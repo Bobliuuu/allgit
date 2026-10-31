@@ -97,8 +97,13 @@ fn imports_every_file_at_every_commit_and_reimport_is_noop() {
     let rep = r.import_git(STREAM.as_bytes()).unwrap();
     assert_eq!(rep.commits_imported, 4);
     assert_eq!(rep.blobs, 2);
-    assert_eq!(rep.refs_ignored, vec!["v1".to_string()]);
-    assert_eq!(rep.paths_skipped.len(), 1);
+    assert!(rep.refs_ignored.is_empty());
+    assert!(rep.paths_skipped.is_empty() && rep.submodules.is_empty());
+    assert_eq!((rep.symlinks, rep.tags_imported), (1, 1));
+    let tags = r.tag_list("root").unwrap();
+    assert_eq!(tags.len(), 1);
+    assert_eq!(tags[0].name, "v1");
+    assert_eq!(tags[0].annotation.as_ref().unwrap().tagger.name, "T");
 
     let refs = r.refs().unwrap();
     let main = refs.head("root", "main").unwrap();
@@ -119,7 +124,8 @@ fn imports_every_file_at_every_commit_and_reimport_is_noop() {
     assert_eq!(c4.1.author.name, "Ann");
     let f = files_at(&r, &c4.0);
     assert_eq!(f["hello.txt"], b"HELLO\n");
-    assert!(!f.contains_key("bin/run.sh") && !f.contains_key("link"));
+    assert!(!f.contains_key("bin/run.sh"));
+    assert_eq!(f["link"], b"hello\n"); // symlink target bytes
 
     let feat = refs.head("root", "feat").unwrap();
     let f = files_at(&r, &feat);
@@ -131,7 +137,7 @@ fn imports_every_file_at_every_commit_and_reimport_is_noop() {
     let f = files_at(&r, &main);
     assert_eq!(
         f.keys().cloned().collect::<Vec<_>>(),
-        ["hello.txt", "merged.txt", "sp ace/q\"t.txt"]
+        ["hello.txt", "link", "merged.txt", "sp ace/q\"t.txt"]
     ); // tree starts from the first parent
     let mc = match r.store().get(&main).unwrap() {
         vcs_objects::Object::Commit(c) => c,
@@ -151,6 +157,7 @@ fn imports_every_file_at_every_commit_and_reimport_is_noop() {
     assert_eq!(rep2.commits_imported, 0);
     assert_eq!(rep2.commits_skipped, 4);
     assert_eq!(rep2.objects_written, 0);
+    assert_eq!((rep2.tags_imported, rep2.tags_skipped.len()), (0, 0));
     assert!(rep2.branches_updated.is_empty());
     let after: std::collections::BTreeSet<_> = r.store().list().unwrap().into_iter().collect();
     assert_eq!(before, after);
@@ -181,4 +188,49 @@ fn malformed_streams_are_errors() {
         .import_git("commit refs/heads/x\ncommitter A <a@x> 1 +0000\ndata 1\nm\nfrom :9\n".as_bytes())
         .is_err());
     assert!(r.refs().unwrap().branches.is_empty());
+}
+
+#[test]
+fn symlink_mode_is_recorded_and_submodules_are_reported() {
+    let d = tempfile::tempdir().unwrap();
+    let r = Repo::init(&d.path().join("r")).unwrap();
+    let s = "blob\nmark :1\ndata 6\ntarget\n\
+commit refs/heads/main\nmark :2\noriginal-oid c1\ncommitter A <a@x> 1 +0000\ndata 1\n1\n\
+M 120000 :1 dir/ln\nM 160000 0123456789012345678901234567890123456789 vendor/sub\nM 100644 inline f\ndata 2\nf\n\n\
+reset refs/tags/light\nfrom :2\n\
+tag ann\nfrom :2\ntagger T <t@x> 9 +0000\ndata 4\nrel\n\
+tag bad..name\nfrom :2\ntagger T <t@x> 9 +0000\ndata 1\nx\n\
+done\n";
+    let rep = r.import_git(s.as_bytes()).unwrap();
+    assert_eq!(rep.submodules, vec!["vendor/sub".to_string()]);
+    assert_eq!(rep.symlinks, 1);
+    assert_eq!(rep.tags_imported, 2);
+    assert_eq!(rep.tags_skipped.len(), 1, "{:?}", rep.tags_skipped);
+    let tags = r.tag_list("root").unwrap();
+    let names: Vec<_> = tags.iter().map(|t| (t.name.as_str(), t.annotation.is_some())).collect();
+    assert_eq!(names, [("ann", true), ("light", false)]);
+    assert_eq!(tags[0].annotation.as_ref().unwrap().message, "rel\n");
+    let main = r.refs().unwrap().head("root", "main").unwrap();
+    assert_eq!(tags[0].commit, main);
+    let vcs_objects::Object::Commit(mc) = r.store().get(&main).unwrap() else {
+        panic!()
+    };
+    let root = mc.root;
+    let vcs_objects::Object::Tree(top) = r.store().get(&root).unwrap() else {
+        panic!()
+    };
+    assert!(top.entries().iter().all(|e| e.name != "vendor"));
+    let dir = top.entries().iter().find(|e| e.name == "dir").unwrap();
+    let vcs_objects::Object::Tree(sub) = r.store().get(&dir.id).unwrap() else {
+        panic!()
+    };
+    assert_eq!(sub.entries()[0].mode, vcs_objects::EntryMode::Symlink);
+    assert!(std::fs::symlink_metadata(r.worktree().join("dir/ln"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    // re-import is a no-op for tags
+    let rep2 = r.import_git(s.as_bytes()).unwrap();
+    assert_eq!(rep2.tags_imported, 0);
+    assert_eq!(r.tag_list("root").unwrap().len(), 2);
 }
