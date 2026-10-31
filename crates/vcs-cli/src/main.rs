@@ -38,6 +38,16 @@ enum Cmd {
     },
     /// Import a `git fast-export` stream (file, or `-` for stdin) into the root zone
     ImportGit { stream: PathBuf },
+    /// Write a zone branch as a Git fast-import stream (stdout, or --output)
+    ExportGit {
+        /// Zone (default: the zone containing the current directory)
+        #[arg(long)]
+        zone: Option<String>,
+        /// Branch (default: main)
+        branch: Option<String>,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
     /// Show commit history of a zone branch
     Log {
         /// Zone (default: the zone containing the current directory)
@@ -389,6 +399,22 @@ fn run(cli: Cli) -> Result<(), Error> {
             for x in &r.paths_skipped {
                 println!("skipped path: {x}");
             }
+        }
+        Cmd::ExportGit { zone, branch, output } => {
+            let (repo, cwd) = open()?;
+            let zone = zone_of_cwd(&repo, &cwd, zone)?;
+            let branch = branch.unwrap_or_else(|| "main".to_string());
+            let rep = match output {
+                Some(p) => {
+                    let mut w =
+                        std::io::BufWriter::new(std::fs::File::create(&p).map_err(|e| Error::Msg(format!("{}: {e}", p.display())))?);
+                    let r = repo.export_git(&zone, &branch, &mut w)?;
+                    std::io::Write::flush(&mut w).map_err(|e| Error::Msg(e.to_string()))?;
+                    r
+                }
+                None => repo.export_git(&zone, &branch, &mut std::io::BufWriter::new(std::io::stdout().lock()))?,
+            };
+            eprintln!("exported {} commit(s), {} blob(s) to {}", rep.commits, rep.blobs, rep.git_ref);
         }
         Cmd::Log { zone, limit, branch } => {
             let (repo, cwd) = open()?;
