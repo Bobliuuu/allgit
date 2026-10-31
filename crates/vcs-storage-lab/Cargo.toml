@@ -1,0 +1,22 @@
+[package]
+name = "vcs-storage-lab"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Research lab for storage-layout experiments (issue #184). Not part of the product; own workspace so default builds are unaffected."
+
+# Deliberately its own workspace root: the main workspace, its Cargo.lock and CI do not see this crate.
+[workspace]
+
+[dependencies]
+vcs-bench = { path = "../vcs-bench" } # only for the seeded storebench workload generators (fixture subcommand)
+zstd = "0.13"
+flate2 = "1"
+
+[[bin]]
+name = "lab"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+debug = false
