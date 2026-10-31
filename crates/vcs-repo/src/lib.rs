@@ -5,6 +5,7 @@ pub mod diff;
 pub mod error;
 pub mod index;
 pub mod meta;
+pub mod ops;
 pub mod repo;
 pub mod sync;
 pub mod treeops;

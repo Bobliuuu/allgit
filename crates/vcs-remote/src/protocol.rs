@@ -94,7 +94,7 @@ pub struct Publisher<'a> {
 /// Dependencies of an object (what must exist remotely before it may).
 fn deps(o: &Object) -> Vec<ObjectId> {
     match o {
-        Object::Blob(_) | Object::Transaction(_) => vec![],
+        Object::Blob(_) | Object::Transaction(_) | Object::Operation(_) => vec![],
         Object::Tree(t) => t.entries().iter().map(|e| e.id).collect(),
         Object::Commit(c) => c.parents.iter().copied().chain(std::iter::once(c.root)).collect(),
         Object::Snapshot(s) => s.zones.values().copied().collect(),

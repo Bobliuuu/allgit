@@ -17,6 +17,7 @@ pub enum Kind {
     Commit = 3,
     Snapshot = 4,
     Transaction = 5,
+    Operation = 6,
 }
 
 impl Kind {
@@ -27,6 +28,7 @@ impl Kind {
             3 => Kind::Commit,
             4 => Kind::Snapshot,
             5 => Kind::Transaction,
+            6 => Kind::Operation,
             _ => return Err(DecodeError::Kind(b)),
         })
     }
@@ -168,6 +170,26 @@ pub struct Transaction {
     pub message: String,
 }
 
+/// Local state captured by an [`Operation`]: every local branch head and the workspace
+/// subscriptions (zone -> checked-out branch). Remote-tracking refs are deliberately absent.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct OpView {
+    /// (zone, branch) -> commit. Sorted by key (BTreeMap order == canonical order).
+    pub branches: BTreeMap<(String, String), ObjectId>,
+    /// zone -> checked-out branch, for subscribed zones.
+    pub workspace: BTreeMap<String, String>,
+}
+
+/// One entry of the operation log (distinct from the commit DAG): the local view after a
+/// mutating repository operation. `parents` are the previous operation(s), normally one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Operation {
+    pub parents: Vec<ObjectId>,
+    pub view: OpView,
+    pub description: String,
+    pub author: Signature,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Object {
     Blob(Vec<u8>),
@@ -175,6 +197,7 @@ pub enum Object {
     Commit(Commit),
     Snapshot(Snapshot),
     Transaction(Transaction),
+    Operation(Operation),
 }
 
 impl Object {
@@ -185,6 +208,7 @@ impl Object {
             Object::Commit(_) => Kind::Commit,
             Object::Snapshot(_) => Kind::Snapshot,
             Object::Transaction(_) => Kind::Transaction,
+            Object::Operation(_) => Kind::Operation,
         }
     }
 
@@ -235,6 +259,22 @@ impl Object {
                 }
                 t.author.encode(&mut w);
                 w.str(&t.message);
+            }
+            Object::Operation(o) => {
+                w.varint(o.parents.len() as u64);
+                for p in &o.parents {
+                    w.id(p);
+                }
+                w.varint(o.view.branches.len() as u64);
+                for ((a, b), id) in &o.view.branches {
+                    w.str(a).str(b).id(id);
+                }
+                w.varint(o.view.workspace.len() as u64);
+                for (a, b) in &o.view.workspace {
+                    w.str(a).str(b);
+                }
+                o.author.encode(&mut w);
+                w.str(&o.description);
             }
         }
         w.finish()
@@ -342,6 +382,53 @@ impl Object {
                 let author = Signature::decode(&mut r)?;
                 let message = r.str(MAX_MESSAGE)?;
                 Object::Transaction(Transaction { updates, author, message })
+            }
+            Kind::Operation => {
+                let np = r.count(32)?;
+                if np > MAX_PARENTS {
+                    return Err(DecodeError::Limit("too many parents"));
+                }
+                let mut parents = Vec::with_capacity(np);
+                for _ in 0..np {
+                    parents.push(r.id()?);
+                }
+                let nb = r.count(2 + 2 + 32)?;
+                let mut branches = BTreeMap::new();
+                let mut prev: Option<(String, String)> = None;
+                for _ in 0..nb {
+                    let a = r.str(64)?;
+                    names::validate_zone_name(&a).map_err(|_| DecodeError::Invalid("zone name"))?;
+                    let b = r.str(200)?;
+                    names::validate_branch_name(&b).map_err(|_| DecodeError::Invalid("branch name"))?;
+                    let key = (a, b);
+                    if prev.as_ref().is_some_and(|p| *p >= key) {
+                        return Err(DecodeError::Invalid("operation branches not strictly sorted"));
+                    }
+                    prev = Some(key.clone());
+                    branches.insert(key, r.id()?);
+                }
+                let nw = r.count(2 + 2)?;
+                let mut workspace = BTreeMap::new();
+                let mut prev: Option<String> = None;
+                for _ in 0..nw {
+                    let a = r.str(64)?;
+                    names::validate_zone_name(&a).map_err(|_| DecodeError::Invalid("zone name"))?;
+                    let b = r.str(200)?;
+                    names::validate_branch_name(&b).map_err(|_| DecodeError::Invalid("branch name"))?;
+                    if prev.as_ref().is_some_and(|p| *p >= a) {
+                        return Err(DecodeError::Invalid("operation workspace not strictly sorted"));
+                    }
+                    prev = Some(a.clone());
+                    workspace.insert(a, b);
+                }
+                let author = Signature::decode(&mut r)?;
+                let description = r.str(MAX_MESSAGE)?;
+                Object::Operation(Operation {
+                    parents,
+                    view: OpView { branches, workspace },
+                    description,
+                    author,
+                })
             }
         };
         r.finish()?;
@@ -483,7 +570,72 @@ mod tests {
         }
     }
 
+    fn op_strategy() -> impl Strategy<Value = Operation> {
+        (
+            proptest::collection::vec(any::<[u8; 32]>(), 0..4),
+            proptest::collection::btree_map(("[a-z][a-z0-9]{0,6}", "[a-z][a-z0-9]{0,6}"), any::<[u8; 32]>(), 0..6),
+            proptest::collection::btree_map("[a-z][a-z0-9]{0,6}", "[a-z][a-z0-9]{0,6}", 0..4),
+            ".{0,40}",
+            any::<u64>(),
+        )
+            .prop_map(|(ps, bs, ws, d, ts)| Operation {
+                parents: ps.into_iter().map(ObjectId::from_bytes).collect(),
+                view: OpView {
+                    branches: bs.into_iter().map(|(k, v)| (k, ObjectId::from_bytes(v))).collect(),
+                    workspace: ws,
+                },
+                description: d,
+                author: Signature {
+                    name: "A".into(),
+                    email: "a@x".into(),
+                    timestamp: ts,
+                },
+            })
+    }
+
+    #[test]
+    fn operation_roundtrip_and_strictness() {
+        let mut v = OpView::default();
+        v.branches.insert(("a".into(), "main".into()), oid(1));
+        v.branches.insert(("b".into(), "main".into()), oid(2));
+        v.workspace.insert("a".into(), "main".into());
+        let op = Object::Operation(Operation {
+            parents: vec![oid(7)],
+            view: v,
+            description: "commit: x".into(),
+            author: sig(),
+        });
+        let enc = op.encode();
+        assert_eq!(enc[0], 6);
+        assert_eq!(Object::decode(&enc).unwrap(), op);
+        let mut t = enc.clone();
+        t.push(0);
+        assert_eq!(Object::decode(&t), Err(DecodeError::Trailing));
+        // unsorted branches are rejected
+        let mut w = Writer::new();
+        w.u8(Kind::Operation as u8).u8(FORMAT_VERSION).varint(0).varint(2);
+        w.str("b").str("main").id(&oid(1)).str("a").str("main").id(&oid(2));
+        w.varint(0);
+        sig().encode(&mut w);
+        w.str("d");
+        assert!(Object::decode(&w.finish()).is_err());
+        // duplicate workspace zone rejected
+        let mut w = Writer::new();
+        w.u8(Kind::Operation as u8).u8(FORMAT_VERSION).varint(0).varint(0).varint(2);
+        w.str("a").str("main").str("a").str("main");
+        sig().encode(&mut w);
+        w.str("d");
+        assert!(Object::decode(&w.finish()).is_err());
+    }
+
     proptest! {
+        #[test]
+        fn operation_roundtrip_prop(op in op_strategy()) {
+            let o = Object::Operation(op);
+            let enc = o.encode();
+            prop_assert_eq!(Object::decode(&enc).unwrap(), o.clone());
+            prop_assert_eq!(id_of_encoded(&enc), o.id());
+        }
         #[test]
         fn blob_roundtrip(data in proptest::collection::vec(any::<u8>(), 0..2048)) {
             let o = Object::Blob(data);
