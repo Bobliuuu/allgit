@@ -201,8 +201,9 @@ impl Repo {
                 }
             }
         }
-        // 4. worktree + index first, refs/workspace last
-        let mut ix = self.index()?;
+        // 4. worktree + index first, refs/workspace last. Every zone is validated before any
+        // file moves, so a refusal in one zone cannot leave another half-restored.
+        let mut moves = Vec::new();
         for a in &affected {
             let old = if ws.subs.contains_key(a) {
                 self.head_flat(a, &zones, &ws, &refs)?
@@ -213,7 +214,12 @@ impl Repo {
                 Some((_, Some(h))) => treeops::flatten(&self.store, Some(self.commit_obj(&h)?.root), zones.path_of(a).unwrap_or(""))?,
                 _ => Flat::new(),
             };
-            self.transition(a, &zones, &old, &new, &mut ix)?;
+            self.transition_check(a, &zones, &old, &new)?;
+            moves.push((a, old, new));
+        }
+        let mut ix = self.index()?;
+        for (a, old, new) in &moves {
+            self.transition(a, &zones, old, new, &mut ix)?;
         }
         if !affected.is_empty() {
             self.save_index(&mut ix)?;

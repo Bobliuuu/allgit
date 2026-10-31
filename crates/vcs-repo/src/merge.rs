@@ -557,19 +557,29 @@ impl Repo {
         let Some(st) = self.merge_state()? else {
             return msg("no merge in progress");
         };
-        self.restore_pre_merge(&st)?;
+        self.restore_pre_merge(&st, st.ours)?;
         self.clear_merge_state()?;
         self.record_op(&format!("merge --abort {}/{}", st.zone, st.branch), None)?;
         Ok(())
     }
 
-    /// Put the zone's files, index and tree back to `st.ours` (lock held). Keeps the state file.
-    pub(crate) fn restore_pre_merge(&self, st: &MergeState) -> Result<()> {
+    /// Put the zone's files, index and tree back to commit `target` (`st.ours` for a merge; the
+    /// original head for a rebase) in one step (lock held). Keeps the state file. Only files the
+    /// merge tracked are removed on the way: an untracked file of the user's is never deleted.
+    pub(crate) fn restore_pre_merge(&self, st: &MergeState, target: ObjectId) -> Result<()> {
         let zones = self.zones()?;
         let prefix = zones.path_of(&st.zone).unwrap_or("").to_owned();
         let status = self.status()?;
         let a = status.zones.iter().find(|a| a.zone == st.zone).expect("subscribed");
-        let touched: BTreeSet<&String> = st.touched.iter().collect();
+        let ours_root = self.commit_obj(&target)?.root;
+        let ours = treeops::flatten(&self.store, Some(ours_root), &prefix)?;
+        // Paths the merge touched, plus (rebase) those where the stopped tip differs from `target`.
+        let mut touched_all: BTreeSet<String> = st.touched.iter().cloned().collect();
+        if target != st.ours {
+            let tip = treeops::flatten(&self.store, Some(self.commit_obj(&st.ours)?.root), &prefix)?;
+            touched_all.extend(tip.keys().chain(ours.keys()).filter(|p| tip.get(*p) != ours.get(*p)).cloned());
+        }
+        let touched: BTreeSet<&String> = touched_all.iter().collect();
         let foreign: Vec<&str> = a
             .staged
             .iter()
@@ -583,11 +593,12 @@ impl Repo {
                 foreign.join(", ")
             ));
         }
-        let ours_root = self.commit_obj(&st.ours)?.root;
-        let ours = treeops::flatten(&self.store, Some(ours_root), &prefix)?;
         let mut ix = self.index()?;
         let mut dirs = BTreeSet::new();
-        for p in &st.touched {
+        for p in &touched_all {
+            if !ix.entries.contains_key(p) {
+                continue; // never staged by the merge: the user's own untracked file (or absent)
+            }
             let abs = self.worktree.join(p);
             match fs::symlink_metadata(&abs) {
                 Ok(m) if m.is_file() => io(&abs, fs::remove_file(&abs))?,

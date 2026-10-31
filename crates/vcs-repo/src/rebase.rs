@@ -303,15 +303,7 @@ impl Repo {
         let Some(ms) = self.merge_state()? else {
             return msg("no rebase in progress");
         };
-        self.restore_pre_merge(&ms)?;
-        // Now worktree/index == cursor (the branch head); move to the original head.
-        let zones = self.zones()?;
-        let prefix = zones.path_of(&rs.zone).unwrap_or("").to_owned();
-        let cur = treeops::flatten(&self.store, Some(self.commit_obj(&rs.cursor)?.root), &prefix)?;
-        let orig = treeops::flatten(&self.store, Some(self.commit_obj(&rs.orig)?.root), &prefix)?;
-        let mut ix = self.index()?;
-        self.transition(&rs.zone, &zones, &cur, &orig, &mut ix)?;
-        self.save_index(&mut ix)?;
+        self.restore_pre_merge(&ms, rs.orig)?;
         let mut refs = self.refs()?;
         refs.apply(&[RefUpdate {
             zone: rs.zone.clone(),

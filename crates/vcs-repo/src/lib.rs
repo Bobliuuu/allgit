@@ -5,6 +5,7 @@ pub mod diff;
 pub mod edit;
 pub mod error;
 pub mod export;
+pub mod failpoint;
 pub mod gc;
 pub mod import;
 pub mod index;

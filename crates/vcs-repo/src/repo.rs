@@ -980,6 +980,13 @@ impl Repo {
     /// Move the working tree + index of one zone from `old` to `new` (flat, full paths).
     /// Preflight validates everything before any file is touched.
     pub(crate) fn transition(&self, zone: &str, zones: &Zones, old: &Flat, new: &Flat, ix: &mut Index) -> Result<()> {
+        self.transition_check(zone, zones, old, new)?;
+        self.transition_apply(zone, old, new, ix)
+    }
+
+    /// The preflight half of [`Repo::transition`]: validates without touching any file, so a
+    /// caller moving several zones can check all of them before changing any.
+    pub(crate) fn transition_check(&self, zone: &str, zones: &Zones, old: &Flat, new: &Flat) -> Result<()> {
         let changed: Vec<&String> = new.iter().filter(|(p, v)| old.get(*p) != Some(v)).map(|(p, _)| p).collect();
         for p in &changed {
             validate_path(p)?;
@@ -1010,6 +1017,11 @@ impl Repo {
                 }
             }
         }
+        Ok(())
+    }
+
+    fn transition_apply(&self, _zone: &str, old: &Flat, new: &Flat, ix: &mut Index) -> Result<()> {
+        let changed: Vec<&String> = new.iter().filter(|(p, v)| old.get(*p) != Some(v)).map(|(p, _)| p).collect();
         // deletions
         let mut dirs: BTreeSet<PathBuf> = BTreeSet::new();
         for p in old.keys().filter(|p| !new.contains_key(*p)) {
