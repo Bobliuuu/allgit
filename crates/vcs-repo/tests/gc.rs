@@ -90,3 +90,39 @@ fn old_orphan_is_reported_with_grace_zero() {
     let rep = r.gc_plan_at(later(), Duration::ZERO).unwrap();
     assert!(rep.would_delete.iter().any(|x| x.0 == b));
 }
+
+#[test]
+fn readopted_old_orphan_is_kept_after_dedup_put() {
+    let d = tempfile::tempdir().unwrap();
+    let r = Repo::init(&d.path().join("r")).unwrap();
+    commit(&r, "a", "one");
+    let o = orphan(&r, b"old orphan");
+    // Backdate it 30 days, as if it had been orphaned long ago.
+    let p = d.path().join("r/.vcs/objects").join(&o.to_hex()[..2]).join(&o.to_hex()[2..]);
+    let old = SystemTime::now() - 30 * DAY;
+    fs::File::options().write(true).open(&p).unwrap().set_modified(old).unwrap();
+    let rep = r.gc_plan(Duration::from_secs(86400)).unwrap();
+    assert_eq!(
+        rep.would_delete.iter().map(|x| x.0).collect::<Vec<_>>(),
+        vec![o],
+        "precondition: it is sweepable"
+    );
+
+    // A writer re-adopts it: put dedups, a pointer to it is about to be installed.
+    assert_eq!(r.store().put(&Object::Blob(b"old orphan".to_vec())).unwrap(), o);
+    r.store().sync().unwrap();
+    // Not yet referenced, but no longer old: even a plan that treats anything older than 1 day
+    // (and one at grace zero evaluated at the moment of the put) must not select it.
+    let rep = r.gc_plan(Duration::from_secs(86400)).unwrap();
+    assert!(
+        rep.would_delete.is_empty(),
+        "re-adopted orphan must survive: {:?}",
+        rep.would_delete
+    );
+    assert!(rep.kept_young.contains(&o));
+    let rep = r.gc_plan_at(SystemTime::now() - Duration::from_secs(5), Duration::ZERO).unwrap();
+    assert!(
+        !rep.would_delete.iter().any(|x| x.0 == o),
+        "grace-zero plan as of just before the put keeps it"
+    );
+}
