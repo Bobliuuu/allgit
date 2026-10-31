@@ -130,6 +130,12 @@ impl Repo {
             return msg("no operation log yet; nothing to undo");
         };
         let op = self.op_get(&head)?;
+        if op.description.starts_with("area rename ") {
+            return msg(format!(
+                "the last operation ({}) renamed an area; renames are not part of the operation view and cannot be undone. Rename the area back with `vcs area rename`",
+                op.description
+            ));
+        }
         let Some(parent) = op.parents.first().copied() else {
             return msg("the current operation is the first one; nothing to undo");
         };
