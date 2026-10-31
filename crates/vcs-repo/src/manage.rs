@@ -162,10 +162,12 @@ impl Repo {
         }
         let branches = refs.branches_of(zone);
         let pins = self.snapshots_pinning(&refs, zone)?;
-        if !force && (!branches.is_empty() || !pins.is_empty()) {
+        let ntags = refs.tags.keys().filter(|(a, _)| a == zone).count();
+        if !force && (!branches.is_empty() || !pins.is_empty() || ntags > 0) {
             return msg(format!(
-                "zone {zone:?} has {} branch(es) and is pinned by {} snapshot(s); pass --force to drop its refs (commits are kept in the object store and operation log)",
+                "zone {zone:?} has {} branch(es), {} tag(s) and is pinned by {} snapshot(s); pass --force to drop its refs (commits are kept in the object store and operation log)",
                 branches.len(),
+                ntags,
                 pins.len()
             ));
         }
@@ -179,6 +181,7 @@ impl Repo {
         }
         zones.remove(zone)?;
         refs.branches.retain(|(a, _), _| a != zone);
+        refs.tags.retain(|(a, _), _| a != zone);
         ws.subs.remove(zone);
         write_atomic(&self.vcs.join("refs"), &refs.encode())?;
         write_atomic(&self.vcs.join("zones"), &zones.encode())?;

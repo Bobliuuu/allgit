@@ -14,6 +14,7 @@ pub mod ops;
 pub mod rebase;
 pub mod repo;
 pub mod sync;
+pub mod tags;
 pub mod treeops;
 
 pub use error::{Error, Result};
@@ -26,3 +27,4 @@ pub use meta::{DEFAULT_BRANCH, ROOT_ZONE};
 pub use rebase::{RebaseOutcome, RebaseState};
 pub use repo::{AddReport, Change, ChangeKind, CommitReport, FsckReport, Repo, Status, ZoneStatus};
 pub use sync::{PublishReport, SyncAction, SyncReport};
+pub use tags::{BlameLine, ShowReport, TagInfo};

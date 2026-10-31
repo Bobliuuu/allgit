@@ -10,6 +10,6 @@ pub mod object;
 pub use codec::DecodeError;
 pub use id::{ChangeId, IdParseError, ObjectId};
 pub use object::{
-    blob_id, id_of_encoded, id_of_parts, Commit, EntryMode, Kind, LockOp, Object, OpView, Operation, RefUpdate, Signature, Snapshot,
-    Transaction, Tree, TreeEntry, FORMAT_VERSION,
+    blob_id, id_of_encoded, id_of_parts, AnnotatedTag, Commit, EntryMode, Kind, LockOp, Object, OpView, Operation, RefUpdate, Signature,
+    Snapshot, Transaction, Tree, TreeEntry, FORMAT_VERSION,
 };

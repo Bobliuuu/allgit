@@ -168,3 +168,44 @@ fn repack_keeps_repo_working_and_fsck_catches_pack_corruption() {
     assert!(!o.status.success());
     assert!(String::from_utf8_lossy(&o.stdout).contains("PROBLEM"));
 }
+
+#[test]
+fn tag_show_blame_commands() {
+    let t = tempfile::tempdir().unwrap();
+    ok(t.path(), &["init", "r"]);
+    let d = t.path().join("r");
+    std::fs::write(d.join("a.txt"), "one\ntwo\n").unwrap();
+    ok(&d, &["add", "."]);
+    ok(&d, &["commit", "-m", "first"]);
+    std::fs::write(d.join("a.txt"), "one\n2\n").unwrap();
+    ok(&d, &["add", "."]);
+    ok(&d, &["commit", "-m", "second"]);
+
+    assert!(ok(&d, &["tag"]).contains("no tags"));
+    ok(&d, &["tag", "light", "HEAD~1"]);
+    ok(&d, &["tag", "v1", "-m", "release one", "--signature", "sig"]);
+    let list = ok(&d, &["tag"]);
+    assert!(list.contains("light") && list.contains("annotated: release one"), "{list}");
+    let dup = vcs(&d, &["tag", "v1"]);
+    assert!(!dup.status.success() && String::from_utf8_lossy(&dup.stderr).contains("already exists"));
+
+    let shown = ok(&d, &["show", "v1"]);
+    assert!(
+        shown.contains("release one") && shown.contains("second") && shown.contains("+2"),
+        "{shown}"
+    );
+    assert!(ok(&d, &["show"]).contains("-two"));
+    assert!(!vcs(&d, &["show", "nope"]).status.success());
+
+    let blame = ok(&d, &["blame", "a.txt"]);
+    let rows: Vec<&str> = blame.lines().collect();
+    assert_eq!(rows.len(), 2, "{blame}");
+    assert!(rows[0].ends_with("one") && rows[1].ends_with("2"));
+    assert_ne!(rows[0].split(' ').next(), rows[1].split(' ').next());
+    assert!(!vcs(&d, &["blame", "nope.txt"]).status.success());
+
+    ok(&d, &["tag", "-d", "light"]);
+    assert!(!vcs(&d, &["tag", "-d", "light"]).status.success());
+    assert!(ok(&d, &["op", "log"]).contains("tag delete root/light"));
+    assert!(ok(&d, &["fsck"]).contains("ok"));
+}
