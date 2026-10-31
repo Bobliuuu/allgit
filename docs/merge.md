@@ -8,8 +8,9 @@ read through `ObjectStore`/`BlobSource`/`CommitGraph`; nothing is written. The o
 
 * **Merge base** (`merge_base`): ancestors of both commits, intersected, minus anything that is a strict ancestor of
   another common ancestor. Returns *all* best common ancestors sorted by id: empty for unrelated histories, several for
-  criss-cross (caller decides; recursive base merging is not done here). O(reachable commits); generation numbers and a
-  commit-graph index are M5.
+  criss-cross (caller decides; recursive base merging is not done here). O(reachable commits) by default. With the
+  commit-graph cache (`.vcs/commit-graph`, see architecture.md) the walk paints down from both tips in generation order
+  and only visits commits newer than the bases; the result is identical.
 * **Line diff** (`Algorithm::{Myers, Patience}`): Myers is the O(ND) shortest edit script (LCS-optimal). Patience
   anchors on lines unique to both sides via a longest increasing subsequence, recurses between anchors, and falls back
   to Myers when there are none. Histogram is not implemented. Neither uses hashing order or randomness.

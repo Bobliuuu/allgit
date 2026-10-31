@@ -1,6 +1,7 @@
 //! Native local repository: workspace, staging, commits, zones, snapshots.
 //! See docs/architecture.md.
 
+pub mod cgraph;
 pub mod diff;
 pub mod edit;
 pub mod error;

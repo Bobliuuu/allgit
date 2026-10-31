@@ -25,6 +25,7 @@ Crates are only created when a real boundary exists. The core never depends on T
   zones             zone name → owned path prefix (root = "")
   workspace         subscribed zones and the branch checked out in each
   index             staged tree: path → (blob id, mode, size, mtime_ns) + write time
+  commit-graph      optional cache: per commit parents, time, generation number (pure cache, see below)
   lock              O_EXCL repository lock (stale lock ⇒ explicit error telling user to delete it)
 ```
 All state files are framed `magic || version || body`, produced with the same canonical codec, and rejected if malformed.
@@ -70,6 +71,18 @@ and `crates/vcs-store` unit tests.
 
 Limits: the barrier assumes the OS/drive honour `fsync` (and `F_FULLFSYNC` on macOS); a drive that lies defeats any
 such scheme. The durability numbers were measured on APFS only; Linux/ext4 behaviour of the batching is not measured.
+
+### Commit-graph cache [impl]
+`.vcs/commit-graph` stores, for every commit reachable from a branch head, its parents, author time and generation
+number (1 + max over parents). It is a **pure cache**: every byte can be recomputed from commit objects, so it is
+never authoritative. It is written lazily (by `merge_bases` and by `is_ancestor` once its short walk is exhausted),
+extended incrementally when branch heads moved past it, and ignored and rebuilt if it fails any check on load
+(blake3 checksum, sorted unique ids, parent indexes in range, every generation equal to 1 + max of parents). If some
+history is missing or malformed the graph is simply not used. `vcs fsck` compares every entry with the real commit
+and reports a corrupt file or a mismatch. Used by merge/rebase merge-base and `Repo::is_ancestor`; `log` does not
+use it (it must read every emitted commit anyway, and measured no faster). `Repo::set_commit_graph(false)` disables
+it. Tested: random branch/merge histories give identical `log`, `merge_bases` and `is_ancestor` with and without it
+(`crates/vcs-repo/tests/commit_graph.rs`, `vcs-merge` unit proptests). One file for the whole repo, not per zone.
 
 ### Index, status and the stat cache [impl]
 Status compares (head tree ↔ index) and (index ↔ worktree). The worktree comparison trusts `(size, mtime, mode)` only if

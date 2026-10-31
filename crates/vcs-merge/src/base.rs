@@ -1,13 +1,20 @@
 //! Merge-base over a commit DAG.
 
 use crate::error::MergeError;
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque};
 use vcs_objects::{Object, ObjectId};
 use vcs_store::ObjectStore;
 
 /// Read-only view of the commit DAG.
 pub trait CommitGraph {
     fn parents(&self, id: &ObjectId) -> Result<Vec<ObjectId>, MergeError>;
+
+    /// Generation number of `id` (1 + the maximum over its parents, 1 for a root), when this
+    /// graph knows it. An implementation that returns `Some` for a commit must return `Some`
+    /// for all of its ancestors, with exactly that definition. The default knows nothing.
+    fn generation(&self, _id: &ObjectId) -> Option<u32> {
+        None
+    }
 }
 
 /// In-memory graph (tests, tools).
@@ -50,8 +57,29 @@ fn ancestors(g: &dyn CommitGraph, start: &ObjectId) -> Result<BTreeSet<ObjectId>
     Ok(seen)
 }
 
+/// Is `anc` reachable from `desc` (or equal)? Uses generation numbers to prune when the graph
+/// has them; the answer is the same either way.
 pub fn is_ancestor(g: &dyn CommitGraph, anc: &ObjectId, desc: &ObjectId) -> Result<bool, MergeError> {
-    Ok(ancestors(g, desc)?.contains(anc))
+    match (g.generation(anc), g.generation(desc)) {
+        (Some(ga), Some(gd)) => {
+            if ga > gd {
+                return Ok(false);
+            }
+            let mut seen = BTreeSet::new();
+            let mut stack = vec![*desc];
+            while let Some(c) = stack.pop() {
+                if &c == anc {
+                    return Ok(true);
+                }
+                if !seen.insert(c) || g.generation(&c).is_none_or(|x| x <= ga) {
+                    continue; // at or below anc's generation and not anc itself: cannot lead to it
+                }
+                stack.extend(g.parents(&c)?);
+            }
+            Ok(false)
+        }
+        _ => Ok(ancestors(g, desc)?.contains(anc)),
+    }
 }
 
 /// Best common ancestors of `a` and `b`: common ancestors that are not a strict ancestor of
@@ -59,8 +87,73 @@ pub fn is_ancestor(g: &dyn CommitGraph, anc: &ObjectId, desc: &ObjectId) -> Resu
 /// criss-cross (caller may merge the bases recursively). If one side contains the other,
 /// the result is that side's commit.
 ///
-/// Cost: O(commits reachable from a and b); no generation numbers yet (M5).
+/// Cost: O(commits reachable from a and b), or, when the graph has generation numbers, only
+/// the commits newer than the merge bases. The result is identical either way.
 pub fn merge_base(g: &dyn CommitGraph, a: &ObjectId, b: &ObjectId) -> Result<Vec<ObjectId>, MergeError> {
+    if g.generation(a).is_some() && g.generation(b).is_some() {
+        return merge_base_gen(g, a, b);
+    }
+    merge_base_plain(g, a, b)
+}
+
+const P1: u8 = 1;
+const P2: u8 = 2;
+const STALE: u8 = 4;
+
+/// Paint down from both tips in decreasing generation order (as git does), then drop
+/// candidates that are ancestors of other candidates.
+fn merge_base_gen(g: &dyn CommitGraph, a: &ObjectId, b: &ObjectId) -> Result<Vec<ObjectId>, MergeError> {
+    let gen = |id: &ObjectId| g.generation(id).ok_or(MergeError::Missing(*id));
+    let mut flags: BTreeMap<ObjectId, u8> = BTreeMap::new();
+    let mut heap: BinaryHeap<(u32, ObjectId)> = BinaryHeap::new();
+    *flags.entry(*a).or_default() |= P1;
+    *flags.entry(*b).or_default() |= P2;
+    heap.push((gen(a)?, *a));
+    if a != b {
+        heap.push((gen(b)?, *b));
+    }
+    let mut done = BTreeSet::new();
+    let mut results = Vec::new();
+    while heap.iter().any(|(_, n)| flags[n] & STALE == 0) {
+        let (_, n) = heap.pop().expect("non-empty");
+        if !done.insert(n) {
+            continue;
+        }
+        let mut f = flags[&n];
+        if f & (P1 | P2 | STALE) == (P1 | P2) {
+            results.push(n);
+            f |= STALE;
+            flags.insert(n, f);
+        }
+        for p in g.parents(&n)? {
+            let e = flags.entry(p).or_default();
+            let new = *e | (f & (P1 | P2 | STALE));
+            if new != *e {
+                *e = new;
+                if !done.contains(&p) {
+                    heap.push((gen(&p)?, p));
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for r in &results {
+        let mut redundant = false;
+        for s in &results {
+            if s != r && is_ancestor(g, r, s)? {
+                redundant = true;
+                break;
+            }
+        }
+        if !redundant {
+            out.push(*r);
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+pub(crate) fn merge_base_plain(g: &dyn CommitGraph, a: &ObjectId, b: &ObjectId) -> Result<Vec<ObjectId>, MergeError> {
     let aa = ancestors(g, a)?;
     let ab = ancestors(g, b)?;
     let common: BTreeSet<ObjectId> = aa.intersection(&ab).copied().collect();

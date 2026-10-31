@@ -24,7 +24,7 @@ use crate::repo::Repo;
 use crate::treeops::{self, Flat};
 use std::collections::BTreeSet;
 use std::fs;
-use vcs_merge::{merge_base, merge_flat_with, Algorithm, ConflictKind, MarkerLabels, StoreBlobs, StoreGraph};
+use vcs_merge::{merge_flat_with, Algorithm, ConflictKind, MarkerLabels, StoreBlobs};
 use vcs_objects::codec::{Reader, Writer};
 use vcs_objects::{Commit, EntryMode, Object, ObjectId, RefUpdate, Signature, Transaction};
 use vcs_store::ObjectStore;
@@ -180,8 +180,7 @@ impl Repo {
         let Some(head) = refs.head(zone, &branch) else {
             return msg(format!("{zone}/{branch} has no commits to rebase"));
         };
-        let g = StoreGraph(&self.store);
-        let base = match merge_base(&g, &head, &onto_id).map_err(me)?.as_slice() {
+        let base = match self.merge_bases(&head, &onto_id)?.as_slice() {
             [] => {
                 return msg(format!(
                     "refusing to rebase unrelated histories ({onto} shares no commit with {branch})"
