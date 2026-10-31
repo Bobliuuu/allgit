@@ -18,6 +18,7 @@ pub mod rebase;
 pub mod repo;
 pub mod stash;
 pub mod sync;
+pub mod tags;
 pub mod treeops;
 
 pub use error::{Error, Result};
@@ -31,3 +32,4 @@ pub use rebase::{RebaseOutcome, RebaseState};
 pub use repo::{AddReport, Change, ChangeKind, CommitReport, FsckReport, Repo, Status, ZoneStatus};
 pub use stash::{StashEntry, StashPopOutcome, StashZone};
 pub use sync::{PublishReport, SyncAction, SyncReport};
+pub use tags::{BlameLine, ShowReport, TagInfo};

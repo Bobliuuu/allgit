@@ -105,6 +105,36 @@ enum Cmd {
     /// Set tracked changes aside (push, pop, list, drop); untracked files are left alone
     #[command(subcommand)]
     Stash(StashCmd),
+    /// List tags of the current zone, create one (lightweight, or annotated with -m), or delete one with -d
+    Tag {
+        name: Option<String>,
+        /// Revision to tag (default: HEAD): a tag, branch, commit id prefix, optionally with ~N or ^
+        rev: Option<String>,
+        #[arg(long)]
+        zone: Option<String>,
+        /// Make an annotated tag with this message
+        #[arg(short, long)]
+        message: Option<String>,
+        /// Opaque signature text stored in an annotated tag (not verified)
+        #[arg(long, requires = "message")]
+        signature: Option<String>,
+        /// Delete the named tag
+        #[arg(short = 'd', long)]
+        delete: bool,
+    },
+    /// Show a commit (default HEAD) with its diff against the first parent
+    Show {
+        rev: Option<String>,
+        #[arg(long)]
+        zone: Option<String>,
+    },
+    /// Attribute each line of a file to a commit, following first parents
+    Blame {
+        path: String,
+        /// Revision to blame at (default: HEAD of the file's zone)
+        #[arg(long)]
+        rev: Option<String>,
+    },
     /// Switch branch (in the zone containing cwd, or --zone)
     Switch {
         branch: String,
@@ -645,6 +675,88 @@ fn run(cli: Cli) -> Result<(), Error> {
                     println!("    {l}");
                 }
                 println!();
+            }
+        }
+        Cmd::Tag {
+            name,
+            rev,
+            zone,
+            message,
+            signature,
+            delete,
+        } => {
+            let (repo, cwd) = open()?;
+            let zone = zone_of_cwd(&repo, &cwd, zone)?;
+            match name {
+                None if delete => return Err(Error::Msg("--delete needs a tag name".into())),
+                None => {
+                    let tags = repo.tag_list(&zone)?;
+                    if tags.is_empty() {
+                        println!("no tags in zone {}", repo.zones()?.label(&repo.resolve_zone(&zone)?));
+                    }
+                    for t in tags {
+                        match t.annotation {
+                            Some(a) => println!(
+                                "{:<24} {}  annotated: {}",
+                                t.name,
+                                t.commit.short(),
+                                a.message.lines().next().unwrap_or("")
+                            ),
+                            None => println!("{:<24} {}", t.name, t.commit.short()),
+                        }
+                    }
+                }
+                Some(n) if delete => {
+                    let c = repo.tag_delete(&zone, &n)?;
+                    println!("deleted tag {n} (was {})", c.short());
+                }
+                Some(n) => {
+                    let ann = message
+                        .as_deref()
+                        .map(|m| (m, author(), signature.unwrap_or_default().into_bytes()));
+                    let c = repo.tag_create(&zone, &n, rev.as_deref(), ann)?;
+                    println!("tagged {n} at {}", c.short());
+                }
+            }
+        }
+        Cmd::Show { rev, zone } => {
+            let (repo, cwd) = open()?;
+            let zone = zone_of_cwd(&repo, &cwd, zone)?;
+            let rep = repo.show(&zone, rev.as_deref().unwrap_or("HEAD"))?;
+            let defs = repo.zones()?;
+            if let Some(t) = &rep.tag {
+                println!("tag {}", t.name);
+                println!("Tagger: {} <{}>", t.tagger.name, t.tagger.email);
+                println!("Date:   {}", t.tagger.timestamp);
+                if !t.signature.is_empty() {
+                    println!("Signature: {} bytes (not verified)", t.signature.len());
+                }
+                for l in t.message.lines() {
+                    println!("    {l}");
+                }
+                println!();
+            }
+            let c = &rep.commit;
+            println!("commit {}", rep.id);
+            println!("change {}   zone {}", c.change_id, defs.label(&c.zone));
+            for p in &c.parents {
+                println!("parent {p}");
+            }
+            println!("Author: {} <{}>", c.author.name, c.author.email);
+            println!("Date:   {}", c.author.timestamp);
+            for l in c.message.lines() {
+                println!("    {l}");
+            }
+            println!();
+            print!("{}", rep.diff);
+        }
+        Cmd::Blame { path, rev } => {
+            let (repo, cwd) = open()?;
+            let rel = repo.rel_path(&cwd, &path)?;
+            let lines = repo.blame(&rel, rev.as_deref())?;
+            let w = lines.len().to_string().len();
+            for l in lines {
+                println!("{} ({:>w$}) {}", l.commit.short(), l.line_no, l.text);
             }
         }
         Cmd::Branch { name, zone, delete, force } => {

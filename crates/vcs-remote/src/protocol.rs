@@ -115,6 +115,7 @@ fn deps(o: &Object) -> Vec<ObjectId> {
         Object::Tree(t) => t.entries().iter().map(|e| e.id).collect(),
         Object::Commit(c) => c.parents.iter().copied().chain(std::iter::once(c.root)).collect(),
         Object::Snapshot(s) => s.zones.values().copied().collect(),
+        Object::Tag(t) => vec![t.target],
     }
 }
 
