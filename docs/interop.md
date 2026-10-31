@@ -1,7 +1,7 @@
 # Interop: Git export and Perforce
 
-Status: Git export of one zone branch is a **prototype** (`vcs export-git`, `Repo::export_git`, tested). Everything
-else here, including the Perforce mapping, is **design only**; nothing in the Perforce section is built.
+Status: Git export of one zone branch is a **prototype** (`vcs export-git`, `Repo::export_git`, tested). Perforce import
+is a fixture-tested prototype ([import-p4.md](import-p4.md)). Everything else here is **design only**.
 
 The core never runs `git` or links libgit2: export writes a `git fast-import` stream, import (see
 [import-git.md](import-git.md)) reads a `git fast-export` stream. Only tests invoke `git`, to check the stream.
@@ -88,9 +88,12 @@ Lossy by design, and by whom:
 Not designed: bidirectional continuous sync, conflict handling when both sides moved, and large-history performance.
 No numbers are claimed; nothing here was benchmarked.
 
-## Perforce changelist mapping (design only)
+## Perforce changelist mapping
 
-Nothing is implemented; no Perforce server or `p4` client was available to validate any of this.
+A fixture-driven **import** prototype exists (`vcs import-p4`, see [import-p4.md](import-p4.md)): changelists become commits
+in the root zone, with a view file for path mapping and a `Perforce-Change: N` trailer. It is tested only against
+hand-written fixtures and has never been run against a real server or `p4` output. The table below is the wider design;
+rows other than add/edit/delete/move, `+x`/symlink types and the id table are not built. Export to Perforce is not built.
 
 | Perforce | vcs |
 |---|---|

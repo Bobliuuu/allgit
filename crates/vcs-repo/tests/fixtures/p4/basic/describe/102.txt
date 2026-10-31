@@ -1,0 +1,9 @@
+Change 102 by bob@ws2 on 2024/03/02 11:00:00
+
+	Move util into lib
+
+Affected files ...
+
+... //depot/proj/src/lib/util.c#1 move/add
+... //depot/proj/src/util.c#2 move/delete
+

@@ -97,6 +97,17 @@ enum Cmd {
     },
     /// Import a `git fast-export` stream (file, or `-` for stdin) into the root zone
     ImportGit { stream: PathBuf },
+    /// Import recorded Perforce output (fixture directory, see docs/import-p4.md) into the root zone.
+    /// Never run against a real server.
+    ImportP4 {
+        dir: PathBuf,
+        /// View file mapping depot paths to zone paths
+        #[arg(long)]
+        view: PathBuf,
+        /// Branch of the root zone to import onto
+        #[arg(long, default_value = "main")]
+        branch: String,
+    },
     /// Write a zone branch as a Git fast-import stream (stdout, or --output)
     ExportGit {
         /// Zone (default: the zone containing the current directory)
@@ -704,6 +715,28 @@ fn run(cli: Cli) -> Result<(), Error> {
             }
             for x in &r.paths_skipped {
                 println!("skipped path: {x}");
+            }
+        }
+        Cmd::ImportP4 { dir, view, branch } => {
+            let (repo, _) = open()?;
+            let text = std::fs::read_to_string(&view).map_err(|source| Error::Io {
+                path: view.clone(),
+                source,
+            })?;
+            let v = vcs_repo::P4View::parse(&text)?;
+            let r = repo.import_p4(&dir, &v, &branch)?;
+            println!(
+                "imported {} changelist(s), {} already present; {} new object(s)",
+                r.changes_imported, r.changes_skipped, r.objects_written
+            );
+            for n in &r.changes_not_imported {
+                println!("not imported (no file in view): change {n}");
+            }
+            for x in &r.paths_skipped {
+                println!("skipped path: {x}");
+            }
+            for x in &r.type_warnings {
+                println!("type warning: {x}");
             }
         }
         Cmd::ExportGit { zone, branch, output } => {
