@@ -68,6 +68,24 @@ fn script(a: &[&[u8]], b: &[&[u8]]) -> Vec<(Tag, usize, usize)> {
     ops
 }
 
+/// For each line of `new`, the index of the `old` line it is unchanged from (`None` = added or
+/// changed). Same alignment as [`unified`]; used by blame to pass attribution to the parent.
+pub fn line_origins(old: &[u8], new: &[u8]) -> Vec<Option<usize>> {
+    let (a, b) = (split_lines(old), split_lines(new));
+    let mut out = vec![None; b.len()];
+    for (t, ai, bi) in script(&a, &b) {
+        if t == Tag::Eq {
+            out[bi] = Some(ai);
+        }
+    }
+    out
+}
+
+/// Lines of `data` as the diff engine splits them (each keeps its trailing newline).
+pub fn lines_of(data: &[u8]) -> Vec<&[u8]> {
+    split_lines(data)
+}
+
 pub fn is_binary(b: &[u8]) -> bool {
     b[..b.len().min(8000)].contains(&0)
 }

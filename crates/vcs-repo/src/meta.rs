@@ -249,6 +249,8 @@ impl Zones {
 pub struct Refs {
     pub branches: BTreeMap<(String, String), ObjectId>,
     pub snapshots: BTreeMap<String, ObjectId>,
+    /// (zone, tag name) -> a commit (lightweight tag) or an annotated tag object.
+    pub tags: BTreeMap<(String, String), ObjectId>,
 }
 
 impl Refs {
@@ -291,6 +293,13 @@ impl Refs {
         for (n, id) in &self.snapshots {
             w.str(n).id(id);
         }
+        // Appended only when non-empty so repositories without tags keep their original bytes.
+        if !self.tags.is_empty() {
+            w.varint(self.tags.len() as u64);
+            for ((a, n), id) in &self.tags {
+                w.str(a).str(n).id(id);
+            }
+        }
         frame(b"AGRF", w.finish())
     }
     pub fn decode(bytes: &[u8]) -> Result<Self> {
@@ -309,6 +318,19 @@ impl Refs {
             let n = r.str(200).map_err(e)?;
             validate_branch_name(&n)?;
             refs.snapshots.insert(n, r.id().map_err(e)?);
+        }
+        if r.remaining() > 0 {
+            let n = r.count(34).map_err(e)?;
+            if n == 0 {
+                return Err(corrupt("refs", "empty tag list"));
+            }
+            for _ in 0..n {
+                let a = r.str(64).map_err(e)?;
+                let t = r.str(200).map_err(e)?;
+                validate_zone_name(&a)?;
+                validate_branch_name(&t)?;
+                refs.tags.insert((a, t), r.id().map_err(e)?);
+            }
         }
         r.finish().map_err(e)?;
         Ok(refs)

@@ -27,6 +27,7 @@ pub enum Kind {
     Transaction = 5,
     Operation = 6,
     Chunked = 7,
+    Tag = 8,
 }
 
 impl Kind {
@@ -39,6 +40,7 @@ impl Kind {
             5 => Kind::Transaction,
             6 => Kind::Operation,
             7 => Kind::Chunked,
+            8 => Kind::Tag,
             _ => return Err(DecodeError::Kind(b)),
         })
     }
@@ -359,6 +361,21 @@ pub struct Operation {
     pub author: Signature,
 }
 
+/// Maximum length of an annotated tag's opaque signature field.
+pub const MAX_TAG_SIGNATURE: usize = 4096;
+
+/// Annotated tag: a named, messaged pointer at one commit of one zone. `signature` is an opaque
+/// byte string (empty = unsigned); the object model stores it but does not verify it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AnnotatedTag {
+    pub zone: String,
+    pub name: String,
+    pub target: ObjectId,
+    pub tagger: Signature,
+    pub message: String,
+    pub signature: Vec<u8>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Object {
     Blob(Vec<u8>),
@@ -368,6 +385,7 @@ pub enum Object {
     Transaction(Transaction),
     Operation(Operation),
     Chunked(ChunkedBlob),
+    Tag(AnnotatedTag),
 }
 
 impl Object {
@@ -380,6 +398,7 @@ impl Object {
             Object::Transaction(_) => Kind::Transaction,
             Object::Operation(_) => Kind::Operation,
             Object::Chunked(_) => Kind::Chunked,
+            Object::Tag(_) => Kind::Tag,
         }
     }
 
@@ -458,6 +477,11 @@ impl Object {
                 }
                 o.author.encode(&mut w);
                 w.str(&o.description);
+            }
+            Object::Tag(t) => {
+                w.str(&t.zone).str(&t.name).id(&t.target);
+                t.tagger.encode(&mut w);
+                w.str(&t.message).bytes(&t.signature);
             }
         }
         w.finish()
@@ -650,6 +674,24 @@ impl Object {
                     author,
                 })
             }
+            Kind::Tag => {
+                let zone = r.str(64)?;
+                names::validate_zone_name(&zone).map_err(|_| DecodeError::Invalid("zone name"))?;
+                let name = r.str(200)?;
+                names::validate_branch_name(&name).map_err(|_| DecodeError::Invalid("tag name"))?;
+                let target = r.id()?;
+                let tagger = Signature::decode(&mut r)?;
+                let message = r.str(MAX_MESSAGE)?;
+                let signature = r.bytes(MAX_TAG_SIGNATURE)?.to_vec();
+                Object::Tag(AnnotatedTag {
+                    zone,
+                    name,
+                    target,
+                    tagger,
+                    message,
+                    signature,
+                })
+            }
         };
         r.finish()?;
         Ok(obj)
@@ -670,6 +712,23 @@ mod tests {
     }
     fn oid(n: u8) -> ObjectId {
         ObjectId::from_bytes([n; 32])
+    }
+
+    #[test]
+    fn annotated_tag_roundtrips_and_rejects_bad_names() {
+        let t = Object::Tag(AnnotatedTag {
+            zone: "engine".into(),
+            name: "v1.0".into(),
+            target: oid(7),
+            tagger: sig(),
+            message: "release\n".into(),
+            signature: vec![1, 2, 3],
+        });
+        assert_eq!(Object::decode(&t.encode()).unwrap(), t);
+        assert_eq!(t.kind(), Kind::Tag);
+        let Object::Tag(mut bad) = t else { unreachable!() };
+        bad.name = "a..b".into();
+        assert!(Object::decode(&Object::Tag(bad).encode()).is_err());
     }
 
     #[test]
