@@ -4,7 +4,7 @@
 //! last remote heads this repository *observed*. Local branches are never moved by `fetch`.
 
 use crate::error::{msg, Error, Result};
-use crate::meta::{write_atomic, Zones, Refs, Workspace, ROOT_ZONE};
+use crate::meta::{write_atomic, Refs, Workspace, Zones, ROOT_ZONE};
 use crate::repo::Repo;
 use crate::treeops;
 use std::collections::{BTreeMap, BTreeSet};

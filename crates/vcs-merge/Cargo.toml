@@ -8,6 +8,17 @@ license.workspace = true
 vcs-objects.workspace = true
 vcs-store.workspace = true
 thiserror.workspace = true
+tree-sitter = { version = "0.25", optional = true }
+tree-sitter-rust = { version = "0.24", optional = true }
+
+[features]
+default = []
+# Experimental structural (syntax-aware) merge driver for Rust sources. Off by default.
+structural = ["dep:tree-sitter", "dep:tree-sitter-rust"]
 
 [dev-dependencies]
 proptest.workspace = true
+
+[[example]]
+name = "structural_corpus"
+required-features = ["structural"]
