@@ -7,7 +7,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use vcs_objects::codec::{Reader, Writer};
-use vcs_objects::names::{validate_zone_name, validate_branch_name, validate_path};
+use vcs_objects::names::{paths_overlap, validate_zone_name, validate_branch_name, validate_path};
 use vcs_objects::{ObjectId, RefUpdate};
 
 pub const ROOT_ZONE: &str = "root";
@@ -44,12 +44,6 @@ pub(crate) fn unframe<'a>(magic: &[u8; 4], bytes: &'a [u8], what: &str) -> Resul
 
 fn corrupt(what: &str, e: impl std::fmt::Display) -> Error {
     Error::Corrupt(format!("{what}: {e}"))
-}
-
-/// True if `a` and `b` are equal or one is a component-wise prefix of the other.
-fn paths_overlap(a: &str, b: &str) -> bool {
-    let pre = |x: &str, y: &str| x == y || (y.starts_with(x) && y.as_bytes()[x.len()] == b'/');
-    pre(a, b) || pre(b, a)
 }
 
 /// Zone definitions. Invariant (enforced): non-root zone paths are pairwise non-overlapping.

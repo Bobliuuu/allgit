@@ -16,9 +16,9 @@ const FORMAT_TEXT: &str = "all-git repository format 1\n";
 const RACY_NS: u64 = 2_000_000_000;
 
 pub struct Repo {
-    worktree: PathBuf,
-    vcs: PathBuf,
-    store: LocalStore,
+    pub(crate) worktree: PathBuf,
+    pub(crate) vcs: PathBuf,
+    pub(crate) store: LocalStore,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -196,10 +196,10 @@ impl Repo {
 
     // ---------- state ----------
 
-    fn lock(&self) -> Result<LockGuard> {
+    pub(crate) fn lock(&self) -> Result<LockGuard> {
         LockGuard::acquire(self.vcs.join("lock"))
     }
-    fn rd(&self, name: &str) -> Result<Vec<u8>> {
+    pub(crate) fn rd(&self, name: &str) -> Result<Vec<u8>> {
         let p = self.vcs.join(name);
         io(&p, fs::read(&p))
     }
@@ -212,18 +212,18 @@ impl Repo {
     pub fn workspace(&self) -> Result<Workspace> {
         Workspace::decode(&self.rd("workspace")?)
     }
-    fn index(&self) -> Result<Index> {
+    pub(crate) fn index(&self) -> Result<Index> {
         Index::decode(&self.rd("index")?)
     }
-    fn save_index(&self, ix: &mut Index) -> Result<()> {
+    pub(crate) fn save_index(&self, ix: &mut Index) -> Result<()> {
         ix.written_ns = now_ns();
         write_atomic(&self.vcs.join("index"), &ix.encode())
     }
-    fn save_ws(&self, ws: &Workspace) -> Result<()> {
+    pub(crate) fn save_ws(&self, ws: &Workspace) -> Result<()> {
         write_atomic(&self.vcs.join("workspace"), &ws.encode())
     }
 
-    fn commit_obj(&self, id: &ObjectId) -> Result<Commit> {
+    pub(crate) fn commit_obj(&self, id: &ObjectId) -> Result<Commit> {
         match self.store.get(id)? {
             Object::Commit(c) => Ok(c),
             _ => Err(Error::Corrupt(format!("{id} is not a commit"))),
@@ -231,12 +231,12 @@ impl Repo {
     }
 
     /// Head of the branch checked out for `zone` (subscribed) else of its `main`.
-    fn current_head(&self, zone: &str, ws: &Workspace, refs: &Refs) -> Option<ObjectId> {
+    pub(crate) fn current_head(&self, zone: &str, ws: &Workspace, refs: &Refs) -> Option<ObjectId> {
         let b = ws.subs.get(zone).map(String::as_str).unwrap_or(DEFAULT_BRANCH);
         refs.head(zone, b)
     }
 
-    fn head_flat(&self, zone: &str, zones: &Zones, ws: &Workspace, refs: &Refs) -> Result<Flat> {
+    pub(crate) fn head_flat(&self, zone: &str, zones: &Zones, ws: &Workspace, refs: &Refs) -> Result<Flat> {
         let root = match self.current_head(zone, ws, refs) {
             Some(h) => Some(self.commit_obj(&h)?.root),
             None => None,
@@ -712,7 +712,7 @@ impl Repo {
         Ok(head)
     }
 
-    fn require_clean(&self, zone: &str, st: &Status) -> Result<()> {
+    pub(crate) fn require_clean(&self, zone: &str, st: &Status) -> Result<()> {
         let a = st.zones.iter().find(|a| a.zone == zone).expect("subscribed");
         if !a.staged.is_empty() || !a.unstaged.is_empty() {
             return msg(format!(
@@ -730,13 +730,14 @@ impl Repo {
         let _l = self.lock()?;
         let zones = self.zones()?;
         let mut ws = self.workspace()?;
-        let refs = self.refs()?;
+        let mut refs = self.refs()?;
         let Some(cur) = ws.subs.get(zone).cloned() else {
             return msg(format!("zone {zone:?} is not subscribed in this workspace"));
         };
         if cur == branch {
             return Ok(());
         }
+        self.adopt_tracking(&mut refs, zone, branch)?;
         let Some(target) = refs.head(zone, branch) else {
             return msg(format!("no such branch {zone}/{branch}"));
         };
@@ -781,7 +782,7 @@ impl Repo {
         let _l = self.lock()?;
         let zones = self.zones()?;
         let mut ws = self.workspace()?;
-        let refs = self.refs()?;
+        let mut refs = self.refs()?;
         if !zones.exists(zone) {
             return msg(format!("no such zone {zone:?}"));
         }
@@ -790,6 +791,7 @@ impl Repo {
         }
         let branch = branch.unwrap_or(DEFAULT_BRANCH);
         validate_branch_name(branch)?;
+        self.adopt_tracking(&mut refs, zone, branch)?;
         let head = refs.head(zone, branch);
         if head.is_none() && branch != DEFAULT_BRANCH {
             return msg(format!("no such branch {zone}/{branch}"));
@@ -829,7 +831,7 @@ impl Repo {
 
     /// Move the working tree + index of one zone from `old` to `new` (flat, full paths).
     /// Preflight validates everything before any file is touched.
-    fn transition(&self, zone: &str, zones: &Zones, old: &Flat, new: &Flat, ix: &mut Index) -> Result<()> {
+    pub(crate) fn transition(&self, zone: &str, zones: &Zones, old: &Flat, new: &Flat, ix: &mut Index) -> Result<()> {
         let changed: Vec<&String> = new.iter().filter(|(p, v)| old.get(*p) != Some(v)).map(|(p, _)| p).collect();
         for p in &changed {
             validate_path(p)?;

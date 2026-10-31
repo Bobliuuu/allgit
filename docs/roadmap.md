@@ -18,7 +18,9 @@ racy-stat handling. CLI demo from the task statement runs verbatim (`crates/vcs-
 sparse materialization with "unsubscribed ≠ deleted"; multi-zone atomic local commit via Transaction; Snapshot create/show/list.
 ⬜ snapshot checkout; zone rename/delete/move-across-zones; dependency metadata; per-zone policies (storage/merge/lock/ACL).
 
-## M3 – S3 backend ⬜
+## M3 – Remote storage 🟡
+✅ backend trait + conformance suite, Mem/Fs backends, manifest CAS protocol, model checker, sparse fetch, publish/fetch/sync/clone in `vcs-repo`.
+⬜ S3 backend + MinIO tests, CLI commands, local object cache policy (tracked in GitHub issues).
 Acceptance: state-machine model of the publish protocol checked over all interleavings and crash points *before* the S3 code;
 MinIO integration tests for every row of the failure table; capability detection; idempotent retry by txid; partial-fetch of
 one zone downloads no bytes of others (assert via request log).
