@@ -1,0 +1,17 @@
+[package]
+name = "vcs-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "vcs"
+path = "src/main.rs"
+
+[dependencies]
+vcs-repo.workspace = true
+vcs-objects.workspace = true
+clap.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
