@@ -1,5 +1,6 @@
 use crate::diff;
 use crate::error::{io, msg, Error, Result};
+use crate::ignore::IgnoreStack;
 use crate::index::{Index, IndexEntry};
 use crate::meta::{write_atomic, LockGuard, Refs, Workspace, Zones, DEFAULT_BRANCH, ROOT_ZONE};
 use crate::treeops::{self, Flat};
@@ -331,7 +332,16 @@ impl Repo {
             Err(source) => Err(Error::Io { path: full, source }),
             Ok(m) if m.is_dir() => {
                 let mut seen = BTreeSet::new();
-                self.add_dir(p, zones, ws, rep, &mut seen, todo)?;
+                let stack = self.ignore_stack_above(p)?;
+                if !p.is_empty() && stack.is_ignored(p, true) {
+                    if !ix.has_under(p) {
+                        rep.skipped.push(format!("{p} (ignored)"));
+                        return Ok(());
+                    }
+                    self.add_dir(p, zones, ws, ix, rep, &mut seen, todo, &stack.inherit())?;
+                } else {
+                    self.add_dir(p, zones, ws, ix, rep, &mut seen, todo, &stack)?;
+                }
                 for g in ix.under(p) {
                     if !seen.contains(&g) {
                         ix.entries.remove(&g);
@@ -342,6 +352,10 @@ impl Repo {
             }
             Ok(m) if m.is_file() => {
                 validate_path(p)?;
+                if !ix.entries.contains_key(p) && self.ignore_stack_above(p)?.is_ignored(p, false) {
+                    rep.skipped.push(format!("{p} (ignored)"));
+                    return Ok(());
+                }
                 todo.push(p.to_owned());
                 rep.staged += 1;
                 Ok(())
@@ -350,15 +364,47 @@ impl Repo {
         }
     }
 
+    /// Ignore stack in force for the entries of directory `dir`'s parent chain, i.e. what applies
+    /// to the path `rel` itself: the ignore files of every proper ancestor directory. A directory
+    /// that is ignored on the way down makes everything below it ignored.
+    fn ignore_stack_above(&self, rel: &str) -> Result<IgnoreStack> {
+        let mut stack = IgnoreStack::default().descend(&self.worktree, "")?;
+        let comps: Vec<&str> = rel.split('/').filter(|c| !c.is_empty()).collect();
+        let mut acc = String::new();
+        for c in comps.iter().take(comps.len().saturating_sub(1)) {
+            if !acc.is_empty() {
+                acc.push('/');
+            }
+            acc.push_str(c);
+            if stack.is_ignored(&acc, true) {
+                stack = stack.inherit();
+            }
+            stack = stack.descend(&self.worktree, &acc)?;
+        }
+        Ok(stack)
+    }
+
+    /// Is `rel` (a repo-relative path) ignored by `.vcsignore` files? Tracked files never are.
+    pub fn is_ignored(&self, rel: &str, is_dir: bool) -> Result<bool> {
+        if self.index()?.entries.contains_key(rel) {
+            return Ok(false);
+        }
+        Ok(self.ignore_stack_above(rel)?.is_ignored(rel, is_dir))
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn add_dir(
         &self,
         dir: &str,
         zones: &Zones,
         ws: &Workspace,
+        ix: &Index,
         rep: &mut AddReport,
         seen: &mut BTreeSet<String>,
         todo: &mut Vec<String>,
+        parent_stack: &IgnoreStack,
     ) -> Result<()> {
+        let stack = parent_stack.descend(&self.worktree, dir)?;
         let abs = if dir.is_empty() {
             self.worktree.clone()
         } else {
@@ -386,8 +432,22 @@ impl Repo {
             if !ws.subs.contains_key(zones.owner(&rel)) {
                 continue; // not our zone: untouched, not an error
             }
+            let tracked = if ft.is_dir() {
+                ix.has_under(&rel)
+            } else {
+                ix.entries.contains_key(&rel)
+            };
+            let ignored = !tracked && stack.is_ignored(&rel, ft.is_dir());
+            if ignored {
+                continue;
+            }
             if ft.is_dir() {
-                self.add_dir(&rel, zones, ws, rep, seen, todo)?;
+                // a directory kept only for tracked files below it ignores everything else
+                if stack.is_ignored(&rel, true) {
+                    self.add_dir(&rel, zones, ws, ix, rep, seen, todo, &stack.inherit())?;
+                } else {
+                    self.add_dir(&rel, zones, ws, ix, rep, seen, todo, &stack)?;
+                }
             } else {
                 validate_path(&rel)?;
                 todo.push(rel.clone());
@@ -519,7 +579,7 @@ impl Repo {
             }
         }
         let budget = AtomicUsize::new(std::thread::available_parallelism().map_or(1, |n| n.get()).min(8) - 1);
-        let w = self.walk_untracked("", &zones, &ws, &ix, &budget)?;
+        let w = self.walk_untracked("", &zones, &ws, &ix, &budget, &IgnoreStack::default())?;
         st.untracked = w.untracked;
         st.unsupported = w.unsupported;
         st.merging = self.merge_state()?;
@@ -530,11 +590,20 @@ impl Repo {
     /// `read_dir` per directory), so sibling subdirectories are walked on extra threads while
     /// the shared `budget` lasts; results are assembled in directory order, so the output does
     /// not depend on scheduling.
-    fn walk_untracked(&self, dir: &str, zones: &Zones, ws: &Workspace, ix: &Index, budget: &AtomicUsize) -> Result<WalkOut> {
+    fn walk_untracked(
+        &self,
+        dir: &str,
+        zones: &Zones,
+        ws: &Workspace,
+        ix: &Index,
+        budget: &AtomicUsize,
+        parent_stack: &IgnoreStack,
+    ) -> Result<WalkOut> {
+        let stack = parent_stack.descend(&self.worktree, dir)?;
         enum Item {
             Unsupported(String),
             File(String),
-            Dir(String, bool),
+            Dir(String, bool, bool),
         }
         let abs = if dir.is_empty() {
             self.worktree.clone()
@@ -562,19 +631,24 @@ impl Repo {
             }
             if ft.is_dir() {
                 let tracked_below = ix.has_under(&rel);
-                items.push(Item::Dir(rel, tracked_below));
-            } else if !ix.entries.contains_key(&rel) {
+                let ignored = stack.is_ignored(&rel, true);
+                if ignored && !tracked_below {
+                    continue;
+                }
+                items.push(Item::Dir(rel, tracked_below, ignored));
+            } else if !ix.entries.contains_key(&rel) && !stack.is_ignored(&rel, false) {
                 items.push(Item::File(rel));
             }
         }
-        let subdirs: Vec<&String> = items
+        let subdirs: Vec<(&String, bool)> = items
             .iter()
-            .filter_map(|i| if let Item::Dir(r, _) = i { Some(r) } else { None })
+            .filter_map(|i| if let Item::Dir(r, _, ig) = i { Some((r, *ig)) } else { None })
             .collect();
         let mut subs: Vec<Option<Result<WalkOut>>> = (0..subdirs.len()).map(|_| None).collect();
         std::thread::scope(|sc| {
             let mut handles = Vec::new();
-            for (i, rel) in subdirs.iter().enumerate() {
+            for (i, (rel, ig)) in subdirs.iter().enumerate() {
+                let child = if *ig { stack.inherit() } else { stack.clone() };
                 let take = budget
                     .fetch_update(Ordering::AcqRel, Ordering::Acquire, |b| b.checked_sub(1))
                     .is_ok();
@@ -582,13 +656,13 @@ impl Repo {
                     handles.push((
                         i,
                         sc.spawn(move || {
-                            let r = self.walk_untracked(rel, zones, ws, ix, budget);
+                            let r = self.walk_untracked(rel, zones, ws, ix, budget, &child);
                             budget.fetch_add(1, Ordering::AcqRel);
                             r
                         }),
                     ));
                 } else {
-                    subs[i] = Some(self.walk_untracked(rel, zones, ws, ix, budget));
+                    subs[i] = Some(self.walk_untracked(rel, zones, ws, ix, budget, &child));
                 }
             }
             for (i, h) in handles {
@@ -601,7 +675,7 @@ impl Repo {
             match it {
                 Item::Unsupported(r) => out.unsupported.push(r),
                 Item::File(r) => out.untracked.push(r),
-                Item::Dir(rel, tracked_below) => {
+                Item::Dir(rel, tracked_below, _) => {
                     let mut sub = subs.next().flatten().expect("one result per subdir")?;
                     out.unsupported.append(&mut sub.unsupported);
                     if !sub.untracked.is_empty() {

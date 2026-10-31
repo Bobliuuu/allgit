@@ -70,6 +70,9 @@ enum Cmd {
         #[arg(long, requires = "delete")]
         force: bool,
     },
+    /// Set tracked changes aside (push, pop, list, drop); untracked files are left alone
+    #[command(subcommand)]
+    Stash(StashCmd),
     /// Switch branch (in the zone containing cwd, or --zone)
     Switch {
         branch: String,
@@ -253,6 +256,24 @@ enum SnapCmd {
     Checkout {
         name: String,
     },
+}
+
+#[derive(Subcommand, Clone)]
+enum StashCmd {
+    /// Save staged and unstaged changes of tracked files and reset to the branch heads
+    Push {
+        #[arg(short, long)]
+        message: Option<String>,
+    },
+    /// Apply a stash entry (staged) and drop it; on conflicts it is kept
+    Pop {
+        /// Entry number from `stash list` (default: newest)
+        index: Option<usize>,
+    },
+    /// List stash entries, newest first
+    List,
+    /// Forget a stash entry
+    Drop { index: Option<usize> },
 }
 
 fn author() -> Signature {
@@ -567,6 +588,34 @@ fn run(cli: Cli) -> Result<(), Error> {
                     println!("\nResolve the files, `vcs add` each one, then `vcs rebase --continue`.");
                     println!("Inspect with `vcs conflict list|show <path>`; give up with `vcs rebase --abort`.");
                     return Err(Error::Msg("rebase has conflicts".into()));
+                }
+            }
+        }
+        Cmd::Stash(c) => {
+            let (repo, _) = open()?;
+            match c {
+                StashCmd::Push { message } => {
+                    let zs = repo.stash_push(message.as_deref(), author())?;
+                    println!("stashed changes in zone(s): {}", zs.join(", "));
+                }
+                StashCmd::Pop { index } => match repo.stash_pop(index.unwrap_or(0))? {
+                    vcs_repo::StashPopOutcome::Applied => println!("applied and dropped stash entry"),
+                    vcs_repo::StashPopOutcome::Conflicted { paths } => {
+                        println!("conflicts in {} file(s); the stash entry was kept:", paths.len());
+                        for p in &paths {
+                            println!("    {p}");
+                        }
+                        println!("fix the markers, `vcs add` the files, then `vcs stash drop`");
+                    }
+                },
+                StashCmd::List => {
+                    for (i, e) in repo.stash_list()?.iter().enumerate() {
+                        println!("stash@{{{i}}}: {}", e.message);
+                    }
+                }
+                StashCmd::Drop { index } => {
+                    let e = repo.stash_drop(index.unwrap_or(0))?;
+                    println!("dropped stash entry: {}", e.message);
                 }
             }
         }
