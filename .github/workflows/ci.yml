@@ -52,6 +52,8 @@ jobs:
 
   s3:
     name: s3 (minio)
+    # Informational: not in ci-ok needs, because MinIO distribution is unreliable.
+    continue-on-error: true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,8 +61,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2.7.8
       - name: Start MinIO
         run: |
-          curl -fsSL --retry 3 -o minio https://dl.min.io/server/minio/release/linux-amd64/minio
-          chmod +x minio
+          # Upstream stopped publishing MinIO binaries and images; build from source.
+          GOBIN="$PWD" go install github.com/minio/minio@latest
           MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin \
             nohup ./minio server "$RUNNER_TEMP/minio-data" --address 127.0.0.1:9000 > minio.log 2>&1 &
           for i in $(seq 1 30); do
@@ -75,7 +77,7 @@ jobs:
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [fmt, clippy, test, s3]
+    needs: [fmt, clippy, test]
     runs-on: ubuntu-latest
     steps:
       - name: Check all jobs succeeded
