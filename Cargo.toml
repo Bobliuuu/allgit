@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/vcs-objects", "crates/vcs-store", "crates/vcs-remote", "crates/vcs-repo", "crates/vcs-store-s3","crates/vcs-cli"]
+members = ["crates/vcs-objects", "crates/vcs-store", "crates/vcs-merge", "crates/vcs-remote", "crates/vcs-repo", "crates/vcs-store-s3", "crates/vcs-cli"]
 
 [workspace.package]
 version = "0.1.0"
@@ -16,6 +16,7 @@ tempfile = "3"
 proptest = "1"
 vcs-objects = { path = "crates/vcs-objects" }
 vcs-store = { path = "crates/vcs-store" }
+vcs-merge = { path = "crates/vcs-merge" }
 vcs-remote = { path = "crates/vcs-remote" }
 vcs-repo = { path = "crates/vcs-repo" }
 
