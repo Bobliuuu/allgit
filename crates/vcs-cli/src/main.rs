@@ -6,7 +6,9 @@ use vcs_objects::{ObjectId, Signature};
 use vcs_remote::Outcome;
 use vcs_repo::{ChangeKind, Error, MergeOutcome, RebaseOutcome, Repo, Resolution, SyncAction, ROOT_ZONE};
 
+mod generate;
 mod json;
+mod logfmt;
 mod remote;
 
 #[derive(Parser, Clone)]
@@ -87,9 +89,27 @@ enum Cmd {
         zone: Option<String>,
         #[arg(short = 'n', long, default_value_t = 20)]
         limit: usize,
+        /// One line per commit: short id and subject
+        #[arg(long)]
+        oneline: bool,
+        /// Draw the commit graph with ASCII lanes
+        #[arg(long)]
+        graph: bool,
+        /// Only commits whose author name or email contains this text (case-insensitive)
+        #[arg(long)]
+        author: Option<String>,
+        /// When to colour output
+        #[arg(long, value_enum, default_value_t = logfmt::ColorWhen::Auto)]
+        color: logfmt::ColorWhen,
         /// Branch (default: the checked-out one)
         branch: Option<String>,
+        /// Only commits that change these paths (after `--`)
+        #[arg(last = true)]
+        paths: Vec<String>,
     },
+    /// Generate shell completions or man pages
+    #[command(subcommand)]
+    Gen(generate::GenCmd),
     /// List branches of the current zone, or create one (at the checked-out head)
     Branch {
         name: Option<String>,
@@ -607,25 +627,28 @@ fn run(cli: Cli) -> Result<(), Error> {
             };
             eprintln!("exported {} commit(s), {} blob(s) to {}", rep.commits, rep.blobs, rep.git_ref);
         }
-        Cmd::Log { zone, limit, branch } => {
+        Cmd::Log {
+            zone,
+            limit,
+            oneline,
+            graph,
+            author,
+            color,
+            branch,
+            paths,
+        } => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
-            let entries = repo.log(&zone, branch.as_deref(), limit)?;
-            let defs = repo.zones()?;
-            if entries.is_empty() {
-                println!("zone {}: no commits yet", defs.label(&zone));
-            }
-            for (id, c) in entries {
-                println!("commit {id}");
-                println!("change {}   zone {}", c.change_id, defs.label(&c.zone));
-                println!("Author: {} <{}>", c.author.name, c.author.email);
-                println!("Date:   {}", c.author.timestamp);
-                for l in c.message.lines() {
-                    println!("    {l}");
-                }
-                println!();
-            }
+            let opts = logfmt::Opts {
+                oneline,
+                graph,
+                author,
+                color: color.enabled(),
+                paths,
+            };
+            print!("{}", logfmt::run(&repo, &cwd, &zone, branch.as_deref(), limit, &opts)?);
         }
+        Cmd::Gen(g) => generate::run(g, <Cli as clap::CommandFactory>::command())?,
         Cmd::Branch { name, zone, delete, force } => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;

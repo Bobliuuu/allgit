@@ -12,6 +12,8 @@ rust-version = "1.80"
 blake3 = "1"
 thiserror = "1"
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+clap_mangen = "0.2"
 tempfile = "3"
 proptest = "1"
 vcs-objects = { path = "crates/vcs-objects" }
