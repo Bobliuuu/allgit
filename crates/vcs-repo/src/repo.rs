@@ -6,6 +6,7 @@ use crate::treeops::{self, Flat};
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use vcs_objects::names::{validate_branch_name, validate_component, validate_path, validate_zone_name, META_DIR};
 use vcs_objects::{ChangeId, Commit, EntryMode, Object, ObjectId, RefUpdate, Signature, Snapshot, Transaction};
@@ -14,6 +15,12 @@ use vcs_store::{LocalStore, ObjectStore};
 const FORMAT_FILE: &str = "format";
 const FORMAT_TEXT: &str = "all-git repository format 1\n";
 const RACY_NS: u64 = 2_000_000_000;
+
+#[derive(Default)]
+struct WalkOut {
+    untracked: Vec<String>,
+    unsupported: Vec<String>,
+}
 
 pub struct Repo {
     pub(crate) worktree: PathBuf,
@@ -265,9 +272,12 @@ impl Repo {
         let ws = self.workspace()?;
         let mut ix = self.index()?;
         let mut rep = AddReport::default();
+        let mut todo = Vec::new();
         for p in rel_paths {
-            self.add_one(p, &zones, &ws, &mut ix, &mut rep)?;
+            self.add_one(p, &zones, &ws, &mut ix, &mut rep, &mut todo)?;
         }
+        // Read + hash + write the blobs on several threads; the index is updated afterwards.
+        self.stage_files(&todo, &mut ix)?;
         self.note_resolved(rel_paths, &ix)?;
         // Durability barrier: every blob the index is about to name must be durable first.
         self.store.sync()?;
@@ -275,7 +285,7 @@ impl Repo {
         Ok(rep)
     }
 
-    fn add_one(&self, p: &str, zones: &Zones, ws: &Workspace, ix: &mut Index, rep: &mut AddReport) -> Result<()> {
+    fn add_one(&self, p: &str, zones: &Zones, ws: &Workspace, ix: &mut Index, rep: &mut AddReport, todo: &mut Vec<String>) -> Result<()> {
         let full = if p.is_empty() {
             self.worktree.clone()
         } else {
@@ -304,7 +314,7 @@ impl Repo {
             Err(source) => Err(Error::Io { path: full, source }),
             Ok(m) if m.is_dir() => {
                 let mut seen = BTreeSet::new();
-                self.add_dir(p, zones, ws, ix, rep, &mut seen)?;
+                self.add_dir(p, zones, ws, rep, &mut seen, todo)?;
                 for g in ix.under(p) {
                     if !seen.contains(&g) {
                         ix.entries.remove(&g);
@@ -314,7 +324,8 @@ impl Repo {
                 Ok(())
             }
             Ok(m) if m.is_file() => {
-                self.stage_file(p, ix)?;
+                validate_path(p)?;
+                todo.push(p.to_owned());
                 rep.staged += 1;
                 Ok(())
             }
@@ -327,9 +338,9 @@ impl Repo {
         dir: &str,
         zones: &Zones,
         ws: &Workspace,
-        ix: &mut Index,
         rep: &mut AddReport,
         seen: &mut BTreeSet<String>,
+        todo: &mut Vec<String>,
     ) -> Result<()> {
         let abs = if dir.is_empty() {
             self.worktree.clone()
@@ -359,9 +370,10 @@ impl Repo {
                 continue; // not our zone: untouched, not an error
             }
             if ft.is_dir() {
-                self.add_dir(&rel, zones, ws, ix, rep, seen)?;
+                self.add_dir(&rel, zones, ws, rep, seen, todo)?;
             } else {
-                self.stage_file(&rel, ix)?;
+                validate_path(&rel)?;
+                todo.push(rel.clone());
                 seen.insert(rel);
                 rep.staged += 1;
             }
@@ -369,21 +381,53 @@ impl Repo {
         Ok(())
     }
 
-    fn stage_file(&self, rel: &str, ix: &mut Index) -> Result<()> {
-        validate_path(rel)?;
-        let abs = self.worktree.join(rel);
-        let m = io(&abs, fs::metadata(&abs))?; // stat BEFORE read: later edits change mtime/size
-        let data = io(&abs, fs::read(&abs))?;
-        let id = self.store.put_blob(&data)?;
-        ix.insert(
-            rel,
-            IndexEntry {
+    /// Stat, read, hash and store each file (in parallel when there are many), then record
+    /// them in the index. Blob writes only touch `store`, which is safe to share across threads.
+    fn stage_files(&self, files: &[String], ix: &mut Index) -> Result<()> {
+        let one = |rel: &String| -> Result<IndexEntry> {
+            let abs = self.worktree.join(rel);
+            let m = io(&abs, fs::metadata(&abs))?; // stat BEFORE read: later edits change mtime/size
+            let data = io(&abs, fs::read(&abs))?;
+            let id = self.store.put_blob(&data)?;
+            Ok(IndexEntry {
                 id,
                 mode: mode_of(&m),
                 size: m.len(),
                 mtime_ns: mtime_ns(&m),
-            },
-        )
+            })
+        };
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
+        let mut entries: Vec<Option<Result<IndexEntry>>> = (0..files.len()).map(|_| None).collect();
+        if threads <= 1 || files.len() < 64 {
+            for (i, f) in files.iter().enumerate() {
+                entries[i] = Some(one(f));
+            }
+        } else {
+            let next = std::sync::atomic::AtomicUsize::new(0);
+            let parts: Vec<Vec<(usize, Result<IndexEntry>)>> = std::thread::scope(|sc| {
+                let hs: Vec<_> = (0..threads)
+                    .map(|_| {
+                        sc.spawn(|| {
+                            let mut mine = Vec::new();
+                            loop {
+                                let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                let Some(f) = files.get(i) else { break };
+                                mine.push((i, one(f)));
+                            }
+                            mine
+                        })
+                    })
+                    .collect();
+                hs.into_iter().map(|h| h.join().expect("stage worker panicked")).collect()
+            });
+            for (i, r) in parts.into_iter().flatten() {
+                entries[i] = Some(r);
+            }
+        }
+        for (f, e) in files.iter().zip(entries) {
+            ix.insert(f, e.expect("every file processed")?)?;
+        }
+        Ok(())
     }
 
     // ---------- status ----------
@@ -410,20 +454,6 @@ impl Repo {
         })
     }
 
-    /// True only if `zone` has a HEAD commit whose root tree id equals the root the index
-    /// entries would build. Any doubt (no HEAD, build error) returns false: callers then take
-    /// the exact slow path.
-    fn index_matches_head(&self, zone: &str, zones: &Zones, ws: &Workspace, refs: &Refs, mine: &BTreeMap<&String, &IndexEntry>) -> bool {
-        let Some(h) = self.current_head(zone, ws, refs) else {
-            return false;
-        };
-        let Ok(c) = self.commit_obj(&h) else {
-            return false;
-        };
-        let entries = mine.iter().map(|(p, e)| (zones.relative(zone, p), e.mode, e.id));
-        matches!(treeops::build(&HashOnly, entries), Ok(r) if r == c.root)
-    }
-
     pub fn status(&self) -> Result<Status> {
         let zones = self.zones()?;
         let ws = self.workspace()?;
@@ -432,35 +462,17 @@ impl Repo {
         let mut st = Status::default();
         for (zone, branch) in &ws.subs {
             let mine: BTreeMap<&String, &IndexEntry> = ix.entries.iter().filter(|(p, _)| zones.owner(p) == zone).collect();
-            let mut staged = Vec::new();
-            // Fast path: if the tree the index would commit has exactly HEAD's root id, the
-            // two path maps are identical, so there is nothing staged and the (one file read
-            // per tree object) HEAD flatten can be skipped. Hash-only, no store I/O.
-            if !self.index_matches_head(zone, &zones, &ws, &refs, &mine) {
-                let head = self.head_flat(zone, &zones, &ws, &refs)?;
-                for (p, e) in &mine {
-                    match head.get(*p) {
-                        None => staged.push(Change {
-                            path: (*p).clone(),
-                            kind: ChangeKind::Added,
-                        }),
-                        Some((m, id)) if *m != e.mode || *id != e.id => staged.push(Change {
-                            path: (*p).clone(),
-                            kind: ChangeKind::Modified,
-                        }),
-                        _ => {}
-                    }
-                }
-                for p in head.keys() {
-                    if !mine.contains_key(p) {
-                        staged.push(Change {
-                            path: p.clone(),
-                            kind: ChangeKind::Deleted,
-                        });
-                    }
-                }
-                staged.sort_by(|a, b| a.path.cmp(&b.path));
-            }
+            // Subtree-skipping diff: hash the tree the index would commit and compare it with
+            // HEAD's tree, reading only the HEAD trees on paths that actually differ.
+            let head_root = match self.current_head(zone, &ws, &refs) {
+                Some(h) => Some(self.commit_obj(&h)?.root),
+                None => None,
+            };
+            let entries = mine.iter().map(|(p, e)| (zones.relative(zone, p), e.mode, e.id));
+            let staged: Vec<Change> = treeops::diff_index(&self.store, head_root, entries, zones.path_of(zone).unwrap_or(""))?
+                .into_iter()
+                .map(|(path, kind)| Change { path, kind })
+                .collect();
             let mut unstaged = Vec::new();
             for (p, e) in &mine {
                 match self.wt_state(p, e, ix.written_ns)? {
@@ -489,13 +501,24 @@ impl Repo {
                 st.unsubscribed.push(n.to_owned());
             }
         }
-        self.walk_untracked("", &zones, &ws, &ix, &mut st)?;
+        let budget = AtomicUsize::new(std::thread::available_parallelism().map_or(1, |n| n.get()).min(8) - 1);
+        let w = self.walk_untracked("", &zones, &ws, &ix, &budget)?;
+        st.untracked = w.untracked;
+        st.unsupported = w.unsupported;
         st.merging = self.merge_state()?;
         Ok(st)
     }
 
-    fn walk_untracked(&self, dir: &str, zones: &Zones, ws: &Workspace, ix: &Index, st: &mut Status) -> Result<bool> {
-        // returns true if anything untracked was reported under dir
+    /// Directory scan for untracked and unsupported entries. The scan is syscall-bound (one
+    /// `read_dir` per directory), so sibling subdirectories are walked on extra threads while
+    /// the shared `budget` lasts; results are assembled in directory order, so the output does
+    /// not depend on scheduling.
+    fn walk_untracked(&self, dir: &str, zones: &Zones, ws: &Workspace, ix: &Index, budget: &AtomicUsize) -> Result<WalkOut> {
+        enum Item {
+            Unsupported(String),
+            File(String),
+            Dir(String, bool),
+        }
         let abs = if dir.is_empty() {
             self.worktree.clone()
         } else {
@@ -505,8 +528,7 @@ impl Repo {
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|source| Error::Io { path: abs.clone(), source })?;
         ents.sort_by_key(|e| e.file_name());
-        let mut local = Vec::new();
-        let mut any_tracked_here = false;
+        let mut items = Vec::new();
         for e in ents {
             let name = e.file_name().to_string_lossy().into_owned();
             if name.eq_ignore_ascii_case(META_DIR) || validate_component(&name).is_err() {
@@ -515,7 +537,7 @@ impl Repo {
             let rel = if dir.is_empty() { name } else { format!("{dir}/{name}") };
             let ft = io(&abs, e.file_type())?;
             if ft.is_symlink() || !(ft.is_dir() || ft.is_file()) {
-                st.unsupported.push(rel);
+                items.push(Item::Unsupported(rel));
                 continue;
             }
             if !ws.subs.contains_key(zones.owner(&rel)) {
@@ -523,27 +545,59 @@ impl Repo {
             }
             if ft.is_dir() {
                 let tracked_below = ix.has_under(&rel);
-                any_tracked_here |= tracked_below;
-                let mut sub = Status::default();
-                let found = self.walk_untracked(&rel, zones, ws, ix, &mut sub)?;
-                st.unsupported.append(&mut sub.unsupported);
-                if found {
-                    if tracked_below {
-                        local.append(&mut sub.untracked);
-                    } else {
-                        local.push(format!("{rel}/"));
-                    }
-                }
-            } else if ix.entries.contains_key(&rel) {
-                any_tracked_here = true;
-            } else {
-                local.push(rel);
+                items.push(Item::Dir(rel, tracked_below));
+            } else if !ix.entries.contains_key(&rel) {
+                items.push(Item::File(rel));
             }
         }
-        let _ = any_tracked_here;
-        let found = !local.is_empty();
-        st.untracked.append(&mut local);
-        Ok(found)
+        let subdirs: Vec<&String> = items
+            .iter()
+            .filter_map(|i| if let Item::Dir(r, _) = i { Some(r) } else { None })
+            .collect();
+        let mut subs: Vec<Option<Result<WalkOut>>> = (0..subdirs.len()).map(|_| None).collect();
+        std::thread::scope(|sc| {
+            let mut handles = Vec::new();
+            for (i, rel) in subdirs.iter().enumerate() {
+                let take = budget
+                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |b| b.checked_sub(1))
+                    .is_ok();
+                if take {
+                    handles.push((
+                        i,
+                        sc.spawn(move || {
+                            let r = self.walk_untracked(rel, zones, ws, ix, budget);
+                            budget.fetch_add(1, Ordering::AcqRel);
+                            r
+                        }),
+                    ));
+                } else {
+                    subs[i] = Some(self.walk_untracked(rel, zones, ws, ix, budget));
+                }
+            }
+            for (i, h) in handles {
+                subs[i] = Some(h.join().expect("walk worker panicked"));
+            }
+        });
+        let mut out = WalkOut::default();
+        let mut subs = subs.into_iter();
+        for it in items {
+            match it {
+                Item::Unsupported(r) => out.unsupported.push(r),
+                Item::File(r) => out.untracked.push(r),
+                Item::Dir(rel, tracked_below) => {
+                    let mut sub = subs.next().flatten().expect("one result per subdir")?;
+                    out.unsupported.append(&mut sub.unsupported);
+                    if !sub.untracked.is_empty() {
+                        if tracked_below {
+                            out.untracked.append(&mut sub.untracked);
+                        } else {
+                            out.untracked.push(format!("{rel}/"));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 
     // ---------- diff ----------
@@ -1146,25 +1200,6 @@ impl Repo {
     /// Move all loose objects into a new pack. Returns how many were packed.
     pub fn repack(&self) -> Result<usize> {
         Ok(self.store.repack()?)
-    }
-}
-
-/// Write-nothing store: `put` only computes the id. Used to ask "what root would these
-/// entries hash to?" without touching disk or memory-storing the trees.
-struct HashOnly;
-
-impl ObjectStore for HashOnly {
-    fn get(&self, id: &ObjectId) -> std::result::Result<Object, vcs_store::StoreError> {
-        Err(vcs_store::StoreError::NotFound(*id))
-    }
-    fn put(&self, obj: &Object) -> std::result::Result<ObjectId, vcs_store::StoreError> {
-        Ok(vcs_objects::id_of_encoded(&obj.encode()))
-    }
-    fn contains(&self, _id: &ObjectId) -> std::result::Result<bool, vcs_store::StoreError> {
-        Ok(false)
-    }
-    fn list(&self) -> std::result::Result<Vec<ObjectId>, vcs_store::StoreError> {
-        Ok(Vec::new())
     }
 }
 

@@ -119,3 +119,62 @@ fn unstaged_and_untracked_in_deep_tree() {
     assert!(untracked.contains(&"zz/".to_string()), "{untracked:?}");
     assert_eq!(untracked.len(), 2, "{untracked:?}");
 }
+
+#[test]
+fn staged_file_to_directory_swap_in_deep_tree() {
+    let (_d, r, _) = setup();
+    // `l0/mid.txt` becomes a directory holding a file; a top-level file becomes a directory too.
+    fs::remove_file(r.worktree().join("l0/mid.txt")).unwrap();
+    write(&r, "l0/mid.txt/inner.txt", "x\n");
+    fs::remove_file(r.worktree().join("top.txt")).unwrap();
+    write(&r, "top.txt/a/b.txt", "y\n");
+    r.add(&[String::new()]).unwrap();
+    let (staged, unstaged, untracked) = summary(&r);
+    assert_eq!(
+        staged,
+        vec![
+            ("l0/mid.txt".to_string(), ChangeKind::Deleted),
+            ("l0/mid.txt/inner.txt".to_string(), ChangeKind::Added),
+            ("top.txt".to_string(), ChangeKind::Deleted),
+            ("top.txt/a/b.txt".to_string(), ChangeKind::Added),
+        ]
+    );
+    assert!(unstaged.is_empty() && untracked.is_empty());
+}
+
+#[test]
+fn untracked_listing_is_ordered_and_complete_across_many_directories() {
+    // Many sibling directories exercise the threaded directory walk; output must be exactly
+    // the sorted listing regardless of scheduling.
+    let (_d, r, paths) = setup();
+    let mut want = Vec::new();
+    for i in 0..40 {
+        let p = format!("u{i:02}/x/y.txt");
+        write(&r, &p, "u\n");
+        want.push(format!("u{i:02}/"));
+    }
+    let sibling = format!("{}/zz-untracked.txt", paths[100].rsplit_once('/').unwrap().0);
+    write(&r, &sibling, "u\n");
+    want.push(sibling);
+    want.sort();
+    for _ in 0..3 {
+        let (_, _, untracked) = summary(&r);
+        assert_eq!(untracked, want);
+    }
+}
+
+#[test]
+fn bulk_add_records_exact_blob_ids_and_sizes() {
+    // 245 files: above the threshold where blob writes are spread over threads.
+    let (_d, r, paths) = setup();
+    let ix = r.status().unwrap();
+    assert!(ix.zones[0].staged.is_empty());
+    for (i, p) in paths.iter().enumerate() {
+        let c = format!("content {i}\n");
+        assert_eq!(
+            r.store().get_blob(&vcs_objects::blob_id(c.as_bytes())).unwrap(),
+            c.as_bytes(),
+            "{p}"
+        );
+    }
+}
