@@ -11,9 +11,9 @@
 
 </div>
 
-`vcs` is a version control tool written in Rust, for teams whose repository mixes very different things (say, game code, shaders, and gigabytes of art) and who want to download and work on only the parts they need. It is **not** a Git wrapper: it has its own storage and never calls Git.
+allgit is a version control tool (the command is `vcs`) written in Rust, for teams whose repository mixes very different things (say, game code, shaders, and gigabytes of art) and who want to download and work on only the parts they need. It is **not** a Git wrapper: it has its own storage and never calls Git.
 
-> ⚠️ Early research project. It works and is tested, but expect rough edges. See [what works today](#-what-works-today).
+> ⚠️ Early research project. It works and is tested, but expect rough edges and no server yet. See [what works today](#-what-works-today).
 
 ## 💡 The big idea
 
@@ -134,26 +134,49 @@ clean
 
 That's it: `work/` contains only `engine/`. Later, `vcs fetch` downloads updates and `vcs sync` fast-forwards when safe (it reports dirty or diverged zones instead of touching them). A publish that would overwrite someone else's work is refused with guidance.
 
+**5. Everyday commands** (run inside `work/engine`; all verified)
+
+```bash
+vcs tag v1.0 && vcs tag               # lightweight tag, then list tags
+vcs show                              # HEAD commit with its diff
+vcs blame main.rs                     # per-line commit attribution
+echo x >> main.rs
+vcs stash push && vcs stash pop       # set changes aside, bring them back
+vcs restore main.rs                   # discard working-tree changes (--staged to unstage)
+vcs mv main.rs lib.rs && vcs commit -m mv
+# also available: rm, revert, cherry-pick, rebase, resolve (see `vcs --help`)
+vcs log --json                        # --json works on status, log, diff, branch, zone list, op log, conflict list
+vcs gc --dry-run                      # report what GC would delete; deletes nothing
+vcs repack && vcs fsck                # loose objects into one pack, then verify
+vcs op log                            # operation log; `vcs op undo` reverts the last local operation
+vcs lock --lease-secs 60 main.rs && vcs locks   # advisory lock recorded on the remote
+```
+
 > Hashes and timestamps differ on every run, and the outputs above are trimmed to the relevant lines. Step 4's output came from a separate fresh run of steps 1 to 3 (the hashes differ from step 3's).
 
 ## ✅ What works today
 
-| Zone | Status | Notes |
+✅ done and tested · 🟡 partial or limited · ⬜ not built
+
+| Area | Status | Notes |
 |---|---|---|
 | Content-addressed objects | ✅ | BLAKE3, domain-separated, canonical codec, strict decode, proptests |
-| Local VCS | ✅ | init / add / commit / status / diff / log / branch / switch / fsck |
-| Zones & snapshots | ✅ | non-overlapping, independent heads, sparse subscribe/unsubscribe, atomic multi-zone commit |
+| Local VCS | ✅ | init, add, commit, status, diff, log, branch, switch, fsck, tag (lightweight/annotated), show, blame, restore, rm, mv |
+| Zones and snapshots | ✅ | non-overlapping, independent heads, sparse subscribe/unsubscribe, atomic multi-zone commit, rename/delete |
 | Remote protocol | ✅ | single CAS manifest, idempotent publish, **model-checked** (~1.7M crash/interleaving schedules) |
-| Backends | ✅ | in-memory, filesystem, S3-compatible (tested on MinIO only, HTTP, no TLS) |
-| Sparse fetch | ✅ | tests assert an unsubscribed zone's bytes are never read |
-| Merge engine | 🟡 | `vcs-merge`: merge-base, diff3 (Myers/patience), structured tree conflicts; wired into `vcs merge` (fast-forward, three-way, conflict state, `--abort`); no rename detection, criss-cross and file/directory conflicts are errors |
-| Benchmarks | 🟡 | first baseline in [docs/benchmarks.md](docs/benchmarks.md); `add` is currently **much slower than Git** (tracked in #21) |
-| Operation log / undo, rebase | ⬜ | [#11](https://github.com/Bobliuuu/allgit/issues/11) |
-| Locks & leases (server-enforced) | ⬜ | design first: [#14](https://github.com/Bobliuuu/allgit/issues/14) |
-| Packfiles, chunking | ⬜ | [#16](https://github.com/Bobliuuu/allgit/issues/16) |
-| Rebase with stable change ids | 🟡 | `vcs rebase <branch>` / `--continue` / `--abort`; keeps change ids, one undoable op; linear ranges only ([docs/rebase.md](docs/rebase.md)) |
-| Semantic / AI-assisted merge | ⬜ | [#17](https://github.com/Bobliuuu/allgit/issues/17) |
-| Git import/export, P4 | ⬜ | [#15](https://github.com/Bobliuuu/allgit/issues/15) |
+| Backends | 🟡 | in-memory and filesystem (the CLI uses a directory); S3-compatible backend exists in `vcs-store-s3` (MinIO only, HTTP, TLS behind a feature) but is **not wired into the CLI** |
+| Sparse fetch / clone | ✅ | tests assert an unsubscribed zone's bytes are never read |
+| Merge | 🟡 | `merge` (fast-forward, three-way, conflict state, `--abort`), `conflict`, `resolve`; no rename detection; criss-cross and file/directory conflicts are errors ([merge.md](docs/merge.md)) |
+| History rewriting | 🟡 | `cherry-pick`, `revert`, `rebase` (keeps change ids, linear ranges only), `stash` |
+| Operation log / undo | ✅ | `op log/show/undo/restore`, local branches and workspace only ([operations.md](docs/operations.md)) |
+| Packfiles | 🟡 | `repack` writes one pack plus index; no delta compression or chunking |
+| Garbage collection | 🟡 | `gc --dry-run` reports only. **Nothing is ever deleted**; destructive GC is design only ([gc.md](docs/gc.md)) |
+| Locks | 🟡 | `lock`, `unlock`, `locks` work and are model-checked, but the **client** validates them. **Not server-enforced**: anyone with manifest write access bypasses them ([locks.md](docs/locks.md)) |
+| Git interop | 🟡 | `import-git` (fast-export stream) and `export-git` (prototype, one zone branch) ([import-git.md](docs/import-git.md), [interop.md](docs/interop.md)) |
+| Perforce interop | ⬜ | design only |
+| Semantic / AI-assisted merge | ⬜ | research notes only ([structural-merge](docs/research/structural-merge.md)) |
+| Auth, validating server | ⬜ | none; see [security.md](docs/security.md) for what is hardened |
+| Benchmarks | 🟡 | first baseline in [benchmarks.md](docs/benchmarks.md); `add` was measured **much slower than Git** (#21) |
 
 Nothing here is claimed to work without an executable test. Known gaps are listed in [docs/architecture.md](docs/architecture.md#known-limitations-honest-list).
 
@@ -179,7 +202,7 @@ flowchart LR
 |---|---|
 | `vcs-objects` | ids, canonical codec, object types, name/path validation (no I/O) |
 | `vcs-store` | `ObjectStore` trait; memory + loose-object filesystem stores |
-| `vcs-repo` | zones, refs, index, workspace, commit/log/diff/status, snapshots, fsck, publish/fetch/sync/clone |
+| `vcs-repo` | zones, refs, index, workspace, commit/log/diff/status, snapshots, operation log, packs, locks, git import/export, fsck, publish/fetch/sync/clone |
 | `vcs-remote` | `Backend` trait + conformance suite, manifest, publish step machine, sparse fetch, model checker |
 | `vcs-store-s3` | S3-compatible backend (hand-rolled SigV4, blocking, no async runtime) |
 | `vcs-merge` | merge-base, diff3 text merge, three-way tree merge with structured conflicts |
@@ -188,7 +211,10 @@ flowchart LR
 
 ## 📚 Learn more
 
-[Architecture](docs/architecture.md) · [Object model](docs/object-model.md) · [Roadmap](docs/roadmap.md) · [Merge](docs/merge.md) · [Rebase](docs/rebase.md) · [S3 backend](docs/s3.md) · [Benchmarks](docs/benchmarks.md) · [Research notes](docs/research.md) *(from memory, unverified)*
+- Start here: [CLI reference](docs/cli.md) · [Architecture](docs/architecture.md) · [Object model](docs/object-model.md) · [Roadmap](docs/roadmap.md) · [Install](docs/install.md)
+- Features: [Zones](docs/zones.md) · [Merge](docs/merge.md) · [Rebase](docs/rebase.md) · [Operations](docs/operations.md) · [Locks](docs/locks.md) · [Git import](docs/import-git.md) · [Interop](docs/interop.md) · [GC](docs/gc.md) · [Cache](docs/cache.md) · [S3 backend](docs/s3.md)
+- Quality: [Security](docs/security.md) · [Benchmarks](docs/benchmarks.md)
+- Research (written from memory, unverified): [overview](docs/research.md) · [commit graph](docs/research/commit-graph.md) · [performance](docs/research/performance.md) · [server](docs/research/server.md) · [structural merge](docs/research/structural-merge.md) · [virtual fs](docs/research/virtual-fs.md)
 
 ## 🛠️ Contributing
 
