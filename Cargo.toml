@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/vcs-objects", "crates/vcs-store", "crates/vcs-merge", "crates/vcs-remote", "crates/vcs-repo", "crates/vcs-store-s3", "crates/vcs-cli"]
+members = ["crates/vcs-objects", "crates/vcs-store", "crates/vcs-merge", "crates/vcs-remote", "crates/vcs-repo", "crates/vcs-store-s3", "crates/vcs-cli", "crates/vcs-bench"]
 
 [workspace.package]
 version = "0.1.0"
