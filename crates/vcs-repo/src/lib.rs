@@ -1,6 +1,7 @@
 //! Native local repository: workspace, staging, commits, zones, snapshots.
 //! See docs/architecture.md.
 
+pub mod assist;
 pub mod diff;
 pub mod edit;
 pub mod error;
@@ -18,6 +19,7 @@ pub mod repo;
 pub mod sync;
 pub mod treeops;
 
+pub use assist::{AssistResult, ProposalInfo};
 pub use error::{Error, Result};
 pub use export::ExportReport;
 pub use gc::GcReport;
