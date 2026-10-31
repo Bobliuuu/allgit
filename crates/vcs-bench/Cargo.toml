@@ -24,6 +24,10 @@ name = "packbench"
 path = "src/bin/packbench.rs"
 
 [[bin]]
+name = "storebench"
+path = "src/bin/storebench.rs"
+
+[[bin]]
 name = "datagen"
 path = "src/bin/datagen.rs"
 

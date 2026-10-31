@@ -181,6 +181,79 @@ python3 scripts/test_storage_score.py        # unit tests (hand-made example)
 * No cross-provider latency comparison from single-region runs of one client location; provider latency depends on
   client location and is reported with it.
 
+## 7. The `storebench` harness (issue #182)
+
+`crates/vcs-bench/src/bin/storebench.rs` (library: `harness.rs`, `workloads.rs`, `stats.rs`, `json.rs`). It drives the
+**CLIs** end to end (`vcs` and the system `git` binary; benchmark code may call git, core crates never do). Native-API
+micro-benchmarks stay in criterion (`cargo bench -p vcs-bench --bench core`, see `docs/benchmarks.md`); they are not part of
+`storebench`. Result schema is `allgit-storebench/1` (richer than `allgit-bench/v1`: per-trial rows plus summaries);
+`summary[].wall_ms.median` and the per-trial `wall_ms` arrays map directly onto `allgit-bench/v1` metrics.
+
+### 7.1 Subcommands
+
+```
+storebench list                                   # workloads (with scale-1 parameters), operations, tools, modes
+storebench gen <workload> <dir> [--scale S] [--seed N]
+storebench run [--workloads a,b|all] [--tools git,vcs,walgit] [--ops a,b|all] [--modes warm,cold,partial]
+               [--trials N] [--scale smoke|small|medium|N] [--seed N] [--partial-pct N]
+               [--scratch DIR] [--out DIR] [--vcs-bin P] [--git-bin P] [--walgit-bin P] [--drop-caches auto|off]
+```
+
+`run` writes `<out>/results.json` (metadata, datasets, summary, every trial, skipped cells with reasons),
+`<out>/trials.csv` (one row per trial) and `<out>/summary.csv`. The exact command line is stored in
+`meta.command_line`. Datasets and the randomized trial order derive from `--seed`; two runs with the same
+seed execute the same trials in the same order against byte-identical fixtures. Build first:
+`cargo build --release -p vcs-cli -p vcs-bench` (the `vcs` binary is looked up next to `storebench`).
+
+### 7.2 Operations
+
+`init`, `add_initial`, `commit_initial`, `status`, `status_dirty` (1% of files edited), `diff`, `add_incremental`,
+`commit` (1% edited), `log`, `blame`, `lookup` (random historical commit per trial), `tree_traversal`, `merge_base`,
+`switch` (to a branch that differs in 10% of the history zone), `checkout_files` (restore after editing 10%), `clone`,
+`sparse_clone_{1,5,10,50}pct`, `fetch`, `publish`, `sync`, `publish_concurrent` (4 publishers at once), `repack`, `gc`,
+`cold_restart` (first `log -1` + `status` after a cache drop; cold only), `recovery` (SIGKILL `add && commit` after 2 to 26 ms,
+then time stale-lock cleanup + `fsck` + `status`).
+
+Tool mapping and semantic differences (read before comparing): `vcs publish` = `git push origin HEAD:main`;
+`vcs sync` = `git pull --ff-only`; `vcs gc` is `--dry-run` only (destructive GC is not implemented), so the `gc` row
+compares a plan against a real `git gc`; `vcs log` is per zone (`--zone`, history zone) while `git log` walks the whole repo;
+`vcs show <id>` vs `git show --stat`; `vcs init` row includes zone creation. `vcs` has no tree-listing or merge-base command, so
+those two operations are recorded as **skipped** for `vcs` (native API only). Git clones use `file://` URLs (real pack
+protocol, no hardlink shortcut); the git side disables `gc.auto`/`maintenance.auto` and ignores user/system config.
+Fixtures are loose objects for both tools until `repack`/`gc` is timed. `walgit`: see 7.5.
+
+### 7.3 Cache modes
+
+* `warm`: every file of the fixture is read once (untimed) right before the timed command.
+* `cold`: `sync; echo 3 > /proc/sys/vm/drop_caches` (via `sudo -n` when not root), then only the `git`/`vcs` executables are
+  re-read, so timings include reading repository data from disk but not loading the tool binaries. **This drops the page cache of
+  the whole machine**, which slows other users of a shared box; keep cold matrices small. If dropping is not permitted
+  (macOS, no sudo) cold and partial cells are *skipped* with the reason recorded, never silently run warm.
+* `partial`: cold, then a seeded `--partial-pct` (default 50) percent of fixture files (selected by BLAKE3 of path and seed)
+  are re-read. Run `--partial-pct 25/75` separately for the curve required in 3.2. Selection is by file, not by object.
+
+Mutating operations run on a private `cp -a` copy of the fixture per trial; read-only ones share the fixture
+and undo their side effects (`cleanup`), so cache state is the only thing that differs between trials.
+
+### 7.4 Statistics and limits
+
+Per cell (workload, tool, operation, mode): `n`, median, mean, stdev, min, max, and a 95% percentile-bootstrap CI of the median
+(2000 resamples, seeded; flagged `ci_reliable: false` for n < 5, and the CI of n < 3 degenerates to min..max). Failed trials
+are counted in `failed` and excluded from the statistics. Trial order is a seeded shuffle across all cells of a workload.
+Time is wall clock from spawn to exit, including process start-up. CPU time is the delta of children `utime+stime` read from
+`/proc/self/stat` (10 ms ticks, so only meaningful for operations well above 10 ms; for `publish_concurrent` it sums all
+publishers). Peak RSS, disk I/O bytes and request counts are **not** collected yet. Other agents share the box: record `loadavg_start/end`
+and re-run noisy cells; the harness does not refuse to run under load. The methodology's n >= 10 requirement is a flag
+(`--trials 10`), not a default.
+
+### 7.5 walgit runner (stub)
+
+`--tools walgit` registers the tool and records one `skipped` entry per workload with the reason (binary missing, or present
+but runner not implemented). walgit is a git smart-HTTP server in front of an object store, so a complete runner would start
+`walgit serve --config <local-fs store>` and drive the same git client commands against `http://127.0.0.1:<port>/<repo>.git`
+(clone, sparse clone via partial-clone filters if supported, fetch, push). That is not implemented here; operator steps and
+findings belong to the walgit study.
+
 ## Sources
 
 Internal: `crates/vcs-remote/src/backend.rs` and `crates/vcs-store-s3/src/lib.rs` at revision `cd0fd09`
