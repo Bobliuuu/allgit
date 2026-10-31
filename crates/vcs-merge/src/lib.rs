@@ -6,7 +6,12 @@
 pub mod base;
 pub mod diff;
 pub mod error;
-#[cfg(feature = "structural")]
+#[cfg(any(
+    feature = "structural",
+    feature = "structural-python",
+    feature = "structural-typescript",
+    feature = "structural-go"
+))]
 pub mod structural;
 pub mod text;
 pub mod tree;

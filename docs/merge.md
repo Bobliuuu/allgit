@@ -98,3 +98,36 @@ that end conflicted; "hunks" counts conflict hunks.
 All 550 clean structural outputs parsed (0 unparsable). The gain is entirely in moves; line diff3 already merges edits
 to different functions when blank lines separate them. The corpus is synthetic and small, so these numbers say nothing
 about real code.
+
+### Python, TypeScript and Go (features `structural-python`, `structural-typescript`, `structural-go`)
+
+Issue #91. The item-matching code is shared; each language is a small table in `structural/langs.rs` (grammar, comment
+kinds, which nodes are containers, how an item is keyed). Each feature is independent and off by default
+(`vcs-merge`, and pass-through features of the same names in `vcs-repo` and `vcs-cli`); `structural::lang_for_path`
+picks the driver by extension (`.py`, `.ts`/`.mts`/`.cts`, `.go`, plus `.rs`), and `merge_flat_with` uses it, so
+`vcs merge` and `vcs rebase` use these drivers when built with the feature. The same fallbacks and parse guarantee apply.
+
+* Python: `def` and `class` (also decorated) by name, top-level `name = ...` assignments by target, anything else by its
+  normalized text. Class bodies are merged member by member; an indentation-delimited body gives its indentation to the
+  first member so that moving it keeps the file valid.
+* TypeScript (`.ts` only, no `.tsx`): declarations by kind and name, `export` unwrapped, `const/let/var` by first
+  declarator name. Class, interface and namespace bodies are merged member by member.
+* Go: functions by name, methods by receiver and name, `type`/`const`/`var` by the first spec name, imports by text.
+  Methods are top-level declarations, so there is no nested container.
+
+Measured with `cargo run -p vcs-merge --features structural,structural-python,structural-typescript,structural-go --example structural_corpus --release -- 50`
+(550 generated scenarios per language, 50 per kind, Myers; same eleven kinds as above, generator
+`structural/corpus.rs::generate_for`, deterministic). Conflicted files / conflict hunks:
+
+| language | text files | structural files | text hunks | structural hunks | resolved by structural | unparsable clean outputs |
+|---|---|---|---|---|---|---|
+| rust | 200 | 150 | 200 | 150 | 350 | 0 |
+| python | 262 | 150 | 262 | 150 | 350 | 0 |
+| typescript | 200 | 150 | 200 | 150 | 350 | 0 |
+| go | 200 | 150 | 200 | 150 | 350 | 0 |
+
+In every language the 150 remaining conflicts are the three genuine kinds (same line, delete versus edit, both add at the
+end), and `move_fn_vs_edit_it` (43 text conflicts) and `move_fn_vs_edit_other` (7) drop to 0. Python additionally gains
+in `add_method_vs_edit_last` (50 to 0) and `edit_method_vs_insert_after` (12 to 0): with no closing brace, line diff3 sees
+the last method of a class and the next top-level lines as adjacent. The corpora are synthetic, ASCII, gofmt/prettier-like
+and small; they say nothing about real code, and real-repository conflict counts were not measured.

@@ -233,12 +233,19 @@ pub fn merge_flat(blobs: &dyn BlobSource, alg: Algorithm, base: &Flat, left: &Fl
     merge_flat_with(blobs, alg, false, base, left, right)
 }
 
-/// Line merge, or (feature `structural`, `structural` set, path ends in `.rs`) the structural
-/// Rust merge, which itself falls back to the line merge on any failure.
+/// Line merge, or (a `structural*` feature, `structural` set, a path whose extension has an enabled
+/// driver) the structural merge, which itself falls back to the line merge on any failure.
 fn text_or_structural(alg: Algorithm, structural: bool, path: &str, b: &[u8], l: &[u8], r: &[u8]) -> TextMerge {
-    #[cfg(feature = "structural")]
-    if structural && path.ends_with(".rs") {
-        return crate::structural::merge_rust(alg, b, l, r).merge;
+    #[cfg(any(
+        feature = "structural",
+        feature = "structural-python",
+        feature = "structural-typescript",
+        feature = "structural-go"
+    ))]
+    if structural {
+        if let Some(lang) = crate::structural::lang_for_path(path) {
+            return crate::structural::merge_with(lang, alg, b, l, r).merge;
+        }
     }
     let _ = (structural, path);
     merge3(alg, b, l, r)
