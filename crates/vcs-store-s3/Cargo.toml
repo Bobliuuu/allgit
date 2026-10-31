@@ -4,12 +4,20 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# HTTPS endpoints via rustls (certificate verification always on). Off by default so the
+# default build stays offline-buildable.
+tls = ["ureq/tls", "dep:rustls"]
+
 [dependencies]
 vcs-remote.workspace = true
 ureq = { version = "2", default-features = false }
 sha2 = "0.10"
 hmac = "0.12"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
 
 [dev-dependencies]
 vcs-objects.workspace = true
 vcs-store.workspace = true
+rcgen = "0.13"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }

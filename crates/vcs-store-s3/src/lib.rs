@@ -8,8 +8,9 @@
 //! (about 60 lines on `sha2` + `hmac`) over blocking `ureq`, so there is no async runtime
 //! at all and nothing Tokio-shaped can leak into the sync trait. `If-Match` /
 //! `If-None-Match` are plain request headers and need no SDK support. The endpoint is
-//! plain `http://` (MinIO, local gateways, or a TLS-terminating proxy); native TLS is
-//! deliberately not built in to keep the dependency set minimal.
+//! `http://` by default (MinIO, local gateways). With the `tls` cargo feature, `https://`
+//! endpoints work through rustls with certificate verification always on; a failed
+//! verification is a hard error. The default build has no TLS dependencies.
 //!
 //! # Semantics
 //!
@@ -38,6 +39,13 @@ pub struct S3Config {
     /// Key prefix inside the bucket (no leading slash); empty for none.
     pub prefix: String,
     pub timeout: Duration,
+    /// Temporary-credential session token (`AWS_SESSION_TOKEN`), sent as the signed
+    /// `x-amz-security-token` header.
+    pub session_token: Option<String>,
+    /// PEM bundle of trusted root CAs for `https://` endpoints (feature `tls`). When set it
+    /// replaces the built-in web roots, e.g. for MinIO with a private CA. Verification is
+    /// never disabled.
+    pub ca_pem: Option<Vec<u8>>,
 }
 
 impl S3Config {
@@ -50,7 +58,21 @@ impl S3Config {
             secret_key: secret_key.into(),
             prefix: String::new(),
             timeout: Duration::from_secs(30),
+            session_token: None,
+            ca_pem: None,
         }
+    }
+
+    /// Credentials from `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and the optional
+    /// `AWS_SESSION_TOKEN` (empty counts as unset). `None` if the key pair is missing.
+    pub fn from_env(endpoint: &str, bucket: &str) -> Option<Self> {
+        let get = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+        let mut cfg = Self::new(endpoint, bucket, &get("AWS_ACCESS_KEY_ID")?, &get("AWS_SECRET_ACCESS_KEY")?);
+        cfg.session_token = get("AWS_SESSION_TOKEN");
+        if let Some(r) = get("AWS_REGION").or_else(|| get("AWS_DEFAULT_REGION")) {
+            cfg.region = r;
+        }
+        Some(cfg)
     }
 }
 
@@ -74,15 +96,38 @@ enum Resp {
 impl S3Backend {
     /// Build a client without contacting the server. Prefer [`S3Backend::connect`].
     pub fn new_unchecked(cfg: S3Config) -> Result<Self, BackendError> {
-        let host = cfg
-            .endpoint
-            .strip_prefix("http://")
-            .filter(|h| !h.is_empty() && !h.contains('/'))
-            .ok_or_else(|| BackendError::Other(format!("endpoint must look like http://host:port, got {:?}", cfg.endpoint)))?
-            .to_owned();
+        let bad = || {
+            BackendError::Other(format!(
+                "endpoint must look like http://host:port or https://host:port, got {:?}",
+                cfg.endpoint
+            ))
+        };
+        let (https, rest) = match (cfg.endpoint.strip_prefix("http://"), cfg.endpoint.strip_prefix("https://")) {
+            (Some(h), _) => (false, h),
+            (_, Some(h)) => (true, h),
+            _ => return Err(bad()),
+        };
+        if rest.is_empty() || rest.contains('/') {
+            return Err(bad());
+        }
+        if https && !cfg!(feature = "tls") {
+            return Err(BackendError::Other(
+                "https:// endpoint requires building vcs-store-s3 with the `tls` feature".into(),
+            ));
+        }
+        // The Host header omits the scheme's default port; sign exactly what is sent.
+        let host = rest.strip_suffix(if https { ":443" } else { ":80" }).unwrap_or(rest).to_owned();
         // No connection pooling: a stale pooled connection that dies mid-PUT would surface as
         // an ambiguous transport error on a conditional write. Fresh connections keep it clean.
-        let agent = ureq::AgentBuilder::new().timeout(cfg.timeout).max_idle_connections(0).build();
+        #[allow(unused_mut)]
+        let mut builder = ureq::AgentBuilder::new().timeout(cfg.timeout).max_idle_connections(0);
+        #[cfg(feature = "tls")]
+        if https {
+            if let Some(pem) = &cfg.ca_pem {
+                builder = builder.tls_config(std::sync::Arc::new(tls_config(pem)?));
+            }
+        }
+        let agent = builder.build();
         Ok(S3Backend {
             cfg,
             host,
@@ -165,17 +210,7 @@ impl S3Backend {
         let amz_date = amz_timestamp();
         let date = &amz_date[..8];
         let payload_hash = hex(&Sha256::digest(body));
-        let mut signed: Vec<(String, String)> = vec![
-            ("host".into(), self.host.clone()),
-            ("x-amz-content-sha256".into(), payload_hash.clone()),
-            ("x-amz-date".into(), amz_date.clone()),
-        ];
-        for (k, v) in headers {
-            if *k == "range" {
-                signed.push((k.to_string(), v.to_string()));
-            }
-        }
-        signed.sort();
+        let signed = signed_header_set(&self.host, &amz_date, &payload_hash, self.cfg.session_token.as_deref(), headers);
         let canon_headers: String = signed.iter().map(|(k, v)| format!("{k}:{v}\n")).collect();
         let signed_names = signed.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(";");
         let canon = format!("{method}\n{path}\n{qs}\n{canon_headers}\n{signed_names}\n{payload_hash}");
@@ -198,6 +233,9 @@ impl S3Backend {
             .set("x-amz-date", &amz_date)
             .set("x-amz-content-sha256", &payload_hash)
             .set("authorization", &auth);
+        if let Some(t) = &self.cfg.session_token {
+            req = req.set("x-amz-security-token", t);
+        }
         for (k, v) in headers {
             req = req.set(k, v);
         }
@@ -321,6 +359,49 @@ impl Backend for S3Backend {
     }
 }
 
+/// The headers that enter the SigV4 signature, sorted by name.
+fn signed_header_set(
+    host: &str,
+    amz_date: &str,
+    payload_hash: &str,
+    token: Option<&str>,
+    headers: &[(&str, &str)],
+) -> Vec<(String, String)> {
+    let mut signed: Vec<(String, String)> = vec![
+        ("host".into(), host.to_owned()),
+        ("x-amz-content-sha256".into(), payload_hash.to_owned()),
+        ("x-amz-date".into(), amz_date.to_owned()),
+    ];
+    if let Some(t) = token {
+        signed.push(("x-amz-security-token".into(), t.to_owned()));
+    }
+    for (k, v) in headers {
+        if *k == "range" {
+            signed.push((k.to_string(), v.to_string()));
+        }
+    }
+    signed.sort();
+    signed
+}
+
+#[cfg(feature = "tls")]
+fn tls_config(pem: &[u8]) -> Result<rustls::ClientConfig, BackendError> {
+    use rustls::pki_types::pem::PemObject;
+    let mut roots = rustls::RootCertStore::empty();
+    let mut n = 0;
+    for cert in rustls::pki_types::CertificateDer::pem_reader_iter(pem) {
+        let cert = cert.map_err(|e| BackendError::Other(format!("invalid ca_pem: {e}")))?;
+        roots
+            .add(cert)
+            .map_err(|e| BackendError::Other(format!("invalid CA certificate: {e}")))?;
+        n += 1;
+    }
+    if n == 0 {
+        return Err(BackendError::Other("ca_pem contains no certificates".into()));
+    }
+    Ok(rustls::ClientConfig::builder().with_root_certificates(roots).with_no_client_auth())
+}
+
 /// All text values of `<tag>..</tag>` in a (flat, well-formed) S3 XML response.
 fn tag_values(xml: &str, tag: &str) -> Vec<String> {
     let (open, close) = (format!("<{tag}>"), format!("</{tag}>"));
@@ -397,6 +478,29 @@ mod tests {
         let t = amz_timestamp();
         assert_eq!(t.len(), 16);
         assert!(t.starts_with("20") && t.ends_with('Z') && &t[8..9] == "T");
+    }
+
+    #[test]
+    fn signed_headers_include_token_only_when_present() {
+        let names = |t| {
+            signed_header_set("h", "d", "p", t, &[("range", "bytes=0-1")])
+                .into_iter()
+                .map(|(k, _)| k)
+                .collect::<Vec<_>>()
+        };
+        assert!(!names(None).contains(&"x-amz-security-token".to_owned()));
+        let with = signed_header_set("h", "d", "p", Some("tok"), &[]);
+        assert!(with.contains(&("x-amz-security-token".to_owned(), "tok".to_owned())));
+        assert!(names(Some("tok")).windows(2).all(|w| w[0] <= w[1]), "sorted");
+    }
+
+    #[cfg(not(feature = "tls"))]
+    #[test]
+    fn https_without_feature_is_error() {
+        let e = S3Backend::new_unchecked(S3Config::new("https://x:9000", "b", "a", "s"))
+            .err()
+            .unwrap();
+        assert!(e.to_string().contains("tls"));
     }
 
     #[test]
