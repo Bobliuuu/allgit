@@ -11,6 +11,11 @@ path = "src/main.rs"
 [features]
 # https:// endpoints for s3:// remotes (rustls). Off by default to keep the build offline.
 tls = ["vcs-store-s3/tls"]
+default = []
+structural = ["vcs-repo/structural"]
+structural-python = ["vcs-repo/structural-python"]
+structural-typescript = ["vcs-repo/structural-typescript"]
+structural-go = ["vcs-repo/structural-go"]
 
 [dependencies]
 vcs-repo.workspace = true
@@ -19,13 +24,6 @@ vcs-store.workspace = true
 vcs-remote.workspace = true
 vcs-store-s3.workspace = true
 clap.workspace = true
-
-[features]
-default = []
-structural = ["vcs-repo/structural"]
-structural-python = ["vcs-repo/structural-python"]
-structural-typescript = ["vcs-repo/structural-typescript"]
-structural-go = ["vcs-repo/structural-go"]
 
 [dev-dependencies]
 tempfile.workspace = true
