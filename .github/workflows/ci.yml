@@ -50,10 +50,31 @@ jobs:
       - uses: Swatinem/rust-cache@v2.7.8
       - run: cargo test --workspace
 
+  s3:
+    name: s3 (minio)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.7.8
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+            docker.io/minio/minio:latest server /data
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:9000/minio/health/live && exit 0
+            sleep 1
+          done
+          echo "MinIO did not become healthy"; exit 1
+      - run: cargo test -p vcs-store-s3 -p vcs-cli
+        env:
+          VCS_TEST_S3_ENDPOINT: http://127.0.0.1:9000
+
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [fmt, clippy, test]
+    needs: [fmt, clippy, test, s3]
     runs-on: ubuntu-latest
     steps:
       - name: Check all jobs succeeded
