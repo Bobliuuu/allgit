@@ -169,6 +169,13 @@ fn hardware_flush(f: &fs::File) -> std::io::Result<()> {
     }
 }
 
+/// Refresh an object file's mtime to now. Errors propagate: a swallowed failure would leave an
+/// old object looking old, which is exactly the hole this closes.
+fn touch(path: &Path) -> Result<(), StoreError> {
+    let f = io(path, fs::File::options().write(true).open(path))?;
+    io(path, f.set_modified(std::time::SystemTime::now()))
+}
+
 impl LocalStore {
     pub fn open(dir: impl Into<PathBuf>) -> Result<Self, StoreError> {
         let dir = dir.into();
@@ -199,8 +206,15 @@ impl ObjectStore for LocalStore {
     fn put(&self, obj: &Object) -> Result<ObjectId, StoreError> {
         let enc = obj.encode();
         let id = vcs_objects::id_of_encoded(&enc);
-        // Existing objects are never rewritten: one stat (or a map lookup), no write I/O.
-        if self.pending.lock().unwrap().contains_key(&id) || self.path_of(&id).exists() {
+        // Existing objects are never rewritten. A pending object is brand new already. A published
+        // one gets its modification time refreshed ("touch on dedup"), so GC's age check sees a
+        // re-adopted orphan as young (docs/gc.md). Cost: one metadata-only write on this path.
+        if self.pending.lock().unwrap().contains_key(&id) {
+            return Ok(id);
+        }
+        let existing = self.path_of(&id);
+        if existing.exists() {
+            touch(&existing)?;
             return Ok(id);
         }
         let n = self.seq.fetch_add(1, Ordering::Relaxed);
@@ -310,6 +324,20 @@ mod tests {
         assert!(matches!(s.get(&missing), Err(StoreError::NotFound(_))));
         s.sync().unwrap();
         assert_eq!(s.list().unwrap(), vec![id]);
+    }
+
+    #[test]
+    fn local_put_dedup_refreshes_mtime() {
+        let d = tempfile::tempdir().unwrap();
+        let s = LocalStore::open(d.path().join("objects")).unwrap();
+        let id = s.put_blob(b"old orphan").unwrap();
+        s.sync().unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(30 * 86400);
+        fs::File::options().write(true).open(s.path_of(&id)).unwrap().set_modified(old).unwrap();
+        assert!(s.modified(&id).unwrap().unwrap() <= old);
+        assert_eq!(s.put_blob(b"old orphan").unwrap(), id);
+        let age = std::time::SystemTime::now().duration_since(s.modified(&id).unwrap().unwrap()).unwrap();
+        assert!(age < std::time::Duration::from_secs(60), "dedup put must refresh age, got {age:?}");
     }
 
     #[test]

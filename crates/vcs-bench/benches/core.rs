@@ -36,6 +36,12 @@ fn fresh(dir: &Path) -> Repo {
     Repo::init(dir).unwrap()
 }
 
+/// Reopen the repo with an empty index, keeping all stored objects.
+fn fresh_index(dir: &Path) -> Repo {
+    fs::write(dir.join(".vcs/index"), vcs_repo::index::Index::default().encode()).unwrap();
+    Repo::discover(dir).unwrap()
+}
+
 fn bench_hash(c: &mut Criterion) {
     let mut g = c.benchmark_group("hash_blob");
     g.sample_size(10).measurement_time(Duration::from_secs(3));
@@ -123,6 +129,16 @@ fn bench_repo(c: &mut Criterion) {
             // re-add of an unchanged, already-stored tree: measures the "object already exists" check
             g.bench_function(BenchmarkId::new("add_unchanged", &id), |b| {
                 b.iter(|| r.add(&[String::new()]).unwrap())
+            });
+
+            // add with an empty index but every object already stored: each file is re-hashed and
+            // `put` takes the dedup path (touch-on-dedup, docs/gc.md). Index reset is untimed.
+            g.bench_function(BenchmarkId::new("add_dedup", &id), |b| {
+                b.iter_batched(
+                    || fresh_index(d.path()),
+                    |rr| rr.add(&[String::new()]).unwrap(),
+                    BatchSize::PerIteration,
+                )
             });
 
             // commit with one changed file staged
