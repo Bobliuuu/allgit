@@ -8,10 +8,6 @@ license.workspace = true
 name = "vcs"
 path = "src/main.rs"
 
-[features]
-# https:// endpoints for s3:// remotes (rustls). Off by default to keep the build offline.
-tls = ["vcs-store-s3/tls"]
-
 [dependencies]
 vcs-repo.workspace = true
 vcs-objects.workspace = true
@@ -26,6 +22,8 @@ structural = ["vcs-repo/structural"]
 structural-python = ["vcs-repo/structural-python"]
 structural-typescript = ["vcs-repo/structural-typescript"]
 structural-go = ["vcs-repo/structural-go"]
+# https:// endpoints for s3:// remotes (rustls). Off by default to keep the build offline.
+tls = ["vcs-store-s3/tls"]
 
 [dev-dependencies]
 tempfile.workspace = true
