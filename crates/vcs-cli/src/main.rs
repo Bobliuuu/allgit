@@ -86,6 +86,24 @@ enum Cmd {
     Sync,
     /// Verify all objects and graph invariants
     Fsck,
+    /// Operation log: inspect, undo, restore (local branches and workspace only)
+    #[command(subcommand)]
+    Op(OpCmd),
+}
+
+#[derive(Subcommand)]
+enum OpCmd {
+    /// List operations, newest first
+    Log {
+        #[arg(short = 'n', long, default_value_t = 20)]
+        limit: usize,
+    },
+    /// Show one operation and its view
+    Show { id: String },
+    /// Restore the view before the current operation (recorded as a new operation)
+    Undo,
+    /// Restore the view as it was after the given operation (recorded as a new operation)
+    Restore { id: String },
 }
 
 #[derive(Subcommand)]
@@ -475,6 +493,52 @@ fn run(cli: Cli) -> Result<(), Error> {
                     SyncAction::NoRemote => "not on the remote yet (run `vcs publish`)".into(),
                 };
                 println!("{a}/{b}: {what}");
+            }
+        }
+        Cmd::Op(c) => {
+            let (repo, _) = open()?;
+            match c {
+                OpCmd::Log { limit } => {
+                    let head = repo.op_head()?;
+                    for (id, op) in repo.op_log(limit)? {
+                        let mark = if Some(id) == head { "@" } else { " " };
+                        println!(
+                            "{mark} {}  {}  {} <{}>",
+                            id.short(),
+                            op.author.timestamp,
+                            op.author.name,
+                            op.author.email
+                        );
+                        println!("    {}", op.description);
+                    }
+                }
+                OpCmd::Show { id } => {
+                    let id = repo.op_resolve(&id)?;
+                    let op = repo.op_get(&id)?;
+                    println!("operation {id}");
+                    println!("description: {}", op.description);
+                    println!("author:      {} <{}> @ {}", op.author.name, op.author.email, op.author.timestamp);
+                    for p in &op.parents {
+                        println!("parent:      {p}");
+                    }
+                    println!("workspace:");
+                    for (a, b) in &op.view.workspace {
+                        println!("  {a:<14} on {b}");
+                    }
+                    println!("branches:");
+                    for ((a, b), c) in &op.view.branches {
+                        println!("  {a}/{b:<24} {}", c.short());
+                    }
+                }
+                OpCmd::Undo => {
+                    let id = repo.op_undo()?;
+                    println!("undone; recorded operation {}", id.short());
+                }
+                OpCmd::Restore { id } => {
+                    let target = repo.op_resolve(&id)?;
+                    let id = repo.op_restore(&target)?;
+                    println!("restored view of {}; recorded operation {}", target.short(), id.short());
+                }
             }
         }
         Cmd::Fsck => {

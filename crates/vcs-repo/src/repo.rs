@@ -128,6 +128,7 @@ impl Repo {
         write_atomic(&r.vcs.join("index"), &Index::default().encode())?;
         // format marker written last: a crashed init leaves no valid repo
         write_atomic(&r.vcs.join(FORMAT_FILE), FORMAT_TEXT.as_bytes())?;
+        r.record_op("init repository", None)?;
         Ok(r)
     }
 
@@ -565,6 +566,7 @@ impl Repo {
         let ws = self.workspace()?;
         let mut refs = self.refs()?;
         let ix = self.index()?;
+        let op_author = author.clone();
         let mut updates = Vec::new();
         let mut commits = Vec::new();
         for (zone, branch) in &ws.subs {
@@ -616,6 +618,8 @@ impl Repo {
         }))?;
         refs.apply(&updates)?;
         write_atomic(&self.vcs.join("refs"), &refs.encode())?; // linearization point
+        let first = message.lines().next().unwrap_or("");
+        self.record_op(&format!("commit: {first}"), Some(op_author))?;
         Ok(CommitReport { transaction: tx, commits })
     }
 
@@ -709,6 +713,7 @@ impl Repo {
             new: head,
         }])?;
         write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+        self.record_op(&format!("create branch {zone}/{branch}"), None)?;
         Ok(head)
     }
 
@@ -749,7 +754,9 @@ impl Repo {
         self.transition(zone, &zones, &old, &new, &mut ix)?;
         ws.subs.insert(zone.into(), branch.into());
         self.save_index(&mut ix)?;
-        self.save_ws(&ws)
+        self.save_ws(&ws)?;
+        self.record_op(&format!("checkout {zone}/{branch}"), None)?;
+        Ok(())
     }
 
     // ---------- zones ----------
@@ -774,7 +781,9 @@ impl Repo {
         }
         write_atomic(&self.vcs.join("zones"), &zones.encode())?;
         ws.subs.insert(name.into(), DEFAULT_BRANCH.into());
-        self.save_ws(&ws)
+        self.save_ws(&ws)?;
+        self.record_op(&format!("create zone {name} at {path}"), None)?;
+        Ok(())
     }
 
     /// Subscribe to an existing zone and materialize it (sparse checkout by zone).
@@ -804,7 +813,9 @@ impl Repo {
         self.transition(zone, &zones, &Flat::new(), &new, &mut ix)?;
         ws.subs.insert(zone.into(), branch.into());
         self.save_index(&mut ix)?;
-        self.save_ws(&ws)
+        self.save_ws(&ws)?;
+        self.record_op(&format!("zone add {zone}/{branch}"), None)?;
+        Ok(())
     }
 
     /// Unsubscribe: remove the zone's tracked files from the working tree. Refuses if dirty.
@@ -826,7 +837,9 @@ impl Repo {
         self.transition(zone, &zones, &old, &Flat::new(), &mut ix)?;
         ws.subs.remove(zone);
         self.save_index(&mut ix)?;
-        self.save_ws(&ws)
+        self.save_ws(&ws)?;
+        self.record_op(&format!("zone remove {zone}"), None)?;
+        Ok(())
     }
 
     /// Move the working tree + index of one zone from `old` to `new` (flat, full paths).
@@ -944,6 +957,7 @@ impl Repo {
         }))?;
         refs.snapshots.insert(name.to_owned(), id);
         write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+        self.record_op(&format!("snapshot create {name}"), None)?;
         Ok(id)
     }
 
@@ -1012,6 +1026,7 @@ impl Repo {
                 _ => {}
             }
         }
+        self.fsck_ops(&mut rep.problems);
         Ok(rep)
     }
 }

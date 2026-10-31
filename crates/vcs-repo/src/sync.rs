@@ -284,6 +284,15 @@ impl Repo {
             rep.actions.push((zone, branch, act));
         }
         let _ = &mut ws;
+        let moved: Vec<String> = rep
+            .actions
+            .iter()
+            .filter(|(_, _, a)| matches!(a, SyncAction::FastForwarded { .. }))
+            .map(|(a, b, _)| format!("{a}/{b}"))
+            .collect();
+        if !moved.is_empty() {
+            self.record_op(&format!("sync: fast-forward {}", moved.join(", ")), None)?;
+        }
         Ok(rep)
     }
 
