@@ -158,6 +158,7 @@ fn mode_from(b: u8) -> Result<Option<EntryMode>> {
         0 => None,
         1 => Some(EntryMode::File),
         2 => Some(EntryMode::Executable),
+        4 => Some(EntryMode::Symlink),
         _ => return Err(Error::Corrupt("conflicts: bad mode".into())),
     })
 }
@@ -592,7 +593,7 @@ impl Repo {
         for p in &st.touched {
             let abs = self.worktree.join(p);
             match fs::symlink_metadata(&abs) {
-                Ok(m) if m.is_file() => io(&abs, fs::remove_file(&abs))?,
+                Ok(m) if m.is_file() || m.file_type().is_symlink() => io(&abs, fs::remove_file(&abs))?,
                 Ok(_) => return msg(format!("cannot abort: {p:?} is no longer a regular file")),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(source) => return Err(Error::Io { path: abs, source }),
