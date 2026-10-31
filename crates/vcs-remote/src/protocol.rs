@@ -89,6 +89,7 @@ pub struct Publisher<'a> {
     to_upload: Vec<ObjectId>,
     retries: u32,
     zones: BTreeMap<String, String>,
+    labels: BTreeMap<String, String>,
 }
 
 /// Dependencies of an object (what must exist remotely before it may).
@@ -162,11 +163,18 @@ impl<'a> Publisher<'a> {
             to_upload: vec![],
             retries: 0,
             zones: BTreeMap::new(),
+            labels: BTreeMap::new(),
         }
     }
     /// Zone definitions (name -> path) to register in the manifest atomically with this tx.
     pub fn with_zones(mut self, zones: BTreeMap<String, String>) -> Self {
         self.zones = zones;
+        self
+    }
+    /// Display names (zone id -> name) of renamed zones, recorded in the manifest with this tx.
+    /// A later publisher's label for a zone replaces the stored one.
+    pub fn with_labels(mut self, labels: BTreeMap<String, String>) -> Self {
+        self.labels = labels;
         self
     }
     pub fn txid(&self) -> ObjectId {
@@ -311,6 +319,12 @@ impl<'a> Publisher<'a> {
                             new.zones.insert(n.clone(), p.clone());
                         }
                     }
+                }
+                for n in self.zones.keys() {
+                    match self.labels.get(n) {
+                        Some(l) => new.labels.insert(n.clone(), l.clone()),
+                        None => new.labels.remove(n),
+                    };
                 }
                 new.generation += 1;
                 for u in &self.tx.updates {

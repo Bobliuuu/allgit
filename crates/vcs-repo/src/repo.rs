@@ -209,6 +209,11 @@ impl Repo {
         let p = self.vcs.join(name);
         io(&p, fs::read(&p))
     }
+    /// Map a user-supplied zone name (display name or original id) to the zone id used by
+    /// commits, refs and snapshots. Unknown names are returned unchanged so callers report them.
+    pub fn resolve_zone(&self, name: &str) -> Result<String> {
+        Ok(self.zones()?.resolve(name).unwrap_or_else(|| name.to_owned()))
+    }
     pub fn zones(&self) -> Result<Zones> {
         Zones::decode(&self.rd("zones")?)
     }
@@ -669,6 +674,8 @@ impl Repo {
     /// History reachable from the branch checked out for `zone` (or `main` if unsubscribed),
     /// newest first (by timestamp, ties by id).
     pub fn log(&self, zone: &str, branch: Option<&str>, limit: usize) -> Result<Vec<(ObjectId, Commit)>> {
+        let zone = self.resolve_zone(zone)?;
+        let zone = zone.as_str();
         let zones = self.zones()?;
         if !zones.exists(zone) {
             return msg(format!("no such zone {zone:?}"));
@@ -717,6 +724,8 @@ impl Repo {
     // ---------- branches ----------
 
     pub fn branches(&self, zone: &str) -> Result<Vec<(String, Option<ObjectId>, bool)>> {
+        let zone = self.resolve_zone(zone)?;
+        let zone = zone.as_str();
         let zones = self.zones()?;
         if !zones.exists(zone) {
             return msg(format!("no such zone {zone:?}"));
@@ -733,6 +742,8 @@ impl Repo {
 
     /// Create `branch` in `zone` at the current head of the checked-out branch.
     pub fn create_branch(&self, zone: &str, branch: &str) -> Result<ObjectId> {
+        let zone = self.resolve_zone(zone)?;
+        let zone = zone.as_str();
         validate_branch_name(branch)?;
         let _l = self.lock()?;
         let zones = self.zones()?;
@@ -777,6 +788,8 @@ impl Repo {
 
     /// Switch the checked-out branch of one zone. Other zones are untouched.
     pub fn checkout(&self, zone: &str, branch: &str) -> Result<()> {
+        let zone = self.resolve_zone(zone)?;
+        let zone = zone.as_str();
         validate_branch_name(branch)?;
         let _l = self.lock()?;
         let zones = self.zones()?;
@@ -834,6 +847,8 @@ impl Repo {
 
     /// Subscribe to an existing zone and materialize it (sparse checkout by zone).
     pub fn zone_add(&self, zone: &str, branch: Option<&str>) -> Result<()> {
+        let zone = self.resolve_zone(zone)?;
+        let zone = zone.as_str();
         let _l = self.lock()?;
         let zones = self.zones()?;
         let mut ws = self.workspace()?;
@@ -866,6 +881,8 @@ impl Repo {
 
     /// Unsubscribe: remove the zone's tracked files from the working tree. Refuses if dirty.
     pub fn zone_remove(&self, zone: &str) -> Result<()> {
+        let zone = self.resolve_zone(zone)?;
+        let zone = zone.as_str();
         if zone == ROOT_ZONE {
             return msg("the root zone cannot be removed from the workspace");
         }

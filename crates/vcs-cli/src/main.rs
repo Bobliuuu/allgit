@@ -211,7 +211,7 @@ enum ZoneCmd {
     Remove {
         name: String,
     },
-    /// Rename a zone that has no history yet (commits record their zone name)
+    /// Rename a zone (also with history: commits keep the original name as the zone's id)
     Rename {
         old: String,
         new: String,
@@ -319,7 +319,9 @@ fn run(cli: Cli) -> Result<(), Error> {
         Cmd::Commit { message } => {
             let (repo, _) = open()?;
             let rep = repo.commit(&message, author())?;
+            let defs = repo.zones()?;
             for (zone, branch, id) in &rep.commits {
+                let zone = defs.label(zone);
                 println!("[{zone}/{branch} {}] {}", id.short(), message.lines().next().unwrap_or(""));
             }
             if rep.commits.len() > 1 {
@@ -333,13 +335,14 @@ fn run(cli: Cli) -> Result<(), Error> {
         Cmd::Status => {
             let (repo, _) = open()?;
             let st = repo.status()?;
+            let defs = repo.zones()?;
             for a in &st.zones {
                 let loc = if a.path.is_empty() {
                     String::new()
                 } else {
                     format!(" ({}/)", a.path)
                 };
-                println!("zone {}{loc}: branch {} @ {}", a.zone, a.branch, opt_short(a.head));
+                println!("zone {}{loc}: branch {} @ {}", defs.label(&a.zone), a.branch, opt_short(a.head));
                 if !a.staged.is_empty() {
                     println!("  staged:");
                     for c in &a.staged {
@@ -443,12 +446,13 @@ fn run(cli: Cli) -> Result<(), Error> {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
             let entries = repo.log(&zone, branch.as_deref(), limit)?;
+            let defs = repo.zones()?;
             if entries.is_empty() {
-                println!("zone {zone}: no commits yet");
+                println!("zone {}: no commits yet", defs.label(&zone));
             }
             for (id, c) in entries {
                 println!("commit {id}");
-                println!("change {}   zone {}", c.change_id, c.zone);
+                println!("change {}   zone {}", c.change_id, defs.label(&c.zone));
                 println!("Author: {} <{}>", c.author.name, c.author.email);
                 println!("Date:   {}", c.author.timestamp);
                 for l in c.message.lines() {
@@ -583,13 +587,14 @@ fn run(cli: Cli) -> Result<(), Error> {
                     let refs = repo.refs()?;
                     for n in zones.names() {
                         let p = zones.path_of(n).unwrap();
+                        let shown = zones.label(n);
                         let sub = match ws.subs.get(n) {
                             Some(b) => format!("subscribed, on {b}"),
                             None => "not subscribed".into(),
                         };
                         let nb = refs.branches_of(n).len();
                         println!(
-                            "{n:<14} {:<20} {sub}; {nb} branch(es)",
+                            "{shown:<14} {:<20} {sub}; {nb} branch(es)",
                             if p.is_empty() { "(rest of repo)" } else { p }
                         );
                     }
@@ -597,11 +602,19 @@ fn run(cli: Cli) -> Result<(), Error> {
                 ZoneCmd::Show { name } => {
                     let zones = repo.zones()?;
                     let ws = repo.workspace()?;
-                    let Some(p) = zones.path_of(&name) else {
+                    let Some(id) = zones.resolve(&name) else {
                         return Err(Error::Msg(format!("no such zone {name:?}")));
                     };
+                    let p = zones.path_of(&id).unwrap();
+                    let name = id;
                     println!(
-                        "zone:   {name}\npath:   {}",
+                        "zone:   {}{}\npath:   {}",
+                        zones.label(&name),
+                        if zones.label(&name) != name {
+                            format!(" (id {name})")
+                        } else {
+                            String::new()
+                        },
                         if p.is_empty() {
                             "(everything not owned by another zone)"
                         } else {
