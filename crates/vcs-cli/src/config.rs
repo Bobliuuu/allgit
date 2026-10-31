@@ -15,7 +15,11 @@ pub const KEYS: &[(&str, &str, &str)] = &[
     ("core.editor", "VCS_EDITOR", "editor for `vcs commit` without -m"),
     ("merge.structural", "VCS_MERGE_STRUCTURAL", "on/off: structural merge (default on)"),
     ("log.default-format", "VCS_LOG_FORMAT", "full or oneline (default full)"),
-    ("remote.default", "VCS_REMOTE_DEFAULT", "remote URL used when `vcs remote set` was not run"),
+    (
+        "remote.default",
+        "VCS_REMOTE_DEFAULT",
+        "remote URL used when `vcs remote set` was not run",
+    ),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -58,9 +62,7 @@ pub fn parse(text: &str, origin: &Path) -> Result<BTreeMap<String, String>, Erro
         if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
             continue;
         }
-        let bad = |why: &str| -> Result<BTreeMap<String, String>, Error> {
-            msg(format!("{}:{}: {why}: {raw:?}", origin.display(), i + 1))
-        };
+        let bad = |why: &str| -> Result<BTreeMap<String, String>, Error> { msg(format!("{}:{}: {why}: {raw:?}", origin.display(), i + 1)) };
         let Some((k, v)) = line.split_once('=') else {
             return bad("expected `key = value`");
         };
@@ -119,7 +121,10 @@ fn read_file(p: &Path) -> Result<BTreeMap<String, String>, Error> {
             Err(_) => msg(format!("{}: not valid UTF-8", p.display())),
         },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
-        Err(source) => Err(Error::Io { path: p.to_owned(), source }),
+        Err(source) => Err(Error::Io {
+            path: p.to_owned(),
+            source,
+        }),
     }
 }
 
@@ -150,7 +155,9 @@ pub fn repo_path() -> Option<PathBuf> {
 fn scope_path(scope: Scope) -> Result<PathBuf, Error> {
     match scope {
         Scope::Repo => repo_path().ok_or(Error::NotARepo),
-        Scope::User => user_path().ok_or_else(|| Error::Msg("cannot locate the user config directory (set HOME or VCS_CONFIG_HOME)".into())),
+        Scope::User => {
+            user_path().ok_or_else(|| Error::Msg("cannot locate the user config directory (set HOME or VCS_CONFIG_HOME)".into()))
+        }
     }
 }
 
@@ -271,7 +278,10 @@ pub fn unset(scope: Scope, key: &str) -> Result<bool, Error> {
 }
 
 fn write(p: &Path, m: &BTreeMap<String, String>) -> Result<(), Error> {
-    let io = |source| Error::Io { path: p.to_owned(), source };
+    let io = |source| Error::Io {
+        path: p.to_owned(),
+        source,
+    };
     if let Some(d) = p.parent() {
         std::fs::create_dir_all(d).map_err(io)?;
     }
@@ -289,7 +299,9 @@ pub fn list(cfg: &Config) -> Vec<(String, String, Source)> {
         }
     }
     keys.sort();
-    keys.into_iter().filter_map(|k| cfg.get_with_source(&k).map(|(v, s)| (k, v, s))).collect()
+    keys.into_iter()
+        .filter_map(|k| cfg.get_with_source(&k).map(|(v, s)| (k, v, s)))
+        .collect()
 }
 
 /// Run the editor on a message template and return the cleaned message.
@@ -298,7 +310,10 @@ pub fn edit_message(cfg: &Config, dir: &Path) -> Result<String, Error> {
         return msg("no editor configured\n\nUse `vcs commit -m <message>`, or set one:\n  vcs config set --user core.editor <command>\n(or set $EDITOR)");
     };
     let file = dir.join("COMMIT_EDITMSG");
-    let io = |source| Error::Io { path: file.clone(), source };
+    let io = |source| Error::Io {
+        path: file.clone(),
+        source,
+    };
     std::fs::write(
         &file,
         "\n# Write the commit message above. Lines starting with '#' are ignored.\n# An empty message aborts the commit.\n",

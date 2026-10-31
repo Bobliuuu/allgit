@@ -8,7 +8,9 @@ struct Env {
 
 impl Env {
     fn new() -> Env {
-        Env { home: tempfile::tempdir().unwrap() }
+        Env {
+            home: tempfile::tempdir().unwrap(),
+        }
     }
     /// No author env: identity comes from config only.
     fn vcs(&self, dir: &Path, args: &[&str], extra: &[(&str, &str)]) -> Output {
@@ -62,7 +64,9 @@ fn precedence_env_over_repo_over_user() {
     e.ok(&d, &["config", "unset", "user.name"]);
     assert_eq!(e.ok(&d, &["config", "get", "user.name"]), "User");
     assert!(e.err(&d, &["config", "unset", "user.name"], &[]).contains("not set"));
-    assert!(std::fs::read_to_string(e.home.path().join("config")).unwrap().contains("user.name = User"));
+    assert!(std::fs::read_to_string(e.home.path().join("config"))
+        .unwrap()
+        .contains("user.name = User"));
 }
 
 #[test]
@@ -86,9 +90,18 @@ fn bad_keys_values_and_files_never_panic() {
     let e = Env::new();
     let (_t, d) = repo(&e);
     assert!(e.err(&d, &["config", "set", "nope.key", "x"], &[]).contains("unknown config key"));
-    assert!(e.err(&d, &["config", "set", "merge.structural", "maybe"], &[]).contains("'on' or 'off'"));
+    assert!(e
+        .err(&d, &["config", "set", "merge.structural", "maybe"], &[])
+        .contains("'on' or 'off'"));
     assert!(e.err(&d, &["config", "set", "log.default-format", "x"], &[]).contains("oneline"));
-    for bad in ["no equals here\n", "= v\n", "a b = c\n", "user.name = \"open\n", "user.name = \"x\\q\"\n", "user.name = \"x\" junk\n"] {
+    for bad in [
+        "no equals here\n",
+        "= v\n",
+        "a b = c\n",
+        "user.name = \"open\n",
+        "user.name = \"x\\q\"\n",
+        "user.name = \"x\" junk\n",
+    ] {
         std::fs::write(d.join(".vcs/config"), bad).unwrap();
         let err = e.err(&d, &["config", "list"], &[]);
         assert!(err.contains("config:1"), "{bad:?} -> {err}");
@@ -106,7 +119,10 @@ fn commit_requires_identity_then_uses_it() {
     std::fs::write(d.join("a.txt"), "a\n").unwrap();
     e.ok(&d, &["add", "a.txt"]);
     let err = e.err(&d, &["commit", "-m", "x"], &[]);
-    assert!(err.contains("user.name and user.email are not set") && err.contains("vcs config set"), "{err}");
+    assert!(
+        err.contains("user.name and user.email are not set") && err.contains("vcs config set"),
+        "{err}"
+    );
     e.ok(&d, &["config", "set", "--user", "user.name", "Ann Dev"]);
     assert!(e.err(&d, &["commit", "-m", "x"], &[]).contains("user.email is not set"));
     e.ok(&d, &["config", "set", "--user", "user.email", "ann@example.com"]);
@@ -151,7 +167,10 @@ fn editor_flow() {
     let o = e.vcs(&d, &["commit"], &[("EDITOR", &good)]);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let log = e.ok(&d, &["log"]);
-    assert!(log.contains("from editor") && log.contains("body line") && !log.contains("dropped"), "{log}");
+    assert!(
+        log.contains("from editor") && log.contains("body line") && !log.contains("dropped"),
+        "{log}"
+    );
     // core.editor wins over $EDITOR
     std::fs::write(d.join("a.txt"), "c\n").unwrap();
     e.ok(&d, &["add", "a.txt"]);
