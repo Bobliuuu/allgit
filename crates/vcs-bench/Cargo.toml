@@ -1,0 +1,23 @@
+[package]
+name = "vcs-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+vcs-objects.workspace = true
+vcs-store.workspace = true
+vcs-repo.workspace = true
+tempfile.workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false }
+
+[[bin]]
+name = "datagen"
+path = "src/bin/datagen.rs"
+
+[[bench]]
+name = "core"
+harness = false
