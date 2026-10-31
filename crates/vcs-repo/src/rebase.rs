@@ -496,6 +496,7 @@ impl Repo {
             updates: vec![update.clone()],
             author: run.author.clone(),
             message: message.clone(),
+            lock_ops: vec![],
         }))?;
         self.transition(&run.zone, &zones, &run.worktree, &cursor_flat, &mut ix)?;
         self.save_index(&mut ix)?;

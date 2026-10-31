@@ -199,6 +199,7 @@ impl Repo {
             updates: updates.clone(),
             author,
             message: "publish".into(),
+            lock_ops: vec![],
         };
         let outcome = Publisher::new(backend, &self.store, tx)
             .with_zones(zone_defs)

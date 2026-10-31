@@ -710,6 +710,7 @@ impl Repo {
             updates: updates.clone(),
             author,
             message: message.to_owned(),
+            lock_ops: vec![],
         }))?;
         refs.apply(&updates)?;
         // Durability barrier: trees, commits and the transaction are durable before refs name them.
