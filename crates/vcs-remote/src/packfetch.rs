@@ -39,6 +39,76 @@ pub fn fetch_from_any_pack(b: &dyn Backend, id: &ObjectId) -> Result<Option<Vec<
     Ok(None)
 }
 
+/// Maximum unwanted bytes read between two wanted ranges to keep them in one request.
+const COALESCE_GAP: u64 = 64 * 1024;
+
+/// Fetch several objects at once. Packs are listed once and each index read once; wanted
+/// ranges that are close together in a pack are merged into one ranged GET; ids not in any
+/// pack are read loose, one GET each. Returned bytes are verified against their ids. Errors if
+/// any id is absent everywhere. Compare with calling [`fetch_from_any_pack`] per id, which
+/// repeats the list and index reads every time.
+pub fn fetch_many(b: &dyn Backend, ids: &[ObjectId]) -> Result<Vec<(ObjectId, Vec<u8>)>, BackendError> {
+    let mut want: Vec<ObjectId> = ids.to_vec();
+    want.sort();
+    want.dedup();
+    let mut out = Vec::with_capacity(want.len());
+    let mut remaining: Vec<ObjectId> = want;
+    if !remaining.is_empty() {
+        for key in b.list(PACK_PREFIX)? {
+            let Some(stem) = key.strip_suffix(".idx") else { continue };
+            if remaining.is_empty() {
+                break;
+            }
+            let Some(idx) = b.get(&key)? else { continue };
+            let idx = PackIndex::parse(&idx.data, Path::new(stem)).map_err(|e| BackendError::Other(e.to_string()))?;
+            let mut hits: Vec<(u64, u32, ObjectId)> = Vec::new();
+            remaining.retain(|id| match idx.find(id) {
+                Some((off, len)) => {
+                    hits.push((off, len, *id));
+                    false
+                }
+                None => true,
+            });
+            hits.sort_by_key(|h| h.0);
+            let pack_key = format!("{stem}.pack");
+            let mut i = 0;
+            while i < hits.len() {
+                let start = hits[i].0;
+                let mut end = hits[i].0 + hits[i].1 as u64;
+                let mut j = i + 1;
+                while j < hits.len() && hits[j].0 <= end + COALESCE_GAP {
+                    end = end.max(hits[j].0 + hits[j].1 as u64);
+                    j += 1;
+                }
+                let Some(buf) = b.get_range(&pack_key, start, end - start)? else {
+                    return Err(BackendError::Other(format!("pack {stem}: pack file missing")));
+                };
+                for (off, len, id) in &hits[i..j] {
+                    let s = (off - start) as usize;
+                    let e = s + *len as usize;
+                    let Some(bytes) = buf.get(s..e) else {
+                        return Err(BackendError::Other(format!("pack {stem}: short read for {id}")));
+                    };
+                    if id_of_encoded(bytes) != *id {
+                        return Err(BackendError::Other(format!("pack {stem}: object {id} failed verification")));
+                    }
+                    out.push((*id, bytes.to_vec()));
+                }
+                i = j;
+            }
+        }
+    }
+    for id in remaining {
+        let h = id.to_hex();
+        let key = format!("objects/{}/{}", &h[..2], &h[2..]);
+        match b.get(&key)? {
+            Some(v) => out.push((id, v.data)),
+            None => return Err(BackendError::Other(format!("object {id} missing on remote"))),
+        }
+    }
+    Ok(out)
+}
+
 /// Upload a local pack (and its index) as `packs/<name>`. The pack goes first, so a reader
 /// never sees an index without its pack. Create-only: an existing name is left unchanged.
 pub fn upload_pack(b: &dyn Backend, name: &str, pack_path: &Path) -> Result<(), BackendError> {

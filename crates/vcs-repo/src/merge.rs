@@ -257,6 +257,12 @@ impl MergeState {
 }
 
 pub(crate) fn me(e: vcs_merge::MergeError) -> Error {
+    // Keep absent objects typed so lazy fetch (`with_lazy_fetch`, `vcs` command retry) can fetch them.
+    match e {
+        vcs_merge::MergeError::Store(s @ vcs_store::StoreError::NotFound(_)) => return Error::Store(s),
+        vcs_merge::MergeError::Missing(id) => return Error::Store(vcs_store::StoreError::NotFound(id)),
+        _ => {}
+    }
     Error::Msg(format!("merge: {e}"))
 }
 
