@@ -24,6 +24,10 @@ use vcs_objects::{ChangeId, Commit, EntryMode, Object, ObjectId, RefUpdate, Sign
 use vcs_store::ObjectStore;
 
 const MAP_FILE: &str = "git-import";
+/// Longest header/command line accepted (paths are <= 4096 bytes, quoted at most 4x).
+const MAX_LINE: u64 = 64 * 1024;
+/// Largest single `data` block (one blob or one message). The block is held in memory.
+const MAX_DATA: u64 = 1 << 30;
 
 #[derive(Debug, Default)]
 pub struct ImportReport {
@@ -71,15 +75,21 @@ struct Parser<R: BufRead> {
 impl<R: BufRead> Parser<R> {
     fn raw_line(&mut self) -> Result<Option<Vec<u8>>> {
         let mut buf = Vec::new();
-        let n = self.r.read_until(b'\n', &mut buf).map_err(|source| Error::Io {
-            path: "<stream>".into(),
-            source,
-        })?;
+        // bounded: a stream without newlines must not grow one line without limit
+        let n = (&mut self.r)
+            .take(MAX_LINE + 1)
+            .read_until(b'\n', &mut buf)
+            .map_err(|source| Error::Io {
+                path: "<stream>".into(),
+                source,
+            })?;
         if n == 0 {
             return Ok(None);
         }
         if buf.last() == Some(&b'\n') {
             buf.pop();
+        } else if n as u64 > MAX_LINE {
+            return msg("stream line too long");
         }
         Ok(Some(buf))
     }
@@ -110,6 +120,9 @@ impl<R: BufRead> Parser<R> {
                 if l == delim {
                     return Ok(out);
                 }
+                if out.len() as u64 + l.len() as u64 + 1 > MAX_DATA {
+                    return msg("data block too large");
+                }
                 out.extend_from_slice(&l);
                 out.push(b'\n');
             }
@@ -118,6 +131,9 @@ impl<R: BufRead> Parser<R> {
             .ok()
             .and_then(|s| s.trim().parse().ok())
             .ok_or_else(|| Error::Msg("bad data length".into()))?;
+        if n as u64 > MAX_DATA {
+            return msg("data block too large");
+        }
         // never trust the length for preallocation
         let mut out = Vec::new();
         let got = (&mut self.r).take(n as u64).read_to_end(&mut out).map_err(|source| Error::Io {
@@ -145,6 +161,9 @@ fn parse_sig(rest: &[u8]) -> Result<Signature> {
     let (Some(lt), Some(gt)) = (rest.find('<'), rest.rfind('>')) else {
         return msg(format!("bad identity line {rest:?}"));
     };
+    if gt < lt {
+        return msg(format!("bad identity line {rest:?}"));
+    }
     let name = rest[..lt].trim().to_owned();
     let email = rest[lt + 1..gt].to_owned();
     let timestamp = rest[gt + 1..]
@@ -436,14 +455,20 @@ impl Importer<'_> {
                 git_change_id(&h.finalize().to_hex())
             }
         };
-        let id = self.put(&Object::Commit(Commit {
+        let commit = Object::Commit(Commit {
             zone: ROOT_ZONE.into(),
             parents,
             root,
             change_id,
             author,
             message,
-        }))?;
+        });
+        // The stream is untrusted: refuse a commit (oversized message or identity, too many
+        // parents) that the strict decoder would later reject, instead of storing it.
+        if Object::decode(&commit.encode()).is_err() {
+            return msg("commit exceeds object limits (message, identity or parent count)");
+        }
+        let id = self.put(&commit)?;
         if let Some(m) = mark_key {
             self.marks.insert(m, id);
         }

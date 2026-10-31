@@ -19,5 +19,6 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 [dev-dependencies]
 vcs-objects.workspace = true
 vcs-store.workspace = true
+proptest.workspace = true
 rcgen = "0.13"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
