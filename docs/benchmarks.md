@@ -112,6 +112,90 @@ Only 1,000-file datasets were run through the script (the 10k `add` alone takes 
    ~7-10x more than flat per file, consistent with creating many small tree objects.
 4. `log` limit scaling is roughly linear in commits walked (14 ms per 1,000, 188 ms per 10,000).
 
+## After: batched object sync (#21) and status fast path (#22), 2026-10-31
+
+Same machine, same flags as above (criterion `--quick`, release, warm, APFS, `VCS_BENCH_MAX` default 10,000). The
+baseline above is kept untouched. "Before" here is the pre-change code (`origin/main` at 21a5cbf) **re-measured in the
+same session** with the same harness, so the two columns are directly comparable; they agree with the first baseline
+within normal `--quick` noise. Time-per-op, lower is better. 10k `add_all` has effectively one sample per cell.
+
+`repo/add_all` (fresh index, every object written):
+
+| layout | 1,000 before | 1,000 after | 10,000 before | 10,000 after |
+|---|---|---|---|---|
+| flat | 3.43 s | 256 ms | 37.6 s | 2.63 s |
+| deep | 4.01 s | 374 ms | 40.2 s | 3.67 s |
+| bigdir | 4.76 s | 265 ms | 45.1 s | 2.74 s |
+
+`repo/commit_1_change`:
+
+| layout | 1,000 before | 1,000 after | 10,000 before | 10,000 after |
+|---|---|---|---|---|
+| flat | 21.2 ms | 10.9 ms | 25.0 ms | 17.9 ms |
+| deep | 47.0 ms | 21.7 ms | 128 ms | 93.2 ms |
+| bigdir | 22.3 ms | 10.0 ms | 29.8 ms | 20.7 ms |
+
+`repo/status_clean`:
+
+| layout | 1,000 before | 1,000 after | 10,000 before | 10,000 after |
+|---|---|---|---|---|
+| flat | 3.43 ms | 2.91 ms | 34.9 ms | 33.3 ms |
+| deep | 157 ms | 75.0 ms | 3.85 s | 674 ms |
+| bigdir | 3.21 ms | 3.32 ms | 45.1 ms | 39.6 ms |
+
+`repo/status_1pct_modified`:
+
+| layout | 1,000 before | 1,000 after | 10,000 before | 10,000 after |
+|---|---|---|---|---|
+| flat | 3.50 ms | 5.18 ms | 35.4 ms | 38.9 ms |
+| deep | 163 ms | 79.5 ms | 3.79 s | 647 ms |
+| bigdir | 3.23 ms | 3.22 ms | 46.5 ms | 42.2 ms |
+
+New cases (no "before": they did not exist in the old harness):
+
+| case | layout | 1,000 | 10,000 |
+|---|---|---|---|
+| `add_unchanged` (re-add of an already stored tree) | flat | 22.9 ms | 244 ms |
+| | deep | 102 ms | 1.00 s |
+| | bigdir | 22.2 ms | 281 ms |
+| `status_1_staged` (one staged change: slow path) | flat | 3.94 ms | 37.7 ms |
+| | deep | 161 ms | 2.97 s |
+| | bigdir | 3.58 ms | 46.0 ms |
+
+### What changed and why
+
+- **#21.** `LocalStore::put` no longer fsyncs. It writes to `objects/tmp/` and `ObjectStore::sync()` (called by
+  `Repo::add` before the index is saved, by `commit`/`snapshot_create` before refs, and by fetch before refs move)
+  flushes all pending files, renames them into place and flushes the directories. On macOS that is plain `fsync` per
+  file plus two `F_FULLFSYNC` per barrier instead of one `F_FULLFSYNC` per object. Objects that already exist are
+  skipped (one `stat`); the cost of that check is the `add_unchanged` row (about 22 us/file flat). The guarantee and
+  crash outcomes are documented in `docs/architecture.md` ("Durability"). `add` is ~13-16x faster at 10k files; it
+  is still ~0.26 ms/file (file create/write/rename plus per-file `fsync`), so it is not free.
+- **#22.** Diagnosis (macOS `sample` on the CLI, `status` of a clean 10k-file `deep` repo): the time was not in
+  `ix.under()` allocation. About 47% of samples were in `head_flat` (one object-file read per tree object, about 25k
+  trees for 10k deep files) and about 41% in `walk_untracked` (one `read_dir` per directory, about 25k directories);
+  the rest was per-file stats. Both are syscall-bound and scale with directory count, which is why flat/bigdir (about
+  100 and 1 directories) were unaffected. Fix: `status` first hashes the tree the index would commit (no I/O) and, if
+  it equals HEAD's root id, skips flattening HEAD entirely (the two path maps are then identical, so staged is empty).
+  `walk_untracked` also uses a non-allocating `Index::has_under` instead of `under()`; its separate effect was not
+  measured. Output is unchanged (regression tests in `crates/vcs-repo/tests/status_deep.rs`).
+
+### Notes and caveats for these numbers
+
+- `deep` status is still ~17x flat at 10k (674 ms vs 33 ms): the per-directory scan in `walk_untracked` remains
+  (git's own `status` is also ~8x slower on `deep` at 1k, see the CLI table above).
+- The fast path only helps when nothing is staged. With a staged change (`status_1_staged`) `deep` status still takes
+  about 3 s at 10k, essentially the old cost. A subtree-skipping HEAD-vs-index diff is the real fix and is not done.
+- Harness change: the persistent repo now sleeps 2.2 s and re-runs `add` after the initial commit. Reason: with the
+  faster `add`, the generated files were still inside the 2 s racy window when the index was written, so every
+  `status` re-hashed every file (an early run measured `status_clean/flat/1000` at 15.6 ms instead of 2.9 ms). In the
+  old code `add` itself took seconds, so entries were never racy. A real consequence worth knowing: `status` never
+  rewrites the index, so racy entries stay re-hashed until the next `add`/`commit`.
+- Durability was exercised by simulated crashes (dropping the store before the barrier), not by power-loss testing. The
+  batching was measured on macOS/APFS only; Linux behaviour is unmeasured. The CLI git-vs-vcs table was not re-run.
+- `add_all` and 10k cells are single-sample `--quick` estimates; `status_1pct_modified/flat/1000` moved from 3.50 to
+  5.18 ms with no code path change for flat layouts, which shows the noise level to expect.
+
 ## Caveats
 
 - One machine, one run session, `--quick` sampling; treat differences under ~2x as noise.

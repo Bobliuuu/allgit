@@ -144,6 +144,13 @@ fn bench_repo(c: &mut Criterion) {
             let k = modify(d.path(), &paths, 100, SEED).unwrap();
             assert!(k >= n / 100);
             g.bench_function(BenchmarkId::new("status_1pct_modified", &id), |b| b.iter(|| r.status().unwrap()));
+
+            // one staged change: index no longer hashes to HEAD's root, so status takes the full
+            // HEAD-flatten path (the #22 fast path does not apply). Must stay last in this loop body.
+            let staged_path = paths[1].clone();
+            fs::write(d.path().join(&staged_path), "staged edit\n").unwrap();
+            r.add(std::slice::from_ref(&staged_path)).unwrap();
+            g.bench_function(BenchmarkId::new("status_1_staged", &id), |b| b.iter(|| r.status().unwrap()));
         }
     }
     g.finish();
