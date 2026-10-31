@@ -1,4 +1,4 @@
-# Object model (format v1)
+# Object model (format v2)
 
 Status: **implemented** in `crates/vcs-objects` (tests: unit + proptest). Items marked *(designed)* are not yet implemented.
 
@@ -37,15 +37,39 @@ round-trip, order-independence of tree construction, and no panics on arbitrary 
 | Kind | Payload | Notes |
 |---|---|---|
 | Blob | raw bytes | Whole-file for now; chunk manifests are Milestone 5 *(designed)* |
-| Tree | sorted `(name, mode, id)` | modes: File, Executable, Directory. Names validated (no `/`, `\`, NUL, `.`, `..`, `.vcs` any case) |
+| Tree | sorted `(name, mode, id)` | modes: File, Executable, Directory, Symlink. Names validated (no `/`, `\`, NUL, `.`, `..`, `.vcs` any case) |
 | Commit | `zone, parents[], root, change_id, author, message` | one **zone**; `root` is the tree of that zone, paths zone-relative |
 | Snapshot | `zone → commit`, author, message | pins a consistent set of zone versions |
 | Transaction | sorted `RefUpdate{zone, branch, old?, new}`, author, message | immutable record of one atomic publication |
 | Operation | parents[], view (local branch heads + workspace subs), description, author | Kind 6; see operations.md |
 | Conflict | – | *(designed, Milestone 4)* |
 
-Symlinks are intentionally unsupported in v1 (they are the main path-escape vector); they are skipped with a warning on
-`add` and refused on checkout traversal.
+## Symlinks and portable paths (format v2)
+
+Format v2 adds the tree entry mode `Symlink` (byte 4). Its id names a Blob holding the raw link target, so identical
+targets dedupe like any blob. **This is a format bump:** `FORMAT_VERSION` went 1 to 2, every object id changed, and
+v1 objects are rejected with `DecodeError::Version` (the golden id in `golden_blob_id_is_stable` was updated on purpose).
+There is no migration tool: existing v1 repositories must be re-created (for example by exporting and re-importing).
+
+A target is accepted only if it provably stays inside the worktree (`vcs_repo::portable::check_symlink_target`):
+relative, valid UTF-8, no NUL or backslash, no empty component, never names `.vcs`, and `..` only as a leading run that
+does not climb above the worktree root. `..` after a normal component is refused because that component may itself be a
+link, which makes a lexical resolution unsound. `add` stages a valid link as a Symlink entry (an explicit pathspec with
+an escaping link is an error; a directory walk skips and reports it). Checkout re-validates every link from the stored
+blob (a crafted commit can contain anything), creates it by renaming a temporary link into place so it never writes
+through an existing one, and still refuses to write beneath a symlinked directory. Merges never text-merge two link
+targets: differing targets are a conflict. `export` writes mode 120000. Git import still skips symlinks.
+
+Case-insensitive filesystems: `add` and checkout refuse two paths (or directory prefixes) whose names are equal after
+Unicode NFD normalization and lowercasing, e.g. `README` and `readme`, or a precomposed and a decomposed `e` with
+an accent. The check is applied everywhere, not only on a folding filesystem, so a repository stays checkout-able on
+macOS and Windows. It uses simple lowercasing, not full Unicode case folding or Windows 8.3 short names; exotic
+equivalences (for example `ß` against `SS`) are not detected.
+
+Windows limits: symlink entries are tracked and hashed, but checkout of a Symlink entry fails with a clear error on
+non-unix platforms (creating links needs privilege or Developer Mode, and file-versus-directory links differ). Reserved
+device names (`CON`, `NUL`, ...), trailing dots or spaces and the 260-character path limit are not checked. None of the
+Windows behavior is exercised by tests (the suite runs on unix).
 
 ## Graph invariants
 

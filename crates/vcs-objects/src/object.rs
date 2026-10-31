@@ -4,7 +4,7 @@ use crate::names;
 use std::collections::BTreeMap;
 
 /// Version of the object encoding. Part of the hashed bytes: a format change yields new ids.
-pub const FORMAT_VERSION: u8 = 1;
+pub const FORMAT_VERSION: u8 = 2;
 const HASH_CONTEXT: &str = "all-git 2026 object identity v1";
 const MAX_MESSAGE: usize = 1 << 20;
 const MAX_PARENTS: usize = 64;
@@ -61,6 +61,8 @@ pub enum EntryMode {
     File = 1,
     Executable = 2,
     Directory = 3,
+    /// Symbolic link: the entry id names a Blob holding the link target bytes.
+    Symlink = 4,
 }
 
 impl EntryMode {
@@ -69,6 +71,7 @@ impl EntryMode {
             1 => Ok(Self::File),
             2 => Ok(Self::Executable),
             3 => Ok(Self::Directory),
+            4 => Ok(Self::Symlink),
             _ => Err(DecodeError::Invalid("tree entry mode")),
         }
     }
@@ -657,7 +660,38 @@ mod tests {
         assert_eq!(id.len(), 64);
         assert_eq!(id, GOLDEN_HELLO);
     }
-    const GOLDEN_HELLO: &str = "3f158096fc84b5c7cdda1072501373ea3758184a0f5ba8628269a2af992e8935";
+    // Deliberately changed when FORMAT_VERSION went 1 -> 2 (symlink entry mode); the old value was
+    // 3f158096fc84b5c7cdda1072501373ea3758184a0f5ba8628269a2af992e8935.
+    const GOLDEN_HELLO: &str = "230a94c2c10eb5f8f2e220ab15c5bb4a652fbf102c30278fb6201c9a4eecd41b";
+
+    #[test]
+    fn symlink_entry_roundtrips_and_v1_is_rejected() {
+        let t = Object::Tree(
+            Tree::new(vec![
+                TreeEntry {
+                    name: "f".into(),
+                    mode: EntryMode::File,
+                    id: oid(1),
+                },
+                TreeEntry {
+                    name: "l".into(),
+                    mode: EntryMode::Symlink,
+                    id: oid(2),
+                },
+            ])
+            .unwrap(),
+        );
+        let enc = t.encode();
+        assert_eq!(Object::decode(&enc).unwrap(), t);
+        let mut v1 = enc.clone();
+        v1[1] = 1;
+        assert_eq!(Object::decode(&v1), Err(DecodeError::Version(1)));
+        // mode byte 5 is still unknown
+        let mut bad = enc;
+        let pos = bad.iter().rposition(|b| *b == 4).unwrap();
+        bad[pos] = 5;
+        assert!(Object::decode(&bad).is_err());
+    }
 
     #[test]
     fn commit_and_snapshot_and_tx_roundtrip() {

@@ -141,7 +141,7 @@ fn merge_entry(
         (None, Some(le), Some(re)) => {
             let mut c = Conflict::new(path, ConflictKind::AddAdd, b, l, r);
             let (lc, rc) = (blobs.blob(&le.1)?, blobs.blob(&re.1)?);
-            if !is_binary(&lc) && !is_binary(&rc) {
+            if le.0 != EntryMode::Symlink && re.0 != EntryMode::Symlink && !is_binary(&lc) && !is_binary(&rc) {
                 c.hunks = Some(merge3(alg, b"", &lc, &rc).into_hunks());
             }
             Ok(Res::Conflict(Box::new(c)))
@@ -155,7 +155,7 @@ fn merge_entry(
                 Some(id) => (Some(id), None),
                 None => {
                     let (bc, lc, rc) = (blobs.blob(&be.1)?, blobs.blob(&le.1)?, blobs.blob(&re.1)?);
-                    if is_binary(&bc) || is_binary(&lc) || is_binary(&rc) {
+                    if [be.0, le.0, re.0].contains(&EntryMode::Symlink) || is_binary(&bc) || is_binary(&lc) || is_binary(&rc) {
                         (None, None)
                     } else {
                         match text_or_structural(alg, structural, path, &bc, &lc, &rc) {

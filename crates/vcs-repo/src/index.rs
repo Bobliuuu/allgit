@@ -96,6 +96,7 @@ impl Index {
             let mode = match r.u8().map_err(c)? {
                 1 => EntryMode::File,
                 2 => EntryMode::Executable,
+                4 => EntryMode::Symlink,
                 _ => return Err(Error::Corrupt("index: bad mode".into())),
             };
             let id = r.id().map_err(c)?;

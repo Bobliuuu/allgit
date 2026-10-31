@@ -140,7 +140,7 @@ impl Repo {
             }
             self.check_ancestors(p)?;
             match fs::symlink_metadata(self.worktree.join(p)) {
-                Ok(m) if m.is_file() => {}
+                Ok(m) if m.is_file() || m.file_type().is_symlink() => {}
                 Ok(_) => return msg(format!("cannot restore {p:?}: a directory or special file is in the way")),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(source) => {
@@ -160,15 +160,21 @@ impl Repo {
             let parent = abs.parent().unwrap();
             io(parent, fs::create_dir_all(parent))?;
             let tmp = parent.join(format!(".vcs-tmp-{}", std::process::id()));
-            io(&tmp, fs::write(&tmp, &data))?;
+            if mode == EntryMode::Symlink {
+                crate::portable::check_symlink_target(p, &data).or_else(|why| msg(format!("refusing to restore symlink {p:?}: {why}")))?;
+                let _ = fs::remove_file(&tmp);
+                crate::repo::make_symlink(&data, &tmp)?;
+            } else {
+                io(&tmp, fs::write(&tmp, &data))?;
+            }
             #[cfg(unix)]
-            {
+            if mode != EntryMode::Symlink {
                 use std::os::unix::fs::PermissionsExt;
                 let bits = if mode == EntryMode::Executable { 0o755 } else { 0o644 };
                 io(&tmp, fs::set_permissions(&tmp, fs::Permissions::from_mode(bits)))?;
             }
             io(&abs, fs::rename(&tmp, &abs))?;
-            let m = io(&abs, fs::metadata(&abs))?;
+            let m = io(&abs, fs::symlink_metadata(&abs))?;
             ix.entries.insert(
                 p.clone(),
                 IndexEntry {
@@ -296,7 +302,7 @@ impl Repo {
         if !cached {
             for p in &paths {
                 match fs::symlink_metadata(self.worktree.join(p)) {
-                    Ok(m) if m.is_file() => {}
+                    Ok(m) if m.is_file() || m.file_type().is_symlink() => {}
                     Ok(_) => return msg(format!("cannot remove {p:?}: not a regular file in the working tree")),
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                     Err(source) => {
@@ -383,7 +389,7 @@ impl Repo {
                 return msg(format!("{o:?} has unresolved merge conflicts; resolve it first"));
             }
             match fs::symlink_metadata(self.worktree.join(o)) {
-                Ok(m) if m.is_file() => {}
+                Ok(m) if m.is_file() || m.file_type().is_symlink() => {}
                 Ok(_) => return msg(format!("{o:?} is not a regular file in the working tree")),
                 Err(_) => return msg(format!("{o:?} is missing from the working tree; `vcs restore {o}` it first")),
             }
@@ -394,7 +400,9 @@ impl Repo {
             }
             if occupied {
                 match fs::symlink_metadata(self.worktree.join(&n)) {
-                    Ok(m) if !m.is_file() => return msg(format!("cannot overwrite {n:?}: not a regular file")),
+                    Ok(m) if !(m.is_file() || m.file_type().is_symlink()) => {
+                        return msg(format!("cannot overwrite {n:?}: not a regular file"))
+                    }
                     _ => {}
                 }
             }

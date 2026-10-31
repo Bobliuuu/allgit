@@ -11,6 +11,7 @@ vcs-remote.workspace = true
 vcs-merge.workspace = true
 thiserror.workspace = true
 blake3.workspace = true
+unicode-normalization.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
