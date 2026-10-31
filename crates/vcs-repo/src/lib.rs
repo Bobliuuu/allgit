@@ -2,6 +2,7 @@
 //! See docs/architecture.md.
 
 pub mod assist;
+pub mod cgraph;
 pub mod diff;
 pub mod edit;
 pub mod error;

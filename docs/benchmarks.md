@@ -320,3 +320,19 @@ Findings:
   for loose objects for the same reason. We have not profiled which part dominates, so the cause is a hypothesis.
   The saving is bytes (and network transfer), not speed. A larger average chunk would cut object counts but dedup less.
 - Not measured: checkout/clone time, remote transfer time, non-random binaries, or other thresholds.
+
+## Commit-graph cache (#103), 10,000 commits
+
+Measured on the Linux x86_64 build box (30 cores), `cargo bench -p vcs-bench --bench core -- log`, criterion medians.
+History: 10,000 commits, two branches diverging 10 commits before each tip. Graph file present and current.
+
+| operation | without graph | with graph |
+|---|---|---|
+| merge base of the two tips | 325 ms | 2.32 ms |
+| is_ancestor, negative (walks all history without graph) | 154 ms | 6.01 ms |
+| is_ancestor, positive near the tip | 149 us | 144 us |
+
+`log` does not use the graph (limit 10 = 114 us, limit 1,000 = 7.95 ms, limit 10,000 = 86.6 ms on this box; an
+experimental graph-driven log was measured at 2.42 ms, 10.8 ms and 93.9 ms, i.e. slower, so it was dropped). The ~2.3 ms
+floor with the graph is loading and validating the 10k-entry file; building it cold was not measured.
+These numbers are from a different machine than the earlier tables in this file and are not comparable with them.

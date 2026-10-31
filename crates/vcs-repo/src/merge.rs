@@ -16,9 +16,7 @@ use crate::repo::{fresh_change_id, Repo};
 use crate::treeops::{self, Flat};
 use std::collections::BTreeSet;
 use std::fs;
-use vcs_merge::{
-    merge3, merge_base, merge_flat_with, render_markers, Algorithm, Conflict, ConflictKind, MarkerLabels, StoreBlobs, StoreGraph, TextMerge,
-};
+use vcs_merge::{merge3, merge_flat_with, render_markers, Algorithm, Conflict, ConflictKind, MarkerLabels, StoreBlobs, TextMerge};
 use vcs_objects::codec::{Reader, Writer};
 use vcs_objects::names::validate_path;
 use vcs_objects::{Commit, EntryMode, Object, ObjectId, RefUpdate, Signature, Transaction};
@@ -389,8 +387,7 @@ impl Repo {
         let Some(ours) = ours else {
             return self.fast_forward(zone, &branch, None, theirs, &old, &mut refs, &mut ix);
         };
-        let g = StoreGraph(&self.store);
-        let bases = merge_base(&g, &ours, &theirs).map_err(me)?;
+        let bases = self.merge_bases(&ours, &theirs)?;
         let base = match bases.as_slice() {
             [] => {
                 return msg(format!(

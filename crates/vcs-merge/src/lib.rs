@@ -5,6 +5,7 @@
 
 pub mod assist;
 pub mod base;
+pub mod cgraph;
 pub mod diff;
 pub mod error;
 #[cfg(any(
@@ -18,6 +19,7 @@ pub mod text;
 pub mod tree;
 
 pub use base::{is_ancestor, merge_base, CommitGraph, MemGraph, StoreGraph};
+pub use cgraph::CommitGraphFile;
 pub use diff::Algorithm;
 pub use error::MergeError;
 pub use text::{merge3, render_markers, Hunk, Line, MarkerLabels, TextMerge};
