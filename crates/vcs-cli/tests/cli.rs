@@ -168,3 +168,27 @@ fn repack_keeps_repo_working_and_fsck_catches_pack_corruption() {
     assert!(!o.status.success());
     assert!(String::from_utf8_lossy(&o.stdout).contains("PROBLEM"));
 }
+
+#[test]
+fn restore_rm_mv_commands() {
+    let t = tempfile::tempdir().unwrap();
+    ok(t.path(), &["init", "demo"]);
+    let d = t.path().join("demo");
+    std::fs::write(d.join("a.txt"), "a\n").unwrap();
+    ok(&d, &["add", "a.txt"]);
+    ok(&d, &["commit", "-m", "init"]);
+    std::fs::write(d.join("a.txt"), "edit\n").unwrap();
+    ok(&d, &["restore", "a.txt"]);
+    assert_eq!(std::fs::read_to_string(d.join("a.txt")).unwrap(), "a\n");
+    ok(&d, &["mv", "a.txt", "b.txt"]);
+    assert!(d.join("b.txt").exists() && !d.join("a.txt").exists());
+    ok(&d, &["restore", "--staged", "."]);
+    assert!(ok(&d, &["status"]).contains("deleted"));
+    std::fs::write(d.join("b.txt"), "dirty\n").unwrap();
+    ok(&d, &["add", "b.txt"]);
+    let o = vcs(&d, &["rm", "b.txt"]);
+    assert!(!o.status.success());
+    assert!(String::from_utf8_lossy(&o.stderr).contains("uncommitted work"));
+    ok(&d, &["rm", "--force", "b.txt"]);
+    assert!(!d.join("b.txt").exists());
+}
