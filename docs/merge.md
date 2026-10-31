@@ -59,6 +59,15 @@ stores `new_blobs`, and moves the working tree/index/ref.
 * `vcs commit` refuses while any conflict is unresolved. A conflict is resolved by `vcs add <path>` (editing the file
   first; deleting it and adding the removal also counts). For marker files the staged content must differ from the
   marker file, so unedited markers cannot be committed by accident. The commit gets the recorded second parent.
+* `vcs resolve` settles conflicts without hand-running `vcs add`, in both merge and rebase (they share
+  `.vcs/conflicts`). `vcs resolve <path> --ours|--theirs|--base|--file <f>` writes that content, stages it and marks the
+  conflict resolved; choosing a side that lacks the file (a delete/modify conflict, add/add with no base) removes it.
+  "Ours" is the recorded left side (merge: the current branch; rebase: the branch being rebased onto), "theirs" the
+  right (merge: the merged-in branch; rebase: the commit being replayed). Re-resolving a path is allowed.
+  `vcs resolve <path> --mark` accepts the hand-edited working file (the same rule as `vcs add`: refused while the file
+  is still the untouched marker file). `vcs resolve --check` exits non-zero while any conflict is unresolved or a
+  resolved, staged text file still holds a `<<<<<<<` ... `>>>>>>>` block; binary files are not scanned. `--mark` itself
+  does not scan, so `--check` is the guard to run before `vcs commit` / `vcs rebase --continue`.
 * `vcs conflict list` and `vcs conflict show <path>` inspect the state. `vcs merge --abort` restores the pre-merge
   tree, index and files exactly (discarding edits to merge-touched files); it refuses if any other file in the zone
   changed. `checkout`/`zone remove` refuse during a merge.

@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 use vcs_objects::{ObjectId, Signature};
 use vcs_remote::Outcome;
-use vcs_repo::{ChangeKind, Error, MergeOutcome, RebaseOutcome, Repo, SyncAction, ROOT_ZONE};
+use vcs_repo::{ChangeKind, Error, MergeOutcome, RebaseOutcome, Repo, Resolution, SyncAction, ROOT_ZONE};
 
 mod remote;
 
@@ -113,6 +113,30 @@ enum Cmd {
     /// Inspect conflicts of an in-progress merge
     #[command(subcommand)]
     Conflict(ConflictCmd),
+    /// Resolve a conflicted path of a merge or rebase (ours = recorded left side, theirs = right)
+    #[command(group(clap::ArgGroup::new("how").required(true).args(["ours", "theirs", "base", "file", "mark", "check"])))]
+    Resolve {
+        /// Conflicted path (not used with --check)
+        path: Option<String>,
+        /// Take our side (merge: current branch; rebase: the branch being rebased onto)
+        #[arg(long)]
+        ours: bool,
+        /// Take their side
+        #[arg(long)]
+        theirs: bool,
+        /// Take the common ancestor's version
+        #[arg(long)]
+        base: bool,
+        /// Take the content of this file
+        #[arg(long, value_name = "FILE")]
+        file: Option<std::path::PathBuf>,
+        /// Accept the hand-edited working-tree file
+        #[arg(long)]
+        mark: bool,
+        /// Fail while conflicts are unresolved or conflict markers remain in resolved files
+        #[arg(long)]
+        check: bool,
+    },
     /// Manage zones
     #[command(subcommand)]
     Zone(ZoneCmd),
@@ -567,6 +591,56 @@ fn run(cli: Cli) -> Result<(), Error> {
                     println!("\nResolve the files, `vcs add` each one, then `vcs rebase --continue`.");
                     println!("Inspect with `vcs conflict list|show <path>`; give up with `vcs rebase --abort`.");
                     return Err(Error::Msg("rebase has conflicts".into()));
+                }
+            }
+        }
+        Cmd::Resolve {
+            path,
+            ours,
+            theirs,
+            base,
+            file,
+            mark: _,
+            check,
+        } => {
+            let (repo, cwd) = open()?;
+            if check {
+                if path.is_some() {
+                    return Err(Error::Msg("--check takes no path".into()));
+                }
+                let r = repo.resolve_check()?;
+                for p in &r.unresolved {
+                    println!("unresolved: {p}");
+                }
+                for p in &r.with_markers {
+                    println!("conflict markers remain: {p}");
+                }
+                if !r.is_clean() {
+                    return Err(Error::Msg(format!(
+                        "{} unresolved, {} with conflict markers",
+                        r.unresolved.len(),
+                        r.with_markers.len()
+                    )));
+                }
+                println!("all conflicts resolved, no conflict markers left");
+            } else {
+                let path = path.ok_or_else(|| Error::Msg("resolve needs a <path>".into()))?;
+                let rel = repo.rel_path(&cwd, &path)?;
+                let how = if ours {
+                    Resolution::Ours
+                } else if theirs {
+                    Resolution::Theirs
+                } else if base {
+                    Resolution::Base
+                } else if let Some(f) = file {
+                    Resolution::File(cwd.join(f))
+                } else {
+                    Resolution::Mark
+                };
+                repo.resolve(&rel, &how)?;
+                println!("resolved {rel}");
+                if let Some(k) = repo.merge_state()? {
+                    println!("{} conflict(s) left", k.unresolved().len());
                 }
             }
         }

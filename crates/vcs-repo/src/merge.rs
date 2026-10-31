@@ -20,6 +20,7 @@ use vcs_merge::{
     merge3, merge_base, merge_flat_with, render_markers, Algorithm, Conflict, ConflictKind, MarkerLabels, StoreBlobs, StoreGraph, TextMerge,
 };
 use vcs_objects::codec::{Reader, Writer};
+use vcs_objects::names::validate_path;
 use vcs_objects::{Commit, EntryMode, Object, ObjectId, RefUpdate, Signature, Transaction};
 use vcs_store::ObjectStore;
 
@@ -41,6 +42,48 @@ pub struct ConflictRec {
     /// The placeholder contains conflict markers; committing it unchanged is refused.
     pub has_markers: bool,
     pub resolved: bool,
+}
+
+/// How `Repo::resolve` settles one conflicted path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Resolution {
+    Ours,
+    Theirs,
+    Base,
+    /// Take the content of this file.
+    File(std::path::PathBuf),
+    /// Accept the working-tree file as the hand-edited result.
+    Mark,
+}
+
+/// Outcome of `Repo::resolve_check`; both lists empty means ready to finish.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ResolveCheck {
+    pub unresolved: Vec<String>,
+    pub with_markers: Vec<String>,
+}
+
+impl ResolveCheck {
+    pub fn is_clean(&self) -> bool {
+        self.unresolved.is_empty() && self.with_markers.is_empty()
+    }
+}
+
+/// True when text contains a `<<<<<<<` line followed later by a `>>>>>>>` line (binary: false).
+pub fn has_conflict_markers(data: &[u8]) -> bool {
+    if data[..data.len().min(8000)].contains(&0) {
+        return false;
+    }
+    let is = |l: &[u8], m: &[u8]| l.starts_with(m) && matches!(l.get(m.len()), None | Some(b' ' | b'\r' | b'\n'));
+    let mut open = false;
+    for l in data.split(|b| *b == b'\n') {
+        if is(l, b"<<<<<<<") {
+            open = true;
+        } else if open && is(l, b">>>>>>>") {
+            return true;
+        }
+    }
+    false
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -575,6 +618,110 @@ impl Repo {
         Ok(())
     }
 
+    /// Resolve one conflicted path of the in-progress merge or rebase (they share this state).
+    /// "Ours" is the recorded left side (merge: the current branch; rebase: the branch being
+    /// rebased onto), "theirs" the right side. Choosing a side that does not have the file
+    /// removes it. The result is staged and the conflict marked resolved.
+    pub fn resolve(&self, path: &str, how: &Resolution) -> Result<()> {
+        let st = self
+            .merge_state()?
+            .ok_or_else(|| Error::Msg("no merge or rebase in progress".into()))?;
+        let c = st
+            .conflicts
+            .iter()
+            .find(|c| c.path == path)
+            .ok_or_else(|| Error::Msg(format!("{path:?} is not conflicted")))?
+            .clone();
+        validate_path(path)?;
+        let abs = self.worktree.join(path);
+        let pick = |id: Option<ObjectId>, mode: Option<EntryMode>| -> Result<Option<(Vec<u8>, EntryMode)>> {
+            id.map(|id| Ok((self.store.get_blob(&id)?, mode.unwrap_or(EntryMode::File))))
+                .transpose()
+        };
+        let content = match how {
+            Resolution::Mark => {
+                self.add(&[path.to_owned()])?;
+                let st = self
+                    .merge_state()?
+                    .ok_or_else(|| Error::Msg("no merge or rebase in progress".into()))?;
+                return if st.conflicts.iter().any(|x| x.path == path && x.resolved) {
+                    Ok(())
+                } else {
+                    msg(format!(
+                        "{path:?} still holds the conflict markers it was written with; edit it, or choose --ours/--theirs/--base/--file"
+                    ))
+                };
+            }
+            Resolution::Ours => pick(c.left, c.left_mode)?,
+            Resolution::Theirs => pick(c.right, c.right_mode)?,
+            Resolution::Base => pick(c.base, c.base_mode)?,
+            Resolution::File(f) => {
+                let data = fs::read(f).map_err(|source| Error::Io { path: f.clone(), source })?;
+                Some((data, c.left_mode.or(c.right_mode).unwrap_or(EntryMode::File)))
+            }
+        };
+        match content {
+            None => match fs::symlink_metadata(&abs) {
+                Ok(m) if m.is_file() => io(&abs, fs::remove_file(&abs))?,
+                Ok(_) => return msg(format!("{path:?} is not a regular file")),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(source) => return Err(Error::Io { path: abs, source }),
+            },
+            Some((data, mode)) => {
+                if let Ok(m) = fs::symlink_metadata(&abs) {
+                    if !m.is_file() {
+                        return msg(format!("{path:?} is not a regular file"));
+                    }
+                }
+                let parent = abs.parent().expect("file has a parent");
+                io(parent, fs::create_dir_all(parent))?;
+                let tmp = parent.join(format!(".vcs-tmp-{}", std::process::id()));
+                io(&tmp, fs::write(&tmp, &data))?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let bits = if mode == EntryMode::Executable { 0o755 } else { 0o644 };
+                    io(&tmp, fs::set_permissions(&tmp, fs::Permissions::from_mode(bits)))?;
+                }
+                #[cfg(not(unix))]
+                let _ = mode;
+                io(&abs, fs::rename(&tmp, &abs))?;
+            }
+        }
+        if self.index()?.entries.contains_key(path) || abs.exists() {
+            self.add(&[path.to_owned()])?;
+        }
+        // An explicit choice always counts, even when the staged content equals the placeholder.
+        let _l = self.lock()?;
+        let Some(mut st) = self.merge_state()? else { return Ok(()) };
+        if let Some(x) = st.conflicts.iter_mut().find(|x| x.path == path) {
+            x.resolved = true;
+        }
+        self.save_merge_state(&st)
+    }
+
+    /// Verify the in-progress merge or rebase is ready to finish: every conflict resolved and no
+    /// conflict markers left in any staged resolved file.
+    pub fn resolve_check(&self) -> Result<ResolveCheck> {
+        let st = self
+            .merge_state()?
+            .ok_or_else(|| Error::Msg("no merge or rebase in progress".into()))?;
+        let ix = self.index()?;
+        let mut rep = ResolveCheck::default();
+        for c in &st.conflicts {
+            if !c.resolved {
+                rep.unresolved.push(c.path.clone());
+                continue;
+            }
+            if let Some(e) = ix.entries.get(&c.path) {
+                if has_conflict_markers(&self.store.get_blob(&e.id)?) {
+                    rep.with_markers.push(c.path.clone());
+                }
+            }
+        }
+        Ok(rep)
+    }
+
     /// Conflicts of the in-progress merge.
     pub fn conflicts(&self) -> Result<Vec<ConflictRec>> {
         match self.merge_state()? {
@@ -625,5 +772,21 @@ impl Repo {
             out.push_str(&String::from_utf8_lossy(&render_markers(&hunks, &labels)));
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod marker_tests {
+    use super::has_conflict_markers as h;
+
+    #[test]
+    fn detects_marker_blocks_only() {
+        assert!(h(b"a\n<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\nb\n"));
+        assert!(h(b"<<<<<<<\n>>>>>>>"));
+        assert!(!h(b"=======\ntitle\n=======\n"));
+        assert!(!h(b"<<<<<<< only open\n"));
+        assert!(!h(b">>>>>>> x\n<<<<<<< y\n"));
+        assert!(!h(b"<<<<<<<<< not seven\n>>>>>>>>>\n"));
+        assert!(!h(b"<<<<<<< x\n>>>>>>> y\n\0"));
     }
 }

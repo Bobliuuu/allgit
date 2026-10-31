@@ -21,7 +21,7 @@ pub use export::ExportReport;
 pub use gc::GcReport;
 pub use import::ImportReport;
 pub use manage::SnapshotCheckoutReport;
-pub use merge::{ConflictRec, MergeOutcome, MergeState};
+pub use merge::{ConflictRec, MergeOutcome, MergeState, Resolution, ResolveCheck};
 pub use meta::{DEFAULT_BRANCH, ROOT_ZONE};
 pub use rebase::{RebaseOutcome, RebaseState};
 pub use repo::{AddReport, Change, ChangeKind, CommitReport, FsckReport, Repo, Status, ZoneStatus};
