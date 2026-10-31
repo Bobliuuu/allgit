@@ -1170,8 +1170,10 @@ name = "vcs-repo"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "proptest",
  "tempfile",
  "thiserror",
+ "vcs-merge",
  "vcs-objects",
  "vcs-remote",
  "vcs-store",

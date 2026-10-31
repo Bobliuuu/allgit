@@ -1,6 +1,7 @@
 # Merge engine
 
-Status: **implemented** in `crates/vcs-merge` (M4, part 1). Pure functions: no filesystem, network or async. Stores are
+Status: **implemented** in `crates/vcs-merge` (M4, part 1) and **wired into the CLI** (`vcs merge`, M4 part 2; see
+"Merge command" below). Pure functions: no filesystem, network or async. Stores are
 read through `ObjectStore`/`BlobSource`/`CommitGraph`; nothing is written. The on-disk object format is unchanged.
 
 ## Algorithms
@@ -34,5 +35,33 @@ read through `ObjectStore`/`BlobSource`/`CommitGraph`; nothing is written. The o
 
 Rename/copy detection (a rename is delete+add), semantic/structural merge (M6), histogram diff, recursive merge of
 multiple bases, whitespace-insensitive merge, subtree-skipping tree merge (the whole tree is flattened; M5), writing
-merged trees/conflict objects (`Conflict` is not persisted yet). Merge quality of Myers vs patience was only compared on a
+conflict *objects* in the object graph (conflicts are persisted only in `.vcs/conflicts`, see below).
+
+## Merge command (`vcs merge`)
+
+Implemented in `crates/vcs-repo/src/merge.rs`; the pure engine above does the work, the repo layer only reads trees,
+stores `new_blobs`, and moves the working tree/index/ref.
+
+* `vcs merge <branch> [--zone A]` merges the local branch into the zone's checked-out branch. `--remote` merges the
+  remote-tracking head of `<branch>` (as last fetched, shown as `origin/<branch>`) instead; `vcs sync` prints this
+  command when a branch has diverged.
+* Target already contained in head: "already up to date". Target descends from head: fast-forward (no commit).
+  Otherwise the merge base is computed; unrelated histories and criss-cross histories (several best bases) are
+  errors (recursive merge is not implemented). A dirty zone (staged or unstaged changes) refuses to start.
+* Clean: a merge commit with two parents (`[ours, theirs]`), same zone, fresh change id, a one-update transaction;
+  the working tree and index move first, the branch ref last.
+* Conflicts: nothing is lost. Merged files are written; each conflicted file is materialized with diff3 markers
+  (text), or as our side (binary, mode) / the surviving side (delete/modify) with no markers. The structured list
+  is stored in `.vcs/conflicts` (framed `AGMC`, atomic): zone, branch, ours/theirs heads, touched paths, and per
+  conflict path, kind, base/left/right ids and modes. A valid file whose "ours" head still equals the branch head
+  is the "merging" state (`vcs status` shows it). A file whose head no longer matches is stale (crash after the ref
+  moved) and ignored; a corrupt file is an error.
+* `vcs commit` refuses while any conflict is unresolved. A conflict is resolved by `vcs add <path>` (editing the file
+  first; deleting it and adding the removal also counts). For marker files the staged content must differ from the
+  marker file, so unedited markers cannot be committed by accident. The commit gets the recorded second parent.
+* `vcs conflict list` and `vcs conflict show <path>` inspect the state. `vcs merge --abort` restores the pre-merge
+  tree, index and files exactly (discarding edits to merge-touched files); it refuses if any other file in the zone
+  changed. `checkout`/`zone remove` refuse during a merge.
+* Not done: file<->directory conflicts (the merge is refused before anything is touched), merging several zones in
+  one command, rename detection. Merge quality of Myers vs patience was only compared on a
 small hand-written corpus, not on real repositories; no timing numbers exist.
