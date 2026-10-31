@@ -20,6 +20,9 @@ pub struct Manifest {
     pub applied: Vec<ObjectId>,
     /// Zone name -> owned path prefix (non-root zones). Needed so a clone knows the layout.
     pub zones: BTreeMap<String, String>,
+    /// Zone id -> display name, only for zones renamed after they got commits (the id is the
+    /// name embedded in commits and keys everything above). Absent entry: the id is the name.
+    pub labels: BTreeMap<String, String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -33,7 +36,10 @@ impl Manifest {
 
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::new();
-        w.raw(b"AGMF").u8(1).varint(self.generation).varint(self.branches.len() as u64);
+        w.raw(b"AGMF")
+            .u8(if self.labels.is_empty() { 1 } else { 2 })
+            .varint(self.generation)
+            .varint(self.branches.len() as u64);
         for ((a, b), id) in &self.branches {
             w.str(a).str(b).id(id);
         }
@@ -49,6 +55,12 @@ impl Manifest {
         for (n, p) in &self.zones {
             w.str(n).str(p);
         }
+        if !self.labels.is_empty() {
+            w.varint(self.labels.len() as u64);
+            for (i, l) in &self.labels {
+                w.str(i).str(l);
+            }
+        }
         w.finish()
     }
 
@@ -59,7 +71,7 @@ impl Manifest {
             return Err(ManifestError("bad magic".into()));
         }
         let v = r.u8().map_err(e)?;
-        if v != 1 {
+        if v != 1 && v != 2 {
             return Err(ManifestError(format!("unsupported version {v}")));
         }
         let mut m = Manifest {
@@ -92,6 +104,15 @@ impl Manifest {
             vcs_objects::names::validate_path(&p).map_err(|x| ManifestError(x.to_string()))?;
             m.zones.insert(n, p);
         }
+        if v == 2 {
+            for _ in 0..r.count(2).map_err(e)? {
+                let i = r.str(64).map_err(e)?;
+                let l = r.str(64).map_err(e)?;
+                validate_zone_name(&i).map_err(|x| ManifestError(x.to_string()))?;
+                validate_zone_name(&l).map_err(|x| ManifestError(x.to_string()))?;
+                m.labels.insert(i, l);
+            }
+        }
         r.finish().map_err(e)?;
         Ok(m)
     }
@@ -109,6 +130,10 @@ mod tests {
         m.branches.insert(("a".into(), "main".into()), ObjectId::from_bytes([1; 32]));
         m.applied.push(ObjectId::from_bytes([2; 32]));
         assert_eq!(Manifest::decode(&m.encode()).unwrap(), m);
+        m.labels.insert("engine".into(), "core".into());
+        assert_eq!(Manifest::decode(&m.encode()).unwrap(), m);
+        m.labels.clear();
+        assert_eq!(m.encode()[4], 1, "no labels keeps the v1 encoding");
         assert!(Manifest::decode(b"junk").is_err());
         let mut bad = m.encode();
         bad.push(0);

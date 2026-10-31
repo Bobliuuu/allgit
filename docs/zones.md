@@ -17,9 +17,23 @@ Restores every **subscribed** zone whose checked-out branch is not already at th
 
 ## `vcs zone rename <old> <new>`
 
-Only for a zone **without history**: no local or remote-tracking branches, not pinned by a snapshot, not mid-merge.
-Commits embed their zone name and are immutable, so renaming a zone with commits would need history rewriting.
-The path does not change, so no workspace file moves. The root zone cannot be renamed.
+Works for any zone, with or without history. Chosen design: an **alias layer**, not history rewriting (see
+[object-model.md](object-model.md#zone-names-ids-and-display-names)).
+
+* The name embedded in a zone's commits is its permanent **id**. A rename stores only a **display name** in the
+  `zones` file (`AGA2` encoding; a zone that was never renamed keeps the old `AGAR` bytes).
+* Branches, snapshots, workspace, index, operation views and the remote manifest stay keyed by id, so no commit id
+  changes and nothing else is rewritten. `vcs log`, branches, `snapshot checkout`, `fsck` keep working.
+* Every command accepts the display name or the id. Output shows the display name. Both stay reserved: a new zone
+  or another rename cannot take either.
+* Refuses: the root zone, an unknown zone, a name already in use, a dirty zone, a zone mid-merge.
+* Operation log: a rename is recorded (`zone rename old new`), but names are not part of an operation view. So
+  `vcs op undo` immediately after a rename is **refused** with a message (rename back instead), and
+  `op undo`/`op restore` of other operations works across a rename and keeps the new name.
+* Published repositories: `publish` records `id -> display name` in the remote manifest (v2; v1 bytes unchanged when
+  no zone is renamed) together with that publish's transaction, so it appears with the next publish that touches the
+  zone (a rename alone does not publish). `fetch`/`sync` and `clone` adopt a remote name unless the local zone was
+  renamed already or the name is taken; a local rename wins until it is published. Last publisher wins.
 
 ## `vcs zone delete <name> [--force]`
 

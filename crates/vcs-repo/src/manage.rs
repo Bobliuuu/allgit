@@ -117,34 +117,26 @@ impl Repo {
         Ok(rep)
     }
 
-    /// Rename a zone. Commits embed their zone name and are immutable, so only a zone with no
-    /// history (no local or remote-tracking branches, not pinned by any snapshot) can be renamed.
-    /// Its path, and therefore every workspace file, stays where it is.
+    /// Rename a zone, with or without history.
+    ///
+    /// Commits embed their zone name and are immutable, so the name a commit carries becomes the
+    /// zone's permanent **id**; a rename only changes the zone's display name (a label stored in
+    /// the `zones` file). Branches, snapshots, the workspace, the operation log, the index and
+    /// the remote manifest stay keyed by id, so nothing else is rewritten and no commit id changes.
+    /// Either the old display name or the id may be used to refer to the zone afterwards.
+    /// Refuses a dirty or mid-merge zone, the root zone and names already in use.
     pub fn zone_rename(&self, old: &str, new: &str) -> Result<()> {
         let _l = self.lock()?;
         let mut zones = self.zones()?;
-        let mut ws = self.workspace()?;
-        let refs = self.refs()?;
-        if !zones.exists(old) {
-            return msg(format!("no such zone {old:?}"));
-        }
-        zones.rename(old, new)?;
-        if !refs.branches_of(old).is_empty() || !self.remote_refs()?.branches_of(old).is_empty() {
-            return msg(format!(
-                "zone {old:?} has branches; commits record their zone name and are immutable, so only a zone without history can be renamed"
-            ));
-        }
-        if let Some(s) = self.snapshots_pinning(&refs, old)?.first() {
-            return msg(format!("zone {old:?} is pinned by snapshot {s:?}; it cannot be renamed"));
-        }
-        if self.merge_state()?.is_some_and(|m| m.zone == old) {
+        let id = zones.rename(old, new)?;
+        if self.merge_state()?.is_some_and(|m| m.zone == id) {
             return msg(format!("zone {old:?} is in the middle of a merge"));
         }
-        write_atomic(&self.vcs.join("zones"), &zones.encode())?;
-        if let Some(b) = ws.subs.remove(old) {
-            ws.subs.insert(new.to_owned(), b);
+        if self.workspace()?.subs.contains_key(&id) {
+            let st = self.status()?;
+            self.require_clean(&id, &st)?;
         }
-        self.save_ws(&ws)?;
+        write_atomic(&self.vcs.join("zones"), &zones.encode())?;
         self.record_op(&format!("zone rename {old} {new}"), None)?;
         Ok(())
     }
@@ -156,6 +148,8 @@ impl Repo {
     /// A zone that has branches or is pinned by a snapshot needs `force`: the refs are dropped,
     /// the commits stay in the object store and in the operation log.
     pub fn zone_delete(&self, zone: &str, force: bool) -> Result<()> {
+        let zone = self.resolve_zone(zone)?;
+        let zone = zone.as_str();
         let _l = self.lock()?;
         let mut zones = self.zones()?;
         let mut ws = self.workspace()?;
@@ -197,6 +191,8 @@ impl Repo {
     /// head is not reachable from another branch of the zone or from a snapshot, since deleting it
     /// would leave its commits without a name. Returns the commit the branch pointed at.
     pub fn branch_delete(&self, zone: &str, branch: &str, force: bool) -> Result<ObjectId> {
+        let zone = self.resolve_zone(zone)?;
+        let zone = zone.as_str();
         validate_branch_name(branch)?;
         let _l = self.lock()?;
         let zones = self.zones()?;
