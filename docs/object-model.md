@@ -139,3 +139,22 @@ the same size as the loose objects (apparent bytes +0.02%; allocated bytes -1.6%
   already-compressed binaries. Whole-pack `fsck` costs one extra hash pass over the pack on top of the per-object
   hashes. Repack rewrites all loose objects into a new pack each time; there is no incremental or multi-pack merge yet.
 - **Not measured:** remote latency benefit, checkout speed from packs, and repos with many small text objects.
+
+## Chunked blobs (design only, not implemented)
+
+Measured dedup of the chunker prototype (docs/benchmarks.md): chunks stored 41-43% of whole-blob bytes at 8 KiB average
+size and 66-67% at 32 KiB, on versioned random binaries with small edits. That ignores manifest overhead. The proposal:
+
+- New object kind **ChunkedBlob** (next free kind number): `total_len: u64`, then ordered `(chunk_id, len: u32)` entries.
+  Chunks are ordinary Blob objects, so they dedupe across files, versions and zones and travel through packs, sync and
+  GC unchanged. A ChunkedBlob has its own id (hash of its encoding), and a Tree entry points at it exactly as it
+  would point at a Blob.
+- Content identity: the same file bytes can exist as a plain Blob or as a ChunkedBlob with different ids. To keep one
+  canonical id per content the writer must be deterministic: chunk iff `len >= threshold` (proposal: 1 MiB) with fixed
+  parameters recorded in the repository format. Changing parameters is a format bump, never silent.
+- Invariants for `fsck`: every chunk id resolves to a Blob; lengths sum to `total_len`; no empty chunks; manifests are
+  not nested. GC reachability follows manifest entries.
+- Reads stream chunk by chunk; ranged reads map a byte range to the chunks that cover it.
+- Open questions: the threshold and parameters need measurement on real (non-random) binaries; the manifest size
+  (about 36 bytes per chunk, roughly 0.4% at 8 KiB) must be weighed against the saving; how `status` detects change
+  without rehashing a whole large file.
