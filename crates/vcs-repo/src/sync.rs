@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 use vcs_objects::{LockOp, Object, ObjectId, RefUpdate, Signature, Transaction};
-use vcs_remote::{fetch_heads, fetch_object, load_manifest, Backend, Outcome, PublishError, Publisher};
+use vcs_remote::{fetch_heads_lazy, fetch_object, fetch_objects, load_manifest, Backend, Outcome, PublishError, Publisher};
 
 #[derive(Debug)]
 pub struct PublishReport {
@@ -383,7 +383,7 @@ impl Repo {
         if changed {
             write_atomic(&self.vcs.join("zones"), &defs.encode())?;
         }
-        let got = fetch_heads(backend, &self.store, Some(&want)).map_err(publish_err)?;
+        let got = fetch_heads_lazy(backend, &self.store, Some(&want)).map_err(publish_err)?;
         let mut rr = self.remote_refs()?;
         for (a, b, id) in &got {
             rr.branches.insert((a.clone(), b.clone()), *id);
@@ -400,6 +400,68 @@ impl Repo {
         self.store.put(&obj)?;
         self.store.sync()?;
         Ok(())
+    }
+
+    /// [`Repo::zone_add`], but first fetches the branch head's files in one batch so the
+    /// checkout does not stop at each missing blob. Uses the local branch head, else the
+    /// remote-tracking head; with neither, behaves as `zone_add`.
+    pub fn zone_add_fetching(&self, backend: &dyn Backend, zone: &str, branch: Option<&str>) -> Result<()> {
+        let z = self.resolve_zone(zone)?;
+        let b = branch.unwrap_or(crate::meta::DEFAULT_BRANCH);
+        let head = self.refs()?.head(&z, b).or(self.remote_refs()?.head(&z, b));
+        if let Some(h) = head {
+            use vcs_store::ObjectStore;
+            if self.store.contains(&h)? {
+                self.prefetch_files(backend, self.commit_obj(&h)?.root)?;
+            }
+        }
+        self.zone_add(&z, branch)
+    }
+
+    /// Download, in one batch, every file blob (and chunk of a chunked file) reachable from the
+    /// tree `root` that is not already stored. Trees must be present (fetch stores them eagerly).
+    /// Returns how many objects were fetched. Every object is hash-verified before it is stored.
+    pub fn prefetch_files(&self, backend: &dyn Backend, root: ObjectId) -> Result<usize> {
+        use vcs_objects::EntryMode;
+        use vcs_store::ObjectStore;
+        let mut trees = vec![root];
+        let mut seen = BTreeSet::new();
+        let mut files = BTreeSet::new();
+        while let Some(t) = trees.pop() {
+            if !seen.insert(t) {
+                continue;
+            }
+            let Object::Tree(t) = self.store.get(&t)? else {
+                return msg(format!("object {t} is not a tree"));
+            };
+            for e in t.entries() {
+                if e.mode == EntryMode::Directory {
+                    trees.push(e.id);
+                } else if !self.store.contains(&e.id)? {
+                    files.insert(e.id);
+                }
+            }
+        }
+        let mut total = 0;
+        let mut batch: Vec<ObjectId> = files.into_iter().collect();
+        while !batch.is_empty() {
+            let mut next = Vec::new();
+            for (id, obj) in fetch_objects(backend, &batch).map_err(publish_err)? {
+                if let Object::Chunked(m) = &obj {
+                    for c in &m.chunks {
+                        if !self.store.contains(&c.id)? {
+                            next.push(c.id);
+                        }
+                    }
+                }
+                self.store.put(&obj)?;
+                debug_assert_eq!(obj.id(), id);
+                total += 1;
+            }
+            batch = next;
+        }
+        self.store.sync()?;
+        Ok(total)
     }
 
     /// Run `f`; whenever it fails because an object is absent locally, fetch that object from
@@ -440,6 +502,7 @@ impl Repo {
                     if !a.staged.is_empty() || !a.unstaged.is_empty() {
                         SyncAction::Dirty
                     } else {
+                        self.prefetch_files(backend, self.commit_obj(&r)?.root)?;
                         let old = self.head_flat(&zone, &defs, &ws, &refs)?;
                         let new = treeops::flatten(&self.store, Some(self.commit_obj(&r)?.root), defs.path_of(&zone).unwrap())?;
                         self.transition(&zone, &defs, &old, &new, &mut ix)?;
@@ -508,7 +571,7 @@ impl Repo {
                 None => defs.names().map(str::to_owned).collect(),
             };
             repo.save_ws(&Workspace::default())?;
-            let got = fetch_heads(backend, &repo.store, Some(&want)).map_err(publish_err)?;
+            let got = fetch_heads_lazy(backend, &repo.store, Some(&want)).map_err(publish_err)?;
             let mut rr = Refs::default();
             let mut local = Refs::default();
             for (a, b, id) in &got {
@@ -518,6 +581,12 @@ impl Repo {
             repo.save_remote_refs(&rr)?;
             write_atomic(&repo.vcs.join("refs"), &local.encode())?;
             drop(_l);
+            // Checkout needs the default branch's files: fetch them in one batch, not one by one.
+            for a in &want {
+                if let Some(h) = local.head(a, crate::meta::DEFAULT_BRANCH) {
+                    repo.prefetch_files(backend, repo.commit_obj(&h)?.root)?;
+                }
+            }
             for a in &want {
                 repo.zone_add(a, None)?;
             }

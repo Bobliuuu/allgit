@@ -11,10 +11,15 @@ pub mod manifest;
 pub mod membackend;
 pub mod packfetch;
 pub mod protocol;
+pub mod stats;
 
 pub use backend::{Backend, BackendError, Versioned};
 pub use fsbackend::FsBackend;
 pub use locks::LockFault;
 pub use manifest::{Lock, Manifest};
 pub use membackend::{CasFault, MemBackend};
-pub use protocol::{changed_paths, fetch_heads, fetch_object, load_manifest, Outcome, PublishError, Publisher, Step};
+pub use packfetch::fetch_many;
+pub use protocol::{
+    changed_paths, fetch_heads, fetch_heads_lazy, fetch_object, fetch_objects, load_manifest, Outcome, PublishError, Publisher, Step,
+};
+pub use stats::{CountingBackend, TransferStats};

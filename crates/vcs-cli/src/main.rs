@@ -308,6 +308,9 @@ enum Cmd {
         /// Only download these zones (repeatable)
         #[arg(long = "zone")]
         zones: Vec<String>,
+        /// Print the number of remote requests and bytes transferred
+        #[arg(long)]
+        stats: bool,
     },
     /// Publish checked-out branches to the remote in one atomic transaction
     Publish {
@@ -335,6 +338,9 @@ enum Cmd {
     Fetch {
         #[arg(long = "zone")]
         zones: Vec<String>,
+        /// Print the number of remote requests and bytes transferred
+        #[arg(long)]
+        stats: bool,
     },
     /// Fetch, then fast-forward local branches where safe
     Sync,
@@ -1170,7 +1176,13 @@ fn run(cli: Cli) -> Result<(), Error> {
                     println!("zone {zone}: switched to {branch}");
                 }
                 ZoneCmd::Add { name, branch } => {
-                    repo.zone_add(&name, branch.as_deref())?;
+                    match repo.remote_url()? {
+                        Some(url) => {
+                            let backend = remote::open_backend(&url)?;
+                            repo.zone_add_fetching(backend.as_ref(), &name, branch.as_deref())?;
+                        }
+                        None => repo.zone_add(&name, branch.as_deref())?,
+                    }
                     println!("subscribed to zone {name}");
                 }
                 ZoneCmd::Remove { name } => {
@@ -1243,12 +1255,16 @@ fn run(cli: Cli) -> Result<(), Error> {
                 },
             }
         }
-        Cmd::Clone { url, dir, zones } => {
+        Cmd::Clone { url, dir, zones, stats } => {
             let cwd = std::env::current_dir().map_err(|source| Error::Io { path: ".".into(), source })?;
             let url = remote::normalize_url(&url, &cwd);
             let backend = remote::open_backend(&url)?;
+            let counting = vcs_remote::CountingBackend::new(backend.as_ref());
             let want = (!zones.is_empty()).then_some(zones.as_slice());
-            let repo = Repo::clone_from(backend.as_ref(), &url, &dir, want)?;
+            let repo = Repo::clone_from(&counting, &url, &dir, want)?;
+            if stats {
+                println!("{}", counting.stats());
+            }
             let defs = repo.zones()?;
             let ws = repo.workspace()?;
             let (got, skipped): (Vec<_>, Vec<_>) = defs.names().map(str::to_owned).partition(|n| ws.subs.contains_key(n));
@@ -1319,11 +1335,15 @@ fn run(cli: Cli) -> Result<(), Error> {
                 );
             }
         }
-        Cmd::Fetch { zones } => {
+        Cmd::Fetch { zones, stats } => {
             let (repo, _) = open()?;
             let backend = remote::open_backend(&need_remote(&repo)?)?;
+            let counting = vcs_remote::CountingBackend::new(backend.as_ref());
             let want = (!zones.is_empty()).then_some(zones.as_slice());
-            let got = repo.fetch(backend.as_ref(), want)?;
+            let got = repo.fetch(&counting, want)?;
+            if stats {
+                println!("{}", counting.stats());
+            }
             if got.is_empty() {
                 println!("nothing fetched");
             }

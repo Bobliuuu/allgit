@@ -76,7 +76,7 @@ fn sparse_clone_downloads_and_materializes_only_requested_zones() {
     );
     // subscribe later: now it is fetched
     b.fetch(&remote, Some(&["assets".to_string()])).unwrap();
-    b.zone_add("assets", None).unwrap();
+    b.zone_add_fetching(&remote, "assets", None).unwrap();
     assert_eq!(read(&b, "assets/big.bin").len(), 50_000);
 }
 

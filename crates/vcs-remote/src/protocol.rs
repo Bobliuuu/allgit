@@ -19,7 +19,7 @@ use crate::backend::{Backend, BackendError};
 use crate::manifest::{self, Manifest, MAX_APPLIED};
 use crate::packfetch;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use vcs_objects::{id_of_encoded, Object, ObjectId, Transaction};
+use vcs_objects::{id_of_encoded, EntryMode, Object, ObjectId, Transaction};
 use vcs_store::{ObjectStore, StoreError};
 
 pub const MAX_RETRIES: u32 = 8;
@@ -109,7 +109,19 @@ pub struct Publisher<'a> {
 
 /// Dependencies of an object (what must exist remotely before it may).
 fn deps(o: &Object) -> Vec<ObjectId> {
+    deps_of(o, false)
+}
+
+/// Like [`deps`], but with `skip_files` a tree contributes only its subdirectories, so a walk
+/// reaches commits and trees and never a file blob or chunk manifest.
+fn deps_of(o: &Object, skip_files: bool) -> Vec<ObjectId> {
     match o {
+        Object::Tree(t) if skip_files => t
+            .entries()
+            .iter()
+            .filter(|e| e.mode == EntryMode::Directory)
+            .map(|e| e.id)
+            .collect(),
         Object::Chunked(m) => m.chunks.iter().map(|c| c.id).collect(),
         Object::Blob(_) | Object::Transaction(_) | Object::Operation(_) => vec![],
         Object::Tree(t) => t.entries().iter().map(|e| e.id).collect(),
@@ -127,6 +139,7 @@ fn post_order(
     load: &mut dyn FnMut(&ObjectId) -> Result<Object, PublishError>,
     emit: &mut dyn FnMut(&ObjectId, &Object) -> Result<(), PublishError>,
     done: &mut HashSet<ObjectId>,
+    deps: &dyn Fn(&Object) -> Vec<ObjectId>,
 ) -> Result<(), PublishError> {
     // `done` = emitted or known-present. A node may be pushed more than once (shared
     // subobjects); only the first pop that finds it not done expands it, and its
@@ -271,6 +284,7 @@ impl<'a> Publisher<'a> {
                             Ok(())
                         },
                         &mut seen,
+                        &deps,
                     );
                     match r {
                         Err(PublishError::Backend(e)) => {
@@ -535,6 +549,23 @@ pub fn fetch_object(backend: &dyn Backend, id: &ObjectId) -> Result<Object, Publ
     Object::decode(&data).map_err(|e| PublishError::Remote(format!("object {id}: {e}")))
 }
 
+/// Fetch many objects with as few requests as the remote layout allows (see
+/// [`packfetch::fetch_many`]), verifying every hash. Order of the result is not specified.
+/// Nothing is stored. An id the remote lacks is an error.
+pub fn fetch_objects(backend: &dyn Backend, ids: &[ObjectId]) -> Result<Vec<(ObjectId, Object)>, PublishError> {
+    let mut out = Vec::with_capacity(ids.len());
+    for (id, data) in packfetch::fetch_many(backend, ids)? {
+        if id_of_encoded(&data) != id {
+            return Err(PublishError::Remote(format!("object {id} fails hash verification")));
+        }
+        out.push((
+            id,
+            Object::decode(&data).map_err(|e| PublishError::Remote(format!("object {id}: {e}")))?,
+        ));
+    }
+    Ok(out)
+}
+
 /// Fetch the closure of the heads of `zones` (None = all) into `local`, storing
 /// dependencies first and verifying every object's hash. Returns the fetched heads.
 /// Only objects reachable from the requested zones are read.
@@ -542,6 +573,25 @@ pub fn fetch_heads(
     backend: &dyn Backend,
     local: &dyn ObjectStore,
     zones: Option<&[String]>,
+) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
+    fetch_heads_impl(backend, local, zones, false)
+}
+
+/// Like [`fetch_heads`] but fetches only commits and trees. File blobs (and chunk manifests)
+/// are left on the remote and come later via [`fetch_objects`] or [`fetch_object`].
+pub fn fetch_heads_lazy(
+    backend: &dyn Backend,
+    local: &dyn ObjectStore,
+    zones: Option<&[String]>,
+) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
+    fetch_heads_impl(backend, local, zones, true)
+}
+
+fn fetch_heads_impl(
+    backend: &dyn Backend,
+    local: &dyn ObjectStore,
+    zones: Option<&[String]>,
+    skip_files: bool,
 ) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
     let (m, _) = load_manifest(backend)?;
     let mut out = Vec::new();
@@ -559,6 +609,7 @@ pub fn fetch_heads(
                 Ok(())
             },
             &mut seen,
+            &|o| deps_of(o, skip_files),
         )?;
         out.push((a.clone(), b.clone(), *id));
     }
@@ -605,6 +656,7 @@ mod tests {
                 Ok(())
             },
             &mut HashSet::new(),
+            &deps,
         )
         .unwrap();
         let pos: BTreeMap<_, _> = order.iter().enumerate().map(|(i, x)| (*x, i)).collect();
