@@ -113,6 +113,31 @@ impl Areas {
         self.defs.insert(name.to_owned(), path.to_owned());
         Ok(())
     }
+    /// Give `old` the name `new`; its path is unchanged. The root area cannot be renamed.
+    pub fn rename(&mut self, old: &str, new: &str) -> Result<()> {
+        validate_area_name(new)?;
+        if old == ROOT_AREA || new == ROOT_AREA {
+            return msg("the root area cannot be renamed");
+        }
+        if self.defs.contains_key(new) {
+            return msg(format!("area {new:?} already exists"));
+        }
+        let Some(path) = self.defs.remove(old) else {
+            return msg(format!("no such area {old:?}"));
+        };
+        self.defs.insert(new.to_owned(), path);
+        Ok(())
+    }
+    /// Drop an area definition; its paths fall back to the root area. Root cannot be removed.
+    pub fn remove(&mut self, name: &str) -> Result<()> {
+        if name == ROOT_AREA {
+            return msg("the root area cannot be deleted");
+        }
+        if self.defs.remove(name).is_none() {
+            return msg(format!("no such area {name:?}"));
+        }
+        Ok(())
+    }
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::new();
         w.varint(self.defs.len() as u64);
@@ -295,6 +320,25 @@ mod tests {
         assert_eq!(a.relative("engine", "src/engine/a/b.rs"), "a/b.rs");
         let b = Areas::decode(&a.encode()).unwrap();
         assert_eq!(b.owner("assets/x"), "assets");
+    }
+
+    #[test]
+    fn area_rename_and_remove() {
+        let mut a = Areas::new();
+        a.create("engine", "src/engine").unwrap();
+        a.create("assets", "assets").unwrap();
+        assert!(a.rename("engine", "assets").is_err(), "target exists");
+        assert!(a.rename("root", "x").is_err());
+        assert!(a.rename("engine", "root").is_err());
+        assert!(a.rename("nope", "x").is_err());
+        assert!(a.rename("engine", "bad name").is_err());
+        a.rename("engine", "core").unwrap();
+        assert_eq!(a.path_of("core"), Some("src/engine"));
+        assert!(!a.exists("engine"));
+        assert!(a.remove("root").is_err());
+        assert!(a.remove("engine").is_err());
+        a.remove("core").unwrap();
+        assert_eq!(a.owner("src/engine/x"), "root");
     }
 
     #[test]
