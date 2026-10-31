@@ -24,5 +24,5 @@ pub use manage::SnapshotCheckoutReport;
 pub use merge::{ConflictRec, MergeOutcome, MergeState};
 pub use meta::{DEFAULT_BRANCH, ROOT_ZONE};
 pub use rebase::{RebaseOutcome, RebaseState};
-pub use repo::{AddReport, ZoneStatus, Change, ChangeKind, CommitReport, FsckReport, Repo, Status};
+pub use repo::{AddReport, Change, ChangeKind, CommitReport, FsckReport, Repo, Status, ZoneStatus};
 pub use sync::{PublishReport, SyncAction, SyncReport};

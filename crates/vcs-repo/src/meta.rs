@@ -7,7 +7,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use vcs_objects::codec::{Reader, Writer};
-use vcs_objects::names::{paths_overlap, validate_zone_name, validate_branch_name, validate_path};
+use vcs_objects::names::{paths_overlap, validate_branch_name, validate_path, validate_zone_name};
 use vcs_objects::{ObjectId, RefUpdate};
 
 pub const ROOT_ZONE: &str = "root";

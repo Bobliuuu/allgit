@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 use vcs_objects::codec::{Reader, Writer};
-use vcs_objects::names::{validate_zone_name, validate_branch_name};
+use vcs_objects::names::{validate_branch_name, validate_zone_name};
 use vcs_objects::ObjectId;
 
 pub const KEY: &str = "manifest";

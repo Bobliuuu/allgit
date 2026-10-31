@@ -1,13 +1,13 @@
 use crate::diff;
 use crate::error::{io, msg, Error, Result};
 use crate::index::{Index, IndexEntry};
-use crate::meta::{write_atomic, Zones, LockGuard, Refs, Workspace, DEFAULT_BRANCH, ROOT_ZONE};
+use crate::meta::{write_atomic, LockGuard, Refs, Workspace, Zones, DEFAULT_BRANCH, ROOT_ZONE};
 use crate::treeops::{self, Flat};
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use vcs_objects::names::{validate_zone_name, validate_branch_name, validate_component, validate_path, META_DIR};
+use vcs_objects::names::{validate_branch_name, validate_component, validate_path, validate_zone_name, META_DIR};
 use vcs_objects::{ChangeId, Commit, EntryMode, Object, ObjectId, RefUpdate, Signature, Snapshot, Transaction};
 use vcs_store::{LocalStore, ObjectStore};
 
