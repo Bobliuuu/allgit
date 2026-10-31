@@ -1,0 +1,12 @@
+-- flat 200
+remote objects: 204
+fsync calls:    207
+link() calls:   0
+opens of local object files (read):  409
+distinct local object files opened:  205
+-- flat 1000
+remote objects: 1012
+fsync calls:    1015
+link() calls:   0
+opens of local object files (read):  2025
+distinct local object files opened:  1013

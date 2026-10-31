@@ -1,0 +1,10 @@
+loose {"exp":"getall","gets":20000,"us_per_get":7.8}
+packed {"exp":"getall","gets":20000,"us_per_get":12.0}
+loose {"exp":"getall","gets":20000,"us_per_get":8.2}
+packed {"exp":"getall","gets":20000,"us_per_get":12.0}
+loose {"exp":"getall","gets":20000,"us_per_get":7.8}
+packed {"exp":"getall","gets":20000,"us_per_get":12.4}
+loose {"exp":"getall","gets":20000,"us_per_get":8.7}
+packed {"exp":"getall","gets":20000,"us_per_get":12.0}
+loose {"exp":"getall","gets":20000,"us_per_get":7.8}
+packed {"exp":"getall","gets":20000,"us_per_get":12.7}

@@ -1,0 +1,6 @@
+add_all 243
+commit 7
+add_again 243
+status 4
+add_one 1
+commit_one 8
