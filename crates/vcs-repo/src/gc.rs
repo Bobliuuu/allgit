@@ -84,6 +84,7 @@ impl Repo {
         let refs = self.refs()?;
         roots.extend(refs.branches.values().copied());
         roots.extend(refs.snapshots.values().copied());
+        roots.extend(refs.tags.values().copied());
         let rrefs = self.remote_refs()?;
         roots.extend(rrefs.branches.values().copied());
         roots.extend(rrefs.snapshots.values().copied());
@@ -125,6 +126,7 @@ pub(crate) fn children(o: &Object, out: &mut Vec<ObjectId>) {
                 out.push(u.new);
             }
         }
+        Object::Tag(t) => out.push(t.target),
         Object::Operation(op) => {
             out.extend(op.parents.iter().copied());
             out.extend(op.view.branches.values().copied());
