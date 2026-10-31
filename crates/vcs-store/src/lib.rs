@@ -4,12 +4,15 @@
 //! must not depend on Tokio. The S3 backend (Milestone 3) will implement an async twin
 //! at the network boundary; see docs/architecture.md §Storage.
 
+pub mod pack;
+use pack::Pack;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::RwLock;
 use vcs_objects::{DecodeError, Object, ObjectId};
 
 #[derive(Debug, thiserror::Error)]
@@ -133,6 +136,7 @@ pub struct LocalStore {
     /// id -> tmp file written but not yet published.
     pending: Mutex<HashMap<ObjectId, PathBuf>>,
     seq: AtomicU64,
+    packs: RwLock<Vec<Pack>>,
 }
 
 /// Push a file's data to the device. On macOS `File::sync_all` is `F_FULLFSYNC` (flushes the
@@ -173,11 +177,64 @@ impl LocalStore {
     pub fn open(dir: impl Into<PathBuf>) -> Result<Self, StoreError> {
         let dir = dir.into();
         io(&dir, fs::create_dir_all(dir.join("tmp")))?;
+        let packs = Self::load_packs(&dir)?;
         Ok(Self {
             dir,
             pending: Mutex::new(HashMap::new()),
             seq: AtomicU64::new(0),
+            packs: RwLock::new(packs),
         })
+    }
+    fn load_packs(dir: &Path) -> Result<Vec<Pack>, StoreError> {
+        let pd = dir.join("pack");
+        let mut out = Vec::new();
+        let Ok(rd) = fs::read_dir(&pd) else { return Ok(out) };
+        let mut idxs: Vec<PathBuf> = rd
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "idx"))
+            .collect();
+        idxs.sort();
+        for p in idxs {
+            out.push(Pack::open(&p)?);
+        }
+        Ok(out)
+    }
+    fn packed(&self, id: &ObjectId) -> Result<Option<Vec<u8>>, StoreError> {
+        for p in self.packs.read().unwrap().iter() {
+            if let Some(b) = p.read(id)? {
+                return Ok(Some(b));
+            }
+        }
+        Ok(None)
+    }
+    fn in_pack(&self, id: &ObjectId) -> bool {
+        self.packs.read().unwrap().iter().any(|p| p.contains(id))
+    }
+    /// Move every loose object into one new pack, then delete the loose files. Returns the
+    /// number of objects packed (0 if there were none, in which case no pack is written).
+    pub fn repack(&self) -> Result<usize, StoreError> {
+        self.sync()?;
+        let loose = self.list_loose()?;
+        if loose.is_empty() {
+            return Ok(0);
+        }
+        let mut objs = Vec::with_capacity(loose.len());
+        for id in &loose {
+            let p = self.path_of(id);
+            let b = io(&p, fs::read(&p))?;
+            decode_verified(id, &b)?; // never pack something that does not hash to its name
+            objs.push((*id, b));
+        }
+        let pack = pack::write_pack(&self.dir.join("pack"), &self.dir.join("tmp"), objs)?;
+        self.packs.write().unwrap().push(pack);
+        for id in &loose {
+            let _ = fs::remove_file(self.path_of(id));
+        }
+        Ok(loose.len())
+    }
+    /// Whole-pack verification for fsck (checksums, framing, every object hash).
+    pub fn verify_packs(&self) -> Vec<String> {
+        self.packs.read().unwrap().iter().flat_map(|p| p.verify()).collect()
     }
     fn path_of(&self, id: &ObjectId) -> PathBuf {
         let h = id.to_hex();
@@ -191,7 +248,10 @@ impl ObjectStore for LocalStore {
         let p = pending.unwrap_or_else(|| self.path_of(id));
         match fs::read(&p) {
             Ok(b) => decode_verified(id, &b),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(StoreError::NotFound(*id)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => match self.packed(id)? {
+                Some(b) => decode_verified(id, &b),
+                None => Err(StoreError::NotFound(*id)),
+            },
             Err(source) => Err(StoreError::Io { path: p, source }),
         }
     }
@@ -200,7 +260,7 @@ impl ObjectStore for LocalStore {
         let enc = obj.encode();
         let id = vcs_objects::id_of_encoded(&enc);
         // Existing objects are never rewritten: one stat (or a map lookup), no write I/O.
-        if self.pending.lock().unwrap().contains_key(&id) || self.path_of(&id).exists() {
+        if self.pending.lock().unwrap().contains_key(&id) || self.path_of(&id).exists() || self.in_pack(&id) {
             return Ok(id);
         }
         let n = self.seq.fetch_add(1, Ordering::Relaxed);
@@ -260,7 +320,7 @@ impl ObjectStore for LocalStore {
     }
 
     fn contains(&self, id: &ObjectId) -> Result<bool, StoreError> {
-        Ok(self.pending.lock().unwrap().contains_key(id) || self.path_of(id).exists())
+        Ok(self.pending.lock().unwrap().contains_key(id) || self.path_of(id).exists() || self.in_pack(id))
     }
 
     fn modified(&self, id: &ObjectId) -> Result<Option<std::time::SystemTime>, StoreError> {
@@ -271,12 +331,27 @@ impl ObjectStore for LocalStore {
         let p = self.path_of(id);
         match fs::metadata(&p) {
             Ok(m) => Ok(m.modified().ok()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(StoreError::NotFound(*id)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => match self.packs.read().unwrap().iter().find(|pk| pk.contains(id)) {
+                Some(pk) => Ok(pk.modified()),
+                None => Err(StoreError::NotFound(*id)),
+            },
             Err(source) => Err(StoreError::Io { path: p, source }),
         }
     }
 
     fn list(&self) -> Result<Vec<ObjectId>, StoreError> {
+        let mut out = self.list_loose()?;
+        for p in self.packs.read().unwrap().iter() {
+            out.extend(p.ids());
+        }
+        out.sort();
+        out.dedup();
+        Ok(out)
+    }
+}
+
+impl LocalStore {
+    fn list_loose(&self) -> Result<Vec<ObjectId>, StoreError> {
         let mut out = Vec::new();
         for d in io(&self.dir, fs::read_dir(&self.dir))? {
             let d = io(&self.dir, d)?;
@@ -373,6 +448,85 @@ mod tests {
         s.sync().unwrap();
         assert_eq!(s.get_blob(&b).unwrap(), b"not yet durable");
         s.sync().unwrap(); // no-op barrier
+    }
+
+    fn packed_store() -> (tempfile::TempDir, PathBuf, Vec<ObjectId>) {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("o");
+        let s = LocalStore::open(&dir).unwrap();
+        let ids: Vec<_> = (0..20)
+            .map(|i| s.put_blob(format!("blob number {i}").as_bytes()).unwrap())
+            .collect();
+        assert_eq!(s.repack().unwrap(), 20);
+        (d, dir, ids)
+    }
+
+    #[test]
+    fn repack_reads_back_across_reopen_and_removes_loose() {
+        let (_d, dir, ids) = packed_store();
+        for reopen in [false, true] {
+            let _ = reopen;
+            let s = LocalStore::open(&dir).unwrap();
+            for (i, id) in ids.iter().enumerate() {
+                assert_eq!(s.get_blob(id).unwrap(), format!("blob number {i}").as_bytes());
+                assert!(s.contains(id).unwrap());
+                assert!(s.modified(id).unwrap().is_some());
+            }
+            let mut want = ids.clone();
+            want.sort();
+            assert_eq!(s.list().unwrap(), want);
+            assert!(s.list_loose().unwrap().is_empty());
+            assert!(s.verify_packs().is_empty());
+            assert_eq!(s.put_blob(b"blob number 3").unwrap(), ids[3], "re-put of packed object is a no-op");
+            assert!(s.list_loose().unwrap().is_empty());
+            assert_eq!(s.repack().unwrap(), 0);
+        }
+    }
+
+    fn pack_file(dir: &Path, ext: &str) -> PathBuf {
+        fs::read_dir(dir.join("pack"))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.extension().unwrap() == ext)
+            .unwrap()
+    }
+
+    #[test]
+    fn pack_bitflip_is_detected_on_get_and_verify() {
+        let (_d, dir, ids) = packed_store();
+        let pp = pack_file(&dir, "pack");
+        let mut b = fs::read(&pp).unwrap();
+        b[20] ^= 1; // inside the first object's payload
+        fs::write(&pp, b).unwrap();
+        let s = LocalStore::open(&dir).unwrap();
+        assert!(ids.iter().any(|id| matches!(s.get(id), Err(StoreError::Corrupt { .. }))));
+        assert!(!s.verify_packs().is_empty());
+    }
+
+    #[test]
+    fn truncated_pack_and_damaged_index_are_refused_at_open() {
+        let (_d, dir, _ids) = packed_store();
+        let pp = pack_file(&dir, "pack");
+        let b = fs::read(&pp).unwrap();
+        fs::write(&pp, &b[..b.len() - 10]).unwrap();
+        assert!(LocalStore::open(&dir).is_err(), "truncated pack");
+        fs::write(&pp, &b).unwrap();
+        assert!(LocalStore::open(&dir).is_ok());
+        let ip = pack_file(&dir, "idx");
+        let mut i = fs::read(&ip).unwrap();
+        i[60] ^= 1;
+        fs::write(&ip, &i).unwrap();
+        assert!(LocalStore::open(&dir).is_err(), "bad index checksum");
+        fs::write(&ip, &i[..30]).unwrap();
+        assert!(LocalStore::open(&dir).is_err(), "truncated index");
+    }
+
+    #[test]
+    fn pack_without_index_is_ignored_and_loose_wins_nothing_lost() {
+        let (_d, dir, _ids) = packed_store();
+        fs::remove_file(pack_file(&dir, "idx")).unwrap();
+        let s = LocalStore::open(&dir).unwrap();
+        assert!(s.list().unwrap().is_empty());
     }
 
     #[test]
