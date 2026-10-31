@@ -59,14 +59,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2.7.8
       - name: Start MinIO
         run: |
-          docker run -d --name minio -p 9000:9000 \
-            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
-            docker.io/minio/minio:latest server /data
+          curl -fsSL --retry 3 -o minio https://dl.min.io/server/minio/release/linux-amd64/minio
+          chmod +x minio
+          MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin \
+            nohup ./minio server "$RUNNER_TEMP/minio-data" --address 127.0.0.1:9000 > minio.log 2>&1 &
           for i in $(seq 1 30); do
             curl -sf http://127.0.0.1:9000/minio/health/live && exit 0
             sleep 1
           done
-          echo "MinIO did not become healthy"; exit 1
+          cat minio.log; echo "MinIO did not become healthy"; exit 1
       - run: cargo test -p vcs-store-s3 -p vcs-cli
         env:
           VCS_TEST_S3_ENDPOINT: http://127.0.0.1:9000
