@@ -80,6 +80,12 @@ pub fn validate_path(s: &str) -> Result<(), NameError> {
     Ok(())
 }
 
+/// True if `a` and `b` are equal or one is a component-wise prefix of the other.
+pub fn paths_overlap(a: &str, b: &str) -> bool {
+    let pre = |x: &str, y: &str| x == y || (y.starts_with(x) && y.as_bytes()[x.len()] == b'/');
+    pre(a, b) || pre(b, a)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
