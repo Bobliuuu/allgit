@@ -18,6 +18,21 @@ vcs zone branch engine feature && vcs zone checkout engine feature
 vcs status && vcs zone list
 ```
 
+<!-- remotes:begin -->
+### Remotes
+
+```bash
+vcs remote set /srv/shared/demo.vcs      # or file:///srv/shared/demo.vcs
+vcs publish                              # atomic multi-zone publish; prints zone/branch old -> new
+vcs clone /srv/shared/demo.vcs work --zone engine   # sparse: other zones listed as skipped
+vcs fetch [--zone A]                     # update remote-tracking refs, local branches untouched
+vcs sync                                 # fast-forward where safe (up to date / ahead / diverged / dirty)
+vcs remote show
+```
+
+Only local directories and `file://` are supported in this build; other schemes (e.g. `s3://`) give a clear error.
+<!-- remotes:end -->
+
 Set `VCS_AUTHOR_NAME` / `VCS_AUTHOR_EMAIL` to control commit authorship.
 
 Implemented: local repository, zones (independent branch heads, sparse subscription, atomic multi-zone commit),

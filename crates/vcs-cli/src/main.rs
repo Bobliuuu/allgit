@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 use vcs_objects::{ObjectId, Signature};
-use vcs_repo::{ChangeKind, Error, Repo, ROOT_ZONE};
+use vcs_remote::Outcome;
+use vcs_repo::{ChangeKind, Error, Repo, SyncAction, ROOT_ZONE};
+
+mod remote;
 
 #[derive(Parser)]
 #[command(name = "vcs", version, about = "Native zone-aware version control")]
@@ -58,6 +61,29 @@ enum Cmd {
     /// Manage snapshots (pinned sets of zone versions)
     #[command(subcommand)]
     Snapshot(SnapCmd),
+    /// Manage the remote
+    #[command(subcommand)]
+    Remote(RemoteCmd),
+    /// Clone a remote into a new directory (sparse with --zone)
+    Clone {
+        url: String,
+        dir: PathBuf,
+        /// Only download these zones (repeatable)
+        #[arg(long = "zone")]
+        zones: Vec<String>,
+    },
+    /// Publish checked-out branches to the remote in one atomic transaction
+    Publish {
+        #[arg(long = "zone")]
+        zones: Vec<String>,
+    },
+    /// Download remote objects and update remote-tracking refs (local branches untouched)
+    Fetch {
+        #[arg(long = "zone")]
+        zones: Vec<String>,
+    },
+    /// Fetch, then fast-forward local branches where safe
+    Sync,
     /// Verify all objects and graph invariants
     Fsck,
 }
@@ -96,6 +122,14 @@ enum ZoneCmd {
     Remove {
         name: String,
     },
+}
+
+#[derive(Subcommand)]
+enum RemoteCmd {
+    /// Set the remote location (path or file:// URL)
+    Set { url: String },
+    /// Show the configured remote
+    Show,
 }
 
 #[derive(Subcommand)]
@@ -144,6 +178,19 @@ fn kind_label(k: ChangeKind) -> &'static str {
 
 fn opt_short(i: Option<ObjectId>) -> String {
     i.map(|i| i.short()).unwrap_or_else(|| "(none)".into())
+}
+
+fn list_or_none(v: &[String]) -> String {
+    if v.is_empty() {
+        "(none)".into()
+    } else {
+        v.join(", ")
+    }
+}
+
+fn need_remote(repo: &Repo) -> Result<String, Error> {
+    repo.remote_url()?
+        .ok_or_else(|| Error::Msg("no remote configured\n\nOptions:\n  vcs remote set <url>".into()))
 }
 
 fn run(cli: Cli) -> Result<(), Error> {
@@ -342,6 +389,92 @@ fn run(cli: Cli) -> Result<(), Error> {
                         println!("{n:<20} {}", id.short());
                     }
                 }
+            }
+        }
+        Cmd::Remote(r) => {
+            let (repo, cwd) = open()?;
+            match r {
+                RemoteCmd::Set { url } => {
+                    let url = remote::normalize_url(&url, &cwd);
+                    repo.set_remote(&url)?;
+                    println!("remote set to {url}");
+                }
+                RemoteCmd::Show => match repo.remote_url()? {
+                    Some(u) => {
+                        println!("remote: {u}");
+                        let rr = repo.remote_refs()?;
+                        if rr.branches.is_empty() {
+                            println!("no remote-tracking refs yet (run `vcs fetch`)");
+                        }
+                        for ((a, b), id) in &rr.branches {
+                            println!("  {a}/{b} @ {}", id.short());
+                        }
+                    }
+                    None => println!("no remote configured (use `vcs remote set <url>`)"),
+                },
+            }
+        }
+        Cmd::Clone { url, dir, zones } => {
+            let cwd = std::env::current_dir().map_err(|source| Error::Io { path: ".".into(), source })?;
+            let url = remote::normalize_url(&url, &cwd);
+            let backend = remote::open_backend(&url)?;
+            let want = (!zones.is_empty()).then_some(zones.as_slice());
+            let repo = Repo::clone_from(backend.as_ref(), &url, &dir, want)?;
+            let defs = repo.zones()?;
+            let ws = repo.workspace()?;
+            let (got, skipped): (Vec<_>, Vec<_>) = defs.names().map(str::to_owned).partition(|n| ws.subs.contains_key(n));
+            println!("Cloned {url} into {}", dir.display());
+            println!("downloaded zones: {}", list_or_none(&got));
+            println!("skipped zones (not subscribed): {}", list_or_none(&skipped));
+            if !skipped.is_empty() {
+                println!("  add one later with `vcs zone add <name>` then `vcs fetch --zone <name>`");
+            }
+        }
+        Cmd::Publish { zones } => {
+            let (repo, _) = open()?;
+            let backend = remote::open_backend(&need_remote(&repo)?)?;
+            let want = (!zones.is_empty()).then_some(zones.as_slice());
+            let rep = repo.publish(backend.as_ref(), want, author())?;
+            if rep.updated.is_empty() {
+                println!("nothing to publish");
+            }
+            for (a, b, old, new) in &rep.updated {
+                println!("{a}/{b} {} -> {}", opt_short(*old), new.short());
+            }
+            match rep.outcome {
+                Some(Outcome::Applied { generation }) => println!("published atomically (remote generation {generation})"),
+                Some(Outcome::AlreadyApplied) => println!("transaction was already applied on the remote"),
+                None => {}
+            }
+        }
+        Cmd::Fetch { zones } => {
+            let (repo, _) = open()?;
+            let backend = remote::open_backend(&need_remote(&repo)?)?;
+            let want = (!zones.is_empty()).then_some(zones.as_slice());
+            let got = repo.fetch(backend.as_ref(), want)?;
+            if got.is_empty() {
+                println!("nothing fetched");
+            }
+            for (a, b, id) in got {
+                println!("fetched {a}/{b} @ {}", id.short());
+            }
+        }
+        Cmd::Sync => {
+            let (repo, _) = open()?;
+            let backend = remote::open_backend(&need_remote(&repo)?)?;
+            let rep = repo.sync(backend.as_ref())?;
+            for (a, b, act) in &rep.actions {
+                let what = match act {
+                    SyncAction::UpToDate => "up to date".to_owned(),
+                    SyncAction::FastForwarded { from, to } => {
+                        format!("fast-forwarded {} -> {}", opt_short(*from), to.short())
+                    }
+                    SyncAction::Ahead => "ahead of remote (run `vcs publish`)".into(),
+                    SyncAction::Diverged => "diverged (needs merge, not implemented)".into(),
+                    SyncAction::Dirty => "dirty (left untouched; commit or discard changes first)".into(),
+                    SyncAction::NoRemote => "not on the remote yet (run `vcs publish`)".into(),
+                };
+                println!("{a}/{b}: {what}");
             }
         }
         Cmd::Fsck => {
