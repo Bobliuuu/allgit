@@ -40,6 +40,17 @@ pub enum PublishError {
     Local(#[from] StoreError),
     #[error("remote data invalid: {0}")]
     Remote(String),
+    #[error("{path} in zone {zone} is locked by {holder} until {expires_at} (unix ms)")]
+    LockedBy {
+        zone: String,
+        path: String,
+        holder: String,
+        expires_at: u64,
+    },
+    #[error("lock on {path} in zone {zone} is not held with the presented token (broken, expired and re-taken, or never held)")]
+    LockBroken { zone: String, path: String },
+    #[error("{path} in zone {zone} is locked by {holder}; only the holder can release it")]
+    NotHolder { zone: String, path: String, holder: String },
     #[error("zone definition conflict: {0}")]
     ZoneConflict(String),
 }
@@ -90,6 +101,9 @@ pub struct Publisher<'a> {
     retries: u32,
     zones: BTreeMap<String, String>,
     labels: BTreeMap<String, String>,
+    principal: String,
+    clock: Box<dyn Fn() -> u64 + 'a>,
+    fault: Option<crate::locks::LockFault>,
 }
 
 /// Dependencies of an object (what must exist remotely before it may).
@@ -164,7 +178,30 @@ impl<'a> Publisher<'a> {
             retries: 0,
             zones: BTreeMap::new(),
             labels: BTreeMap::new(),
+            principal: String::new(),
+            clock: Box::new(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0)
+            }),
+            fault: None,
         }
+    }
+    /// The authenticated identity lock decisions are made for (NOT `Transaction.author`).
+    pub fn with_principal(mut self, p: impl Into<String>) -> Self {
+        self.principal = p.into();
+        self
+    }
+    /// Validator clock in unix ms (injectable for tests and the model checker).
+    pub fn with_clock(mut self, c: impl Fn() -> u64 + 'a) -> Self {
+        self.clock = Box::new(c);
+        self
+    }
+    #[doc(hidden)]
+    pub fn with_lock_fault(mut self, f: crate::locks::LockFault) -> Self {
+        self.fault = Some(f);
+        self
     }
     /// Zone definitions (name -> path) to register in the manifest atomically with this tx.
     pub fn with_zones(mut self, zones: BTreeMap<String, String>) -> Self {
@@ -326,6 +363,24 @@ impl<'a> Publisher<'a> {
                         None => new.labels.remove(n),
                     };
                 }
+                if !self.tx.lock_ops.is_empty() || cur.has_lock_state() {
+                    let (backend, now) = (self.backend, (self.clock)());
+                    let r = crate::locks::apply(&cur, &mut new, &self.tx, &self.principal, now, self.fault, &mut |i| {
+                        let u = &self.tx.updates[i];
+                        changed_paths(backend, u.old, u.new)
+                    });
+                    match r {
+                        Ok(()) => {}
+                        Err(PublishError::Backend(e)) => {
+                            self.state = State::Load;
+                            return self.retry(e);
+                        }
+                        Err(e) => {
+                            self.state = State::Finished;
+                            return Err(e);
+                        }
+                    }
+                }
                 new.generation += 1;
                 for u in &self.tx.updates {
                     new.branches.insert((u.zone.clone(), u.branch.clone()), u.new);
@@ -370,6 +425,83 @@ impl<'a> Publisher<'a> {
             }
         }
     }
+}
+
+fn tree_of(backend: &dyn Backend, id: &ObjectId) -> Result<vcs_objects::Tree, PublishError> {
+    match fetch_object(backend, id)? {
+        Object::Tree(t) => Ok(t),
+        _ => Err(PublishError::Remote(format!("object {id} is not a tree"))),
+    }
+}
+fn root_of(backend: &dyn Backend, commit: &ObjectId) -> Result<ObjectId, PublishError> {
+    match fetch_object(backend, commit)? {
+        Object::Commit(c) => Ok(c.root),
+        _ => Err(PublishError::Remote(format!("object {commit} is not a commit"))),
+    }
+}
+
+/// All files at or below an entry (a file yields itself).
+fn files_under(backend: &dyn Backend, prefix: &str, e: &vcs_objects::TreeEntry, out: &mut BTreeSet<String>) -> Result<(), PublishError> {
+    let path = if prefix.is_empty() {
+        e.name.clone()
+    } else {
+        format!("{prefix}/{}", e.name)
+    };
+    if e.mode == vcs_objects::EntryMode::Directory {
+        for c in tree_of(backend, &e.id)?.entries() {
+            files_under(backend, &path, c, out)?;
+        }
+    } else {
+        out.insert(path);
+    }
+    Ok(())
+}
+
+fn diff_trees(
+    backend: &dyn Backend,
+    prefix: &str,
+    a: Option<&ObjectId>,
+    b: &ObjectId,
+    out: &mut BTreeSet<String>,
+) -> Result<(), PublishError> {
+    let tb = tree_of(backend, b)?;
+    let ta = match a {
+        Some(a) if a == b => return Ok(()),
+        Some(a) => Some(tree_of(backend, a)?),
+        None => None,
+    };
+    let old: BTreeMap<&str, &vcs_objects::TreeEntry> = ta.iter().flat_map(|t| t.entries().iter()).map(|e| (e.name.as_str(), e)).collect();
+    let join = |n: &str| if prefix.is_empty() { n.to_owned() } else { format!("{prefix}/{n}") };
+    for e in tb.entries() {
+        match old.get(e.name.as_str()) {
+            Some(o) if o.id == e.id && o.mode == e.mode => {}
+            Some(o) if o.mode == vcs_objects::EntryMode::Directory && e.mode == vcs_objects::EntryMode::Directory => {
+                diff_trees(backend, &join(&e.name), Some(&o.id), &e.id, out)?
+            }
+            Some(o) => {
+                files_under(backend, prefix, o, out)?;
+                files_under(backend, prefix, e, out)?;
+            }
+            None => files_under(backend, prefix, e, out)?,
+        }
+    }
+    let new_names: BTreeSet<&str> = tb.entries().iter().map(|e| e.name.as_str()).collect();
+    for (n, o) in &old {
+        if !new_names.contains(n) {
+            files_under(backend, prefix, o, out)?;
+        }
+    }
+    Ok(())
+}
+
+/// Net changed file paths (zone-relative) between two commits: adds, modifications, deletions,
+/// mode changes; a rename contributes both paths. `old = None` diffs against the empty tree.
+pub fn changed_paths(backend: &dyn Backend, old: Option<ObjectId>, new: ObjectId) -> Result<BTreeSet<String>, PublishError> {
+    let nr = root_of(backend, &new)?;
+    let or = old.map(|o| root_of(backend, &o)).transpose()?;
+    let mut out = BTreeSet::new();
+    diff_trees(backend, "", or.as_ref(), &nr, &mut out)?;
+    Ok(out)
 }
 
 /// Read and validate the manifest. Missing manifest = empty repository (tag `None`).
