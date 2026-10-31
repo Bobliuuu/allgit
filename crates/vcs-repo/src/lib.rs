@@ -4,6 +4,7 @@
 pub mod diff;
 pub mod error;
 pub mod index;
+pub mod merge;
 pub mod meta;
 pub mod ops;
 pub mod repo;
@@ -11,6 +12,7 @@ pub mod sync;
 pub mod treeops;
 
 pub use error::{Error, Result};
+pub use merge::{ConflictRec, MergeOutcome, MergeState};
 pub use meta::{DEFAULT_BRANCH, ROOT_ZONE};
 pub use repo::{AddReport, ZoneStatus, Change, ChangeKind, CommitReport, FsckReport, Repo, Status};
 pub use sync::{PublishReport, SyncAction, SyncReport};

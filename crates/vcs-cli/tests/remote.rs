@@ -103,7 +103,10 @@ fn multi_zone_remote_workflow() {
     assert!(err.contains("Cannot publish engine/main"), "{err}");
     assert!(err.contains("Options:\n  vcs sync"), "{err}");
     let out = ok(&c, &["sync"]);
-    assert!(out.contains("engine/main: diverged (needs merge, not implemented)"), "{out}");
+    assert!(
+        out.contains("engine/main: diverged; merge with `vcs merge --remote main --zone engine`"),
+        "{out}"
+    );
 }
 
 #[test]

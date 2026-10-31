@@ -52,6 +52,8 @@ pub struct Status {
     pub unsubscribed: Vec<String>,
     /// Symlinks / special files that vcs cannot track yet.
     pub unsupported: Vec<String>,
+    /// In-progress merge (`.vcs/conflicts`), if any.
+    pub merging: Option<crate::merge::MergeState>,
 }
 
 #[derive(Debug, Default)]
@@ -256,6 +258,7 @@ impl Repo {
         for p in rel_paths {
             self.add_one(p, &zones, &ws, &mut ix, &mut rep)?;
         }
+        self.note_resolved(rel_paths, &ix)?;
         self.save_index(&mut ix)?;
         Ok(rep)
     }
@@ -456,6 +459,7 @@ impl Repo {
             }
         }
         self.walk_untracked("", &zones, &ws, &ix, &mut st)?;
+        st.merging = self.merge_state()?;
         Ok(st)
     }
 
@@ -562,6 +566,7 @@ impl Repo {
             return msg("empty commit message");
         }
         let _l = self.lock()?;
+        let merging = self.merge_commit_guard()?;
         let zones = self.zones()?;
         let ws = self.workspace()?;
         let mut refs = self.refs()?;
@@ -585,13 +590,17 @@ impl Repo {
                 continue;
             }
             let root = treeops::build(&self.store, entries)?;
-            if Some(root) == parent_root {
+            let second = merging
+                .as_ref()
+                .filter(|m| m.zone == *zone && Some(m.ours) == parent)
+                .map(|m| m.theirs);
+            if Some(root) == parent_root && second.is_none() {
                 continue;
             }
             let change_id = fresh_change_id(zone, &root, parent.as_ref(), &author);
             let c = Commit {
                 zone: zone.clone(),
-                parents: parent.into_iter().collect(),
+                parents: parent.into_iter().chain(second).collect(),
                 root,
                 change_id,
                 author: author.clone(),
@@ -618,6 +627,9 @@ impl Repo {
         }))?;
         refs.apply(&updates)?;
         write_atomic(&self.vcs.join("refs"), &refs.encode())?; // linearization point
+        if merging.is_some() {
+            self.clear_merge_state()?;
+        }
         let first = message.lines().next().unwrap_or("");
         self.record_op(&format!("commit: {first}"), Some(op_author))?;
         Ok(CommitReport { transaction: tx, commits })
@@ -718,6 +730,11 @@ impl Repo {
     }
 
     pub(crate) fn require_clean(&self, zone: &str, st: &Status) -> Result<()> {
+        if st.merging.as_ref().is_some_and(|m| m.zone == zone) {
+            return msg(format!(
+                "zone {zone:?} is in the middle of a merge; resolve and commit, or `vcs merge --abort`"
+            ));
+        }
         let a = st.zones.iter().find(|a| a.zone == zone).expect("subscribed");
         if !a.staged.is_empty() || !a.unstaged.is_empty() {
             return msg(format!(
@@ -1031,7 +1048,7 @@ impl Repo {
     }
 }
 
-fn fresh_change_id(zone: &str, root: &ObjectId, parent: Option<&ObjectId>, author: &Signature) -> ChangeId {
+pub(crate) fn fresh_change_id(zone: &str, root: &ObjectId, parent: Option<&ObjectId>, author: &Signature) -> ChangeId {
     // Unique per new logical change: mixes wall-clock nanos, pid, and a process-wide counter
     // with content context. Not a secret; collision resistance only.
     use std::sync::atomic::{AtomicU64, Ordering};

@@ -92,7 +92,7 @@ A non-fast-forward publish is refused with guidance instead of overwriting remot
 | Remote protocol | ✅ | single CAS manifest, idempotent publish, **model-checked** (~1.7M crash/interleaving schedules) |
 | Backends | ✅ | in-memory, filesystem, S3-compatible (tested on MinIO only, HTTP, no TLS) |
 | Sparse fetch | ✅ | tests assert an unsubscribed zone's bytes are never read |
-| Merge engine | 🟡 | `vcs-merge`: merge-base, diff3 (Myers/patience), structured tree conflicts; **not wired into the CLI yet** |
+| Merge engine | 🟡 | `vcs-merge`: merge-base, diff3 (Myers/patience), structured tree conflicts; wired into `vcs merge` (fast-forward, three-way, conflict state, `--abort`); no rename detection, criss-cross and file/directory conflicts are errors |
 | Benchmarks | 🟡 | first baseline in [docs/benchmarks.md](docs/benchmarks.md); `add` is currently **much slower than Git** (tracked in #21) |
 | Operation log / undo, rebase | ⬜ | [#4](https://github.com/Bobliuuu/all-git/issues/4) |
 | Locks & leases (server-enforced) | ⬜ | design first: [#7](https://github.com/Bobliuuu/all-git/issues/7) |
