@@ -3,6 +3,7 @@
 
 pub mod diff;
 pub mod error;
+pub mod export;
 pub mod gc;
 pub mod import;
 pub mod index;
@@ -15,6 +16,7 @@ pub mod sync;
 pub mod treeops;
 
 pub use error::{Error, Result};
+pub use export::ExportReport;
 pub use gc::GcReport;
 pub use import::ImportReport;
 pub use merge::{ConflictRec, MergeOutcome, MergeState};
