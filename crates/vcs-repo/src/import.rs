@@ -3,14 +3,16 @@
 //! The importer never runs `git`; it parses the stream (see `git-fast-import(1)` for the
 //! format) and writes blobs, trees and commits through the normal object store.
 //!
-//! * Each `refs/heads/<name>` becomes branch `<name>` of the root zone. Other refs (tags,
-//!   remotes, notes) are counted and skipped.
+//! * Each `refs/heads/<name>` becomes branch `<name>` of the root zone. `refs/tags/<name>`
+//!   (lightweight) and `tag` commands (annotated) become tags of the root zone. Other refs
+//!   (remotes, notes) are counted and skipped.
 //! * Id mapping: commits and blobs are keyed by Git's `original-oid` (stream produced with
 //!   `--show-original-ids`) or, lacking one, by `mark:<n>`. The table lives in `.vcs/git-import`.
 //!   Mark keys are only meaningful when the same producer keeps its marks stable.
 //! * Re-import is incremental: mapped commits are skipped, and since every id is derived
 //!   from content (the change id is derived from the Git key), re-running writes nothing new.
-//! * Symlinks, submodules and paths vcs cannot represent are skipped and reported.
+//! * Symlinks (120000) are imported. Submodules (160000) and paths vcs cannot represent are skipped
+//!   and reported (`submodules`, `paths_skipped`).
 
 use crate::error::{msg, Error, Result};
 use crate::meta::{write_atomic, ROOT_ZONE};
@@ -40,6 +42,14 @@ pub struct ImportReport {
     pub branches_updated: Vec<(String, ObjectId)>,
     pub refs_ignored: Vec<String>,
     pub paths_skipped: Vec<String>,
+    /// Gitlink (mode 160000) paths that were skipped; submodule contents are not imported.
+    pub submodules: Vec<String>,
+    /// Symlink entries applied to trees (counted per modification).
+    pub symlinks: usize,
+    /// Tags newly created in the root zone.
+    pub tags_imported: usize,
+    /// Tags not imported, with the reason (bad name, non-commit target, name taken by another target).
+    pub tags_skipped: Vec<String>,
 }
 
 enum Op {
@@ -65,6 +75,14 @@ struct GitCommit {
     from: Option<String>,
     merges: Vec<String>,
     ops: Vec<Op>,
+}
+
+struct GitTag {
+    name: String,
+    mark: Option<String>,
+    from: String,
+    tagger: Option<Signature>,
+    message: Vec<u8>,
 }
 
 struct Parser<R: BufRead> {
@@ -312,6 +330,40 @@ fn parse_commit<R: BufRead>(p: &mut Parser<R>, refname: String) -> Result<GitCom
     Ok(c)
 }
 
+fn parse_tag<R: BufRead>(p: &mut Parser<R>, name: String) -> Result<GitTag> {
+    let mut t = GitTag {
+        name,
+        mark: None,
+        from: String::new(),
+        tagger: None,
+        message: Vec::new(),
+    };
+    let mut have_from = false;
+    loop {
+        let Some(line) = p.next()? else {
+            return msg("tag without data");
+        };
+        if let Some(v) = line.strip_prefix(b"mark ") {
+            t.mark = Some(s(v)?.trim().to_owned());
+        } else if line.starts_with(b"original-oid ") {
+        } else if let Some(v) = line.strip_prefix(b"from ") {
+            t.from = s(v)?.trim().to_owned();
+            have_from = true;
+        } else if let Some(v) = line.strip_prefix(b"tagger ") {
+            t.tagger = Some(parse_sig(v)?);
+        } else if line.starts_with(b"data ") {
+            t.message = p.data(&line)?;
+            break;
+        } else {
+            return msg("unexpected line in tag");
+        }
+    }
+    if !have_from {
+        return msg("tag without `from`");
+    }
+    Ok(t)
+}
+
 fn git_change_id(key: &str) -> ChangeId {
     let mut h = blake3::Hasher::new_derive_key("all-git 2026 git import change id v1");
     h.update(key.as_bytes());
@@ -325,6 +377,7 @@ struct Importer<'a> {
     map: BTreeMap<String, ObjectId>,
     marks: HashMap<String, ObjectId>, // ":n" -> blob or commit id
     tips: HashMap<String, ObjectId>,  // refname -> commit
+    tags: Vec<(String, ObjectId)>,    // tag name -> ref value (commit or annotated tag object)
     flat_cache: Option<(ObjectId, Flat)>,
     report: ImportReport,
     new_keys: usize,
@@ -361,7 +414,46 @@ impl Importer<'_> {
                 return Ok(*id);
             }
         }
+        if let Some(id) = self.tips.get(r) {
+            return Ok(*id);
+        }
         msg(format!("stream references unknown object {r:?}"))
+    }
+
+    /// Handle a `tag` command: store an annotated tag object for the target commit.
+    fn tag(&mut self, t: GitTag) -> Result<()> {
+        if validate_branch_name(&t.name).is_err() {
+            self.report.tags_skipped.push(format!("{} (name not representable)", t.name));
+            return Ok(());
+        }
+        let target = self.resolve(&t.from)?;
+        let commit = match self.repo.store.get(&target) {
+            Ok(Object::Commit(c)) => c,
+            _ => {
+                self.report.tags_skipped.push(format!("{} (target is not a commit)", t.name));
+                return Ok(());
+            }
+        };
+        let tagger = t.tagger.unwrap_or_else(|| commit.author.clone());
+        let message = String::from_utf8_lossy(&t.message).into_owned();
+        let obj = Object::Tag(vcs_objects::AnnotatedTag {
+            zone: ROOT_ZONE.into(),
+            name: t.name.clone(),
+            target,
+            tagger,
+            message,
+            signature: Vec::new(),
+        });
+        if Object::decode(&obj.encode()).is_err() {
+            self.report.tags_skipped.push(format!("{} (exceeds object limits)", t.name));
+            return Ok(());
+        }
+        let id = self.put(&obj)?;
+        if let Some(m) = t.mark {
+            self.marks.insert(format!(":{}", m.trim_start_matches(':')), id);
+        }
+        self.tags.push((t.name, id));
+        Ok(())
     }
 
     fn flat_of(&mut self, commit: &ObjectId) -> Result<Flat> {
@@ -520,8 +612,17 @@ impl Importer<'_> {
                 let m = match mode {
                     0o100644 | 0o644 => EntryMode::File,
                     0o100755 | 0o755 => EntryMode::Executable,
+                    0o120000 => {
+                        self.report.symlinks += 1;
+                        EntryMode::Symlink
+                    }
+                    0o160000 => {
+                        self.report.submodules.push(p.clone());
+                        remove_prefix(flat, &p);
+                        return Ok(());
+                    }
                     _ => {
-                        // symlink (120000), gitlink (160000), tree (040000)
+                        // tree (040000) or an unknown mode
                         self.report.paths_skipped.push(format!("{p} (mode {mode:o})"));
                         remove_prefix(flat, &p);
                         return Ok(());
@@ -569,6 +670,7 @@ impl Repo {
             map,
             marks: HashMap::new(),
             tips: HashMap::new(),
+            tags: Vec::new(),
             flat_cache: None,
             report: ImportReport::default(),
             new_keys: 0,
@@ -596,14 +698,9 @@ impl Repo {
                 } else {
                     imp.tips.remove(&r);
                 }
-            } else if line.starts_with(b"tag ") {
-                ignored.insert(String::from_utf8_lossy(&line[4..]).into_owned());
-                while let Some(l) = p.next()? {
-                    if l.starts_with(b"data ") {
-                        p.data(&l)?;
-                        break;
-                    }
-                }
+            } else if let Some(n) = line.strip_prefix(b"tag ") {
+                let gt = parse_tag(&mut p, s(n)?.trim().to_owned())?;
+                imp.tag(gt)?;
             } else if line.starts_with(b"progress ")
                 || line.starts_with(b"feature ")
                 || line.starts_with(b"option ")
@@ -623,6 +720,14 @@ impl Repo {
         let mut tips: Vec<(&String, &ObjectId)> = imp.tips.iter().collect();
         tips.sort();
         for (r, id) in tips {
+            if let Some(name) = r.strip_prefix("refs/tags/") {
+                if validate_branch_name(name).is_ok() && imp.repo.commit_obj(id).is_ok() {
+                    imp.tags.push((name.to_owned(), *id));
+                } else {
+                    imp.report.tags_skipped.push(format!("{name} (name not representable)"));
+                }
+                continue;
+            }
             let Some(branch) = r.strip_prefix("refs/heads/") else {
                 ignored.insert(r.clone());
                 continue;
@@ -675,6 +780,24 @@ impl Repo {
             write_atomic(&mp, t.as_bytes())?;
         }
         let mut report = imp.report;
+        let mut tags_changed = false;
+        for (name, val) in &imp.tags {
+            let key = (ROOT_ZONE.to_owned(), name.clone());
+            match refs.tags.get(&key) {
+                Some(old) if old == val => {}
+                Some(_) => report.tags_skipped.push(format!("{name} (tag already exists with another target)")),
+                None => {
+                    refs.tags.insert(key, *val);
+                    report.tags_imported += 1;
+                    tags_changed = true;
+                }
+            }
+        }
+        if tags_changed && updates.is_empty() {
+            let message = format!("import git tags ({})", report.tags_imported);
+            write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+            self.record_op(&message, None)?;
+        }
         if !updates.is_empty() {
             let author = Signature {
                 name: "vcs import-git".into(),
