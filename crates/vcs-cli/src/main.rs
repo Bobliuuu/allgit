@@ -117,6 +117,15 @@ enum Cmd {
     Sync,
     /// Verify all objects and graph invariants
     Fsck,
+    /// Report unreachable objects that garbage collection would delete (deletes nothing)
+    Gc {
+        /// Required: destructive GC is not implemented, see docs/gc.md
+        #[arg(long)]
+        dry_run: bool,
+        /// Keep unreachable objects younger than this many seconds (default 14 days)
+        #[arg(long, default_value_t = 14 * 24 * 3600)]
+        grace_secs: u64,
+    },
     /// Operation log: inspect, undo, restore (local branches and workspace only)
     #[command(subcommand)]
     Op(OpCmd),
@@ -695,6 +704,28 @@ fn run(cli: Cli) -> Result<(), Error> {
                     println!("restored view of {}; recorded operation {}", target.short(), id.short());
                 }
             }
+        }
+        Cmd::Gc { dry_run, grace_secs } => {
+            if !dry_run {
+                return Err(Error::Msg(
+                    "only `vcs gc --dry-run` is implemented; nothing is ever deleted (see docs/gc.md)".into(),
+                ));
+            }
+            let (repo, _) = open()?;
+            let r = repo.gc_plan(std::time::Duration::from_secs(grace_secs))?;
+            println!("{} objects: {} reachable", r.total, r.reachable);
+            println!(
+                "{} unreachable but younger than the {grace_secs}s grace period (kept)",
+                r.kept_young.len()
+            );
+            if r.missing_referenced > 0 {
+                println!("{} referenced objects are missing (run `vcs fsck`)", r.missing_referenced);
+            }
+            println!("{} unreachable and old enough: would delete", r.would_delete.len());
+            for (id, kind) in &r.would_delete {
+                println!("  would delete {} {kind:?}", id.short());
+            }
+            println!("dry run: nothing was deleted");
         }
         Cmd::Fsck => {
             let (repo, _) = open()?;

@@ -49,6 +49,11 @@ pub trait ObjectStore: Send + Sync {
     fn contains(&self, id: &ObjectId) -> Result<bool, StoreError>;
     /// Enumerate all stored ids (fsck / GC mark phase). Not for hot paths.
     fn list(&self) -> Result<Vec<ObjectId>, StoreError>;
+    /// When the object was written, if the store can tell. `None` means unknown, and callers
+    /// that delete (GC) must then treat the object as brand new and keep it.
+    fn modified(&self, _id: &ObjectId) -> Result<Option<std::time::SystemTime>, StoreError> {
+        Ok(None)
+    }
 
     fn put_blob(&self, data: &[u8]) -> Result<ObjectId, StoreError> {
         self.put(&Object::Blob(data.to_vec()))
@@ -256,6 +261,19 @@ impl ObjectStore for LocalStore {
 
     fn contains(&self, id: &ObjectId) -> Result<bool, StoreError> {
         Ok(self.pending.lock().unwrap().contains_key(id) || self.path_of(id).exists())
+    }
+
+    fn modified(&self, id: &ObjectId) -> Result<Option<std::time::SystemTime>, StoreError> {
+        // Written but not yet published objects are, by definition, brand new.
+        if self.pending.lock().unwrap().contains_key(id) {
+            return Ok(Some(std::time::SystemTime::now()));
+        }
+        let p = self.path_of(id);
+        match fs::metadata(&p) {
+            Ok(m) => Ok(m.modified().ok()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(StoreError::NotFound(*id)),
+            Err(source) => Err(StoreError::Io { path: p, source }),
+        }
     }
 
     fn list(&self) -> Result<Vec<ObjectId>, StoreError> {

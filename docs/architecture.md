@@ -136,7 +136,7 @@ the idempotency check or reversing upload order makes the model fail.
 | partial upload | object invisible until complete; closure invariant (model) |
 | store unavailable | `Unknown`, no local state marked published (`unavailable_backend_yields_unknown_not_success`) |
 | reader sees old manifest | consistent older state |
-| GC races publish | **no GC exists yet**; design in §GC |
+| GC races publish | **no destructive GC exists**; design in [gc.md](gc.md) |
 
 **Sparse fetch**: `fetch_heads(zones)` reads the manifest then only objects reachable from the requested zones' heads;
 tests assert an unsubscribed 500 KB zone is never read. Every fetched object is hash-verified and stored dependencies-first.
@@ -153,7 +153,7 @@ manifest `applied` window > 4096 (older retries are rejected as Diverged, never 
 Mark from: all branch heads in retained manifests, named snapshots, protected operation history, tags, in-flight
 transactions (leases), pinned objects. Sweep only objects older than the grace window and absent from the mark set.
 No destructive GC will be implemented until the reachability tests (including a concurrent-publish model test) exist.
-Local `fsck` (read-only) exists today.
+Local `fsck` (read-only) and `vcs gc --dry-run` (report-only) exist today. Full design: [gc.md](gc.md).
 
 ## Merge / operations / semantic layers [design]
 Specified in the roadmap. Hooks already present: `Commit.change_id` (fresh per new commit today; rewrite operations
