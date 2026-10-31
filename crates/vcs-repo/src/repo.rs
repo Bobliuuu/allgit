@@ -649,6 +649,8 @@ impl Repo {
             let mut handles = Vec::new();
             for (i, (rel, ig)) in subdirs.iter().enumerate() {
                 let child = if *ig { stack.inherit() } else { stack.clone() };
+                // `fetch_update` is renamed `try_update` on newer toolchains; keep the name older ones know.
+                #[allow(deprecated)]
                 let take = budget
                     .fetch_update(Ordering::AcqRel, Ordering::Acquire, |b| b.checked_sub(1))
                     .is_ok();
