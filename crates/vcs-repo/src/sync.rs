@@ -133,13 +133,22 @@ impl Repo {
         Ok(true)
     }
 
-    /// Is `anc` reachable from `desc` (or equal)? Linear in history; a commit-graph index is M5.
+    /// Is `anc` reachable from `desc` (or equal)? Uses the commit-graph when available.
     pub fn is_ancestor(&self, anc: ObjectId, desc: ObjectId) -> Result<bool> {
+        // A short walk answers the common near-tip case without loading the graph; past the
+        // budget (long or negative searches) the generation numbers prune the walk instead.
+        let mut budget = 256usize;
         let mut seen = BTreeSet::new();
         let mut stack = vec![desc];
         while let Some(id) = stack.pop() {
             if id == anc {
                 return Ok(true);
+            }
+            if seen.len() == budget {
+                budget = usize::MAX;
+                if let Some(g) = self.commit_graph(&[anc, desc]) {
+                    return vcs_merge::is_ancestor(&g, &anc, &desc).map_err(|e| Error::Corrupt(e.to_string()));
+                }
             }
             if !seen.insert(id) {
                 continue;

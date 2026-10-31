@@ -180,18 +180,47 @@ fn bench_log(c: &mut Criterion) {
         .and_then(|s| s.parse().ok())
         .unwrap_or(10_000);
     let d = tempfile::tempdir().unwrap();
-    let r = Repo::init(d.path()).unwrap();
-    for i in 0..commits {
+    let mut r = Repo::init(d.path()).unwrap();
+    let step = |r: &Repo, i: usize| {
         fs::write(d.path().join("f.txt"), format!("rev {i}\n")).unwrap();
         r.add(&["f.txt".to_string()]).unwrap();
         r.commit(&format!("c{i}"), sig(1_000 + i as u64)).unwrap();
+    };
+    for i in 0..commits - 10 {
+        step(&r, i);
     }
+    // Two branches that diverge 10 commits before the tip, so the merge base is deep in history.
+    r.create_branch(ROOT_ZONE, "side").unwrap();
+    for i in 0..10 {
+        step(&r, commits + i);
+    }
+    r.checkout(ROOT_ZONE, "side").unwrap();
+    for i in 0..10 {
+        step(&r, 2 * commits + i);
+    }
+    let refs = r.branches(ROOT_ZONE).unwrap();
+    let head_of = |n: &str| refs.iter().find(|(b, _, _)| b == n).unwrap().1.unwrap();
+    let (main, side) = (head_of("main"), head_of("side"));
     for limit in [10, 1_000, commits] {
         g.bench_function(BenchmarkId::new("log", format!("limit{limit}_of_{commits}")), |b| {
             b.iter(|| {
                 let l = r.log(ROOT_ZONE, None, limit).unwrap();
                 assert_eq!(l.len(), limit);
             })
+        });
+    }
+    let base = r.merge_bases(&main, &side).unwrap()[0];
+    for (label, on) in [("graph", true), ("nograph", false)] {
+        r.set_commit_graph(on);
+        g.bench_function(BenchmarkId::new(format!("merge_base_{label}"), commits), |b| {
+            b.iter(|| assert_eq!(r.merge_bases(black_box(&main), black_box(&side)).unwrap(), vec![base]))
+        });
+        g.bench_function(BenchmarkId::new(format!("is_ancestor_yes_{label}"), commits), |b| {
+            b.iter(|| assert!(r.is_ancestor(black_box(base), black_box(side)).unwrap()))
+        });
+        // Not an ancestor: without the graph this walks the whole history.
+        g.bench_function(BenchmarkId::new(format!("is_ancestor_no_{label}"), commits), |b| {
+            b.iter(|| assert!(!r.is_ancestor(black_box(side), black_box(main)).unwrap()))
         });
     }
     g.finish();
