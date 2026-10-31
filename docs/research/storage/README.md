@@ -12,5 +12,7 @@ Index of documents under `docs/research/storage/`. Add new documents here, one l
 | [workloads.md](workloads.md) | #182 | The 16 seeded dataset generators of `storebench` (parameters, purpose, limits) |
 | [git-analysis.md](git-analysis.md) | #179 | Git storage internals (loose, packs, deltas, idx, MIDX, bitmaps, commit-graph, cruft, partial clone, LFS) with costs on object storage and a measured git.git experiment |
 | [walgit-analysis.md](walgit-analysis.md) | #179 | tobi/walgit read, built and tested at `80e9a20`: WAL and manifest CAS, remote reader, pack lifecycle, round-trip model, limits |
+| [indexing-experiments.md](indexing-experiments.md) | #185 | Experiment H: object-location indexes (per-pack, fanout, global, hash, MPH, B-tree, LSM, SQLite), Bloom/cuckoo/fuse filters, commit reachability, per-zone commit-graph files, changed-path filters, tree indexes; lab crate `crates/vcs-storage-lab`, data `data/idx_*`, `hist*`, `tree*` |
+| [caching-experiments.md](caching-experiments.md) | #185 | Experiment J: cache backends, LRU/ARC/W-TinyLFU on generated checkout/sync traces, two-level, prefetch, warming, safety under concurrent publish and GC (exhaustive model check, negative caching), data `data/cache.jsonl`, `backend.jsonl`, `negcache.jsonl`, `modelcheck.jsonl` |
 
 Scripts: `scripts/storage_cost_model.py`, `scripts/storage_score.py` (tests: `scripts/test_storage_*.py`). Data: `data/`.
