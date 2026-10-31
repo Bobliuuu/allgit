@@ -154,3 +154,30 @@ fn dash_c_runs_in_other_directory() {
     let err = fail(root, &["-C", "nope", "status"]);
     assert!(err.contains("cannot change to directory"), "{err}");
 }
+
+#[test]
+fn deleted_cached_object_is_refetched_by_the_next_command() {
+    let t = tempfile::tempdir().unwrap();
+    let remote = t.path().join("remote");
+    ok(t.path(), &["init", "a"]);
+    let a = t.path().join("a");
+    std::fs::write(a.join("f.txt"), "cached content\n").unwrap();
+    ok(&a, &["add", "."]);
+    ok(&a, &["commit", "-m", "init"]);
+    ok(&a, &["remote", "set", remote.to_str().unwrap()]);
+    ok(&a, &["publish"]);
+    ok(t.path(), &["clone", remote.to_str().unwrap(), "b"]);
+    let b = t.path().join("b");
+    // Evict every blob-sized loose object that is the file's content.
+    let id = vcs_objects::Object::Blob(b"cached content\n".to_vec()).id();
+    let h = id.to_hex();
+    let p = b.join(".vcs/objects").join(&h[..2]).join(&h[2..]);
+    assert!(p.exists());
+    std::fs::remove_file(&p).unwrap();
+    assert!(ok(&b, &["fsck"]).contains("refetched on demand"));
+    // `diff` must read the committed blob to compare against the edited file.
+    std::fs::write(b.join("f.txt"), "cached content\nmore\n").unwrap();
+    let diff = ok(&b, &["diff"]);
+    assert!(diff.contains("+more"), "{diff}");
+    assert!(p.exists(), "object was refetched into the store");
+}

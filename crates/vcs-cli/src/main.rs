@@ -8,7 +8,7 @@ use vcs_repo::{ChangeKind, Error, MergeOutcome, RebaseOutcome, Repo, SyncAction,
 
 mod remote;
 
-#[derive(Parser)]
+#[derive(Parser, Clone)]
 #[command(name = "vcs", version, about = "Native area-aware version control")]
 struct Cli {
     /// Run as if vcs was started in <DIR> (applied before repository discovery)
@@ -18,7 +18,7 @@ struct Cli {
     cmd: Cmd,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 enum Cmd {
     /// Create a new repository (default: current directory)
     Init { path: Option<PathBuf> },
@@ -134,7 +134,7 @@ enum Cmd {
     Op(OpCmd),
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 enum OpCmd {
     /// List operations, newest first
     Log {
@@ -149,7 +149,7 @@ enum OpCmd {
     Restore { id: String },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 enum ConflictCmd {
     /// List conflicted paths and whether they are resolved
     List,
@@ -157,7 +157,7 @@ enum ConflictCmd {
     Show { path: String },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 enum AreaCmd {
     /// Create an area owning a path prefix (areas may not overlap)
     Create {
@@ -193,7 +193,7 @@ enum AreaCmd {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 enum RemoteCmd {
     /// Set the remote location (path or file:// URL)
     Set { url: String },
@@ -201,7 +201,7 @@ enum RemoteCmd {
     Show,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 enum SnapCmd {
     Create {
         name: String,
@@ -734,6 +734,12 @@ fn run(cli: Cli) -> Result<(), Error> {
             let (repo, _) = open()?;
             let r = repo.fsck()?;
             println!("checked {} objects", r.objects);
+            if !r.evictable.is_empty() {
+                println!(
+                    "{} object(s) not cached locally; they are on the remote and will be refetched on demand",
+                    r.evictable.len()
+                );
+            }
             if r.problems.is_empty() {
                 println!("ok");
             } else {
@@ -754,6 +760,26 @@ fn print_branches(repo: &Repo, area: &str) -> Result<(), Error> {
     Ok(())
 }
 
+/// Run the command; if it fails because a cached object was evicted, fetch that one object
+/// (hash-verified) from the remote and run it again. See docs/cache.md.
+fn run_lazy(cli: Cli) -> Result<(), Error> {
+    let mut fetched = std::collections::BTreeSet::new();
+    loop {
+        match run(cli.clone()) {
+            Err(Error::Store(vcs_store::StoreError::NotFound(id))) if fetched.insert(id) => {
+                let (repo, _) = open()?;
+                let Some(url) = repo.remote_url()? else {
+                    return Err(Error::Store(vcs_store::StoreError::NotFound(id)));
+                };
+                let backend = remote::open_backend(&url)?;
+                repo.fetch_missing(backend.as_ref(), &id)?;
+                eprintln!("fetched missing object {}", id.short());
+            }
+            r => return r,
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let _ = ROOT_AREA;
     let cli = Cli::parse();
@@ -763,7 +789,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
-    match run(cli) {
+    match run_lazy(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e}");

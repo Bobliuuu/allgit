@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 vcs-repo.workspace = true
 vcs-objects.workspace = true
+vcs-store.workspace = true
 vcs-remote.workspace = true
 clap.workspace = true
 
