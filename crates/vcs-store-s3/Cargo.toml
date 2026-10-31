@@ -1,0 +1,15 @@
+[package]
+name = "vcs-store-s3"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+vcs-remote.workspace = true
+ureq = { version = "2", default-features = false }
+sha2 = "0.10"
+hmac = "0.12"
+
+[dev-dependencies]
+vcs-objects.workspace = true
+vcs-store.workspace = true
