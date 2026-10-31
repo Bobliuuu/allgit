@@ -126,3 +126,16 @@ stores the same encoded bytes, so hashes, sync and GC reachability are unaffecte
   than silently hiding objects. `fsck` additionally re-hashes the whole pack, checks each entry's framing and every
   object hash.
 - Not done: compression, deltas, multi-pack merging, range reads in `Backend`, chunking (see issue #9).
+
+### When packs help, and when they do not
+
+Measured (docs/benchmarks.md, 100 files x 256 KiB random data x 4 versions): with no compression or deltas, a pack is
+the same size as the loose objects (apparent bytes +0.02%; allocated bytes -1.6%). What packs change today:
+
+- **Help:** file count (421 files became 2), per-object filesystem overhead, and remote fetch. A reader can GET the small
+  index and then one byte range of the pack (`vcs_remote::packfetch::fetch_from_pack`, tested to read well under 10% of
+  a 50-object pack) instead of one request per loose object or the whole pack.
+- **Do not help:** total bytes, because nothing is compressed or delta-encoded, so they will not shrink random or
+  already-compressed binaries. Whole-pack `fsck` costs one extra hash pass over the pack on top of the per-object
+  hashes. Repack rewrites all loose objects into a new pack each time; there is no incremental or multi-pack merge yet.
+- **Not measured:** remote latency benefit, checkout speed from packs, and repos with many small text objects.

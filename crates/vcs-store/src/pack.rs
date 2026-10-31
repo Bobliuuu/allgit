@@ -18,20 +18,18 @@ fn bad(path: &Path, why: impl Into<String>) -> StoreError {
     }
 }
 
-/// One opened pack: its index lives in memory, object bytes are read by range.
-pub struct Pack {
-    pub(crate) pack_path: PathBuf,
+/// A parsed, checksum-verified pack index (also usable for a pack that lives on a remote).
+pub struct PackIndex {
     /// sorted by id: (id, offset of entry payload, payload length)
     entries: Vec<(ObjectId, u64, u32)>,
-    pack_len: u64,
+    pub pack_len: u64,
     checksum: [u8; 32],
 }
 
-impl Pack {
-    /// Open `<name>.idx` (and check the sibling `.pack` exists with the recorded length).
-    /// Cheap: does not hash the pack; [`Pack::verify`] does.
-    pub fn open(idx_path: &Path) -> Result<Pack, StoreError> {
-        let b = io(idx_path, fs::read(idx_path))?;
+impl PackIndex {
+    /// Parse `.idx` bytes; `label` is only used in error messages.
+    pub fn parse(b: &[u8], label: &Path) -> Result<PackIndex, StoreError> {
+        let idx_path = label;
         if b.len() < 8 + 4 + 8 + 32 + 32 || &b[..8] != IDX_MAGIC {
             return Err(bad(idx_path, "bad index header"));
         }
@@ -59,30 +57,49 @@ impl Pack {
         if entries.windows(2).any(|w| w[0].0 >= w[1].0) {
             return Err(bad(idx_path, "index not strictly sorted"));
         }
-        let pack_path = idx_path.with_extension("pack");
-        let actual = io(&pack_path, fs::metadata(&pack_path))?.len();
-        if actual != pack_len {
-            return Err(bad(
-                &pack_path,
-                format!("pack is {actual} bytes, index says {pack_len} (truncated?)"),
-            ));
-        }
-        Ok(Pack {
-            pack_path,
+        Ok(PackIndex {
             entries,
             pack_len,
             checksum,
         })
     }
-
-    pub fn ids(&self) -> impl Iterator<Item = ObjectId> + '_ {
-        self.entries.iter().map(|e| e.0)
-    }
-    fn find(&self, id: &ObjectId) -> Option<(u64, u32)> {
+    /// `(offset, len)` of the object's encoded bytes within the pack file.
+    pub fn find(&self, id: &ObjectId) -> Option<(u64, u32)> {
         self.entries
             .binary_search_by(|e| e.0.cmp(id))
             .ok()
             .map(|i| (self.entries[i].1, self.entries[i].2))
+    }
+}
+
+/// One opened pack: its index lives in memory, object bytes are read by range.
+pub struct Pack {
+    pub pack_path: PathBuf,
+    idx: PackIndex,
+}
+
+impl Pack {
+    /// Open `<name>.idx` (and check the sibling `.pack` exists with the recorded length).
+    /// Cheap: does not hash the pack; [`Pack::verify`] does.
+    pub fn open(idx_path: &Path) -> Result<Pack, StoreError> {
+        let b = io(idx_path, fs::read(idx_path))?;
+        let idx = PackIndex::parse(&b, idx_path)?;
+        let pack_path = idx_path.with_extension("pack");
+        let actual = io(&pack_path, fs::metadata(&pack_path))?.len();
+        if actual != idx.pack_len {
+            return Err(bad(
+                &pack_path,
+                format!("pack is {actual} bytes, index says {} (truncated?)", idx.pack_len),
+            ));
+        }
+        Ok(Pack { pack_path, idx })
+    }
+
+    pub fn ids(&self) -> impl Iterator<Item = ObjectId> + '_ {
+        self.idx.entries.iter().map(|e| e.0)
+    }
+    fn find(&self, id: &ObjectId) -> Option<(u64, u32)> {
+        self.idx.find(id)
     }
     pub fn contains(&self, id: &ObjectId) -> bool {
         self.find(id).is_some()
@@ -108,26 +125,47 @@ impl Pack {
     /// Full check: whole-pack checksum, then every entry's framing and object hash.
     pub fn verify(&self) -> Vec<String> {
         let mut out = Vec::new();
-        let name = self.pack_path.display();
+        let name = self.pack_path.display().to_string();
+        let name = name.as_str();
         let bytes = match fs::read(&self.pack_path) {
             Ok(b) => b,
             Err(e) => return vec![format!("{name}: {e}")],
         };
-        if bytes.len() as u64 != self.pack_len || bytes.len() < 44 || &bytes[..8] != PACK_MAGIC {
+        if bytes.len() as u64 != self.idx.pack_len || bytes.len() < 44 || &bytes[..8] != PACK_MAGIC {
             return vec![format!("{name}: bad length or header")];
         }
         let (body, trailer) = bytes.split_at(bytes.len() - 32);
-        if blake3::hash(body).as_bytes() != trailer || trailer != self.checksum {
-            out.push(format!("{name}: pack checksum mismatch"));
-        }
-        for (id, off, len) in &self.entries {
-            let (o, l) = (*off as usize, *len as usize);
-            if o < 4 || o + l > body.len() || u32::from_le_bytes(body[o - 4..o].try_into().unwrap()) as usize != l {
-                out.push(format!("{name}: bad framing for {id}"));
-            } else if vcs_objects::id_of_encoded(&body[o..o + l]) != *id {
-                out.push(format!("{name}: object {id} hash mismatch"));
+        let entries = &self.idx.entries;
+        let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(8);
+        let per = entries.len().div_ceil(threads).max(1);
+        // The whole-pack checksum and the per-object hashes are independent: run them side by side.
+        std::thread::scope(|sc| {
+            let sum = sc.spawn(|| blake3::hash(body));
+            let parts: Vec<_> = entries
+                .chunks(per)
+                .map(|part| {
+                    sc.spawn(move || {
+                        let mut out = Vec::new();
+                        for (id, off, len) in part {
+                            let (o, l) = (*off as usize, *len as usize);
+                            if o < 4 || o + l > body.len() || u32::from_le_bytes(body[o - 4..o].try_into().unwrap()) as usize != l {
+                                out.push(format!("{name}: bad framing for {id}"));
+                            } else if vcs_objects::id_of_encoded(&body[o..o + l]) != *id {
+                                out.push(format!("{name}: object {id} hash mismatch"));
+                            }
+                        }
+                        out
+                    })
+                })
+                .collect();
+            let h = sum.join().unwrap();
+            if h.as_bytes() != trailer || trailer != self.idx.checksum {
+                out.push(format!("{name}: pack checksum mismatch"));
             }
-        }
+            for p in parts {
+                out.extend(p.join().unwrap());
+            }
+        });
         out
     }
 }
