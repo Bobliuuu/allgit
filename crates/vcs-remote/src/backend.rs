@@ -60,6 +60,11 @@ pub fn conformance(b: &dyn Backend) {
     assert_eq!(b.get_range("k/one", 1, 1).unwrap().unwrap(), b"1");
     assert_eq!(b.get_range("k/one", 0, 100).unwrap().unwrap(), b"v1");
     assert_eq!(b.get_range("k/missing", 0, 1).unwrap(), None);
+    // range edge cases every backend must agree on
+    assert_eq!(b.get_range("k/one", 0, 0).unwrap().unwrap(), b"", "zero length");
+    assert_eq!(b.get_range("k/one", 1, 100).unwrap().unwrap(), b"1", "range clamps at end");
+    assert_eq!(b.get_range("k/one", 2, 5).unwrap().unwrap(), b"", "offset at end");
+    assert_eq!(b.get_range("k/one", 50, 5).unwrap().unwrap(), b"", "offset past end");
     // CAS
     let t2 = b.put_if_match("k/one", b"v2", &v.tag).unwrap().expect("match succeeds");
     assert_eq!(b.put_if_match("k/one", b"v3", &v.tag).unwrap(), None, "stale tag rejected");

@@ -288,3 +288,10 @@ machine as above, warm cache; the dataset has no natural redundancy besides the 
 Findings: smaller chunks dedup more on this edit pattern, and insertions that shift data dedup about as well as
 in-place overwrites. Not measured: per-chunk metadata/manifest overhead (so the percentages overstate the saving), read
 or checkout time, and the effect on `fsck`.
+
+### Pack fsck after parallelizing verification
+
+`Pack::verify` now hashes the whole pack and the per-object ranges on separate threads (at most 8). Re-run on the same
+dataset after main moved on (loose `fsck` itself also changed upstream, so these are not comparable with the table above):
+loose fsck 96 ms and 101 ms, packed fsck 217 ms and 202 ms (two runs). The earlier packed numbers (1.54 s, 1.12 s) came
+from an older build, so no speedup factor is claimed.

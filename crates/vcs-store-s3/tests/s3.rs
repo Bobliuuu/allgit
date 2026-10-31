@@ -308,3 +308,67 @@ fn minio_concurrent_cas_has_exactly_one_winner_per_round() {
         .collect();
     assert_eq!(hs.into_iter().filter(|_| true).map(|h| h.join().unwrap()).filter(|w| *w).count(), 1);
 }
+
+/// Serves one object honoring `Range`; records the Range header of each request.
+fn range_server(obj: Vec<u8>) -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    std::thread::spawn(move || {
+        for s in l.incoming() {
+            let Ok(mut s) = s else { continue };
+            let (obj, log) = (obj.clone(), log.clone());
+            std::thread::spawn(move || {
+                let mut data = Vec::new();
+                let mut buf = [0u8; 8192];
+                while !String::from_utf8_lossy(&data).contains("\r\n\r\n") {
+                    match s.read(&mut buf) {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => data.extend_from_slice(&buf[..n]),
+                    }
+                }
+                let text = String::from_utf8_lossy(&data).to_string();
+                let range = text
+                    .lines()
+                    .find_map(|l| l.to_lowercase().strip_prefix("range: bytes=").map(str::to_owned));
+                log.lock().unwrap().push(range.clone().unwrap_or_default());
+                let resp = match range.and_then(|r| {
+                    let (a, b) = r.split_once('-')?;
+                    Some((a.parse::<usize>().ok()?, b.trim().parse::<usize>().ok()?))
+                }) {
+                    Some((a, _)) if a >= obj.len() => {
+                        "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                            .as_bytes()
+                            .to_vec()
+                    }
+                    Some((a, b)) => {
+                        let part = &obj[a..=b.min(obj.len() - 1)];
+                        let mut r = format!(
+                            "HTTP/1.1 206 Partial Content\r\nETag: \"e\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            part.len()
+                        )
+                        .into_bytes();
+                        r.extend_from_slice(part);
+                        r
+                    }
+                    None => "HTTP/1.1 200 OK\r\nETag: \"e\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        .as_bytes()
+                        .to_vec(),
+                };
+                let _ = s.write_all(&resp);
+            });
+        }
+    });
+    (format!("http://{addr}"), seen)
+}
+
+#[test]
+fn get_range_sends_range_header_and_returns_only_that_slice() {
+    let (ep, seen) = range_server((0u8..=99).collect());
+    let b = S3Backend::new_unchecked(cfg(&ep)).unwrap();
+    assert_eq!(b.get_range("p/x.pack", 10, 5).unwrap().unwrap(), vec![10, 11, 12, 13, 14]);
+    assert_eq!(b.get_range("p/x.pack", 98, 10).unwrap().unwrap(), vec![98, 99], "clamped at end");
+    assert_eq!(b.get_range("p/x.pack", 500, 4).unwrap().unwrap(), Vec::<u8>::new(), "416 is empty");
+    assert_eq!(*seen.lock().unwrap(), vec!["10-14", "98-107", "500-503"]);
+}

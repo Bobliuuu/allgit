@@ -8,6 +8,7 @@ pub mod backend;
 pub mod fsbackend;
 pub mod manifest;
 pub mod membackend;
+pub mod packfetch;
 pub mod protocol;
 
 pub use backend::{Backend, BackendError, Versioned};
