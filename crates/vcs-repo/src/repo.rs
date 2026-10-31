@@ -128,6 +128,7 @@ impl Repo {
         write_atomic(&r.vcs.join("index"), &Index::default().encode())?;
         // format marker written last: a crashed init leaves no valid repo
         write_atomic(&r.vcs.join(FORMAT_FILE), FORMAT_TEXT.as_bytes())?;
+        r.record_op("init repository", None)?;
         Ok(r)
     }
 
@@ -565,6 +566,7 @@ impl Repo {
         let ws = self.workspace()?;
         let mut refs = self.refs()?;
         let ix = self.index()?;
+        let op_author = author.clone();
         let mut updates = Vec::new();
         let mut commits = Vec::new();
         for (area, branch) in &ws.subs {
@@ -616,6 +618,8 @@ impl Repo {
         }))?;
         refs.apply(&updates)?;
         write_atomic(&self.vcs.join("refs"), &refs.encode())?; // linearization point
+        let first = message.lines().next().unwrap_or("");
+        self.record_op(&format!("commit: {first}"), Some(op_author))?;
         Ok(CommitReport { transaction: tx, commits })
     }
 
@@ -709,6 +713,7 @@ impl Repo {
             new: head,
         }])?;
         write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+        self.record_op(&format!("create branch {area}/{branch}"), None)?;
         Ok(head)
     }
 
@@ -749,7 +754,9 @@ impl Repo {
         self.transition(area, &areas, &old, &new, &mut ix)?;
         ws.subs.insert(area.into(), branch.into());
         self.save_index(&mut ix)?;
-        self.save_ws(&ws)
+        self.save_ws(&ws)?;
+        self.record_op(&format!("checkout {area}/{branch}"), None)?;
+        Ok(())
     }
 
     // ---------- areas ----------
@@ -774,7 +781,9 @@ impl Repo {
         }
         write_atomic(&self.vcs.join("areas"), &areas.encode())?;
         ws.subs.insert(name.into(), DEFAULT_BRANCH.into());
-        self.save_ws(&ws)
+        self.save_ws(&ws)?;
+        self.record_op(&format!("create area {name} at {path}"), None)?;
+        Ok(())
     }
 
     /// Subscribe to an existing area and materialize it (sparse checkout by area).
@@ -804,7 +813,9 @@ impl Repo {
         self.transition(area, &areas, &Flat::new(), &new, &mut ix)?;
         ws.subs.insert(area.into(), branch.into());
         self.save_index(&mut ix)?;
-        self.save_ws(&ws)
+        self.save_ws(&ws)?;
+        self.record_op(&format!("area add {area}/{branch}"), None)?;
+        Ok(())
     }
 
     /// Unsubscribe: remove the area's tracked files from the working tree. Refuses if dirty.
@@ -826,7 +837,9 @@ impl Repo {
         self.transition(area, &areas, &old, &Flat::new(), &mut ix)?;
         ws.subs.remove(area);
         self.save_index(&mut ix)?;
-        self.save_ws(&ws)
+        self.save_ws(&ws)?;
+        self.record_op(&format!("area remove {area}"), None)?;
+        Ok(())
     }
 
     /// Move the working tree + index of one area from `old` to `new` (flat, full paths).
@@ -944,6 +957,7 @@ impl Repo {
         }))?;
         refs.snapshots.insert(name.to_owned(), id);
         write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+        self.record_op(&format!("snapshot create {name}"), None)?;
         Ok(id)
     }
 
@@ -1012,6 +1026,7 @@ impl Repo {
                 _ => {}
             }
         }
+        self.fsck_ops(&mut rep.problems);
         Ok(rep)
     }
 }
