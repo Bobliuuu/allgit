@@ -246,3 +246,26 @@ Caveats:
   cold cache, hyperfine, S3. The roadmap's benchmark plan lists these; they remain open.
 - The git comparison covers a single workflow set at 1k files and is not a fair "who is faster" claim given the
   semantic differences above.
+
+## Binary-heavy dataset: loose vs packed (measured)
+
+Reproduce: `cargo run --release -p vcs-bench --bin packbench -- 100 262144 4 4 4096`.
+
+Dataset: 100 files of 256 KiB deterministic random (incompressible) bytes, 4 versions; each new version overwrites 4
+regions of 4 KiB in place in every file. The tool adds and commits each version, then times `fsck`, `repack`, `fsck`.
+Same machine and release profile as above, warm cache, two runs, not idle-controlled; only one dataset size was run.
+
+| Metric | Run 1 | Run 2 |
+|---|---|---|
+| add + commit, 4 versions | 2.54 s | 3.53 s |
+| loose store: files / apparent bytes / allocated bytes | 421 / 104,877,906 / 106,598,400 | same |
+| fsck, loose | 0.40 s | 0.44 s |
+| `repack` (421 objects) | 1.59 s | 2.48 s |
+| packed store: files / apparent bytes / allocated bytes | 2 / 104,898,242 / 104,902,656 | same |
+| fsck, packed | 1.54 s | 1.12 s |
+
+Findings:
+- Packing does not shrink the data: there is no compression or delta yet, so apparent size grew by 20,336 bytes (index
+  and framing). It does cut allocated bytes by about 1.6% (106.6 MB to 104.9 MB) and 421 files to 2.
+- Packed `fsck` was slower than loose `fsck` in both runs because it also re-hashes the whole pack once.
+- Every changed file is stored as a full new blob (about 4x the first version), which is the case content-defined chunking targets.
