@@ -8,8 +8,10 @@ license.workspace = true
 vcs-objects.workspace = true
 vcs-store.workspace = true
 vcs-remote.workspace = true
+vcs-merge.workspace = true
 thiserror.workspace = true
 blake3.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+proptest.workspace = true
