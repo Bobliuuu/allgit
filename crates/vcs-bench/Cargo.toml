@@ -13,6 +13,7 @@ s3-tls = ["vcs-store-s3/tls"]
 vcs-objects.workspace = true
 vcs-store.workspace = true
 vcs-repo.workspace = true
+vcs-remote.workspace = true
 tempfile.workspace = true
 blake3.workspace = true
 vcs-remote.workspace = true
@@ -37,6 +38,10 @@ required-features = ["s3-tls"]
 [[bin]]
 name = "storebench"
 path = "src/bin/storebench.rs"
+
+[[bin]]
+name = "auditprobe"
+path = "src/bin/auditprobe.rs"
 
 [[bin]]
 name = "datagen"
