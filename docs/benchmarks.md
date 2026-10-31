@@ -196,6 +196,48 @@ New cases (no "before": they did not exist in the old harness):
 - `add_all` and 10k cells are single-sample `--quick` estimates; `status_1pct_modified/flat/1000` moved from 3.50 to
   5.18 ms with no code path change for flat layouts, which shows the noise level to expect.
 
+## After: parallel add and subtree-skipping staged status (#35), 2026-10-31
+
+Same machine as above (M2 Pro, APFS, release, warm). **The machine was heavily loaded by other processes during
+these runs (load average 8-55), so absolute times are noisy; before/after pairs were run alternately in the same
+session with the pre-change binary built from `origin/main` (38c19fe).** Only measured values are listed.
+
+Profile (macOS `sample`, 10k-file `deep` repo): `status` with a staged change spent essentially all samples in
+`head_flat` (one object read per tree object); clean `status` was dominated by `open` in `walk_untracked` (one
+`read_dir` per directory, about 250 of 340 samples); `add` was `open`/`read`/`write`/`close`/`rename` syscalls on a
+single thread.
+
+Changes: staged changes come from a hash-only index tree diffed against HEAD, reading only trees on changed paths;
+`add` reads/hashes/writes blobs on up to 8 threads; the durability barrier fsyncs and renames on up to 8 threads;
+the untracked walk uses a bounded thread budget with ordered output.
+
+10k files, `deep` layout, CLI wall time (alternating runs, ms):
+
+| case | before (runs) | after (runs) |
+|---|---|---|
+| `status`, clean | 846 898 925 950 981 984 | 612 615 628 659 665 764 |
+| `status`, one staged change | 3465 3602 3608 3696 3773 3780 | 625 669 693 721 726 782 |
+| `add .` (fresh index), 6 alternating runs | min 3570, median 4010 (with a 13.5 s outlier) | min 2310, median 3560 |
+
+`scripts/bench_vs_git.sh` (median of 5, ms), under the same load. Only runs that completed are shown; the
+10k `deep` pair did not finish and has no numbers.
+
+| workflow | flat 10k vcs before | flat 10k vcs after | deep 1k vcs before | deep 1k vcs after | deep 1k git (same session) |
+|---|---|---|---|---|---|
+| add . (fresh) | 19325 | 5406 | 1499 | 1157 | 733 |
+| status clean | 71.6 | 49.6 | 186 | 69.6 | 105 |
+| status 1% modified | 62.1 | 48.7 | 182 | 71.3 | 104 |
+
+Caveats:
+
+- **Deep and flat `status` at 10k are not within 3x**: deep is about 0.6 s and flat about 35 ms (about 17x). What is
+  left is one `open`+`getdirentries` per directory (about 25k directories in `deep`), which is kernel path-lookup
+  bound; threads helped only partly. Git's own `status` is also several times slower on `deep` (above). Removing the
+  rest would need a directory cache (fsmonitor/untracked-cache style) or `openat`-relative scanning; not done.
+- The 10k-flat git `add` took 13-28 s in this loaded session (git's median is far above its earlier quiet-machine
+  figures), so cross-tool comparisons from this run are not reliable.
+- Linux was not measured. Criterion benches were not re-run for this change.
+
 ## Caveats
 
 - One machine, one run session, `--quick` sampling; treat differences under ~2x as noise.
