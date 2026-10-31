@@ -110,7 +110,7 @@ impl Repo {
     }
 }
 
-fn children(o: &Object, out: &mut Vec<ObjectId>) {
+pub(crate) fn children(o: &Object, out: &mut Vec<ObjectId>) {
     match o {
         Object::Blob(_) => {}
         Object::Tree(t) => out.extend(t.entries().iter().map(|e| e.id)),
