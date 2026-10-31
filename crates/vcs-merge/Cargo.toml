@@ -1,0 +1,13 @@
+[package]
+name = "vcs-merge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+vcs-objects.workspace = true
+vcs-store.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
