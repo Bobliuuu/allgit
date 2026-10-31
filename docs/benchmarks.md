@@ -1,7 +1,7 @@
 # Benchmarks (first baseline)
 
 Everything here was measured by the harness in `crates/vcs-bench` and `scripts/bench_vs_git.sh`. Nothing is
-extrapolated: sizes that were not run (100k files, 100k commits) have no numbers. This is a **first baseline on one
+extrapolated: sizes that were not run (100k commits; see the 100k-file scale run below) have no numbers. This is a **first baseline on one
 machine**, not a conclusion about vcs vs git.
 
 ## Reproduce
@@ -264,11 +264,64 @@ cold OS cache, 1% modified files, repositories with many untracked files, and th
 in this change). Any change in a directory (new, removed or renamed entry) makes that directory be re-read; a status
 after such a change was checked for correctness by the property test, not benchmarked.
 
+## 100k-file scale run: git vs vcs CLI (`scripts/bench_scale.sh`), 2026-10-31
+
+Method: `scripts/bench_scale.sh <layout> 100000 5` (one tool at a time; the dataset is generated into the tool's own
+work dir by `datagen` and deleted afterwards; **5 runs per cell, median reported, raw runs in the script output**).
+Per-run timings wrap the CLI process (`git ...` / `vcs ...`) with Python `perf_counter`; preparation (re-init,
+re-add) is untimed. Warm cache. Workflows: `add .` into a fresh index; `commit` with everything staged; `status` clean;
+`status` with every 100th file rewritten (1,000 files); `log` of a 50-commit history (`git log --oneline -n 50` /
+`vcs log -n 50`); `checkout` = switch from a branch whose tree differs by 1,000 files (1%) to `main`
+(`git checkout -q main` / `vcs switch main`; the switch away is untimed). Layouts: `flat` (100 text files of 100-1099
+bytes per directory, 1,000 directories), `deep` (depth 8, fan-out 4, about one file per leaf directory),
+`binary` (100 files per directory, 4 KiB random incompressible bytes each). Seed 42.
+
+Machine for all 100k numbers: **Linux box, AMD EPYC 7J13, 30 cores, 216 GiB RAM, ext4 (not APFS), git 2.34.1,
+vcs release build of `origin/main` at `c47fcda` (before later main commits).** The box is shared: load1 sampled around each cell ranged
+1.5 to 34 (per-row values are in the script output; the run starts were load1 21.9 flat, 5.5 deep, 3.2 binary). So
+timings are noisy; cells with a big spread between runs (e.g. git deep `commit`: 14.5-37.8 s) say so in the raw runs.
+Not comparable in absolute terms with the earlier Mac (M2 Pro, APFS, git 2.52.0) tables above.
+
+Median ms, git / vcs:
+
+| workflow | flat 100k | deep 100k | binary 100k |
+|---|---|---|---|
+| add . (fresh index) | 22,170 / 47,741 | 15,189 / 39,804 | 23,634 / 29,297 |
+| commit (all staged) | 729 / 684 | 19,041 / 30,405 | 652 / 637 |
+| status, clean | 121 / 558 | 1,034 / 1,150 | 106 / 555 |
+| status, 1% modified | 122 / 570 | 1,080 / 1,145 | 112 / 671 |
+| log (50 commits) | 20.1 / 3.8 | 34.4 / 4.0 | 20.7 / 4.1 |
+| checkout (1% differ) | 605 / 1,067 | 865 / 3,200 | 580 / 1,121 |
+
+Store size on disk after the first commit (`du -sk` of `.git` / `.vcs`, KiB): flat 421,656 / 439,100; deep 777,884 /
+791,608; binary 821,668 / 839,236. Both tools store loose objects here (git has not repacked), so sizes are close.
+
+What the data says (only differences well outside the run-to-run spread):
+- vcs `log` of 50 commits is faster than git in all three layouts (3.8-4.1 ms vs 20-34 ms).
+- On these datasets git is faster at `status` on flat and binary (about 4.6-6.0x by medians), at `add` on flat and
+  deep, and at `checkout`; vcs `checkout` on deep is about 3.7x slower. `commit` is roughly equal on flat and binary and slower
+  for vcs on deep. On the binary layout `add` is within about 1.2x.
+- `status` on deep is about 1.1 s for both tools.
+- Nothing here shows a vcs speedup except `log`.
+
+Caveats: single machine per number, shared and not idle; warm cache only; git ran with an empty config (no
+fsmonitor/untracked cache, no repack); git writes zlib-compressed loose objects and vcs does not compress; the `log`
+history is 50 single-file commits, not 100k commits; `checkout` moves 1% of files, not a whole tree; the `binary`
+layout is 4 KiB files, not large binaries; the Mac was not used for 100k because of disk.
+
+Small Mac comparison (flat, **10,000** files, 5 runs, median ms, git 2.52.0 / vcs; Apple M2 Pro, APFS, load1 about
+14-35 during the run, 20 agents sharing the machine): add 8,160 / 2,030; commit 218 / 102; status clean 86.8 / 52.6;
+status 1% modified 54.2 / 67.5; log 20.4 / 10.5; checkout 90.8 / 180. The git `add` figure is far above the quiet-machine
+baselines earlier in this file (load), so this row pair is not reliable evidence about either tool.
+
+Reproduce: `cargo build --release -p vcs-cli -p vcs-bench && scripts/bench_scale.sh flat 100000 5` (also `deep`, `binary`;
+needs about 1.5 GB free for flat, about 2.5 GB for deep/binary per tool at 100k; the script aborts below `MIN_FREE_GB`, default 4).
+
 ## Caveats
 
 - One machine, one run session, `--quick` sampling; treat differences under ~2x as noise.
 - Release build only; debug numbers not collected.
-- Not run: 100k files, 100k-commit history, 1k branches, 50 zones, large-binary mutation, RSS/CPU/disk I/O,
+- Not run: 100k-commit history, 1k branches, 50 zones, large-binary mutation, RSS/CPU/disk I/O,
   cold cache, hyperfine, S3. The roadmap's benchmark plan lists these; they remain open.
 - The git comparison covers a single workflow set at 1k files and is not a fair "who is faster" claim given the
   semantic differences above.
