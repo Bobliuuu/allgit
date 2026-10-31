@@ -7,7 +7,7 @@ use crate::error::MergeError;
 use crate::text::{merge3, Hunk, TextMerge};
 use crate::Algorithm;
 use std::collections::{BTreeMap, BTreeSet};
-use vcs_objects::{blob_id, EntryMode, Object, ObjectId};
+use vcs_objects::{content_id, EntryMode, Object, ObjectId};
 use vcs_store::ObjectStore;
 
 pub type Entry = (EntryMode, ObjectId);
@@ -22,7 +22,7 @@ pub struct StoreBlobs<'a>(pub &'a dyn ObjectStore);
 
 impl BlobSource for StoreBlobs<'_> {
     fn blob(&self, id: &ObjectId) -> Result<Vec<u8>, MergeError> {
-        Ok(self.0.get_blob(id)?)
+        Ok(self.0.get_content(id)?)
     }
 }
 
@@ -32,7 +32,7 @@ pub struct MapBlobs(pub BTreeMap<ObjectId, Vec<u8>>);
 
 impl MapBlobs {
     pub fn add(&mut self, data: &[u8]) -> ObjectId {
-        let id = blob_id(data);
+        let id = content_id(data);
         self.0.insert(id, data.to_vec());
         id
     }
@@ -160,7 +160,7 @@ fn merge_entry(
                     } else {
                         match text_or_structural(alg, structural, path, &bc, &lc, &rc) {
                             TextMerge::Clean(bytes) => {
-                                let id = blob_id(&bytes);
+                                let id = content_id(&bytes);
                                 if mode.is_some() {
                                     new_blobs.insert(id, bytes);
                                 }
@@ -470,7 +470,7 @@ mod tests {
         let (mode, id) = m.entries["t"];
         assert_eq!(mode, F);
         assert_eq!(m.new_blobs[&id], b"L\n2\n3\n4\nR\n");
-        assert_eq!(id, blob_id(b"L\n2\n3\n4\nR\n"));
+        assert_eq!(id, content_id(b"L\n2\n3\n4\nR\n"));
 
         let l2 = x.f("X\n2\n3\n4\n5\n");
         let m = x.run(&[("t", base)], &[("t", l)], &[("t", l2)]);

@@ -1,4 +1,4 @@
-# Object model (format v1)
+# Object model (format v2)
 
 Status: **implemented** in `crates/vcs-objects` (tests: unit + proptest). Items marked *(designed)* are not yet implemented.
 
@@ -6,13 +6,14 @@ Status: **implemented** in `crates/vcs-objects` (tests: unit + proptest). Items 
 
 ```
 object bytes = kind:u8 || format_version:u8 || payload
-ObjectId     = BLAKE3 derive_key("all-git 2026 object identity v1")(object bytes)   // 256 bit
+ObjectId     = BLAKE3 derive_key("all-git 2026 object identity v2")(object bytes)   // 256 bit
 ```
 
 * Domain separation: the derive-key context isolates this system's hashes from any other BLAKE3 use; the kind byte
   separates object types (`Blob` and `Tree` with identical payload bytes get different ids – tested).
-* The format version is *inside* the hashed bytes. A future v2 encoding yields different ids by construction; readers
-  reject unknown versions (`DecodeError::Version`).
+* The format version is *inside* the hashed bytes. A new encoding yields different ids by construction; readers
+  reject unknown versions (`DecodeError::Version`). **v2** added the chunk manifest kind (below); the bump changed every
+  object id, so v1 repositories and remotes are not readable by v2 code (there is no migration; the project is pre-release).
 * Stores verify `hash(bytes) == id` on every read (`StoreError::Corrupt`).
 * Why BLAKE3 over SHA-256: ~several× faster on one core and tree-parallel for large blobs (relevant to the 1M-file and
   large-asset targets); 256-bit security. Cost: no hardware-SHA ubiquity, no FIPS. Revisit only if a compliance
@@ -36,7 +37,8 @@ round-trip, order-independence of tree construction, and no panics on arbitrary 
 
 | Kind | Payload | Notes |
 |---|---|---|
-| Blob | raw bytes | Whole-file for now; chunk manifests are Milestone 5 *(designed)* |
+| Blob | raw bytes | A whole file below 1 MiB, or one chunk of a large file |
+| Chunked (kind 7) | `total_len`, ordered `(chunk_id, len)` | A file of at least 1 MiB; see Chunked blobs |
 | Tree | sorted `(name, mode, id)` | modes: File, Executable, Directory. Names validated (no `/`, `\`, NUL, `.`, `..`, `.vcs` any case) |
 | Commit | `zone, parents[], root, change_id, author, message` | one **zone**; `root` is the tree of that zone, paths zone-relative |
 | Snapshot | `zone → commit`, author, message | pins a consistent set of zone versions |
@@ -140,21 +142,27 @@ the same size as the loose objects (apparent bytes +0.02%; allocated bytes -1.6%
   hashes. Repack rewrites all loose objects into a new pack each time; there is no incremental or multi-pack merge yet.
 - **Not measured:** remote latency benefit, checkout speed from packs, and repos with many small text objects.
 
-## Chunked blobs (design only, not implemented)
+## Chunked blobs (format v2, implemented)
 
 Measured dedup of the chunker prototype (docs/benchmarks.md): chunks stored 41-43% of whole-blob bytes at 8 KiB average
-size and 66-67% at 32 KiB, on versioned random binaries with small edits. That ignores manifest overhead. The proposal:
+size and 66-67% at 32 KiB, on versioned random binaries with small edits. Implemented as:
 
-- New object kind **ChunkedBlob** (next free kind number): `total_len: u64`, then ordered `(chunk_id, len: u32)` entries.
+- Object kind **Chunked** (7): `total_len: varint`, `count: varint`, then `count` x `(chunk_id: 32 bytes, len: varint)`.
   Chunks are ordinary Blob objects, so they dedupe across files, versions and zones and travel through packs, sync and
-  GC unchanged. A ChunkedBlob has its own id (hash of its encoding), and a Tree entry points at it exactly as it
-  would point at a Blob.
-- Content identity: the same file bytes can exist as a plain Blob or as a ChunkedBlob with different ids. To keep one
-  canonical id per content the writer must be deterministic: chunk iff `len >= threshold` (proposal: 1 MiB) with fixed
-  parameters recorded in the repository format. Changing parameters is a format bump, never silent.
-- Invariants for `fsck`: every chunk id resolves to a Blob; lengths sum to `total_len`; no empty chunks; manifests are
-  not nested. GC reachability follows manifest entries.
-- Reads stream chunk by chunk; ranged reads map a byte range to the chunks that cover it.
-- Open questions: the threshold and parameters need measurement on real (non-random) binaries; the manifest size
-  (about 36 bytes per chunk, roughly 0.4% at 8 KiB) must be weighed against the saving; how `status` detects change
-  without rehashing a whole large file.
+  GC unchanged. A Chunked object has its own id and a Tree entry points at it exactly as it would at a Blob.
+- One canonical id per content: the writer chunks **iff `len >= 1 MiB`** (`CHUNK_THRESHOLD`), with gear-hash CDC
+  parameters min/avg/max = 4/16/64 KiB fixed by the format. `vcs_objects::content_id(bytes)` is the id a file has in a
+  tree; `ObjectStore::put_content` / `get_content` write and reassemble. Changing the threshold or parameters is a format
+  bump, never silent. The manifest/chunk golden test pins the chunker output.
+- Decode is strict: at least 2 chunks, `total_len >= threshold`, every chunk length in `1..=64 KiB`, lengths sum to
+  `total_len`, no trailing bytes.
+- Reads: `get_content` fetches each chunk (hash-verified like any object), checks its length against the manifest and
+  concatenates. A missing chunk is `NotFound(chunk)`, so lazy fetch pulls just that chunk.
+- `fsck`: every chunk of a manifest must exist (or be refetchable) and be a Blob of the recorded length. GC reachability
+  and sync dependency order (chunks before the manifest) follow manifest entries. Manifests cannot nest because a chunk
+  must be a Blob.
+- Remote: `fetch_object` falls back to packs under `packs/<name>.pack|.idx` when an object is not stored loose, using
+  `fetch_from_pack` (one index GET plus one ranged GET). `packfetch::upload_pack` puts a local pack there. Publish still
+  uploads loose objects; nothing uploads packs automatically yet.
+- Not done: ranged reads that map a byte range to chunks (reads reassemble the whole file in memory), streaming
+  checkout, and avoiding the full-file re-hash in `status` when mtime/size changed (it now also re-chunks large files).

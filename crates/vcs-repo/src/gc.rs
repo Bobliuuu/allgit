@@ -113,6 +113,7 @@ impl Repo {
 pub(crate) fn children(o: &Object, out: &mut Vec<ObjectId>) {
     match o {
         Object::Blob(_) => {}
+        Object::Chunked(m) => out.extend(m.chunks.iter().map(|c| c.id)),
         Object::Tree(t) => out.extend(t.entries().iter().map(|e| e.id)),
         Object::Commit(c) => {
             out.extend(c.parents.iter().copied());
