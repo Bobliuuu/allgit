@@ -6,6 +6,7 @@ use vcs_objects::{ObjectId, Signature};
 use vcs_remote::Outcome;
 use vcs_repo::{ChangeKind, Error, MergeOutcome, RebaseOutcome, Repo, Resolution, SyncAction, ROOT_ZONE};
 
+mod json;
 mod remote;
 
 #[derive(Parser, Clone)]
@@ -14,6 +15,9 @@ struct Cli {
     /// Run as if vcs was started in <DIR> (applied before repository discovery)
     #[arg(short = 'C', global = true, value_name = "DIR")]
     chdir: Option<PathBuf>,
+    /// Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+    #[arg(long, global = true)]
+    json: bool,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -60,6 +64,9 @@ enum Cmd {
     Diff {
         #[arg(long)]
         staged: bool,
+        /// Per-file added/deleted line counts instead of the patch
+        #[arg(long)]
+        stat: bool,
     },
     /// Import a `git fast-export` stream (file, or `-` for stdin) into the root zone
     ImportGit { stream: PathBuf },
@@ -353,6 +360,11 @@ fn need_remote(repo: &Repo) -> Result<String, Error> {
 }
 
 fn run(cli: Cli) -> Result<(), Error> {
+    if cli.json {
+        let doc = json::build(&cli.cmd).ok_or_else(|| Error::Msg("--json is not supported for this command".into()))??;
+        println!("{}", doc.render());
+        return Ok(());
+    }
     match cli.cmd {
         Cmd::Init { path } => {
             let p = path.unwrap_or_else(|| PathBuf::from("."));
@@ -473,9 +485,27 @@ fn run(cli: Cli) -> Result<(), Error> {
                 println!("clean");
             }
         }
-        Cmd::Diff { staged } => {
+        Cmd::Diff { staged, stat } => {
             let (repo, _) = open()?;
-            print!("{}", repo.diff(staged)?);
+            let d = repo.diff(staged)?;
+            if stat {
+                let stats = json::diff_stat(&d);
+                for s in &stats {
+                    if s.binary {
+                        println!(" {} | binary", s.path);
+                    } else {
+                        println!(" {} | +{} -{}", s.path, s.added, s.deleted);
+                    }
+                }
+                println!(
+                    " {} file(s) changed, {} insertion(s), {} deletion(s)",
+                    stats.len(),
+                    stats.iter().map(|s| s.added).sum::<u64>(),
+                    stats.iter().map(|s| s.deleted).sum::<u64>()
+                );
+            } else {
+                print!("{d}");
+            }
         }
         Cmd::ImportGit { stream } => {
             let (repo, _) = open()?;
