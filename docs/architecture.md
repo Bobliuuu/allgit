@@ -9,7 +9,8 @@ vcs-objects  ids, canonical codec, object types, name/path validation   (no I/O,
 vcs-store    ObjectStore trait; MemoryStore, LocalStore (loose objects) (sync I/O)              [impl]
 vcs-repo     zones, refs, index, workspace, status/diff/commit/log, snapshots, fsck             [impl]
 vcs-cli      `vcs` binary (clap)                                                                [impl]
-vcs-store-s3, vcs-transaction (remote), vcs-merge, vcs-operations, …                            [design]
+vcs-remote   Backend trait, Mem/Fs backends, manifest, publish step machine, sparse fetch, model tests [impl]
+vcs-store-s3, vcs-merge, vcs-operations, …                                                      [design]
 ```
 Crates are only created when a real boundary exists. The core never depends on Tokio or any S3 SDK.
 
@@ -58,52 +59,66 @@ Preflight validates every path before touching disk: path syntax, zone ownership
 write through symlinked or file ancestors (tested with a symlink pointing outside the worktree). `.vcs` is rejected
 case-insensitively in any component. Dirty zones refuse to switch.
 
-## Remote / S3 design [design – Milestone 3]
+## Remote design [impl: protocol + Fs/Mem backends; S3 backend tracked in issues]
 
-**Required backend capabilities:** read-after-write for new keys, `GET` range reads, and **one** conditional write
-primitive: either `If-None-Match: *` PUT (create-only) or `If-Match: <etag>` PUT. MinIO and AWS S3 support these;
-providers without them cannot be authoritative backends (they can still be read-only mirrors). The client must
-feature-detect at `init` and refuse to proceed otherwise; it must not assume uniform semantics.
+**Required backend capabilities** (`vcs-remote::Backend`): read-after-write for new keys, range GET, create-only PUT
+(S3 `If-None-Match: *`), and compare-and-swap PUT on an opaque version tag (S3 `If-Match`). Providers lacking either
+conditional primitive cannot be authoritative. A shared conformance suite (`backend::conformance`) runs against every backend.
 
 **Layout**
 ```
-objects/<hh>/<id>            immutable loose objects (small repos / hot objects)
-packs/<pack-id>.pack|.idx    immutable packs, zone-tagged; idx enables range reads
-manifest/<zone>              per-zone manifest: {branch → commit, pack list, version}; updated by conditional PUT
-txlog/<ulid-or-txid>         immutable Transaction records
-global/manifest              tiny pointer object listing manifest versions: the multi-zone CAS point
+objects/<hh>/<id>   immutable objects (create-only)
+tx/<txid>           immutable Transaction records (create-only)
+manifest            THE authoritative state: generation, branch heads, snapshots, applied txids, zone definitions
 ```
-**Single-zone publish:** upload objects (idempotent, content-addressed) → write `txlog/<txid>` → conditional PUT of
-`manifest/<zone>` (If-Match). Linearization point = successful conditional PUT.
+**Design decision (changed from the first draft).** One manifest object, not per-zone manifests. Rationale: a single CAS
+gives multi-zone atomicity with no coordinator and no two-phase commit. Cost: all writers contend on one key. Mitigation
+implemented: on CAS loss the writer reloads and re-validates only its own `old` heads; writers on disjoint branches
+therefore succeed without user-visible conflict (model-checked). Sharding the manifest by zone is deferred until a benchmark
+shows CAS contention matters.
 
-**Multi-zone atomic publish (chosen):** zone manifests are *not* the commit point for cross-zone transactions. Instead
-`global/manifest` holds `{zone → manifest version}` and is advanced by one conditional PUT. Alternatives rejected:
-2PC across several keys (needs a coordinator and recovery of in-doubt participants; S3 has no multi-key transactions);
-a repo-wide single head for *all* publishes (serializes unrelated zone writers; mitigated by giving single-zone
-publishes their own CAS target and having `global/manifest` reference *immutable* per-zone manifest versions, so the
-global CAS only runs for cross-zone transactions and for snapshots). Open point to settle in M3: whether single-zone
-publishes also bump `global/manifest` (simpler reads, more CAS contention) – decide with a benchmark of conflict rates.
+**Publish step machine** (`Publisher::step`; every step idempotent):
+`Collect → Upload* → PutTx → Load → Cas`, back to `Load` on CAS loss or any CAS error.
+* Collect walks the local closure of the new heads, pruning at objects the remote has. **Upload is dependency-first
+  (post-order)**, so "object exists remotely ⇒ its whole closure exists" holds even after a crash mid-upload.
+* Load: if the txid is already in `manifest.applied` ⇒ `AlreadyApplied` (lost-ack and duplicate-submit safety); if any
+  update's `old` differs from the current head ⇒ `Diverged` (never overwrites).
+* Cas: create-only PUT on an empty repo, otherwise `If-Match`. **The successful CAS is the linearization point.**
+* `Unavailable` retries a step up to 8 times, then `Unknown` (outcome undetermined; re-running the same tx converges).
 
-**Failure analysis (each is a test requirement in M3; the state-machine model is written before the code)**
+**Executable model** (`crates/vcs-remote/tests/model.rs`): explores every interleaving of 2 writers' steps with either one
+crash at any point or one lost request / lost response at any CAS, then recovers by retrying, for four scenarios
+(same-branch race, disjoint zones, multi-zone vs single-zone, duplicate submission) – about 1.7M schedules. Invariants:
+every manifest version equals the previous plus exactly one whole transaction (atomicity, no lost update); no tx applied
+twice; every stored object's dependencies are stored; every reported success is durably visible. Mutation-checked: removing
+the idempotency check or reversing upload order makes the model fail.
 
-| Event | Outcome |
+**Failure table**
+
+| Event | Outcome (covered by) |
 |---|---|
-| client crash before CAS | orphan objects/txlog entry; no visible effect; GC after grace period |
-| client crash after CAS, before ack | committed; retry with the same `txid` finds it in txlog/manifest ⇒ idempotent success |
-| upload timeout | retry (content-addressed ⇒ safe); conditional PUT only after all uploads confirmed |
-| response lost after successful CAS | retry sees `txid` already applied ⇒ report success, no double-apply |
-| CAS fails (412) | reload manifest; if the target branch is unchanged ⇒ retry; if moved ⇒ surface "remote advanced from X to Y" (sync/rebase/merge) – never overwrite |
-| two writers, different zones | disjoint zone manifests ⇒ both succeed (cross-zone txs conflict only on shared zones) |
-| two writers, same branch | exactly one CAS wins; loser gets the advance error |
-| tx references missing object | publisher verifies existence (HEAD/pack idx) before CAS; readers treat a missing object as corruption, not absence |
-| partial multipart/pack upload | object invisible until complete; packs referenced only after idx upload |
-| store unavailable | operation fails with retryable error; no local state is marked published |
-| reader sees old manifest | consistent older snapshot (all-or-nothing); it fetches the new one on next sync |
-| GC races publish | GC only deletes objects unreachable from manifest history **and** older than the max in-flight lease (e.g. 24h); publishers refresh the lease by listing their txid in `txlog` first |
+| client crash before CAS | orphan objects only; retry converges (model) |
+| crash after CAS, before ack | committed; retry returns `AlreadyApplied` (model) |
+| upload timeout | step retried; content-addressed so safe |
+| response lost after CAS | `Load` finds txid applied (model, `lost_ack_then_retry_is_idempotent`) |
+| CAS fails | reload; disjoint writers reconcile, same-branch loser gets `Diverged` (model) |
+| two writers, same branch | exactly one wins (model) |
+| tx references missing object | impossible by upload order; fetch rejects missing/tampered objects (`tampered_remote_object_is_rejected`) |
+| partial upload | object invisible until complete; closure invariant (model) |
+| store unavailable | `Unknown`, no local state marked published (`unavailable_backend_yields_unknown_not_success`) |
+| reader sees old manifest | consistent older state |
+| GC races publish | **no GC exists yet**; design in §GC |
 
-**Offline:** local commits are normal local state; `publish` runs the protocol above. Server-enforced policy
-(permissions, locks) is evaluated by whichever component performs the conditional write (a stateless validating service,
-or object-store policy + signed manifests); this is *not* designed in detail yet and is not claimed to exist.
+**Sparse fetch**: `fetch_heads(zones)` reads the manifest then only objects reachable from the requested zones' heads;
+tests assert an unsubscribed 500 KB zone is never read. Every fetched object is hash-verified and stored dependencies-first.
+
+**Local side** (`vcs-repo::sync`): remote-tracking refs in `.vcs/remote-refs`; `publish` (one atomic tx for all subscribed
+branches with local changes; refuses non-fast-forward with guidance; unchanged branches never block others), `fetch`,
+`sync` (fast-forward only; dirty zones and divergence are reported, never touched), `clone_from` (sparse by zone).
+Zone definitions travel in the manifest, merged atomically with the publishing tx, with name/path/overlap conflicts rejected.
+
+**Not done:** S3 backend, server-side policy/locks (needs a validating writer), packs/range-read optimisation, GC,
+manifest `applied` window > 4096 (older retries are rejected as Diverged, never double-applied).
 
 ## Garbage collection [design]
 Mark from: all branch heads in retained manifests, named snapshots, protected operation history, tags, in-flight
