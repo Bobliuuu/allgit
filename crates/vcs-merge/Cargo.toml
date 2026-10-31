@@ -8,6 +8,7 @@ license.workspace = true
 vcs-objects.workspace = true
 vcs-store.workspace = true
 thiserror.workspace = true
+blake3.workspace = true
 tree-sitter = { version = "0.25", optional = true }
 tree-sitter-rust = { version = "0.24", optional = true }
 tree-sitter-python = { version = "0.25", optional = true }

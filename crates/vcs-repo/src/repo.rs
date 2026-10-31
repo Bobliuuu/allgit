@@ -62,6 +62,7 @@ pub struct Repo {
     pub(crate) vcs: PathBuf,
     pub(crate) store: LocalStore,
     pub(crate) structural: bool,
+    pub(crate) use_commit_graph: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -215,6 +216,7 @@ impl Repo {
             vcs,
             store,
             structural: true,
+            use_commit_graph: true,
         };
         write_atomic(&r.vcs.join("zones"), &Zones::new().encode())?;
         write_atomic(&r.vcs.join("refs"), &Refs::default().encode())?;
@@ -243,6 +245,7 @@ impl Repo {
                     vcs,
                     store,
                     structural: true,
+                    use_commit_graph: true,
                 });
             }
             if !cur.pop() {
@@ -1540,6 +1543,7 @@ impl Repo {
         }
         rep.evictable = evictable.into_iter().collect();
         self.fsck_ops(&mut rep.problems);
+        self.fsck_commit_graph(&mut rep.problems);
         rep.problems.extend(self.store.verify_packs());
         Ok(rep)
     }
