@@ -708,7 +708,7 @@ impl Repo {
     }
 }
 
-fn is_ancestor(repo: &Repo, anc: &ObjectId, of: &ObjectId) -> Result<bool> {
+pub(crate) fn is_ancestor(repo: &Repo, anc: &ObjectId, of: &ObjectId) -> Result<bool> {
     let mut seen = BTreeSet::new();
     let mut stack = vec![*of];
     while let Some(c) = stack.pop() {

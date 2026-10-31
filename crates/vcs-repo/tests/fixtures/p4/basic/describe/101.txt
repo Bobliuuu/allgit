@@ -1,0 +1,9 @@
+Change 101 by bob@ws2 on 2024/03/01 09:30:00
+
+	Fix main, add util
+
+Affected files ...
+
+... //depot/proj/src/main.c#2 edit
+... //depot/proj/src/util.c#1 add
+
