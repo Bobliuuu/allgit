@@ -125,6 +125,23 @@ enum Cmd {
         #[arg(long)]
         no_structural: bool,
     },
+    /// Re-apply the change of one commit onto the checked-out branch
+    #[command(name = "cherry-pick")]
+    CherryPick {
+        /// Commit id (or unique prefix), branch name or HEAD
+        rev: String,
+        /// Zone (default: the zone containing the current directory)
+        #[arg(long)]
+        zone: Option<String>,
+    },
+    /// Create a commit that undoes one commit
+    Revert {
+        /// Commit id (or unique prefix), branch name or HEAD
+        rev: String,
+        /// Zone (default: the zone containing the current directory)
+        #[arg(long)]
+        zone: Option<String>,
+    },
     /// Replay the checked-out branch onto another branch, keeping each change id
     Rebase {
         /// Branch to rebase onto (not needed with --continue/--abort)
@@ -357,6 +374,23 @@ fn zone_of_cwd(repo: &Repo, cwd: &Path, explicit: Option<String>) -> Result<Stri
     }
     let rel = repo.rel_path(cwd, ".")?;
     Ok(repo.zones()?.owner(if rel.is_empty() { "" } else { &rel }).to_owned())
+}
+
+fn print_pick(zone: &str, out: MergeOutcome, verb: &str) -> Result<(), Error> {
+    match out {
+        MergeOutcome::Merged { commit } => println!("{zone}: {verb} done, new commit {}", commit.short()),
+        MergeOutcome::Conflicted { paths } => {
+            println!("{verb} stopped: {} conflict(s)", paths.len());
+            for p in &paths {
+                println!("  conflict: {p}");
+            }
+            println!("\nResolve the files, `vcs add` each one, then `vcs commit -m <message>`.");
+            println!("Inspect with `vcs conflict list|show <path>`; give up with `vcs merge --abort`.");
+            return Err(Error::Msg(format!("{verb} has conflicts")));
+        }
+        MergeOutcome::UpToDate | MergeOutcome::FastForward { .. } => println!("nothing to do"),
+    }
+    Ok(())
 }
 
 fn kind_label(k: ChangeKind) -> &'static str {
@@ -655,6 +689,18 @@ fn run(cli: Cli) -> Result<(), Error> {
                     return Err(Error::Msg("merge has conflicts".into()));
                 }
             }
+        }
+        Cmd::CherryPick { rev, zone } => {
+            let (repo, cwd) = open()?;
+            let zone = zone_of_cwd(&repo, &cwd, zone)?;
+            let out = repo.cherry_pick(&zone, &rev, author())?;
+            print_pick(&zone, out, "cherry-pick")?;
+        }
+        Cmd::Revert { rev, zone } => {
+            let (repo, cwd) = open()?;
+            let zone = zone_of_cwd(&repo, &cwd, zone)?;
+            let out = repo.revert(&zone, &rev, author())?;
+            print_pick(&zone, out, "revert")?;
         }
         Cmd::Rebase {
             onto,

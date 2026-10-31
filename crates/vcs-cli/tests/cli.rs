@@ -192,3 +192,26 @@ fn restore_rm_mv_commands() {
     ok(&d, &["rm", "--force", "b.txt"]);
     assert!(!d.join("b.txt").exists());
 }
+
+#[test]
+fn cherry_pick_and_revert_commands() {
+    let t = tempfile::tempdir().unwrap();
+    ok(t.path(), &["init", "demo"]);
+    let d = t.path().join("demo");
+    std::fs::write(d.join("a.txt"), "a\n").unwrap();
+    ok(&d, &["add", "a.txt"]);
+    ok(&d, &["commit", "-m", "init"]);
+    ok(&d, &["branch", "feat"]);
+    ok(&d, &["switch", "feat"]);
+    std::fs::write(d.join("b.txt"), "b\n").unwrap();
+    ok(&d, &["add", "b.txt"]);
+    ok(&d, &["commit", "-m", "add b"]);
+    ok(&d, &["switch", "main"]);
+    assert!(ok(&d, &["cherry-pick", "feat"]).contains("cherry-pick done"));
+    assert!(d.join("b.txt").exists());
+    assert!(ok(&d, &["revert", "HEAD"]).contains("revert done"));
+    assert!(!d.join("b.txt").exists());
+    assert!(ok(&d, &["log"]).contains("Revert \"add b\""));
+    ok(&d, &["op", "undo"]);
+    assert!(d.join("b.txt").exists());
+}
