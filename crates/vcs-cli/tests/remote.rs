@@ -140,3 +140,17 @@ fn remote_set_stores_absolute_path_and_publish_works_from_subdir() {
     ok(&sub, &["publish"]);
     ok(&demo, &["publish"]);
 }
+
+#[test]
+fn dash_c_runs_in_other_directory() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    ok(root, &["init", "demo"]);
+    let demo = root.join("demo");
+    write(&demo, "a.txt", "x\n");
+    let inside = ok(&demo, &["status"]);
+    let outside = ok(root, &["-C", "demo", "status"]);
+    assert_eq!(inside, outside);
+    let err = fail(root, &["-C", "nope", "status"]);
+    assert!(err.contains("cannot change to directory"), "{err}");
+}

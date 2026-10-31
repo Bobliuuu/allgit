@@ -11,6 +11,9 @@ mod remote;
 #[derive(Parser)]
 #[command(name = "vcs", version, about = "Native zone-aware version control")]
 struct Cli {
+    /// Run as if vcs was started in <DIR> (applied before repository discovery)
+    #[arg(short = 'C', global = true, value_name = "DIR")]
+    chdir: Option<PathBuf>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -753,7 +756,14 @@ fn print_branches(repo: &Repo, zone: &str) -> Result<(), Error> {
 
 fn main() -> ExitCode {
     let _ = ROOT_ZONE;
-    match run(Cli::parse()) {
+    let cli = Cli::parse();
+    if let Some(dir) = &cli.chdir {
+        if let Err(e) = std::env::set_current_dir(dir) {
+            eprintln!("error: cannot change to directory {}: {e}", dir.display());
+            return ExitCode::FAILURE;
+        }
+    }
+    match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e}");
