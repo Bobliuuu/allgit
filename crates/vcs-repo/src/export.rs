@@ -7,7 +7,7 @@ use crate::repo::Repo;
 use crate::treeops::{self, Flat};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
-use vcs_objects::{Commit, EntryMode, Object, ObjectId};
+use vcs_objects::{Commit, EntryMode, ObjectId};
 
 /// Trailer added to exported messages so a future import can restore the stable change id.
 pub const CHANGE_ID_TRAILER: &str = "Vcs-Change-Id";
@@ -139,9 +139,7 @@ impl Repo {
                 let m = match blob_mark.get(bid) {
                     Some(m) => *m,
                     None => {
-                        let Object::Blob(data) = self.store().get(bid)? else {
-                            return Err(Error::Corrupt(format!("object {bid} is not a blob")));
-                        };
+                        let data = self.store().get_content(bid)?;
                         next += 1;
                         write!(out, "blob\nmark :{next}\ndata {}\n", data.len()).map_err(io_err)?;
                         out.write_all(&data).map_err(io_err)?;

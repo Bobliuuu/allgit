@@ -295,3 +295,28 @@ or checkout time, and the effect on `fsck`.
 dataset after main moved on (loose `fsck` itself also changed upstream, so these are not comparable with the table above):
 loose fsck 96 ms and 101 ms, packed fsck 217 ms and 202 ms (two runs). The earlier packed numbers (1.54 s, 1.12 s) came
 from an older build, so no speedup factor is claimed.
+
+## Chunk manifests wired into the object model (measured)
+
+Reproduce: `cargo run --release -p vcs-bench --bin packbench -- 20 2097152 4 4 4096` on the base commit (whole blobs) and
+on the chunk-manifest branch. Dataset: 20 files of 2 MiB deterministic random bytes (above the 1 MiB chunking
+threshold), 4 versions, 4 in-place edits of 4 KiB per file per version. Chunking: gear-hash CDC, 4/16/64 KiB min/avg/max.
+Same machine, release profile, warm cache, two runs each; the machine was shared with other builds, so timings are noisy.
+
+| Metric | Whole blobs (base) | Chunk manifests |
+|---|---|---|
+| objects stored | 101 | 2,543 |
+| loose apparent bytes | 167,777,426 | 49,570,606 (29.5%) |
+| packed apparent bytes | 167,782,402 | 49,692,798 (29.6%) |
+| add + commit, 4 versions (2 runs) | 2.39 s, 0.82 s | 10.05 s, 10.18 s |
+| loose fsck (2 runs) | 127 ms, 232 ms | 1.87 s, 1.57 s |
+| packed fsck (2 runs) | 237 ms, 831 ms | 989 ms, 1.13 s |
+
+Findings:
+- Size: random data with small edits stores 29.5% of the whole-blob bytes (the manifests are about 36 bytes per chunk,
+  included here). This is the best case: the data has no other redundancy.
+- Time: chunking is not free. Add + commit was roughly 4x to 12x slower in these runs (about 2,540 objects written
+  instead of 101, each a separate loose file and hash, plus chunking every file), and `fsck` is about 7x to 15x slower
+  for loose objects for the same reason. We have not profiled which part dominates, so the cause is a hypothesis.
+  The saving is bytes (and network transfer), not speed. A larger average chunk would cut object counts but dedup less.
+- Not measured: checkout/clone time, remote transfer time, non-random binaries, or other thresholds.

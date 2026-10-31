@@ -346,7 +346,7 @@ impl Repo {
                 ));
             }
             for (id, data) in &tm.new_blobs {
-                if self.store.put_blob(data)? != *id {
+                if self.store.put_content(data)? != *id {
                     return Err(Error::Corrupt("merged blob id mismatch".into()));
                 }
             }

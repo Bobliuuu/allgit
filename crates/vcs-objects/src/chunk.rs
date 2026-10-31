@@ -1,5 +1,5 @@
 //! Content-defined chunking prototype (gear hash, FastCDC-style cut with normalized masks).
-//! Not wired into the object model: it only finds boundaries so dedup can be measured.
+//! Finds boundaries for chunked blobs (`Object::Chunked`); parameters are fixed by the object format.
 
 const fn gear_table() -> [u64; 256] {
     let mut t = [0u64; 256];

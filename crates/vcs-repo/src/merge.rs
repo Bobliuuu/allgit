@@ -417,7 +417,7 @@ impl Repo {
             ));
         }
         for (id, data) in &tm.new_blobs {
-            let got = self.store.put_blob(data)?;
+            let got = self.store.put_content(data)?;
             if got != *id {
                 return Err(Error::Corrupt("merged blob id mismatch".into()));
             }
@@ -540,7 +540,7 @@ impl Repo {
     pub(crate) fn placeholder(&self, c: &Conflict, labels: &MarkerLabels) -> Result<(EntryMode, ObjectId, bool)> {
         if let Some(h) = &c.hunks {
             let bytes = render_markers(h, labels);
-            let id = self.store.put_blob(&bytes)?;
+            let id = self.store.put_content(&bytes)?;
             let mode = c.left_mode.or(c.right_mode).unwrap_or(EntryMode::File);
             return Ok((mode, id, true));
         }
@@ -751,7 +751,7 @@ impl Repo {
             f(&c.right),
             st.theirs_label
         );
-        let get = |i: &Option<ObjectId>| -> Result<Option<Vec<u8>>> { i.map(|i| Ok(self.store.get_blob(&i)?)).transpose() };
+        let get = |i: &Option<ObjectId>| -> Result<Option<Vec<u8>>> { i.map(|i| Ok(self.store.get_content(&i)?)).transpose() };
         let (b, l, r) = (get(&c.base)?, get(&c.left)?, get(&c.right)?);
         let bin = [&b, &l, &r]
             .iter()

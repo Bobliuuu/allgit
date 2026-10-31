@@ -2,6 +2,7 @@
 //!
 //! No I/O, no async, no storage dependencies. See `docs/object-model.md`.
 
+pub mod chunk;
 pub mod codec;
 pub mod id;
 pub mod names;
@@ -10,6 +11,6 @@ pub mod object;
 pub use codec::DecodeError;
 pub use id::{ChangeId, IdParseError, ObjectId};
 pub use object::{
-    blob_id, id_of_encoded, id_of_parts, Commit, EntryMode, Kind, LockOp, Object, OpView, Operation, RefUpdate, Signature, Snapshot,
-    Transaction, Tree, TreeEntry, FORMAT_VERSION,
+    blob_id, content_id, id_of_encoded, id_of_parts, ChunkRef, ChunkedBlob, Commit, EntryMode, Kind, LockOp, Object, OpView, Operation,
+    RefUpdate, Signature, Snapshot, Transaction, Tree, TreeEntry, CHUNK_THRESHOLD, FORMAT_VERSION,
 };

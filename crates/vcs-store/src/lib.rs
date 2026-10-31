@@ -4,7 +4,7 @@
 //! must not depend on Tokio. The S3 backend (Milestone 3) will implement an async twin
 //! at the network boundary; see docs/architecture.md §Storage.
 
-pub mod chunk;
+pub use vcs_objects::chunk;
 pub mod pack;
 use pack::Pack;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::sync::RwLock;
-use vcs_objects::{DecodeError, Object, ObjectId};
+use vcs_objects::{ChunkedBlob, DecodeError, Object, ObjectId};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -61,6 +61,52 @@ pub trait ObjectStore: Send + Sync {
 
     fn put_blob(&self, data: &[u8]) -> Result<ObjectId, StoreError> {
         self.put(&Object::Blob(data.to_vec()))
+    }
+    /// Store file content: a plain blob below `CHUNK_THRESHOLD`, otherwise chunk blobs plus a
+    /// manifest. Returns the canonical id (`vcs_objects::content_id`).
+    fn put_content(&self, data: &[u8]) -> Result<ObjectId, StoreError> {
+        match ChunkedBlob::plan(data) {
+            None => self.put_blob(data),
+            Some(m) => {
+                let mut off = 0usize;
+                for c in &m.chunks {
+                    let end = off + c.len as usize;
+                    if self.put_blob(&data[off..end])? != c.id {
+                        return Err(StoreError::Corrupt {
+                            id: c.id,
+                            reason: "chunk id mismatch".into(),
+                        });
+                    }
+                    off = end;
+                }
+                self.put(&Object::Chunked(m))
+            }
+        }
+    }
+    /// Read file content stored by `put_content` (a blob, or a manifest reassembled from its
+    /// chunks). Every chunk hash and length, and the total length, are verified.
+    fn get_content(&self, id: &ObjectId) -> Result<Vec<u8>, StoreError> {
+        match self.get(id)? {
+            Object::Blob(b) => Ok(b),
+            Object::Chunked(m) => {
+                let mut out = Vec::with_capacity(m.total_len as usize);
+                for c in &m.chunks {
+                    let b = self.get_blob(&c.id)?;
+                    if b.len() != c.len as usize {
+                        return Err(StoreError::Corrupt {
+                            id: *id,
+                            reason: format!("chunk {} has length {}, manifest says {}", c.id, b.len(), c.len),
+                        });
+                    }
+                    out.extend_from_slice(&b);
+                }
+                Ok(out)
+            }
+            _ => Err(StoreError::Corrupt {
+                id: *id,
+                reason: "expected blob or chunk manifest".into(),
+            }),
+        }
     }
     fn get_blob(&self, id: &ObjectId) -> Result<Vec<u8>, StoreError> {
         match self.get(id)? {
@@ -581,5 +627,82 @@ mod tests {
         let s = LocalStore::open(&dir).unwrap();
         assert_eq!(s.get_blob(&id).unwrap(), b"x");
         assert_eq!(s.list().unwrap(), vec![id]);
+    }
+
+    fn big(n: usize, mut x: u64) -> Vec<u8> {
+        (0..n)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                (x >> 24) as u8
+            })
+            .collect()
+    }
+
+    #[test]
+    fn large_content_roundtrips_as_manifest_in_both_stores_and_after_repack() {
+        let data = big(3 << 20, 11);
+        let want = vcs_objects::content_id(&data);
+        let mem = MemoryStore::new();
+        assert_eq!(mem.put_content(&data).unwrap(), want);
+        assert_eq!(mem.get_content(&want).unwrap(), data);
+        assert!(matches!(mem.get(&want).unwrap(), Object::Chunked(_)));
+        assert!(mem.get_blob(&want).is_err(), "a manifest is not a blob");
+        let d = tempfile::tempdir().unwrap();
+        let s = LocalStore::open(d.path().join("o")).unwrap();
+        assert_eq!(s.put_content(&data).unwrap(), want);
+        s.sync().unwrap();
+        assert_eq!(s.get_content(&want).unwrap(), data);
+        s.repack().unwrap();
+        assert_eq!(s.get_content(&want).unwrap(), data);
+        // small content stays a plain blob
+        let small = s.put_content(b"tiny").unwrap();
+        assert!(matches!(s.get(&small).unwrap(), Object::Blob(_)));
+    }
+
+    #[test]
+    fn edited_version_shares_most_chunks() {
+        let a = big(4 << 20, 3);
+        let mut b = a.clone();
+        b[2 << 20] ^= 0xFF; // one byte in the middle
+        let s = MemoryStore::new();
+        s.put_content(&a).unwrap();
+        let n1 = s.list().unwrap().len();
+        s.put_content(&b).unwrap();
+        let added = s.list().unwrap().len() - n1;
+        assert!(added <= 4, "one-byte edit added {added} of {n1} objects");
+    }
+
+    #[test]
+    fn chunked_read_detects_missing_corrupt_and_wrong_length_chunks() {
+        let data = big(2 << 20, 8);
+        let s = MemoryStore::new();
+        let id = s.put_content(&data).unwrap();
+        let Object::Chunked(m) = s.get(&id).unwrap() else { panic!() };
+        // corrupted chunk bytes
+        let mut bad = Object::Blob(vec![0u8; m.chunks[1].len as usize]).encode();
+        bad[5] ^= 1;
+        s.corrupt(&m.chunks[1].id, bad);
+        assert!(matches!(s.get_content(&id), Err(StoreError::Corrupt { .. })));
+        // truncated chunk: a validly encoded shorter blob stored under the chunk id
+        s.corrupt(&m.chunks[1].id, Object::Blob(vec![1u8; 3]).encode());
+        assert!(matches!(s.get_content(&id), Err(StoreError::Corrupt { .. })));
+        // missing chunk
+        s.remove_for_test(&m.chunks[1].id);
+        assert!(matches!(s.get_content(&id), Err(StoreError::NotFound(x)) if x == m.chunks[1].id));
+    }
+
+    #[test]
+    fn chunk_manifest_with_wrong_length_for_valid_chunk_is_corrupt() {
+        // A syntactically valid manifest whose recorded length disagrees with the stored chunk.
+        let data = big(2 << 20, 9);
+        let s = MemoryStore::new();
+        let id = s.put_content(&data).unwrap();
+        let Object::Chunked(mut m) = s.get(&id).unwrap() else { panic!() };
+        m.chunks[0].len -= 1;
+        m.chunks[1].len += 1;
+        let forged = s.put(&Object::Chunked(m)).unwrap();
+        assert!(matches!(s.get_content(&forged), Err(StoreError::Corrupt { .. })));
     }
 }

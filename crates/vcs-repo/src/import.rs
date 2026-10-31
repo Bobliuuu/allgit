@@ -321,6 +321,15 @@ impl Importer<'_> {
         Ok(id)
     }
 
+    fn put_content(&mut self, data: &[u8]) -> Result<ObjectId> {
+        let id = vcs_objects::content_id(data);
+        if !self.repo.store.contains(&id)? {
+            self.report.objects_written += 1;
+        }
+        self.repo.store.put_content(data)?;
+        Ok(id)
+    }
+
     fn resolve(&self, r: &str) -> Result<ObjectId> {
         if let Some(id) = self.marks.get(r) {
             return Ok(*id);
@@ -364,7 +373,7 @@ impl Importer<'_> {
                 return msg("unexpected line in blob");
             }
         };
-        let id = self.put(&Object::Blob(data))?;
+        let id = self.put_content(&data)?;
         self.report.blobs += 1;
         if let Some(m) = mark {
             self.marks.insert(format!(":{}", m.trim_start_matches(':')), id);
@@ -494,7 +503,7 @@ impl Importer<'_> {
                     }
                 };
                 let id = match dataref {
-                    DataRef::Inline(d) => self.put(&Object::Blob(d.clone()))?,
+                    DataRef::Inline(d) => self.put_content(d)?,
                     DataRef::Mark(r) | DataRef::Sha(r) => self.resolve(r)?,
                 };
                 remove_prefix(flat, &p); // file replaces a directory of the same name

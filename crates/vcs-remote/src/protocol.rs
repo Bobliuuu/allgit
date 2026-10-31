@@ -17,6 +17,7 @@
 
 use crate::backend::{Backend, BackendError};
 use crate::manifest::{self, Manifest, MAX_APPLIED};
+use crate::packfetch;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use vcs_objects::{id_of_encoded, Object, ObjectId, Transaction};
 use vcs_store::{ObjectStore, StoreError};
@@ -109,6 +110,7 @@ pub struct Publisher<'a> {
 /// Dependencies of an object (what must exist remotely before it may).
 fn deps(o: &Object) -> Vec<ObjectId> {
     match o {
+        Object::Chunked(m) => m.chunks.iter().map(|c| c.id).collect(),
         Object::Blob(_) | Object::Transaction(_) | Object::Operation(_) => vec![],
         Object::Tree(t) => t.entries().iter().map(|e| e.id).collect(),
         Object::Commit(c) => c.parents.iter().copied().chain(std::iter::once(c.root)).collect(),
@@ -518,13 +520,18 @@ pub fn load_manifest(backend: &dyn Backend) -> Result<(Manifest, Option<String>)
 /// Fetch ONE object by id from the remote and verify its hash before returning it.
 /// Nothing is stored: the caller decides, so a corrupt remote object can never reach a store.
 pub fn fetch_object(backend: &dyn Backend, id: &ObjectId) -> Result<Object, PublishError> {
-    let v = backend
-        .get(&object_key(id))?
-        .ok_or_else(|| PublishError::Remote(format!("object {id} missing on remote")))?;
-    if id_of_encoded(&v.data) != *id {
+    let data = match backend.get(&object_key(id))? {
+        Some(v) => v.data,
+        // Not stored loose: try remote packs (`packs/<name>.pack` + `.idx`), reading only the
+        // small index and the one object's byte range.
+        None => {
+            packfetch::fetch_from_any_pack(backend, id)?.ok_or_else(|| PublishError::Remote(format!("object {id} missing on remote")))?
+        }
+    };
+    if id_of_encoded(&data) != *id {
         return Err(PublishError::Remote(format!("object {id} fails hash verification")));
     }
-    Object::decode(&v.data).map_err(|e| PublishError::Remote(format!("object {id}: {e}")))
+    Object::decode(&data).map_err(|e| PublishError::Remote(format!("object {id}: {e}")))
 }
 
 /// Fetch the closure of the heads of `zones` (None = all) into `local`, storing
@@ -545,15 +552,7 @@ pub fn fetch_heads(
         post_order(
             *id,
             &mut |i| Ok(local.contains(i)?),
-            &mut |i| {
-                let v = backend
-                    .get(&object_key(i))?
-                    .ok_or_else(|| PublishError::Remote(format!("object {i} missing on remote")))?;
-                if id_of_encoded(&v.data) != *i {
-                    return Err(PublishError::Remote(format!("object {i} fails hash verification")));
-                }
-                Object::decode(&v.data).map_err(|e| PublishError::Remote(format!("object {i}: {e}")))
-            },
+            &mut |i| fetch_object(backend, i),
             &mut |_, o| {
                 local.put(o)?;
                 Ok(())

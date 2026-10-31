@@ -23,6 +23,33 @@ pub fn fetch_from_pack(b: &dyn Backend, stem: &str, id: &ObjectId) -> Result<Opt
     Ok(Some(bytes))
 }
 
+/// Key prefix under which a remote keeps packs: `packs/<name>.pack` and `packs/<name>.idx`.
+pub const PACK_PREFIX: &str = "packs/";
+
+/// Look for `id` in every pack under [`PACK_PREFIX`]. `Ok(None)` if no pack has it.
+/// Cost: one `list`, then per pack one index GET (until found) and one ranged GET.
+pub fn fetch_from_any_pack(b: &dyn Backend, id: &ObjectId) -> Result<Option<Vec<u8>>, BackendError> {
+    for key in b.list(PACK_PREFIX)? {
+        if let Some(stem) = key.strip_suffix(".idx") {
+            if let Some(bytes) = fetch_from_pack(b, stem, id)? {
+                return Ok(Some(bytes));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Upload a local pack (and its index) as `packs/<name>`. The pack goes first, so a reader
+/// never sees an index without its pack. Create-only: an existing name is left unchanged.
+pub fn upload_pack(b: &dyn Backend, name: &str, pack_path: &Path) -> Result<(), BackendError> {
+    let other = |e: std::io::Error| BackendError::Other(e.to_string());
+    let pack = std::fs::read(pack_path).map_err(other)?;
+    let idx = std::fs::read(pack_path.with_extension("idx")).map_err(other)?;
+    b.put_if_absent(&format!("{PACK_PREFIX}{name}.pack"), &pack)?;
+    b.put_if_absent(&format!("{PACK_PREFIX}{name}.idx"), &idx)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

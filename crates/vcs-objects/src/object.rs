@@ -4,8 +4,16 @@ use crate::names;
 use std::collections::BTreeMap;
 
 /// Version of the object encoding. Part of the hashed bytes: a format change yields new ids.
-pub const FORMAT_VERSION: u8 = 1;
-const HASH_CONTEXT: &str = "all-git 2026 object identity v1";
+/// v2 added `Kind::Chunked` (chunk manifests for large blobs); every id changed with the bump.
+pub const FORMAT_VERSION: u8 = 2;
+const HASH_CONTEXT: &str = "all-git 2026 object identity v2";
+/// Files of at least this many bytes are stored as a chunk manifest plus chunk blobs; smaller
+/// ones as one blob. Fixed by the format: changing it (or the chunk parameters) is a version bump.
+pub const CHUNK_THRESHOLD: usize = 1 << 20;
+/// Chunking parameters fixed by format v2.
+pub const CHUNK_MIN: usize = 4 << 10;
+pub const CHUNK_AVG: usize = 16 << 10;
+pub const CHUNK_MAX: usize = 64 << 10;
 const MAX_MESSAGE: usize = 1 << 20;
 const MAX_PARENTS: usize = 64;
 
@@ -18,6 +26,7 @@ pub enum Kind {
     Snapshot = 4,
     Transaction = 5,
     Operation = 6,
+    Chunked = 7,
 }
 
 impl Kind {
@@ -29,6 +38,7 @@ impl Kind {
             4 => Kind::Snapshot,
             5 => Kind::Transaction,
             6 => Kind::Operation,
+            7 => Kind::Chunked,
             _ => return Err(DecodeError::Kind(b)),
         })
     }
@@ -53,6 +63,54 @@ pub fn id_of_encoded(encoded: &[u8]) -> ObjectId {
 /// Blob id without building an `Object` (avoids copying large content).
 pub fn blob_id(data: &[u8]) -> ObjectId {
     id_of_parts(Kind::Blob, data)
+}
+
+/// Id a file with these bytes has in a tree: a plain blob below [`CHUNK_THRESHOLD`], otherwise
+/// the id of its chunk manifest. One canonical id per content.
+pub fn content_id(data: &[u8]) -> ObjectId {
+    match ChunkedBlob::plan(data) {
+        Some(m) => Object::Chunked(m).id(),
+        None => blob_id(data),
+    }
+}
+
+/// One chunk of a [`ChunkedBlob`]: the id of a plain Blob and its length.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChunkRef {
+    pub id: ObjectId,
+    pub len: u32,
+}
+
+/// Manifest of a large file: ordered chunks whose concatenation is the file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChunkedBlob {
+    pub total_len: u64,
+    pub chunks: Vec<ChunkRef>,
+}
+
+impl ChunkedBlob {
+    /// Deterministic manifest for `data`, or `None` when it is below [`CHUNK_THRESHOLD`].
+    pub fn plan(data: &[u8]) -> Option<ChunkedBlob> {
+        if data.len() < CHUNK_THRESHOLD {
+            return None;
+        }
+        let mut start = 0;
+        let chunks = crate::chunk::chunk_ends(data, crate::chunk::ChunkParams::new(CHUNK_MIN, CHUNK_AVG, CHUNK_MAX))
+            .into_iter()
+            .map(|end| {
+                let r = ChunkRef {
+                    id: blob_id(&data[start..end]),
+                    len: (end - start) as u32,
+                };
+                start = end;
+                r
+            })
+            .collect();
+        Some(ChunkedBlob {
+            total_len: data.len() as u64,
+            chunks,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -309,6 +367,7 @@ pub enum Object {
     Snapshot(Snapshot),
     Transaction(Transaction),
     Operation(Operation),
+    Chunked(ChunkedBlob),
 }
 
 impl Object {
@@ -320,6 +379,7 @@ impl Object {
             Object::Snapshot(_) => Kind::Snapshot,
             Object::Transaction(_) => Kind::Transaction,
             Object::Operation(_) => Kind::Operation,
+            Object::Chunked(_) => Kind::Chunked,
         }
     }
 
@@ -330,6 +390,12 @@ impl Object {
         match self {
             Object::Blob(b) => {
                 w.raw(b);
+            }
+            Object::Chunked(m) => {
+                w.varint(m.total_len).varint(m.chunks.len() as u64);
+                for c in &m.chunks {
+                    w.id(&c.id).varint(c.len as u64);
+                }
             }
             Object::Tree(t) => {
                 w.varint(t.entries.len() as u64);
@@ -413,6 +479,28 @@ impl Object {
             Kind::Blob => {
                 let n = r.remaining();
                 Object::Blob(r.raw(n)?.to_vec())
+            }
+            Kind::Chunked => {
+                let total_len = r.varint()?;
+                let n = r.count(32 + 1)?;
+                if n < 2 || total_len < CHUNK_THRESHOLD as u64 {
+                    return Err(DecodeError::Invalid("chunked blob below threshold"));
+                }
+                let mut chunks = Vec::with_capacity(n);
+                let mut sum = 0u64;
+                for _ in 0..n {
+                    let id = r.id()?;
+                    let len = r.varint()?;
+                    if len == 0 || len > CHUNK_MAX as u64 {
+                        return Err(DecodeError::Invalid("chunk length"));
+                    }
+                    sum += len;
+                    chunks.push(ChunkRef { id, len: len as u32 });
+                }
+                if sum != total_len {
+                    return Err(DecodeError::Invalid("chunk lengths do not sum to total"));
+                }
+                Object::Chunked(ChunkedBlob { total_len, chunks })
             }
             Kind::Tree => {
                 let n = r.count(1 + 1 + 1 + 32)?;
@@ -648,7 +736,7 @@ mod tests {
 
     #[test]
     fn golden_blob_id_is_stable() {
-        // Guards against accidental change of the identity function (format v1).
+        // Guards against accidental change of the identity function (format v2).
         assert_eq!(
             Object::Blob(b"hello\n".to_vec()).id().to_hex(),
             Object::Blob(b"hello\n".to_vec()).id().to_hex()
@@ -657,7 +745,74 @@ mod tests {
         assert_eq!(id.len(), 64);
         assert_eq!(id, GOLDEN_HELLO);
     }
-    const GOLDEN_HELLO: &str = "3f158096fc84b5c7cdda1072501373ea3758184a0f5ba8628269a2af992e8935";
+    const GOLDEN_HELLO: &str = "de6e9755b08af02d38d3d998f15520ff076c051b4b84753e99b098b728bc724a";
+
+    fn rnd(n: usize, mut x: u64) -> Vec<u8> {
+        (0..n)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                (x >> 24) as u8
+            })
+            .collect()
+    }
+
+    #[test]
+    fn content_id_is_blob_below_threshold_and_manifest_at_or_above() {
+        let small = rnd(CHUNK_THRESHOLD - 1, 1);
+        assert_eq!(content_id(&small), blob_id(&small));
+        assert!(ChunkedBlob::plan(&small).is_none());
+        let big = rnd(CHUNK_THRESHOLD, 1);
+        let m = ChunkedBlob::plan(&big).unwrap();
+        assert_ne!(content_id(&big), blob_id(&big));
+        assert_eq!(content_id(&big), Object::Chunked(m.clone()).id());
+        assert_eq!(m.total_len as usize, big.len());
+        assert_eq!(m.chunks.iter().map(|c| c.len as usize).sum::<usize>(), big.len());
+        assert!(m.chunks.iter().all(|c| c.len as usize <= CHUNK_MAX && c.len > 0));
+    }
+
+    #[test]
+    fn chunked_roundtrip_and_golden_id() {
+        let big = rnd(CHUNK_THRESHOLD + 12345, 42);
+        let o = Object::Chunked(ChunkedBlob::plan(&big).unwrap());
+        assert_eq!(Object::decode(&o.encode()).unwrap(), o);
+        // Pins the chunker parameters and manifest encoding (format v2): changing either changes this.
+        assert_eq!(o.id().to_hex(), GOLDEN_CHUNKED);
+    }
+    const GOLDEN_CHUNKED: &str = "c07e3acd5be026d050469aaf80ec54325a99efc06977a8f9f9d39b6a21133fc4";
+
+    #[test]
+    fn chunked_decode_rejects_malformed() {
+        let big = rnd(CHUNK_THRESHOLD, 5);
+        let m = ChunkedBlob::plan(&big).unwrap();
+        let enc = Object::Chunked(m.clone()).encode();
+        // truncation at every length near the end and start
+        for cut in [1usize, 2, 3, 10, enc.len() / 2, enc.len() - 1] {
+            assert!(Object::decode(&enc[..cut]).is_err(), "cut {cut}");
+        }
+        let mut t = enc.clone();
+        t.push(0);
+        assert_eq!(Object::decode(&t), Err(DecodeError::Trailing));
+        let mut bad = m.clone();
+        bad.total_len += 1;
+        assert!(Object::decode(&Object::Chunked(bad).encode()).is_err(), "sum mismatch");
+        let mut bad = m.clone();
+        bad.chunks[0].len = 0;
+        assert!(Object::decode(&Object::Chunked(bad).encode()).is_err(), "empty chunk");
+        let mut bad = m.clone();
+        bad.chunks[0].len = CHUNK_MAX as u32 + 1;
+        assert!(Object::decode(&Object::Chunked(bad).encode()).is_err(), "oversize chunk");
+        let one = ChunkedBlob {
+            total_len: 10,
+            chunks: vec![ChunkRef { id: oid(1), len: 10 }],
+        };
+        assert!(Object::decode(&Object::Chunked(one).encode()).is_err(), "below threshold");
+        // an old-format object is refused
+        let mut old = enc;
+        old[1] = 1;
+        assert_eq!(Object::decode(&old), Err(DecodeError::Version(1)));
+    }
 
     #[test]
     fn commit_and_snapshot_and_tx_roundtrip() {

@@ -405,7 +405,7 @@ impl Repo {
             let abs = self.worktree.join(rel);
             let m = io(&abs, fs::metadata(&abs))?; // stat BEFORE read: later edits change mtime/size
             let data = io(&abs, fs::read(&abs))?;
-            let id = self.store.put_blob(&data)?;
+            let id = self.store.put_content(&data)?;
             Ok(IndexEntry {
                 id,
                 mode: mode_of(&m),
@@ -464,7 +464,7 @@ impl Repo {
             return Ok(Wt::Clean);
         }
         let data = io(&abs, fs::read(&abs))?;
-        Ok(if vcs_objects::blob_id(&data) == e.id && mode_of(&m) == e.mode {
+        Ok(if vcs_objects::content_id(&data) == e.id && mode_of(&m) == e.mode {
             Wt::Clean
         } else {
             Wt::Modified
@@ -639,8 +639,8 @@ impl Repo {
                 if old == new && heads.get(p).map(|h| h.0) == ix.entries.get(p).map(|e| e.mode) {
                     continue;
                 }
-                let o = old.map(|i| self.store.get_blob(&i)).transpose()?;
-                let n = new.map(|i| self.store.get_blob(&i)).transpose()?;
+                let o = old.map(|i| self.store.get_content(&i)).transpose()?;
+                let n = new.map(|i| self.store.get_content(&i)).transpose()?;
                 out.push_str(&diff::unified(p, o.as_deref(), n.as_deref()));
             }
         } else {
@@ -652,7 +652,7 @@ impl Repo {
                     Err(x) if x.kind() == std::io::ErrorKind::NotFound => None,
                     Err(source) => return Err(Error::Io { path: abs, source }),
                 };
-                let old = self.store.get_blob(&e.id)?;
+                let old = self.store.get_content(&e.id)?;
                 out.push_str(&diff::unified(p, Some(&old), cur.as_deref()));
             }
         }
@@ -1033,7 +1033,7 @@ impl Repo {
         // writes
         for p in changed {
             let (mode, id) = new[p];
-            let data = self.store.get_blob(&id)?;
+            let data = self.store.get_content(&id)?;
             let abs = self.worktree.join(p);
             let parent = abs.parent().unwrap();
             io(parent, fs::create_dir_all(parent))?;
@@ -1177,6 +1177,26 @@ impl Repo {
                             format!("snapshot {id}: missing commit {c} for zone {a}"),
                             &mut rep.problems,
                         )?;
+                    }
+                }
+                Ok(Object::Chunked(m)) => {
+                    for c in &m.chunks {
+                        missing(
+                            self,
+                            &c.id,
+                            format!("chunk manifest {id}: missing chunk {}", c.id),
+                            &mut rep.problems,
+                        )?;
+                        // A present chunk must be a plain blob of the recorded length.
+                        if self.store.contains(&c.id)? {
+                            match self.store.get(&c.id) {
+                                Ok(Object::Blob(b)) if b.len() == c.len as usize => {}
+                                Ok(_) => rep
+                                    .problems
+                                    .push(format!("chunk manifest {id}: chunk {} is not a blob of {} bytes", c.id, c.len)),
+                                Err(_) => {} // reported when the chunk itself is checked
+                            }
+                        }
                     }
                 }
                 Ok(_) => {}
