@@ -30,8 +30,14 @@ fn write(dir: &Path, f: &str, c: &str) {
 #[test]
 fn multi_zone_remote_workflow() {
     let t = tempfile::tempdir().unwrap();
-    let root = t.path();
-    let remote = root.join("remote");
+    let remote = t.path().join("remote");
+    let r = remote.to_str().unwrap();
+    workflow(t.path(), r, &format!("file://{r}"), r);
+}
+
+/// Publish/clone/fetch/sync/diverge workflow against any remote location.
+/// `set_url` goes to `remote set`; the clones use `sparse_url` and `full_url`.
+fn workflow(root: &Path, set_url: &str, sparse_url: &str, full_url: &str) {
     let a = root.join("a");
     ok(root, &["init", "a"]);
     ok(&a, &["zone", "create", "engine", "--path", "engine"]);
@@ -44,8 +50,8 @@ fn multi_zone_remote_workflow() {
 
     assert!(ok(&a, &["remote", "show"]).contains("no remote configured"));
     assert!(fail(&a, &["publish"]).contains("vcs remote set"));
-    ok(&a, &["remote", "set", remote.to_str().unwrap()]);
-    assert!(ok(&a, &["remote", "show"]).contains(remote.to_str().unwrap()));
+    ok(&a, &["remote", "set", set_url]);
+    assert!(ok(&a, &["remote", "show"]).contains(set_url));
     let out = ok(&a, &["publish"]);
     assert!(out.contains("engine/main (none) ->"), "{out}");
     assert!(out.contains("assets/main (none) ->"), "{out}");
@@ -53,8 +59,7 @@ fn multi_zone_remote_workflow() {
     assert!(ok(&a, &["publish"]).contains("nothing to publish"));
 
     // sparse clone
-    let url = format!("file://{}", remote.display());
-    let out = ok(root, &["clone", &url, "b", "--zone", "engine"]);
+    let out = ok(root, &["clone", sparse_url, "b", "--zone", "engine"]);
     assert!(out.contains("downloaded zones: engine"), "{out}");
     assert!(out.contains("skipped zones (not subscribed): "), "{out}");
     assert!(out.contains("assets"), "{out}");
@@ -65,7 +70,7 @@ fn multi_zone_remote_workflow() {
     assert!(ok(&b, &["remote", "show"]).contains("engine/main"));
 
     // full clone
-    ok(root, &["clone", remote.to_str().unwrap(), "c"]);
+    ok(root, &["clone", full_url, "c"]);
     let c = root.join("c");
     assert!(c.join("assets/logo.txt").exists());
 
@@ -114,9 +119,9 @@ fn unknown_scheme_is_rejected() {
     let t = tempfile::tempdir().unwrap();
     ok(t.path(), &["init", "r"]);
     let r = t.path().join("r");
-    let err = fail(t.path(), &["clone", "s3://bucket/x", "d"]);
+    let err = fail(t.path(), &["clone", "gs://bucket/x", "d"]);
     assert!(err.contains("not supported in this build"), "{err}");
-    ok(&r, &["remote", "set", "s3://bucket/x"]);
+    ok(&r, &["remote", "set", "gs://bucket/x"]);
     let err = fail(&r, &["fetch"]);
     assert!(err.contains("not supported in this build"), "{err}");
 }
@@ -180,4 +185,103 @@ fn deleted_cached_object_is_refetched_by_the_next_command() {
     let diff = ok(&b, &["diff"]);
     assert!(diff.contains("+more"), "{diff}");
     assert!(p.exists(), "object was refetched into the store");
+}
+
+#[test]
+fn s3_remote_without_credentials_is_a_clear_error() {
+    let t = tempfile::tempdir().unwrap();
+    ok(t.path(), &["init", "r"]);
+    let r = t.path().join("r");
+    ok(&r, &["remote", "set", "s3://bkt/p?endpoint=http://127.0.0.1:1"]);
+    let o = Command::new(env!("CARGO_BIN_EXE_vcs"))
+        .args(["fetch"])
+        .current_dir(&r)
+        .env_remove("AWS_ACCESS_KEY_ID")
+        .env_remove("AWS_SECRET_ACCESS_KEY")
+        .output()
+        .unwrap();
+    assert!(!o.status.success());
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(err.contains("AWS_ACCESS_KEY_ID is not set"), "{err}");
+    assert!(!err.contains("panicked"), "{err}");
+}
+
+#[test]
+fn s3_remote_rejects_secrets_in_url() {
+    let t = tempfile::tempdir().unwrap();
+    ok(t.path(), &["init", "r"]);
+    let r = t.path().join("r");
+    ok(&r, &["remote", "set", "s3://bkt?endpoint=http://127.0.0.1:1&secret_key=hunter2"]);
+    let err = fail(&r, &["fetch"]);
+    assert!(err.contains("unknown option"), "{err}");
+    assert!(!err.contains("hunter2"), "{err}");
+}
+
+/// Gated on `VCS_TEST_S3_ENDPOINT` (see docs/s3.md); skips silently otherwise.
+#[test]
+fn s3_minio_remote_workflow() {
+    let Ok(endpoint) = std::env::var("VCS_TEST_S3_ENDPOINT") else {
+        eprintln!("skipping: VCS_TEST_S3_ENDPOINT not set");
+        return;
+    };
+    let var = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_owned());
+    let bucket = var("VCS_TEST_S3_BUCKET", "vcs-test");
+    let (ak, sk) = (
+        var("VCS_TEST_S3_ACCESS_KEY", "minioadmin"),
+        var("VCS_TEST_S3_SECRET_KEY", "minioadmin"),
+    );
+    vcs_store_s3::S3Backend::new_unchecked(vcs_store_s3::S3Config::new(&endpoint, &bucket, &ak, &sk))
+        .unwrap()
+        .ensure_bucket()
+        .unwrap();
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let url = format!("s3://{bucket}/cli-{}-{nonce}?endpoint={endpoint}", std::process::id());
+    std::env::set_var("AWS_ACCESS_KEY_ID", &ak);
+    std::env::set_var("AWS_SECRET_ACCESS_KEY", &sk);
+    let t = tempfile::tempdir().unwrap();
+    workflow(t.path(), &url, &url, &url);
+    // no secret ever lands on disk
+    for repo in ["a", "b", "c"] {
+        for e in walk(&t.path().join(repo).join(".vcs")) {
+            let bytes = std::fs::read(&e).unwrap_or_default();
+            let text = String::from_utf8_lossy(&bytes);
+            assert!(!text.contains(&sk) || sk.len() < 8, "secret found in {}", e.display());
+        }
+    }
+    assert!(std::fs::read_to_string(t.path().join("a/.vcs/remote")).unwrap().contains(&bucket));
+}
+
+fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut out = vec![];
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            out.extend(walk(&p))
+        } else {
+            out.push(p)
+        }
+    }
+    out
+}
+
+#[cfg(not(feature = "tls"))]
+#[test]
+fn s3_https_endpoint_without_tls_feature_names_the_feature() {
+    let t = tempfile::tempdir().unwrap();
+    ok(t.path(), &["init", "r"]);
+    let r = t.path().join("r");
+    ok(&r, &["remote", "set", "s3://bkt?endpoint=https://127.0.0.1:1"]);
+    let o = Command::new(env!("CARGO_BIN_EXE_vcs"))
+        .args(["fetch"])
+        .current_dir(&r)
+        .env("AWS_ACCESS_KEY_ID", "k")
+        .env("AWS_SECRET_ACCESS_KEY", "s")
+        .output()
+        .unwrap();
+    assert!(!o.status.success());
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(err.contains("tls"), "{err}");
 }

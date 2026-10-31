@@ -1308,6 +1308,7 @@ dependencies = [
  "vcs-remote",
  "vcs-repo",
  "vcs-store",
+ "vcs-store-s3",
 ]
 
 [[package]]
