@@ -4,6 +4,7 @@ Index of documents under `docs/research/storage/`. Add new documents here, one l
 
 | Document | Issue | Content |
 |---|---|---|
+| [architecture-audit.md](architecture-audit.md) | #178 | End-to-end audit of the current storage path at `cd0fd09`: diagram, source map, 23 findings (F1 to F23) with measured syscalls, hash counts and backend request counts from the Lambda box; probe `crates/vcs-bench/src/bin/auditprobe.rs`, data `data/audit_*` |
 | [benchmark-methodology.md](benchmark-methodology.md) | #181 | Metric definitions, measurement protocol, Pareto scoring, result schema |
 | [cost-model.md](cost-model.md) | #181 | Provider pricing (retrieved 2026-10-31) and the executable cost model |
 | [provider-comparison.md](provider-comparison.md) | #181 | Capability matrix: S3, R2, GCS, B2, MinIO, RustFS, Ceph RGW |
