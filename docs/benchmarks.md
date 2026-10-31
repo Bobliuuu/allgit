@@ -238,6 +238,32 @@ Caveats:
   figures), so cross-tool comparisons from this run are not reliable.
 - Linux was not measured. Criterion benches were not re-run for this change.
 
+## After: directory listing cache for `status` (#102), 2026-10-31
+
+`status` keeps a per-directory cache of directory listings in `.vcs/dircache` (stamp = inode, mtime, ctime; trusted
+only after a 2 s racy window; see the module docs in `crates/vcs-repo/src/dircache.rs`). A directory whose stamp still
+matches is not re-read; tracked files are still stat'ed every time, so this removes the `open`+`getdirentries`+`close`
+per directory, not the per-file `stat`. `VCS_NO_DIRCACHE=1` turns it off for A/B runs.
+
+Machine: the Mac used above (APFS, release build, warm cache), **heavily loaded by other jobs during the runs (load
+average 17-31)**. CLI wall time of `vcs status` on a clean, committed, re-added 10k-file repo (`datagen`), in ms, three
+alternating batches of 7 runs each (21 runs per cell, pooled):
+
+| case | cache off: median (min-max) | cache warm: median (min-max) |
+|---|---|---|
+| `deep` 10k, clean | 757 (509-1321) | 161 (128-230) |
+
+`flat` 10k, one batch of 7 runs each: cache off 81 (70-131), cache warm 81 (70-123). That is, no change for flat, as
+expected (about 100 directories). The first run after the cache is missing (cold) took 863 ms (one sample) and writes
+a 1.3 MB cache file.
+
+Result: warm `deep` status is about 4.7x faster than without the cache, and about 2x the `flat` time at the same file
+count (161 ms vs 81 ms), so the "within 3x of flat" criterion is met on this run, with wide noise from the load. The
+speedup is the directory-listing part only; the remaining ~160 ms is per-file `stat` and index load. Not measured: Linux,
+cold OS cache, 1% modified files, repositories with many untracked files, and the optional filesystem watcher (not done
+in this change). Any change in a directory (new, removed or renamed entry) makes that directory be re-read; a status
+after such a change was checked for correctness by the property test, not benchmarked.
+
 ## Caveats
 
 - One machine, one run session, `--quick` sampling; treat differences under ~2x as noise.

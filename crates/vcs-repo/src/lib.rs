@@ -2,6 +2,7 @@
 //! See docs/architecture.md.
 
 pub mod diff;
+mod dircache;
 pub mod edit;
 pub mod error;
 pub mod export;
@@ -25,5 +26,5 @@ pub use manage::SnapshotCheckoutReport;
 pub use merge::{ConflictRec, MergeOutcome, MergeState, Resolution, ResolveCheck};
 pub use meta::{DEFAULT_BRANCH, ROOT_ZONE};
 pub use rebase::{RebaseOutcome, RebaseState};
-pub use repo::{AddReport, Change, ChangeKind, CommitReport, FsckReport, Repo, Status, ZoneStatus};
+pub use repo::{AddReport, Change, ChangeKind, CommitReport, FsckReport, Repo, Status, StatusOpts, ZoneStatus};
 pub use sync::{PublishReport, SyncAction, SyncReport};
