@@ -402,6 +402,20 @@ impl Repo {
         })
     }
 
+    /// True only if `zone` has a HEAD commit whose root tree id equals the root the index
+    /// entries would build. Any doubt (no HEAD, build error) returns false: callers then take
+    /// the exact slow path.
+    fn index_matches_head(&self, zone: &str, zones: &Zones, ws: &Workspace, refs: &Refs, mine: &BTreeMap<&String, &IndexEntry>) -> bool {
+        let Some(h) = self.current_head(zone, ws, refs) else {
+            return false;
+        };
+        let Ok(c) = self.commit_obj(&h) else {
+            return false;
+        };
+        let entries = mine.iter().map(|(p, e)| (zones.relative(zone, p), e.mode, e.id));
+        matches!(treeops::build(&HashOnly, entries), Ok(r) if r == c.root)
+    }
+
     pub fn status(&self) -> Result<Status> {
         let zones = self.zones()?;
         let ws = self.workspace()?;
@@ -409,31 +423,36 @@ impl Repo {
         let ix = self.index()?;
         let mut st = Status::default();
         for (zone, branch) in &ws.subs {
-            let head = self.head_flat(zone, &zones, &ws, &refs)?;
             let mine: BTreeMap<&String, &IndexEntry> = ix.entries.iter().filter(|(p, _)| zones.owner(p) == zone).collect();
             let mut staged = Vec::new();
-            for (p, e) in &mine {
-                match head.get(*p) {
-                    None => staged.push(Change {
-                        path: (*p).clone(),
-                        kind: ChangeKind::Added,
-                    }),
-                    Some((m, id)) if *m != e.mode || *id != e.id => staged.push(Change {
-                        path: (*p).clone(),
-                        kind: ChangeKind::Modified,
-                    }),
-                    _ => {}
+            // Fast path: if the tree the index would commit has exactly HEAD's root id, the
+            // two path maps are identical, so there is nothing staged and the (one file read
+            // per tree object) HEAD flatten can be skipped. Hash-only, no store I/O.
+            if !self.index_matches_head(zone, &zones, &ws, &refs, &mine) {
+                let head = self.head_flat(zone, &zones, &ws, &refs)?;
+                for (p, e) in &mine {
+                    match head.get(*p) {
+                        None => staged.push(Change {
+                            path: (*p).clone(),
+                            kind: ChangeKind::Added,
+                        }),
+                        Some((m, id)) if *m != e.mode || *id != e.id => staged.push(Change {
+                            path: (*p).clone(),
+                            kind: ChangeKind::Modified,
+                        }),
+                        _ => {}
+                    }
                 }
-            }
-            for p in head.keys() {
-                if !mine.contains_key(p) {
-                    staged.push(Change {
-                        path: p.clone(),
-                        kind: ChangeKind::Deleted,
-                    });
+                for p in head.keys() {
+                    if !mine.contains_key(p) {
+                        staged.push(Change {
+                            path: p.clone(),
+                            kind: ChangeKind::Deleted,
+                        });
+                    }
                 }
+                staged.sort_by(|a, b| a.path.cmp(&b.path));
             }
-            staged.sort_by(|a, b| a.path.cmp(&b.path));
             let mut unstaged = Vec::new();
             for (p, e) in &mine {
                 match self.wt_state(p, e, ix.written_ns)? {
@@ -495,7 +514,7 @@ impl Repo {
                 continue;
             }
             if ft.is_dir() {
-                let tracked_below = !ix.under(&rel).is_empty();
+                let tracked_below = ix.has_under(&rel);
                 any_tracked_here |= tracked_below;
                 let mut sub = Status::default();
                 let found = self.walk_untracked(&rel, zones, ws, ix, &mut sub)?;
@@ -630,6 +649,8 @@ impl Repo {
             message: message.to_owned(),
         }))?;
         refs.apply(&updates)?;
+        // Durability barrier: trees, commits and the transaction are durable before refs name them.
+        self.store.sync()?;
         write_atomic(&self.vcs.join("refs"), &refs.encode())?; // linearization point
         if merging.is_some() {
             self.clear_merge_state()?;
@@ -654,8 +675,6 @@ impl Repo {
             Some(b) => refs
                 .head(zone, b)
                 .ok_or_else(|| Error::Msg(format!("no such branch {zone}/{b}")))?
-        // Durability barrier: trees, commits and the transaction are durable before refs name them.
-        self.store.sync()?;
                 .into(),
             None => self.current_head(zone, &ws, &refs),
         };
@@ -979,6 +998,7 @@ impl Repo {
             message: message.to_owned(),
         }))?;
         refs.snapshots.insert(name.to_owned(), id);
+        self.store.sync()?;
         write_atomic(&self.vcs.join("refs"), &refs.encode())?;
         self.record_op(&format!("snapshot create {name}"), None)?;
         Ok(id)
@@ -999,7 +1019,6 @@ impl Repo {
     // ---------- fsck ----------
 
     /// Verify every object (hash + canonical decode) and graph invariants.
-        self.store.sync()?;
     pub fn fsck(&self) -> Result<FsckReport> {
         let mut rep = FsckReport::default();
         let ids = self.store.list()?;
@@ -1042,6 +1061,12 @@ impl Repo {
                 }
             }
         }
+        // The index must never name a blob that is not in the store.
+        for (p, e) in &self.index()?.entries {
+            if !self.store.contains(&e.id)? {
+                rep.problems.push(format!("index {p}: missing blob {}", e.id));
+            }
+        }
         let refs = self.refs()?;
         for ((a, b), h) in &refs.branches {
             match commits.get(h) {
@@ -1055,6 +1080,25 @@ impl Repo {
     }
 }
 
+/// Write-nothing store: `put` only computes the id. Used to ask "what root would these
+/// entries hash to?" without touching disk or memory-storing the trees.
+struct HashOnly;
+
+impl ObjectStore for HashOnly {
+    fn get(&self, id: &ObjectId) -> std::result::Result<Object, vcs_store::StoreError> {
+        Err(vcs_store::StoreError::NotFound(*id))
+    }
+    fn put(&self, obj: &Object) -> std::result::Result<ObjectId, vcs_store::StoreError> {
+        Ok(vcs_objects::id_of_encoded(&obj.encode()))
+    }
+    fn contains(&self, _id: &ObjectId) -> std::result::Result<bool, vcs_store::StoreError> {
+        Ok(false)
+    }
+    fn list(&self) -> std::result::Result<Vec<ObjectId>, vcs_store::StoreError> {
+        Ok(Vec::new())
+    }
+}
+
 pub(crate) fn fresh_change_id(zone: &str, root: &ObjectId, parent: Option<&ObjectId>, author: &Signature) -> ChangeId {
     // Unique per new logical change: mixes wall-clock nanos, pid, and a process-wide counter
     // with content context. Not a secret; collision resistance only.
@@ -1062,12 +1106,6 @@ pub(crate) fn fresh_change_id(zone: &str, root: &ObjectId, parent: Option<&Objec
     static CTR: AtomicU64 = AtomicU64::new(0);
     let mut h = blake3::Hasher::new_derive_key("all-git 2026 change id v1");
     h.update(zone.as_bytes());
-        // The index must never name a blob that is not in the store.
-        for (p, e) in &self.index()?.entries {
-            if !self.store.contains(&e.id)? {
-                rep.problems.push(format!("index {p}: missing blob {}", e.id));
-            }
-        }
     h.update(root.as_bytes());
     if let Some(p) = parent {
         h.update(p.as_bytes());
