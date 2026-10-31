@@ -6,6 +6,7 @@ pub mod edit;
 pub mod error;
 pub mod export;
 pub mod gc;
+pub mod ignore;
 pub mod import;
 pub mod index;
 pub mod manage;
@@ -15,6 +16,7 @@ pub mod ops;
 pub mod pick;
 pub mod rebase;
 pub mod repo;
+pub mod stash;
 pub mod sync;
 pub mod treeops;
 
@@ -27,4 +29,5 @@ pub use merge::{ConflictRec, MergeOutcome, MergeState, Resolution, ResolveCheck}
 pub use meta::{DEFAULT_BRANCH, ROOT_ZONE};
 pub use rebase::{RebaseOutcome, RebaseState};
 pub use repo::{AddReport, Change, ChangeKind, CommitReport, FsckReport, Repo, Status, ZoneStatus};
+pub use stash::{StashEntry, StashPopOutcome, StashZone};
 pub use sync::{PublishReport, SyncAction, SyncReport};

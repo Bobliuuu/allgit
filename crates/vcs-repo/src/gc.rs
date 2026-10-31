@@ -91,6 +91,7 @@ impl Repo {
         for e in self.index()?.entries.values() {
             roots.push(e.id);
         }
+        roots.extend(self.stash_roots()?);
         if let Some(m) = self.merge_state()? {
             roots.push(m.ours);
             roots.push(m.theirs);

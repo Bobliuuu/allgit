@@ -215,3 +215,24 @@ fn cherry_pick_and_revert_commands() {
     ok(&d, &["op", "undo"]);
     assert!(d.join("b.txt").exists());
 }
+
+#[test]
+fn ignore_and_stash_via_cli() {
+    let t = tempfile::tempdir().unwrap();
+    ok(t.path(), &["init", "demo"]);
+    let d = t.path().join("demo");
+    std::fs::write(d.join(".vcsignore"), "*.o\n").unwrap();
+    std::fs::write(d.join("a.txt"), "1\n").unwrap();
+    std::fs::write(d.join("a.o"), "bin").unwrap();
+    let st = ok(&d, &["status"]);
+    assert!(st.contains("a.txt") && !st.contains("a.o"), "{st}");
+    ok(&d, &["add", "."]);
+    ok(&d, &["commit", "-m", "c"]);
+    std::fs::write(d.join("a.txt"), "2\n").unwrap();
+    assert!(ok(&d, &["stash", "push", "-m", "wip"]).contains("stashed"));
+    assert_eq!(std::fs::read_to_string(d.join("a.txt")).unwrap(), "1\n");
+    assert!(ok(&d, &["stash", "list"]).contains("stash@{0}: wip"));
+    ok(&d, &["stash", "pop"]);
+    assert_eq!(std::fs::read_to_string(d.join("a.txt")).unwrap(), "2\n");
+    assert!(ok(&d, &["stash", "list"]).trim().is_empty());
+}
