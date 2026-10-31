@@ -63,6 +63,12 @@ enum Cmd {
         name: Option<String>,
         #[arg(long)]
         area: Option<String>,
+        /// Delete the named branch instead of creating it (refuses the checked-out branch)
+        #[arg(short = 'd', long)]
+        delete: bool,
+        /// With --delete: delete even if its commits are not reachable from another branch or snapshot
+        #[arg(long, requires = "delete")]
+        force: bool,
     },
     /// Switch branch (in the area containing cwd, or --area)
     Switch {
@@ -203,6 +209,17 @@ enum AreaCmd {
     Remove {
         name: String,
     },
+    /// Rename an area that has no history yet (commits record their area name)
+    Rename {
+        old: String,
+        new: String,
+    },
+    /// Delete an area definition (refuses a dirty area; --force drops its branches and snapshot pins)
+    Delete {
+        name: String,
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand, Clone)]
@@ -224,6 +241,10 @@ enum SnapCmd {
         name: String,
     },
     List,
+    /// Restore every subscribed area to its pinned commit (on branch snapshot/<name>); refuses dirty areas
+    Checkout {
+        name: String,
+    },
 }
 
 fn author() -> Signature {
@@ -434,10 +455,15 @@ fn run(cli: Cli) -> Result<(), Error> {
                 println!();
             }
         }
-        Cmd::Branch { name, area } => {
+        Cmd::Branch { name, area, delete, force } => {
             let (repo, cwd) = open()?;
             let area = area_of_cwd(&repo, &cwd, area)?;
             match name {
+                Some(n) if delete => {
+                    let h = repo.branch_delete(&area, &n, force)?;
+                    println!("deleted {area}/{n} (was {})", h.short());
+                }
+                None if delete => return Err(Error::Msg("--delete needs a branch name".into())),
                 Some(n) => {
                     let h = repo.create_branch(&area, &n)?;
                     println!("created {area}/{n} at {}", h.short());
@@ -603,6 +629,14 @@ fn run(cli: Cli) -> Result<(), Error> {
                     repo.area_remove(&name)?;
                     println!("unsubscribed from area {name}");
                 }
+                AreaCmd::Rename { old, new } => {
+                    repo.area_rename(&old, &new)?;
+                    println!("renamed area {old} to {new}");
+                }
+                AreaCmd::Delete { name, force } => {
+                    repo.area_delete(&name, force)?;
+                    println!("deleted area {name}");
+                }
             }
         }
         Cmd::Snapshot(s) => {
@@ -617,6 +651,18 @@ fn run(cli: Cli) -> Result<(), Error> {
                     println!("snapshot {name} ({id})");
                     for (a, c) in &s.areas {
                         println!("  {a:<14} {c}");
+                    }
+                }
+                SnapCmd::Checkout { name } => {
+                    let rep = repo.snapshot_checkout(&name)?;
+                    for (a, b, c) in &rep.switched {
+                        println!("area {a}: now on {b} at {}", c.short());
+                    }
+                    for a in &rep.unchanged {
+                        println!("area {a}: already at the snapshot");
+                    }
+                    for a in &rep.skipped {
+                        println!("area {a}: not subscribed, left alone");
                     }
                 }
                 SnapCmd::List => {

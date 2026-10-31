@@ -90,6 +90,9 @@ vcs add engine assets && vcs commit -m "Add engine and assets"
 vcs area branch engine feature       # branch just the engine
 vcs area checkout engine feature     # assets stays on main
 vcs area list
+vcs snapshot create v1 && vcs snapshot checkout v1   # every subscribed area back to its pinned commit
+vcs area rename old new                 # areas without history only; vcs area delete <name> [--force]
+vcs branch -d feature                   # refuses the checked-out branch and unmerged work (--force to override)
 ```
 ```text
 created area engine owning engine/
