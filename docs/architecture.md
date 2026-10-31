@@ -10,7 +10,10 @@ vcs-store    ObjectStore trait; MemoryStore, LocalStore (loose objects) (sync I/
 vcs-repo     zones, refs, index, workspace, status/diff/commit/log, snapshots, fsck             [impl]
 vcs-cli      `vcs` binary (clap)                                                                [impl]
 vcs-remote   Backend trait, Mem/Fs backends, manifest, publish step machine, sparse fetch, model tests [impl]
-vcs-store-s3, vcs-merge, vcs-operations, …                                                      [design]
+vcs-store-s3  S3-compatible Backend (not wired into the CLI)                                    [impl]
+vcs-merge     merge-base, diff3, three-way tree merge                                            [impl]
+vcs-bench     dataset generator, criterion benchmarks                                            [impl]
+(operation log, packs, locks and git import/export live in vcs-repo / vcs-remote)
 ```
 Crates are only created when a real boundary exists. The core never depends on Tokio or any S3 SDK.
 
@@ -88,7 +91,7 @@ Preflight validates every path before touching disk: path syntax, zone ownership
 write through symlinked or file ancestors (tested with a symlink pointing outside the worktree). `.vcs` is rejected
 case-insensitively in any component. Dirty zones refuse to switch.
 
-## Remote design [impl: protocol + Fs/Mem backends; S3 backend tracked in issues]
+## Remote design [impl: protocol + Fs/Mem backends; S3 backend exists, not wired to the CLI]
 
 **Required backend capabilities** (`vcs-remote::Backend`): read-after-write for new keys, range GET, create-only PUT
 (S3 `If-None-Match: *`), and compare-and-swap PUT on an opaque version tag (S3 `If-Match`). Providers lacking either
@@ -146,7 +149,7 @@ branches with local changes; refuses non-fast-forward with guidance; unchanged b
 `sync` (fast-forward only; dirty zones and divergence are reported, never touched), `clone_from` (sparse by zone).
 Zone definitions travel in the manifest, merged atomically with the publishing tx, with name/path/overlap conflicts rejected.
 
-**Not done:** S3 backend, server-side policy/locks (needs a validating writer), packs/range-read optimisation, GC,
+**Not done:** S3 backend CLI wiring, server-enforced locks (needs a validating writer; locks today are validated by the client, see [locks.md](locks.md)), range-read optimisation, destructive GC,
 manifest `applied` window > 4096 (older retries are rejected as Diverged, never double-applied).
 
 ## Garbage collection [design]
@@ -155,15 +158,15 @@ transactions (leases), pinned objects. Sweep only objects older than the grace w
 No destructive GC will be implemented until the reachability tests (including a concurrent-publish model test) exist.
 Local `fsck` (read-only) and `vcs gc --dry-run` (report-only) exist today. Full design: [gc.md](gc.md).
 
-## Merge / operations / semantic layers [design]
-Specified in the roadmap. Hooks already present: `Commit.change_id` (fresh per new commit today; rewrite operations
+## Merge / operations / semantic layers [merge, rebase, op log impl; semantic merge design]
+See [merge.md](merge.md), [rebase.md](rebase.md), [operations.md](operations.md). Semantic merge is only research notes. Hooks used: `Commit.change_id` (fresh per new commit today; rewrite operations
 will carry it forward), `Transaction` as the unit that an operation-log entry will reference.
 
-## Change identity [partially impl]
+## Change identity [impl for create, rebase; others partial]
 A new logical change gets a fresh 128-bit `ChangeId` at commit. Rules adopted for the rewrite milestone: amend and rebase
 keep the id; squash keeps the id of the top change; split gives the original id to the first part and fresh ids to the rest;
 cherry-pick creates a new id (records the source in metadata); two live commits with the same id are shown as *divergent*
-(visible state, never silently resolved). Only the creation rule is implemented.
+(visible state, never silently resolved). Creation and rebase (keeps ids) are implemented; cherry-pick and revert make new commits.
 
 ## Decisions log
 | # | Problem | Choice | Why / cost |
@@ -179,6 +182,11 @@ cherry-pick creates a new id (records the source in metadata); two live commits 
 | D9 | Tree flatten | whole-tree per zone | O(n); subtree-skipping + lazy loading in M5 after measurement |
 
 ## Known limitations (honest list)
-No merge/rebase yet; the operation log ([operations.md](operations.md)) covers local refs/workspace only: snapshots, remote-tracking refs and unrecorded crash-window changes are not undoable, and `undo` across several zones is not atomic; no S3 CLI wiring; no packfiles or chunking; no lock/lease; no Git/P4 interop; no
-filesystem monitor; no authn/authz; renaming a zone that already has history is not implemented (see [zones.md](zones.md)); `vcs log` has no
-merge-commit support because merges don't exist yet; no unit of concurrency control beyond a coarse repo lock.
+- Merge: no rename detection; criss-cross merges and file/directory conflicts are errors. Rebase handles linear ranges only.
+- Operation log covers local refs/workspace only: snapshots, remote-tracking refs and unrecorded crash-window changes are not undoable, and `undo` across several zones is not atomic ([operations.md](operations.md)).
+- S3 backend is not selectable from the CLI; remotes are directories.
+- Packs: `repack` only; no deltas, chunking or range reads. GC: report-only, nothing is deleted.
+- Locks are advisory: no validating writer, no authn/authz, `unlock --break` is unrestricted, no clock-skew margin ([locks.md](locks.md)).
+- Git: import and a one-branch export prototype; no Perforce.
+- No filesystem monitor; a coarse repo lock is the only local concurrency control; `log` shows first-parent history per zone branch.
+- Symlinks unsupported in v1. `vcs rm` of the last file in your current directory removes the directory and the next command in it fails (observed, not yet filed).
