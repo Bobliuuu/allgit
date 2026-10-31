@@ -1380,6 +1380,7 @@ dependencies = [
  "vcs-objects",
  "vcs-remote",
  "vcs-repo",
+ "vcs-server",
  "vcs-store",
  "vcs-store-s3",
 ]
@@ -1430,6 +1431,19 @@ dependencies = [
  "thiserror",
  "unicode-normalization",
  "vcs-merge",
+ "vcs-objects",
+ "vcs-remote",
+ "vcs-store",
+]
+
+[[package]]
+name = "vcs-server"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "tempfile",
+ "thiserror",
+ "ureq",
  "vcs-objects",
  "vcs-remote",
  "vcs-store",

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/vcs-objects", "crates/vcs-store", "crates/vcs-merge", "crates/vcs-remote", "crates/vcs-repo", "crates/vcs-store-s3", "crates/vcs-cli", "crates/vcs-bench"]
+members = ["crates/vcs-objects", "crates/vcs-store", "crates/vcs-merge", "crates/vcs-remote", "crates/vcs-repo", "crates/vcs-store-s3", "crates/vcs-server", "crates/vcs-cli", "crates/vcs-bench"]
 
 [workspace.package]
 version = "0.1.0"
@@ -23,6 +23,7 @@ vcs-merge = { path = "crates/vcs-merge" }
 vcs-remote = { path = "crates/vcs-remote" }
 vcs-repo = { path = "crates/vcs-repo" }
 vcs-store-s3 = { path = "crates/vcs-store-s3" }
+vcs-server = { path = "crates/vcs-server" }
 
 [profile.test]
 opt-level = 3

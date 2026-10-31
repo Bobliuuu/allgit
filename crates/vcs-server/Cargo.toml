@@ -1,0 +1,25 @@
+[package]
+name = "vcs-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Validating-writer HTTP server and HttpBackend client (no TLS; run behind a TLS proxy)"
+
+[lib]
+name = "vcs_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "vcs-server"
+path = "src/main.rs"
+
+[dependencies]
+vcs-remote.workspace = true
+vcs-objects.workspace = true
+blake3.workspace = true
+thiserror.workspace = true
+ureq = { version = "2", default-features = false }
+
+[dev-dependencies]
+vcs-store.workspace = true
+tempfile.workspace = true
