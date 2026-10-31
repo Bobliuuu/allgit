@@ -63,6 +63,9 @@ vcs area branch engine feature          # branch only the engine area
 vcs area checkout engine feature        # assets stays on main
 vcs status                              # shows each area's own branch + head
 vcs area list
+vcs snapshot create v1 && vcs snapshot checkout v1   # every subscribed area back to its pinned commit
+vcs area rename old new                 # areas without history only; vcs area delete <name> [--force]
+vcs branch -d feature                   # refuses the checked-out branch and unmerged work (--force to override)
 ```
 
 Areas own non-overlapping path prefixes (enforced). A commit that touches several areas advances all their branch heads in **one atomic update**.

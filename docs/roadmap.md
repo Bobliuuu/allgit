@@ -16,7 +16,8 @@ racy-stat handling. CLI demo from the task statement runs verbatim (`crates/vcs-
 ## M2 – Areas & snapshots 🟡
 ✅ area create/list/show/branches/branch/checkout/add/remove; non-overlap enforced; independent branch heads per area;
 sparse materialization with "unsubscribed ≠ deleted"; multi-area atomic local commit via Transaction; Snapshot create/show/list.
-⬜ snapshot checkout; area rename/delete/move-across-areas; dependency metadata; per-area policies (storage/merge/lock/ACL).
+✅ snapshot checkout, area rename/delete, branch delete (see [docs/areas.md](areas.md)).
+⬜ rename of areas that have history; move-across-areas; dependency metadata; per-area policies (storage/merge/lock/ACL).
 
 ## M3 – Remote storage 🟡
 ✅ backend trait + conformance suite, Mem/Fs backends, manifest CAS protocol, model checker, sparse fetch, publish/fetch/sync/clone in `vcs-repo`.
