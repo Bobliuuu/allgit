@@ -8,7 +8,7 @@ license.workspace = true
 vcs-remote.workspace = true
 ureq = { version = "2", default-features = false }
 sha2 = "0.10"
-hmac = "0.12"
+hmac = "0.13"
 
 [dev-dependencies]
 vcs-objects.workspace = true
