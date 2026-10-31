@@ -60,6 +60,17 @@ impl Index {
         v
     }
 
+    /// `!under(prefix).is_empty()` without allocating: is `prefix` or anything beneath it tracked?
+    pub fn has_under(&self, prefix: &str) -> bool {
+        if prefix.is_empty() {
+            return !self.entries.is_empty();
+        }
+        if self.entries.contains_key(prefix) {
+            return true;
+        }
+        self.entries.range(format!("{prefix}/")..format!("{prefix}0")).next().is_some()
+    }
+
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::new();
         w.varint(self.written_ns).varint(self.entries.len() as u64);
