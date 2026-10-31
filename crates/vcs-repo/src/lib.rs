@@ -7,6 +7,7 @@ mod dircache;
 pub mod edit;
 pub mod error;
 pub mod export;
+pub mod failpoint;
 pub mod gc;
 pub mod ignore;
 pub mod import;

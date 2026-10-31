@@ -16,6 +16,14 @@ const STATE_VERSION: u8 = 1;
 
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+    if crate::failpoint::tick() {
+        // Simulated crash mid-write: a torn temp file is left behind, the target is untouched.
+        let _ = fs::write(&tmp, &bytes[..bytes.len() / 2]);
+        return Err(Error::Io {
+            path: path.to_owned(),
+            source: std::io::Error::other("injected crash"),
+        });
+    }
     {
         let mut f = io(&tmp, fs::File::create(&tmp))?;
         io(&tmp, f.write_all(bytes))?;
