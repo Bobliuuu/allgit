@@ -79,6 +79,19 @@ jobs:
         env:
           VCS_TEST_S3_ENDPOINT: http://127.0.0.1:9000
 
+  # Advisory: compile-only on Windows (not in ci-ok). Nothing is executed on Windows here.
+  windows-check:
+    name: windows-check (advisory)
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2.7.8
+      - run: cargo check --workspace --all-targets --target x86_64-pc-windows-msvc
+
   ci-ok:
     name: ci-ok
     if: always()

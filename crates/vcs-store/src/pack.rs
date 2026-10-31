@@ -213,6 +213,8 @@ pub fn write_pack(dir: &Path, tmp_dir: &Path, mut objects: Vec<(ObjectId, Vec<u8
         }
         io(final_path, fs::rename(&tmp, final_path))?;
     }
+    // Directory fsync is a unix notion; Windows cannot open a directory as a plain file.
+    #[cfg(unix)]
     if let Ok(d) = fs::File::open(dir) {
         let _ = d.sync_all();
     }
