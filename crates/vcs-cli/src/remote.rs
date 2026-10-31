@@ -76,7 +76,7 @@ fn s3_config(url: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<S3Config
     let (mut endpoint, mut region) = (None, None);
     for kv in query.split('&').filter(|s| !s.is_empty()) {
         let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
-        let v = pct_decode(v).map_err(&bad)?;
+        let v = pct_decode(v).map_err(bad)?;
         match k {
             "endpoint" => endpoint = Some(v),
             "region" => region = Some(v),
