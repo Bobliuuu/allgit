@@ -129,6 +129,23 @@ enum Cmd {
         #[arg(long = "zone")]
         zones: Vec<String>,
     },
+    /// Lock files on the remote so others cannot publish changes to them
+    Lock {
+        paths: Vec<String>,
+        /// Lease length in seconds (no default: choose per your team's workflow)
+        #[arg(long = "lease-secs")]
+        lease_secs: u64,
+        #[arg(long, default_value = "")]
+        reason: String,
+    },
+    /// Release locks you hold (`--break` removes anyone's lock; unrestricted for now)
+    Unlock {
+        paths: Vec<String>,
+        #[arg(long = "break")]
+        admin_break: bool,
+    },
+    /// Show locks recorded on the remote (as of now; advisory until a validating writer exists)
+    Locks,
     /// Download remote objects and update remote-tracking refs (local branches untouched)
     Fetch {
         #[arg(long = "zone")]
@@ -257,6 +274,14 @@ fn author() -> Signature {
         .and_then(|t| t.parse().ok())
         .unwrap_or_else(|| SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0));
     Signature { name, email, timestamp }
+}
+
+/// Identity used for lock decisions: `VCS_PRINCIPAL`, else the author email.
+fn principal() -> String {
+    std::env::var("VCS_PRINCIPAL")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| author().email)
 }
 
 fn open() -> Result<(Repo, PathBuf), Error> {
@@ -730,7 +755,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             let (repo, _) = open()?;
             let backend = remote::open_backend(&need_remote(&repo)?)?;
             let want = (!zones.is_empty()).then_some(zones.as_slice());
-            let rep = repo.publish(backend.as_ref(), want, author())?;
+            let rep = repo.publish_as(backend.as_ref(), want, author(), &principal())?;
             if rep.updated.is_empty() {
                 println!("nothing to publish");
             }
@@ -741,6 +766,49 @@ fn run(cli: Cli) -> Result<(), Error> {
                 Some(Outcome::Applied { generation }) => println!("published atomically (remote generation {generation})"),
                 Some(Outcome::AlreadyApplied) => println!("transaction was already applied on the remote"),
                 None => {}
+            }
+        }
+        Cmd::Lock { paths, lease_secs, reason } => {
+            let (repo, cwd) = open()?;
+            let backend = remote::open_backend(&need_remote(&repo)?)?;
+            let rel: Vec<String> = paths.iter().map(|p| repo.rel_path(&cwd, p)).collect::<Result<_, _>>()?;
+            let got = repo.lock_paths(
+                backend.as_ref(),
+                &rel,
+                lease_secs.saturating_mul(1000),
+                &reason,
+                author(),
+                &principal(),
+            )?;
+            let defs = repo.zones()?;
+            for (z, p, t) in got {
+                println!("locked {p} (zone {}) token {t}", defs.label(&z));
+            }
+        }
+        Cmd::Unlock { paths, admin_break } => {
+            let (repo, cwd) = open()?;
+            let backend = remote::open_backend(&need_remote(&repo)?)?;
+            let rel: Vec<String> = paths.iter().map(|p| repo.rel_path(&cwd, p)).collect::<Result<_, _>>()?;
+            repo.unlock_paths(backend.as_ref(), &rel, admin_break, author(), &principal())?;
+            println!("unlocked {} path(s)", rel.len());
+        }
+        Cmd::Locks => {
+            let (repo, _) = open()?;
+            let backend = remote::open_backend(&need_remote(&repo)?)?;
+            let rows = repo.list_locks(backend.as_ref())?;
+            if rows.is_empty() {
+                println!("no locks");
+            }
+            for (z, p, l) in rows {
+                let now = std::time::SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                let state = if l.expires_at > now { "held" } else { "expired" };
+                println!(
+                    "{p} (zone {z}) {state} by {} until {} (unix ms) token {}  {}",
+                    l.holder, l.expires_at, l.token, l.reason
+                );
             }
         }
         Cmd::Fetch { zones } => {

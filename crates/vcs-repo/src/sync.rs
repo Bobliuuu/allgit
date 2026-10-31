@@ -10,7 +10,7 @@ use crate::treeops;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
-use vcs_objects::{Object, ObjectId, RefUpdate, Signature, Transaction};
+use vcs_objects::{LockOp, Object, ObjectId, RefUpdate, Signature, Transaction};
 use vcs_remote::{fetch_heads, fetch_object, load_manifest, Backend, Outcome, PublishError, Publisher};
 
 #[derive(Debug)]
@@ -57,9 +57,30 @@ fn publish_err(e: PublishError) -> Error {
                 f(found)
             ))
         }
+        PublishError::LockedBy {
+            zone,
+            path,
+            holder,
+            expires_at,
+        } => Error::Msg(format!(
+            "Cannot publish: {path} (zone {zone}) is locked by {holder} until {expires_at} (unix ms).\n\nYour local commits are kept. Options:\n  ask {holder} to `vcs unlock {path}`, or wait for the lease to expire\n  drop your change to that path and publish the rest"
+        )),
+        PublishError::LockBroken { zone, path } => Error::Msg(format!(
+            "Cannot publish: your lock on {path} (zone {zone}) is no longer valid (expired and re-taken, or broken).\n\nYour local commits are kept. Run `vcs locks` to see the current holder."
+        )),
         other => Error::Msg(other.to_string()),
     }
 }
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// One row of `vcs locks`: zone display name, zone-relative path, lock record.
+pub type LockRow = (String, String, vcs_remote::Lock);
 
 impl Repo {
     pub fn remote_url(&self) -> Result<Option<String>> {
@@ -140,6 +161,13 @@ impl Repo {
     /// Publish checked-out branches (all subscribed zones, or `zones`) in ONE atomic remote
     /// transaction. Refuses non-fast-forward; never overwrites remote work.
     pub fn publish(&self, backend: &dyn Backend, zones: Option<&[String]>, author: Signature) -> Result<PublishReport> {
+        let principal = author.email.clone();
+        self.publish_as(backend, zones, author, &principal)
+    }
+
+    /// Like [`Repo::publish`], acting as lock principal `principal`. The locks that principal
+    /// holds in the published zones are presented with their fencing tokens.
+    pub fn publish_as(&self, backend: &dyn Backend, zones: Option<&[String]>, author: Signature, principal: &str) -> Result<PublishReport> {
         let _l = self.lock()?;
         let defs = self.zones()?;
         let ws = self.workspace()?;
@@ -195,13 +223,25 @@ impl Repo {
             });
         }
         updates.sort();
+        let now = now_ms();
+        let lock_ops: Vec<LockOp> = manifest
+            .locks
+            .iter()
+            .filter(|((z, _), l)| l.holder == principal && l.expires_at > now && updates.iter().any(|u| &u.zone == z))
+            .map(|((z, p), l)| LockOp::Present {
+                zone: z.clone(),
+                path: p.clone(),
+                token: l.token,
+            })
+            .collect();
         let tx = Transaction {
             updates: updates.clone(),
             author,
             message: "publish".into(),
-            lock_ops: vec![],
+            lock_ops,
         };
         let outcome = Publisher::new(backend, &self.store, tx)
+            .with_principal(principal)
             .with_zones(zone_defs)
             .with_labels(label_defs)
             .run()
@@ -214,6 +254,96 @@ impl Repo {
             updated: updates.into_iter().map(|u| (u.zone, u.branch, u.old, u.new)).collect(),
             outcome: Some(outcome),
         })
+    }
+
+    /// Lock repo-relative `paths` (files) for `principal` for `lease_ms`, in one transaction.
+    /// Returns (zone id, zone-relative path, fencing token) per path.
+    pub fn lock_paths(
+        &self,
+        backend: &dyn Backend,
+        paths: &[String],
+        lease_ms: u64,
+        reason: &str,
+        author: Signature,
+        principal: &str,
+    ) -> Result<Vec<(String, String, u64)>> {
+        let defs = self.zones()?;
+        let ops: Vec<LockOp> = paths
+            .iter()
+            .map(|p| {
+                let z = defs.owner(p).to_owned();
+                LockOp::Acquire {
+                    path: defs.relative(&z, p).to_owned(),
+                    zone: z,
+                    lease_ms,
+                    reason: reason.to_owned(),
+                }
+            })
+            .collect();
+        self.lock_tx(backend, &ops, "lock", author, principal)?;
+        let (m, _) = load_manifest(backend).map_err(publish_err)?;
+        Ok(ops
+            .iter()
+            .filter_map(|o| {
+                m.locks
+                    .get(&(o.zone().to_owned(), o.path().to_owned()))
+                    .map(|l| (o.zone().to_owned(), o.path().to_owned(), l.token))
+            })
+            .collect())
+    }
+
+    /// Release locks held by `principal` on repo-relative `paths`. With `admin_break`, remove
+    /// them regardless of holder (unrestricted until authn/authz exists).
+    pub fn unlock_paths(
+        &self,
+        backend: &dyn Backend,
+        paths: &[String],
+        admin_break: bool,
+        author: Signature,
+        principal: &str,
+    ) -> Result<()> {
+        let defs = self.zones()?;
+        let (m, _) = load_manifest(backend).map_err(publish_err)?;
+        let mut ops = Vec::new();
+        for p in paths {
+            let z = defs.owner(p).to_owned();
+            let rel = defs.relative(&z, p).to_owned();
+            let Some(l) = m.locks.get(&(z.clone(), rel.clone())) else {
+                return msg(format!("{p} is not locked"));
+            };
+            ops.push(if admin_break {
+                LockOp::Break { zone: z, path: rel }
+            } else {
+                LockOp::Release {
+                    zone: z,
+                    path: rel,
+                    token: l.token,
+                }
+            });
+        }
+        self.lock_tx(backend, &ops, "unlock", author, principal)
+    }
+
+    /// Locks recorded in the remote manifest, with zone display names.
+    pub fn list_locks(&self, backend: &dyn Backend) -> Result<Vec<LockRow>> {
+        let defs = self.zones()?;
+        let (m, _) = load_manifest(backend).map_err(publish_err)?;
+        Ok(m.locks.into_iter().map(|((z, p), l)| (defs.label(&z).to_owned(), p, l)).collect())
+    }
+
+    fn lock_tx(&self, backend: &dyn Backend, ops: &[LockOp], what: &str, author: Signature, principal: &str) -> Result<()> {
+        let tx = Transaction {
+            updates: vec![],
+            author,
+            // unique per invocation: a later re-lock must not be deduplicated as "already applied"
+            message: format!("{what} {}", now_ms()),
+            lock_ops: ops.to_vec(),
+        };
+        Publisher::new(backend, &self.store, tx)
+            .with_principal(principal)
+            .run()
+            .map_err(publish_err)?;
+        Ok(())
     }
 
     /// Download objects for `zones` (default: subscribed) and update remote-tracking refs.

@@ -1,7 +1,25 @@
 # Locks and leases for unmergeable files
 
-Status: **[design]**. Nothing here is implemented. Tracks issue #7. Related: [architecture.md](architecture.md) (remote
-design, publish step machine), [object-model.md](object-model.md), `crates/vcs-remote/tests/model.rs` (checker style).
+Status: **[implemented, with gaps]**. Tracks issue #67 (design: #7). Related: [architecture.md](architecture.md) (remote
+design, publish step machine), [object-model.md](object-model.md), `crates/vcs-remote/tests/model.rs` (checker style),
+`crates/vcs-remote/tests/model_locks.rs` (the lock model checker).
+
+**What exists:** lock ops inside transactions (`Acquire`, `Renew`, `Release`, `Break`, plus `Present` to name the fencing
+token), manifest format v3 (written only once lock state exists), validation in `Publisher`'s `Load` step against the
+manifest the CAS replaces, `vcs lock`, `vcs unlock [--break]`, `vcs locks`, and `publish` presenting the caller's tokens.
+`LockedBy`, `LockBroken` and `NotHolder` reject the whole transaction.
+
+**Known gaps (not implemented):**
+* `require-lock` policy and acquire-on-publish *policy* (acquire-in-the-same-transaction works, nothing requires it).
+* The epsilon margin for replicas with skewed clocks: epsilon is 0, i.e. a single validator clock. Mutual exclusion with
+  replicas whose skew is nonzero is NOT provided; the model checks the single-validator case only.
+* A real validating writer and authentication: today the *client's* `Publisher` runs the validator, and the principal is
+  `VCS_PRINCIPAL` or the author email. Anyone with write access to the manifest bypasses every rule here, so enforcement
+  is advisory until a validating writer holds the only manifest credential (see "Advisory vs enforced").
+* Lease and hold-time defaults: `vcs lock --lease-secs` is required; no default is proposed until contention is measured.
+* Read-only worktree bit, `status`/`log` display, and `add`/`commit` warnings (advisory features).
+* `Break` is unrestricted (no `lock-admin` role until authn/authz exists) and writes no separate tombstone beyond the
+  `tx/<txid>` record, which already carries the author and the op.
 
 ## Problem
 
