@@ -612,6 +612,7 @@ dependencies = [
  "clap",
  "tempfile",
  "vcs-objects",
+ "vcs-remote",
  "vcs-repo",
 ]
 
