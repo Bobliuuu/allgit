@@ -33,7 +33,7 @@ read through `ObjectStore`/`BlobSource`/`CommitGraph`; nothing is written. The o
 
 ## Not done
 
-Rename/copy detection (a rename is delete+add), semantic/structural merge (M6), histogram diff, recursive merge of
+Rename/copy detection (a rename is delete+add), semantic/structural merge beyond the prototype below (M6), histogram diff, recursive merge of
 multiple bases, whitespace-insensitive merge, subtree-skipping tree merge (the whole tree is flattened; M5), writing
 conflict *objects* in the object graph (conflicts are persisted only in `.vcs/conflicts`, see below).
 
@@ -65,3 +65,36 @@ stores `new_blobs`, and moves the working tree/index/ref.
 * Not done: file<->directory conflicts (the merge is refused before anything is touched), merging several zones in
   one command, rename detection. Merge quality of Myers vs patience was only compared on a
 small hand-written corpus, not on real repositories; no timing numbers exist.
+
+## Structural merge prototype (feature `structural`, off by default)
+
+Research prototype for issue #10, `crates/vcs-merge/src/structural/`. `cargo build` does not compile tree-sitter; enable
+it with `--features structural`. It is a library function (`structural::merge_rust`) and is **not** wired into
+`merge_trees` or `vcs merge`.
+
+* Rust only. base, left and right are parsed with tree-sitter-rust. Top-level items (and, recursively, the items inside
+  `impl`, `trait` and inline `mod` bodies) are keyed by kind and name; comments and attributes travel with the item that
+  follows them. The key sequences are merged with the same diff3 (so moves and independent insertions resolve), then each
+  item is resolved: identical, one side unchanged, or a clean text merge of just that item (containers recurse).
+* It declines, and the ordinary text merge result is returned, when an input has a parse error, when key order conflicts
+  (both sides insert at the same spot), or when an item conflicts (same lines edited, delete versus modify, add/add).
+* Parse guarantee: when all three inputs parse, a structural result is returned only if the output parses. If the text
+  fallback is clean but its output does not parse, the result is downgraded to a single whole-file conflict.
+
+Measured with `cargo run -p vcs-merge --features structural --example structural_corpus --release -- 50` (550 generated
+scenarios, 50 per kind, Myers; the generator is `structural/corpus.rs` and is deterministic). "Files" counts scenarios
+that end conflicted; "hunks" counts conflict hunks.
+
+| kind | text files | structural files | text hunks | structural hunks |
+|---|---|---|---|---|
+| move_fn_vs_edit_it | 43 | 0 | 43 | 0 |
+| move_fn_vs_edit_other | 7 | 0 | 7 | 0 |
+| add_fn_both_at_end | 50 | 50 | 50 | 50 |
+| delete_vs_edit_same_fn | 50 | 50 | 50 | 50 |
+| same_line_conflict | 50 | 50 | 50 | 50 |
+| add_method_vs_edit_last, delete_fn_vs_edit_other, edit_different_fns, edit_method_vs_insert_after, edit_two_methods, left_syntax_error (6 kinds, 300 scenarios) | 0 | 0 | 0 | 0 |
+| total (550) | 200 | 150 | 200 | 150 |
+
+All 550 clean structural outputs parsed (0 unparsable). The gain is entirely in moves; line diff3 already merges edits
+to different functions when blank lines separate them. The corpus is synthetic and small, so these numbers say nothing
+about real code.

@@ -6,6 +6,8 @@
 pub mod base;
 pub mod diff;
 pub mod error;
+#[cfg(feature = "structural")]
+pub mod structural;
 pub mod text;
 pub mod tree;
 
