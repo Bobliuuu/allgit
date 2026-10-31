@@ -142,7 +142,14 @@ pub struct LocalStore {
     pending: Mutex<HashMap<ObjectId, PathBuf>>,
     seq: AtomicU64,
     packs: RwLock<Vec<Pack>>,
+    /// Dedup hits on objects older than this refresh their age; see [`DEFAULT_TOUCH_AFTER`].
+    touch_after: std::time::Duration,
 }
+
+/// Default for [`LocalStore::set_touch_after`]: a quarter of the default 14-day GC grace period.
+/// A dedup hit on an object younger than this skips the touch, so an object's age after any
+/// write that names it is at most this much, and GC's grace must exceed it (docs/gc.md).
+pub const DEFAULT_TOUCH_AFTER: std::time::Duration = std::time::Duration::from_secs(14 * 86400 / 4);
 
 /// Push a file's data to the device. On macOS `File::sync_all` is `F_FULLFSYNC` (flushes the
 /// drive cache, very slow); plain `fsync` only hands data to the drive, so the batch uses it
@@ -211,6 +218,13 @@ fn par_try_each<T: Sync>(items: &[T], f: impl Fn(&T) -> Result<(), StoreError> +
     }
 }
 
+/// Refresh an object file's mtime to now. Errors propagate: a swallowed failure would leave an
+/// old object looking old, which is exactly the hole this closes.
+fn touch(path: &Path) -> Result<(), StoreError> {
+    let f = io(path, fs::File::options().write(true).open(path))?;
+    io(path, f.set_modified(std::time::SystemTime::now()))
+}
+
 impl LocalStore {
     pub fn open(dir: impl Into<PathBuf>) -> Result<Self, StoreError> {
         let dir = dir.into();
@@ -221,7 +235,20 @@ impl LocalStore {
             pending: Mutex::new(HashMap::new()),
             seq: AtomicU64::new(0),
             packs: RwLock::new(packs),
+            touch_after: DEFAULT_TOUCH_AFTER,
         })
+    }
+    /// Only refresh a deduplicated object's age if it is older than `d` (zero: always).
+    pub fn set_touch_after(&mut self, d: std::time::Duration) {
+        self.touch_after = d;
+    }
+    /// True if an object last written at `t` is old enough that a dedup hit must refresh it.
+    /// Unknown age counts as old; a timestamp in the future counts as recent.
+    fn is_stale(&self, t: Option<std::time::SystemTime>) -> bool {
+        match t {
+            Some(t) => std::time::SystemTime::now().duration_since(t).is_ok_and(|a| a >= self.touch_after),
+            None => true,
+        }
     }
     fn load_packs(dir: &Path) -> Result<Vec<Pack>, StoreError> {
         let pd = dir.join("pack");
@@ -297,8 +324,34 @@ impl ObjectStore for LocalStore {
     fn put(&self, obj: &Object) -> Result<ObjectId, StoreError> {
         let enc = obj.encode();
         let id = vcs_objects::id_of_encoded(&enc);
-        // Existing objects are never rewritten: one stat (or a map lookup), no write I/O.
-        if self.pending.lock().unwrap().contains_key(&id) || self.path_of(&id).exists() || self.in_pack(&id) {
+        // Existing objects are never rewritten. A pending object is brand new already. A published
+        // one older than `touch_after` gets its modification time refreshed ("touch on dedup"), so
+        // GC's age check sees a re-adopted orphan as young (docs/gc.md). Younger ones are left
+        // alone, which keeps the common "just wrote it" dedup free of write I/O.
+        if self.pending.lock().unwrap().contains_key(&id) {
+            return Ok(id);
+        }
+        let loose = self.path_of(&id);
+        match fs::metadata(&loose) {
+            Ok(m) => {
+                if self.is_stale(m.modified().ok()) {
+                    touch(&loose)?;
+                }
+                return Ok(id);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => return Err(StoreError::Io { path: loose, source }),
+        }
+        // Packs are immutable and shared, so an old packed object is re-adopted by writing a fresh
+        // loose copy below (which `modified` prefers); an object in a recent pack needs nothing.
+        let packed_recent = self
+            .packs
+            .read()
+            .unwrap()
+            .iter()
+            .find(|pk| pk.contains(&id))
+            .map(|pk| !self.is_stale(pk.modified()));
+        if packed_recent == Some(true) {
             return Ok(id);
         }
         let n = self.seq.fetch_add(1, Ordering::Relaxed);
@@ -422,6 +475,70 @@ mod tests {
         assert!(matches!(s.get(&missing), Err(StoreError::NotFound(_))));
         s.sync().unwrap();
         assert_eq!(s.list().unwrap(), vec![id]);
+    }
+
+    #[test]
+    fn local_put_dedup_refreshes_mtime() {
+        let d = tempfile::tempdir().unwrap();
+        let s = LocalStore::open(d.path().join("objects")).unwrap();
+        let id = s.put_blob(b"old orphan").unwrap();
+        s.sync().unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(30 * 86400);
+        fs::File::options()
+            .write(true)
+            .open(s.path_of(&id))
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        assert!(s.modified(&id).unwrap().unwrap() <= old);
+        assert_eq!(s.put_blob(b"old orphan").unwrap(), id);
+        let age = std::time::SystemTime::now()
+            .duration_since(s.modified(&id).unwrap().unwrap())
+            .unwrap();
+        assert!(age < std::time::Duration::from_secs(60), "dedup put must refresh age, got {age:?}");
+    }
+
+    fn backdate(p: &Path, secs: u64) -> std::time::SystemTime {
+        let t = std::time::SystemTime::now() - std::time::Duration::from_secs(secs);
+        fs::File::options().write(true).open(p).unwrap().set_modified(t).unwrap();
+        t
+    }
+
+    #[test]
+    fn local_put_dedup_skips_touch_when_recent() {
+        let d = tempfile::tempdir().unwrap();
+        let s = LocalStore::open(d.path().join("objects")).unwrap();
+        let id = s.put_blob(b"recent").unwrap();
+        s.sync().unwrap();
+        let t = backdate(&s.path_of(&id), 3600); // 1h old, well under touch_after
+        s.put_blob(b"recent").unwrap();
+        let m = fs::metadata(s.path_of(&id)).unwrap().modified().unwrap();
+        assert_eq!(m, t, "a recent object must not be rewritten or touched");
+    }
+
+    #[test]
+    fn local_put_dedup_readopts_old_packed_object() {
+        let d = tempfile::tempdir().unwrap();
+        let s = LocalStore::open(d.path().join("objects")).unwrap();
+        let id = s.put_blob(b"packed orphan").unwrap();
+        assert_eq!(s.repack().unwrap(), 1);
+        let pack = fs::read_dir(d.path().join("objects/pack"))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.extension().is_some_and(|x| x == "pack"))
+            .unwrap();
+        backdate(&pack, 30 * 86400);
+        assert!(s.modified(&id).unwrap().unwrap() < std::time::SystemTime::now() - std::time::Duration::from_secs(86400));
+        s.put_blob(b"packed orphan").unwrap();
+        s.sync().unwrap();
+        let age = std::time::SystemTime::now()
+            .duration_since(s.modified(&id).unwrap().unwrap())
+            .unwrap();
+        assert!(
+            age < std::time::Duration::from_secs(60),
+            "re-adopted packed object must look young, got {age:?}"
+        );
+        assert_eq!(s.get_blob(&id).unwrap(), b"packed orphan");
     }
 
     #[test]

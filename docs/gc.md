@@ -1,7 +1,7 @@
 # Garbage collection
 
-Status: **design + local dry run.** `vcs gc --dry-run` (`Repo::gc_plan`) is implemented and tested. No command deletes
-anything, and no destructive sweep, local or remote, exists. Tracks issue #33.
+Status: **design + local dry run + local touch-on-dedup.** `vcs gc --dry-run` (`Repo::gc_plan`) is implemented and tested. No command deletes
+anything, and no destructive sweep, local or remote, exists. Tracks issues #33 and #43.
 
 ## Safety argument
 
@@ -55,8 +55,12 @@ while its parent survived.
 
 The remote is S3-like: create-only PUT, CAS on `manifest`, no multi-key transactions. Needs:
 
-1. **Object timestamps and touch-on-dedup.** `put_if_absent` hitting an existing key must refresh `LastModified`
-   (S3: copy-to-self with `REPLACE` metadata, or a sidecar). Without it the argument above fails.
+1. **Object timestamps and touch-on-dedup.** `put_if_absent` hitting an existing key (it returns `false`) must refresh
+   `LastModified` before the caller treats the object as stored. S3: server-side copy-to-self with
+   `x-amz-metadata-directive: REPLACE` (rewrites `LastModified` without moving data; needs `s3:GetObject`+`PutObject`;
+   cost is one request per dedup hit, so uploaders should batch or skip when `LastModified` is already recent), or a
+   sidecar `touch/<key>` object. The filesystem backend can use mtime as locally. Without it the argument above fails.
+   Not implemented: `Backend` has no touch operation yet.
 2. **Roots on the remote:** manifest `branches`, `snapshots`, retained history window of manifests, and the `tx/<txid>`
    records inside that window. Manifest history is not kept today (single key); GC needs either versioned manifests or
    an explicit "retained generations" list. Decision needed before building.
@@ -76,7 +80,13 @@ The remote is S3-like: create-only PUT, CAS on `manifest`, no multi-key transact
 ## Plan
 
 1. (done) `vcs gc --dry-run`, local, report only.
-2. Touch-on-dedup in `LocalStore::put`, measured for cost (it adds a write to the hot "already exists" path).
+2. (done) Touch-on-dedup in `LocalStore::put`: a dedup hit on an object older than `touch_after` (default 3.5 days, a quarter
+   of the default grace; `LocalStore::set_touch_after`) refreshes its file mtime, and a failure to touch is an error. A hit
+   on a younger object does nothing, so an object's age after any write that names it is at most `touch_after`, and a
+   real sweep's grace must exceed `touch_after` plus the writer hold time (`--grace-secs` below 3.5 days is unsafe for a
+   sweep; the dry run does not enforce this). An old object that lives in a pack is re-adopted by writing a fresh loose
+   copy, because packs are shared and immutable. Tested by `readopted_old_orphan_is_kept_after_dedup_put` and the store
+   unit tests; cost in `docs/benchmarks.md`. `MemoryStore` reports no age, so GC keeps its objects anyway.
 3. Local `vcs gc` sweep under the repo lock, with crash tests.
 4. Remote design items 1-7, model test first, then implementation.
 

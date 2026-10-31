@@ -288,3 +288,28 @@ machine as above, warm cache; the dataset has no natural redundancy besides the 
 Findings: smaller chunks dedup more on this edit pattern, and insertions that shift data dedup about as well as
 in-place overwrites. Not measured: per-chunk metadata/manifest overhead (so the percentages overstate the saving), read
 or checkout time, and the effect on `fsck`.
+
+## Touch-on-dedup cost (`add_dedup`, measured)
+
+`LocalStore::put` refreshes an existing object's mtime only when it is older than `touch_after` (default 3.5 days). Bench
+`repo/add_dedup`: empty index, every object already stored (and just written, so "recent"), so each file takes the dedup path
+(index reset untimed). 10,000 files, release, warm, criterion default sampling (10 samples). Three process runs, each timing
+all three variants in one process (run 2 in reverse order), via a temporary env override of `touch_after` that is not in the
+tree: `never` = no touch (the old behaviour), `default` = 3.5 days (what ships), `always` = touch on every hit.
+Table cells are the **median of the three runs' mid estimates** (individual runs ranged widely, see below).
+
+| layout (10,000 files) | never | default | always |
+|---|---|---|---|
+| flat | 244 ms | 291 ms | 674 ms |
+| deep | 1.16 s | 1.15 s | 1.32 s |
+| bigdir | 170 ms | 150 ms | 346 ms |
+
+Per-run mid estimates (ms), run1 / run2 / run3: flat never 244/153/261, default 291/142/296, always 938/377/674; deep never
+1156/1067/1715, default 1151/1028/1493, always 1113/1322/3190; bigdir never 142/170/401, default 142/150/288, always
+329/346/576.
+
+Reading: the shipped default is indistinguishable from no touch at this noise level (the machine was shared with other
+builds, so run-to-run spread is up to 2-3x; the `default` and `never` numbers swap order between runs). Touching on every hit
+roughly doubles flat and bigdir dedup-adds, which is why the age threshold exists. Not measured: dedup hits on objects older
+than `touch_after` (these do pay one open and `futimens` each, the `always` column is their upper bound), cold cache,
+quiet machine.
