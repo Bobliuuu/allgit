@@ -55,6 +55,30 @@ jobs:
       - run: cargo test --workspace
       - run: cargo test -p vcs-merge --features structural
 
+  s3:
+    name: s3 (minio)
+    # Informational: not in ci-ok needs, because MinIO distribution is unreliable.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.7.8
+      - name: Start MinIO
+        run: |
+          # Upstream stopped publishing MinIO binaries and images; build from source.
+          GOBIN="$PWD" go install github.com/minio/minio@latest
+          MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin \
+            nohup ./minio server "$RUNNER_TEMP/minio-data" --address 127.0.0.1:9000 > minio.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:9000/minio/health/live && exit 0
+            sleep 1
+          done
+          cat minio.log; echo "MinIO did not become healthy"; exit 1
+      - run: cargo test -p vcs-store-s3 -p vcs-cli
+        env:
+          VCS_TEST_S3_ENDPOINT: http://127.0.0.1:9000
+
   ci-ok:
     name: ci-ok
     if: always()
