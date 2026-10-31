@@ -1122,7 +1122,13 @@ impl Repo {
         }
         rep.evictable = evictable.into_iter().collect();
         self.fsck_ops(&mut rep.problems);
+        rep.problems.extend(self.store.verify_packs());
         Ok(rep)
+    }
+
+    /// Move all loose objects into a new pack. Returns how many were packed.
+    pub fn repack(&self) -> Result<usize> {
+        Ok(self.store.repack()?)
     }
 }
 

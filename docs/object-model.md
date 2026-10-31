@@ -84,3 +84,36 @@ together) and Snapshots (what is pinned together), never by shared ancestry.
 their commits; Transactions referenced by the retained manifest history window; in-flight (unpublished) transactions
 protected by a lease/epoch (see architecture §GC). Transactions are *not* reachable from commits; they are reachable
 from the transaction log.
+
+## Packs (Milestone 5, local store implemented)
+
+Loose objects (`objects/<aa>/<rest>`) stay the write path. `vcs repack` moves every loose object into one pack under
+`objects/pack/`; readers consult loose files first, then packs. Object ids and encodings are unchanged: a pack only
+stores the same encoded bytes, so hashes, sync and GC reachability are unaffected.
+
+`pack-<name>.pack` (all integers little-endian), `<name>` = hex of the trailer:
+
+| Field | Size | Notes |
+|---|---|---|
+| magic `VCSPACK1` | 8 | |
+| count | u32 | number of entries |
+| entries | repeated | `len: u32` then `len` bytes of the encoded object, sorted by id |
+| trailer | 32 | BLAKE3 of everything before it |
+
+`pack-<name>.idx`:
+
+| Field | Size | Notes |
+|---|---|---|
+| magic `VCSPIDX1`, count u32, pack length u64, pack trailer | 8+4+8+32 | ties the index to one pack |
+| entries | 44 each | `id[32]`, `offset u64` (of the payload), `len u32`; strictly sorted by id |
+| trailer | 32 | BLAKE3 of the index before it |
+
+- Lookup: the index is loaded in memory, binary-searched, then exactly one ranged read `[offset, offset+len)` fetches the
+  object; its hash is checked against the id like any loose read. The ranged read is what a remote `Backend` range
+  request would use later (not implemented yet).
+- Write order: pack renamed into place, then index. A pack without an index is ignored (crash-safe). Loose files are
+  deleted only after both are durable.
+- Open refuses a pack whose length differs from the index (truncation) or an index with a bad checksum/ordering, rather
+  than silently hiding objects. `fsck` additionally re-hashes the whole pack, checks each entry's framing and every
+  object hash.
+- Not done: compression, deltas, multi-pack merging, range reads in `Backend`, chunking (see issue #9).

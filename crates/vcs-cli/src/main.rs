@@ -138,6 +138,8 @@ enum Cmd {
     Sync,
     /// Verify all objects and graph invariants
     Fsck,
+    /// Move loose objects into a pack (one pack + index under .vcs/objects/pack)
+    Repack,
     /// Report unreachable objects that garbage collection would delete (deletes nothing)
     Gc {
         /// Required: destructive GC is not implemented, see docs/gc.md
@@ -828,6 +830,11 @@ fn run(cli: Cli) -> Result<(), Error> {
                 println!("  would delete {} {kind:?}", id.short());
             }
             println!("dry run: nothing was deleted");
+        }
+        Cmd::Repack => {
+            let (repo, _) = open()?;
+            let n = repo.repack()?;
+            println!("packed {n} object(s)");
         }
         Cmd::Fsck => {
             let (repo, _) = open()?;

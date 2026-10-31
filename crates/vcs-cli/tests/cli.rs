@@ -140,3 +140,31 @@ fn snapshot_checkout_zone_and_branch_management() {
     assert!(ok(&d, &["zone", "list"]).contains("manual"));
     assert!(ok(&d, &["fsck"]).contains("ok"));
 }
+
+#[test]
+fn repack_keeps_repo_working_and_fsck_catches_pack_corruption() {
+    let t = tempfile::tempdir().unwrap();
+    ok(t.path(), &["init", "p"]);
+    let d = t.path().join("p");
+    for i in 0..5 {
+        std::fs::write(d.join(format!("f{i}.txt")), format!("content {i}\n")).unwrap();
+    }
+    ok(&d, &["add", "."]);
+    ok(&d, &["commit", "-m", "five files"]);
+    assert!(ok(&d, &["repack"]).contains("packed"));
+    assert!(ok(&d, &["repack"]).contains("packed 0 object"));
+    assert!(ok(&d, &["fsck"]).contains("ok"));
+    assert!(ok(&d, &["log"]).contains("five files"));
+    let pd = d.join(".vcs/objects/pack");
+    let pack = std::fs::read_dir(&pd)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.extension().unwrap() == "pack")
+        .unwrap();
+    let mut b = std::fs::read(&pack).unwrap();
+    b[20] ^= 1;
+    std::fs::write(&pack, b).unwrap();
+    let o = vcs(&d, &["fsck"]);
+    assert!(!o.status.success());
+    assert!(String::from_utf8_lossy(&o.stdout).contains("PROBLEM"));
+}
