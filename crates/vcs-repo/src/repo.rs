@@ -589,6 +589,7 @@ impl Repo {
             return msg("empty commit message");
         }
         let _l = self.lock()?;
+        self.rebase_guard("commit")?;
         let merging = self.merge_commit_guard()?;
         let areas = self.areas()?;
         let ws = self.workspace()?;
