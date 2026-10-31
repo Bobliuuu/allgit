@@ -1171,7 +1171,9 @@ impl Repo {
             for c in &comps[..comps.len() - 1] {
                 acc.push(c);
                 match fs::symlink_metadata(&acc) {
-                    Ok(m) if m.file_type().is_symlink() => return msg(format!("refusing to write through symlink at {}", acc.display())),
+                    Ok(m) if crate::portable::is_link_like(&m) => {
+                        return msg(format!("refusing to write through symlink at {}", acc.display()))
+                    }
                     Ok(m) if m.is_file() => {
                         let rel = acc.strip_prefix(&self.worktree).unwrap().to_string_lossy().replace('\\', "/");
                         if !old.contains_key(&rel) || new.contains_key(&rel) {

@@ -6,8 +6,19 @@ use vcs_bench::{generate_binary, mutate_binary};
 use vcs_objects::Signature;
 use vcs_repo::Repo;
 
-fn disk(dir: &Path) -> (u64, u64, u64) {
+#[cfg(unix)]
+fn allocated(m: &std::fs::Metadata) -> u64 {
     use std::os::unix::fs::MetadataExt;
+    m.blocks() * 512
+}
+
+/// No portable allocated-size query on Windows; fall back to the apparent size.
+#[cfg(not(unix))]
+fn allocated(m: &std::fs::Metadata) -> u64 {
+    m.len()
+}
+
+fn disk(dir: &Path) -> (u64, u64, u64) {
     let (mut apparent, mut alloc, mut files) = (0, 0, 0);
     let mut stack = vec![dir.to_owned()];
     while let Some(d) = stack.pop() {
@@ -18,7 +29,7 @@ fn disk(dir: &Path) -> (u64, u64, u64) {
                 stack.push(e.path());
             } else {
                 apparent += m.len();
-                alloc += m.blocks() * 512;
+                alloc += allocated(&m);
                 files += 1;
             }
         }

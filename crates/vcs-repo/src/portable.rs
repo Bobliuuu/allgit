@@ -91,6 +91,21 @@ pub fn require_no_collision<'a>(paths: impl IntoIterator<Item = &'a str>, what: 
     }
 }
 
+/// True for a symlink, and on Windows also for any other reparse point (directory junctions,
+/// mount points), which `FileType::is_symlink` does not report. Used where checkout must refuse
+/// to write through a link planted in the worktree.
+pub(crate) fn is_link_like(m: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return true;
+        }
+    }
+    m.file_type().is_symlink()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
