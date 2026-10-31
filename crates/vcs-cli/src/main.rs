@@ -507,7 +507,11 @@ fn timestamp() -> u64 {
 /// Author from `user.name` / `user.email` (see `vcs config`); a helpful error when unset.
 fn author() -> Result<Signature, Error> {
     let (name, email) = config::Config::load()?.identity()?;
-    Ok(Signature { name, email, timestamp: timestamp() })
+    Ok(Signature {
+        name,
+        email,
+        timestamp: timestamp(),
+    })
 }
 
 /// Identity used for lock decisions: `VCS_PRINCIPAL`, else the author email.
@@ -634,7 +638,10 @@ fn run(cli: Cli) -> Result<(), Error> {
                 ConfigCmd::Set { key, value, user } => config::set(sc(user), &key, &value)?,
                 ConfigCmd::Unset { key, user } => {
                     if !config::unset(sc(user), &key)? {
-                        return Err(Error::Msg(format!("{key} is not set in the {} config", if user { "user" } else { "repository" })));
+                        return Err(Error::Msg(format!(
+                            "{key} is not set in the {} config",
+                            if user { "user" } else { "repository" }
+                        )));
                     }
                 }
                 ConfigCmd::List => {
