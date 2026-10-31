@@ -15,5 +15,9 @@ vcs-store.workspace = true
 vcs-remote.workspace = true
 clap.workspace = true
 
+[features]
+default = []
+structural = ["vcs-repo/structural"]
+
 [dev-dependencies]
 tempfile.workspace = true
