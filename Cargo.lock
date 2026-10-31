@@ -625,6 +625,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcs-remote"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "tempfile",
+ "thiserror",
+ "vcs-objects",
+ "vcs-store",
+]
+
+[[package]]
 name = "vcs-repo"
 version = "0.1.0"
 dependencies = [
@@ -632,6 +643,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "vcs-objects",
+ "vcs-remote",
  "vcs-store",
 ]
 
