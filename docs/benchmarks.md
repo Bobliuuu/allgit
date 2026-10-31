@@ -269,3 +269,22 @@ Findings:
   and framing). It does cut allocated bytes by about 1.6% (106.6 MB to 104.9 MB) and 421 files to 2.
 - Packed `fsck` was slower than loose `fsck` in both runs because it also re-hashes the whole pack once.
 - Every changed file is stored as a full new blob (about 4x the first version), which is the case content-defined chunking targets.
+
+## Content-defined chunking prototype: dedup (measured)
+
+Reproduce: `cargo run --release -p vcs-bench --bin chunkbench -- 100 262144 4 4 4096 overwrite` (or `insert`).
+Prototype only: `vcs_store::chunk` (gear hash, normalized cut) finds boundaries; it is not wired into the object model,
+so no chunk manifests exist yet and nothing here changes the stored repo. "Stored" counts each distinct BLAKE3 hash once
+across all 4 versions of all 100 files (256 KiB random, per version 4 edits of 4 KiB per file). One run each, same
+machine as above, warm cache; the dataset has no natural redundancy besides the edits.
+
+| Edit kind | Chunk min/avg/max | Whole-blob stored | Chunk stored | Chunk / whole | Chunking time (all versions) |
+|---|---|---|---|---|---|
+| overwrite in place | 2 KiB / 8 KiB / 32 KiB | 104,857,600 B | 45,557,538 B | 43.4% | 164 ms |
+| overwrite in place | 8 KiB / 32 KiB / 128 KiB | 104,857,600 B | 70,271,578 B | 67.0% | 78 ms |
+| insert (shifts data) | 2 KiB / 8 KiB / 32 KiB | 114,688,000 B | 47,624,101 B | 41.5% | 74 ms |
+| insert (shifts data) | 8 KiB / 32 KiB / 128 KiB | 114,688,000 B | 75,727,365 B | 66.0% | 78 ms |
+
+Findings: smaller chunks dedup more on this edit pattern, and insertions that shift data dedup about as well as
+in-place overwrites. Not measured: per-chunk metadata/manifest overhead (so the percentages overstate the saving), read
+or checkout time, and the effect on `fsck`.

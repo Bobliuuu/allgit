@@ -4,6 +4,7 @@
 //! must not depend on Tokio. The S3 backend (Milestone 3) will implement an async twin
 //! at the network boundary; see docs/architecture.md §Storage.
 
+pub mod chunk;
 pub mod pack;
 use pack::Pack;
 use std::collections::{BTreeMap, BTreeSet, HashMap};

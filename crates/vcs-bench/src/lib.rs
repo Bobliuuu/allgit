@@ -150,6 +150,22 @@ pub fn mutate_binary(dir: &Path, n: usize, edits: usize, edit_len: usize, seed: 
     Ok(())
 }
 
+/// Like [`mutate_binary`] but inserts `edit_len` bytes (shifting the rest), `edits` times per file.
+pub fn mutate_binary_insert(dir: &Path, n: usize, edits: usize, edit_len: usize, seed: u64) -> io::Result<()> {
+    let mut rng = Rng::new(seed);
+    for i in 0..n {
+        let p = dir.join(format!("bin/f{i:06}.bin"));
+        let mut b = fs::read(&p)?;
+        for _ in 0..edits {
+            let at = (rng.next_u64() as usize) % b.len();
+            let patch = rng.bytes(edit_len);
+            b.splice(at..at, patch);
+        }
+        fs::write(&p, b)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
