@@ -15,3 +15,8 @@ blake3.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 proptest.workspace = true
+
+[features]
+default = []
+# Use the structural Rust merge in merge and rebase (see vcs-merge).
+structural = ["vcs-merge/structural"]

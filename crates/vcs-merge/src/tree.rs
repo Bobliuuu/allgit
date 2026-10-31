@@ -123,6 +123,7 @@ fn pick3<T: PartialEq + Copy>(b: T, l: T, r: T) -> Option<T> {
 fn merge_entry(
     blobs: &dyn BlobSource,
     alg: Algorithm,
+    structural: bool,
     path: &str,
     b: Option<Entry>,
     l: Option<Entry>,
@@ -157,7 +158,7 @@ fn merge_entry(
                     if is_binary(&bc) || is_binary(&lc) || is_binary(&rc) {
                         (None, None)
                     } else {
-                        match merge3(alg, &bc, &lc, &rc) {
+                        match text_or_structural(alg, structural, path, &bc, &lc, &rc) {
                             TextMerge::Clean(bytes) => {
                                 let id = blob_id(&bytes);
                                 if mode.is_some() {
@@ -229,6 +230,30 @@ fn file_of(n: &Node) -> Option<Entry> {
 /// wins, otherwise a `FileDirectory` conflict is recorded at the file path and the
 /// directory side's descendants are merged normally.
 pub fn merge_flat(blobs: &dyn BlobSource, alg: Algorithm, base: &Flat, left: &Flat, right: &Flat) -> Result<TreeMerge, MergeError> {
+    merge_flat_with(blobs, alg, false, base, left, right)
+}
+
+/// Line merge, or (feature `structural`, `structural` set, path ends in `.rs`) the structural
+/// Rust merge, which itself falls back to the line merge on any failure.
+fn text_or_structural(alg: Algorithm, structural: bool, path: &str, b: &[u8], l: &[u8], r: &[u8]) -> TextMerge {
+    #[cfg(feature = "structural")]
+    if structural && path.ends_with(".rs") {
+        return crate::structural::merge_rust(alg, b, l, r).merge;
+    }
+    let _ = (structural, path);
+    merge3(alg, b, l, r)
+}
+
+/// Like [`merge_flat`]; `structural` enables the structural Rust merge for `.rs` files when the
+/// crate is built with feature `structural` (ignored otherwise).
+pub fn merge_flat_with(
+    blobs: &dyn BlobSource,
+    alg: Algorithm,
+    structural: bool,
+    base: &Flat,
+    left: &Flat,
+    right: &Flat,
+) -> Result<TreeMerge, MergeError> {
     let mut out = TreeMerge::default();
     let all: BTreeSet<&String> = base.keys().chain(left.keys()).chain(right.keys()).collect();
     let mut conflicts: BTreeMap<String, Conflict> = BTreeMap::new();
@@ -236,6 +261,7 @@ pub fn merge_flat(blobs: &dyn BlobSource, alg: Algorithm, base: &Flat, left: &Fl
         match merge_entry(
             blobs,
             alg,
+            structural,
             p,
             base.get(*p).copied(),
             left.get(*p).copied(),
