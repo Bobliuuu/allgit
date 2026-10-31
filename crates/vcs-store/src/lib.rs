@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::sync::RwLock;
 use vcs_objects::{DecodeError, Object, ObjectId};
@@ -93,6 +93,10 @@ impl MemoryStore {
     pub fn new() -> Self {
         Self::default()
     }
+    /// Test hook: drop an object so any read of it fails with `NotFound`.
+    pub fn remove_for_test(&self, id: &ObjectId) {
+        self.objects.lock().unwrap().remove(id);
+    }
     /// Test hook: overwrite raw bytes to simulate corruption.
     pub fn corrupt(&self, id: &ObjectId, bytes: Vec<u8>) {
         self.objects.lock().unwrap().insert(*id, bytes);
@@ -170,6 +174,39 @@ fn hardware_flush(f: &fs::File) -> std::io::Result<()> {
     {
         let _ = f;
         Ok(())
+    }
+}
+
+/// Run `f` over `items` on up to 8 threads (inline for small inputs); first error wins.
+fn par_try_each<T: Sync>(items: &[T], f: impl Fn(&T) -> Result<(), StoreError> + Sync) -> Result<(), StoreError> {
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
+    if threads <= 1 || items.len() < 64 {
+        return items.iter().try_for_each(f);
+    }
+    let next = AtomicUsize::new(0);
+    let failed = std::sync::atomic::AtomicBool::new(false);
+    let errs: Vec<Option<StoreError>> = std::thread::scope(|sc| {
+        let hs: Vec<_> = (0..threads)
+            .map(|_| {
+                sc.spawn(|| {
+                    while !failed.load(Ordering::Relaxed) {
+                        let Some(it) = items.get(next.fetch_add(1, Ordering::Relaxed)) else {
+                            break;
+                        };
+                        if let Err(e) = f(it) {
+                            failed.store(true, Ordering::Relaxed);
+                            return Some(e);
+                        }
+                    }
+                    None
+                })
+            })
+            .collect();
+        hs.into_iter().map(|h| h.join().expect("sync worker panicked")).collect()
+    });
+    match errs.into_iter().flatten().next() {
+        Some(e) => Err(e),
+        None => Ok(()),
     }
 }
 
@@ -280,39 +317,38 @@ impl ObjectStore for LocalStore {
             return Ok(());
         }
         // 1. object data to the device, then one hardware flush covering all of it.
-        let mut last = None;
-        for tmp in pending.values() {
+        let tmps: Vec<&PathBuf> = pending.values().collect();
+        par_try_each(&tmps, |tmp| {
             let f = io(tmp, fs::File::open(tmp))?;
-            io(tmp, flush_file(&f))?;
-            last = Some(f);
-        }
-        if let Some(f) = last {
+            io(tmp, flush_file(&f))
+        })?;
+        if let Some(tmp) = tmps.first() {
+            let f = io(tmp, fs::File::open(tmp))?;
             io(&self.dir, hardware_flush(&f))?;
         }
         // 2. publish under final names (data is already durable, so a visible name is complete).
         let mut dirs = BTreeSet::new();
+        let mut moves = Vec::with_capacity(pending.len());
         for (id, tmp) in pending.iter() {
             let dest = self.path_of(id);
             let parent = dest.parent().expect("object path has parent").to_owned();
             if dirs.insert(parent.clone()) {
                 io(&parent, fs::create_dir_all(&parent))?;
             }
-            if dest.exists() {
-                let _ = fs::remove_file(tmp); // another writer won the race; same content
-            } else {
-                io(&dest, fs::rename(tmp, &dest))?;
-            }
+            moves.push((tmp, dest));
         }
+        // rename over an existing identical object is atomic and harmless (another writer won).
+        par_try_each(&moves, |(tmp, dest)| io(dest, fs::rename(tmp, dest)))?;
         // 3. directory entries (renames, new fan-out dirs) durable before anything refers to them.
         dirs.insert(self.dir.clone());
         dirs.insert(self.dir.join("tmp"));
-        let mut last = None;
-        for d in &dirs {
+        let dirs: Vec<PathBuf> = dirs.into_iter().collect();
+        par_try_each(&dirs, |d| {
             let f = io(d, fs::File::open(d))?;
-            io(d, flush_file(&f))?;
-            last = Some(f);
-        }
-        if let Some(f) = last {
+            io(d, flush_file(&f))
+        })?;
+        if let Some(d) = dirs.first() {
+            let f = io(d, fs::File::open(d))?;
             io(&self.dir, hardware_flush(&f))?;
         }
         pending.clear();
