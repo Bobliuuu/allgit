@@ -313,6 +313,7 @@ impl Repo {
 
     fn merge_commit(&self, zone: &str, theirs: ObjectId, label: &str, msg_prefix: &str, author: Signature) -> Result<MergeOutcome> {
         let _l = self.lock()?;
+        self.rebase_guard("merge")?;
         let zones = self.zones()?;
         let ws = self.workspace()?;
         let mut refs = self.refs()?;
@@ -486,7 +487,7 @@ impl Repo {
     }
 
     /// What to materialize for a conflict: (mode, blob, contains markers).
-    fn placeholder(&self, c: &Conflict, labels: &MarkerLabels) -> Result<(EntryMode, ObjectId, bool)> {
+    pub(crate) fn placeholder(&self, c: &Conflict, labels: &MarkerLabels) -> Result<(EntryMode, ObjectId, bool)> {
         if let Some(h) = &c.hunks {
             let bytes = render_markers(h, labels);
             let id = self.store.put_blob(&bytes)?;
@@ -504,9 +505,18 @@ impl Repo {
     /// anything outside the merge's own paths changed.
     pub fn merge_abort(&self) -> Result<()> {
         let _l = self.lock()?;
+        self.rebase_guard("abort a merge")?;
         let Some(st) = self.merge_state()? else {
             return msg("no merge in progress");
         };
+        self.restore_pre_merge(&st)?;
+        self.clear_merge_state()?;
+        self.record_op(&format!("merge --abort {}/{}", st.zone, st.branch), None)?;
+        Ok(())
+    }
+
+    /// Put the zone's files, index and tree back to `st.ours` (lock held). Keeps the state file.
+    pub(crate) fn restore_pre_merge(&self, st: &MergeState) -> Result<()> {
         let zones = self.zones()?;
         let prefix = zones.path_of(&st.zone).unwrap_or("").to_owned();
         let status = self.status()?;
@@ -557,8 +567,6 @@ impl Repo {
             }
         }
         self.save_index(&mut ix)?;
-        self.clear_merge_state()?;
-        self.record_op(&format!("merge --abort {}/{}", st.zone, st.branch), None)?;
         Ok(())
     }
 

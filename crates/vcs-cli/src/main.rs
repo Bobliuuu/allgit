@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 use vcs_objects::{ObjectId, Signature};
 use vcs_remote::Outcome;
-use vcs_repo::{ChangeKind, Error, MergeOutcome, Repo, SyncAction, ROOT_ZONE};
+use vcs_repo::{ChangeKind, Error, MergeOutcome, RebaseOutcome, Repo, SyncAction, ROOT_ZONE};
 
 mod remote;
 
@@ -66,6 +66,20 @@ enum Cmd {
         #[arg(long)]
         remote: bool,
         /// Abandon the in-progress merge and restore the pre-merge state
+        #[arg(long)]
+        abort: bool,
+    },
+    /// Replay the checked-out branch onto another branch, keeping each change id
+    Rebase {
+        /// Branch to rebase onto (not needed with --continue/--abort)
+        onto: Option<String>,
+        /// Zone (default: the zone containing the current directory)
+        #[arg(long)]
+        zone: Option<String>,
+        /// Commit the resolved conflicts and carry on
+        #[arg(long = "continue")]
+        cont: bool,
+        /// Abandon the in-progress rebase and restore the original branch
         #[arg(long)]
         abort: bool,
     },
@@ -308,7 +322,11 @@ fn run(cli: Cli) -> Result<(), Error> {
                         vcs_repo::merge::kind_name(c.kind)
                     );
                 }
-                println!("  (fix, `vcs add`, `vcs commit`; or `vcs merge --abort`)");
+                if repo.rebase_state()?.is_some() {
+                    println!("  (rebase in progress: fix, `vcs add`, `vcs rebase --continue`; or `vcs rebase --abort`)");
+                } else {
+                    println!("  (fix, `vcs add`, `vcs commit`; or `vcs merge --abort`)");
+                }
             }
             if !st.untracked.is_empty() {
                 println!("untracked:");
@@ -405,6 +423,38 @@ fn run(cli: Cli) -> Result<(), Error> {
                     println!("\nResolve the files, `vcs add` each one, then `vcs commit`.");
                     println!("Inspect with `vcs conflict list|show <path>`; give up with `vcs merge --abort`.");
                     return Err(Error::Msg("merge has conflicts".into()));
+                }
+            }
+        }
+        Cmd::Rebase { onto, zone, cont, abort } => {
+            let (repo, cwd) = open()?;
+            if abort {
+                repo.rebase_abort()?;
+                println!("rebase aborted; original branch restored");
+                return Ok(());
+            }
+            let out = if cont {
+                repo.rebase_continue(author())?
+            } else {
+                let Some(onto) = onto else {
+                    return Err(Error::Msg("usage: vcs rebase <branch> [--zone A] | --continue | --abort".into()));
+                };
+                let zone = zone_of_cwd(&repo, &cwd, zone)?;
+                repo.rebase(&zone, &onto, author())?
+            };
+            match out {
+                RebaseOutcome::UpToDate => println!("already up to date"),
+                RebaseOutcome::Done { from, to, replayed } => {
+                    println!("rebased {replayed} commit(s): {} -> {}", from.short(), to.short())
+                }
+                RebaseOutcome::Conflicted { commit, paths } => {
+                    println!("rebase stopped at {}: {} conflict(s)", commit.short(), paths.len());
+                    for p in &paths {
+                        println!("  conflict: {p}");
+                    }
+                    println!("\nResolve the files, `vcs add` each one, then `vcs rebase --continue`.");
+                    println!("Inspect with `vcs conflict list|show <path>`; give up with `vcs rebase --abort`.");
+                    return Err(Error::Msg("rebase has conflicts".into()));
                 }
             }
         }
