@@ -1,4 +1,5 @@
 use crate::diff;
+use crate::dircache::{stamp_of, DirCache, Kind, Listing};
 use crate::error::{io, msg, Error, Result};
 use crate::ignore::IgnoreStack;
 use crate::index::{Index, IndexEntry};
@@ -21,6 +22,39 @@ const RACY_NS: u64 = 2_000_000_000;
 struct WalkOut {
     untracked: Vec<String>,
     unsupported: Vec<String>,
+    /// Directories whose cached listing was reused (kept in the rewritten cache).
+    hits: Vec<String>,
+    /// Directories listed from disk whose stamp was trustworthy (to be added to the cache).
+    fresh: Vec<(String, Listing)>,
+    /// Directories read from disk this walk (cache misses, trustworthy or not).
+    scanned: usize,
+}
+
+/// Per-walk settings for the directory cache.
+struct WalkCtx {
+    cache: DirCache,
+    use_cache: bool,
+    scan_start_ns: u64,
+    racy_ns: u64,
+}
+
+/// Options for [`Repo::status_with`]. `Default` is what [`Repo::status`] uses.
+#[derive(Clone, Copy, Debug)]
+pub struct StatusOpts {
+    /// Use (and refresh) the directory listing cache in `.vcs/dircache`.
+    pub dir_cache: bool,
+    /// A directory stamp younger than this (ns) relative to the scan start is never trusted.
+    #[doc(hidden)]
+    pub racy_ns: u64,
+}
+
+impl Default for StatusOpts {
+    fn default() -> Self {
+        StatusOpts {
+            dir_cache: std::env::var_os("VCS_NO_DIRCACHE").is_none(),
+            racy_ns: RACY_NS,
+        }
+    }
 }
 
 pub struct Repo {
@@ -145,6 +179,11 @@ pub(crate) fn make_symlink(target: &[u8], link: &std::path::Path) -> Result<()> 
             link.display()
         ))
     }
+}
+
+fn is_not_a_directory(e: &std::io::Error) -> bool {
+    // ErrorKind::NotADirectory needs Rust 1.83; the MSRV is 1.80. ENOTDIR is 20 on Linux and macOS.
+    cfg!(unix) && e.raw_os_error() == Some(20)
 }
 
 pub(crate) enum Wt {
@@ -579,7 +618,8 @@ impl Repo {
         let abs = self.worktree.join(path);
         let m = match fs::symlink_metadata(&abs) {
             Ok(m) => m,
-            Err(x) if x.kind() == std::io::ErrorKind::NotFound => return Ok(Wt::Deleted),
+            // A path whose parent became a file (`a/b` tracked, `a` replaced by a file) is ENOTDIR.
+            Err(x) if x.kind() == std::io::ErrorKind::NotFound || is_not_a_directory(&x) => return Ok(Wt::Deleted),
             Err(source) => return Err(Error::Io { path: abs, source }),
         };
         if e.mode == EntryMode::Symlink {
@@ -609,6 +649,19 @@ impl Repo {
     }
 
     pub fn status(&self) -> Result<Status> {
+        self.status_with(StatusOpts::default())
+    }
+
+    /// `status` that never reads or writes the directory cache: the reference implementation the
+    /// cached path must always agree with.
+    pub fn status_full(&self) -> Result<Status> {
+        self.status_with(StatusOpts {
+            dir_cache: false,
+            ..StatusOpts::default()
+        })
+    }
+
+    pub fn status_with(&self, opts: StatusOpts) -> Result<Status> {
         let zones = self.zones()?;
         let ws = self.workspace()?;
         let refs = self.refs()?;
@@ -656,9 +709,31 @@ impl Repo {
             }
         }
         let budget = AtomicUsize::new(std::thread::available_parallelism().map_or(1, |n| n.get()).min(8) - 1);
-        let w = self.walk_untracked("", &zones, &ws, &ix, &budget, &IgnoreStack::default())?;
-        st.untracked = w.untracked;
-        st.unsupported = w.unsupported;
+        let ctx = WalkCtx {
+            cache: if opts.dir_cache {
+                DirCache::load(&self.vcs)
+            } else {
+                DirCache::default()
+            },
+            use_cache: opts.dir_cache,
+            scan_start_ns: now_ns(),
+            racy_ns: opts.racy_ns,
+        };
+        let mut w = self.walk_untracked("", &zones, &ws, &ix, &budget, &IgnoreStack::default(), &ctx)?;
+        st.untracked = std::mem::take(&mut w.untracked);
+        st.unsupported = std::mem::take(&mut w.unsupported);
+        if opts.dir_cache && (w.scanned > 0 || w.hits.len() != ctx.cache.dirs.len()) {
+            // Rewrite only when something changed: a fully warm walk costs no write.
+            let mut next = DirCache::default();
+            let mut old = ctx.cache;
+            for h in w.hits {
+                if let Some(l) = old.dirs.remove(&h) {
+                    next.dirs.insert(h, l);
+                }
+            }
+            next.dirs.extend(w.fresh);
+            next.store(&self.vcs);
+        }
         st.merging = self.merge_state()?;
         Ok(st)
     }
@@ -667,6 +742,7 @@ impl Repo {
     /// `read_dir` per directory), so sibling subdirectories are walked on extra threads while
     /// the shared `budget` lasts; results are assembled in directory order, so the output does
     /// not depend on scheduling.
+    #[allow(clippy::too_many_arguments)]
     fn walk_untracked(
         &self,
         dir: &str,
@@ -675,6 +751,7 @@ impl Repo {
         ix: &Index,
         budget: &AtomicUsize,
         parent_stack: &IgnoreStack,
+        ctx: &WalkCtx,
     ) -> Result<WalkOut> {
         let stack = parent_stack.descend(&self.worktree, dir)?;
         enum Item {
@@ -687,26 +764,76 @@ impl Repo {
         } else {
             self.worktree.join(dir)
         };
-        let mut ents: Vec<_> = io(&abs, fs::read_dir(&abs))?
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|source| Error::Io { path: abs.clone(), source })?;
-        ents.sort_by_key(|e| e.file_name());
-        let mut items = Vec::new();
-        for e in ents {
-            let name = e.file_name().to_string_lossy().into_owned();
-            if name.eq_ignore_ascii_case(META_DIR) || validate_component(&name).is_err() {
-                continue;
+        let mut out = WalkOut::default();
+        let stamp0 = if ctx.use_cache {
+            fs::metadata(&abs).ok().and_then(|m| stamp_of(&m))
+        } else {
+            None
+        };
+        let cached = match (stamp0, ctx.cache.dirs.get(dir)) {
+            (Some(s), Some(l)) if l.stamp == s && s.settled(ctx.scan_start_ns, ctx.racy_ns) => Some(&l.entries),
+            _ => None,
+        };
+        let listed;
+        let entries: &Vec<(String, Kind)> = match cached {
+            Some(e) => {
+                out.hits.push(dir.to_owned());
+                e
             }
-            let rel = if dir.is_empty() { name } else { format!("{dir}/{name}") };
-            let ft = io(&abs, e.file_type())?;
-            if !(ft.is_symlink() || ft.is_dir() || ft.is_file()) {
+            None => {
+                let mut ents: Vec<_> = io(&abs, fs::read_dir(&abs))?
+                    .collect::<std::result::Result<Vec<_>, _>>()
+                    .map_err(|source| Error::Io { path: abs.clone(), source })?;
+                ents.sort_by_key(|e| e.file_name());
+                let mut v = Vec::with_capacity(ents.len());
+                for e in ents {
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    if name.eq_ignore_ascii_case(META_DIR) || validate_component(&name).is_err() {
+                        continue;
+                    }
+                    let ft = io(&abs, e.file_type())?;
+                    let kind = if !(ft.is_symlink() || ft.is_dir() || ft.is_file()) {
+                        Kind::Other
+                    } else if ft.is_dir() {
+                        Kind::Dir
+                    } else {
+                        Kind::File
+                    };
+                    v.push((name, kind));
+                }
+                out.scanned += 1;
+                // Trust the stamp only if it was identical before and after the listing.
+                let stamp1 = if ctx.use_cache {
+                    fs::metadata(&abs).ok().and_then(|m| stamp_of(&m))
+                } else {
+                    None
+                };
+                listed = v;
+                if let (Some(a), Some(b)) = (stamp0, stamp1) {
+                    if a == b && a.settled(ctx.scan_start_ns, ctx.racy_ns) {
+                        out.fresh.push((
+                            dir.to_owned(),
+                            Listing {
+                                stamp: a,
+                                entries: listed.clone(),
+                            },
+                        ));
+                    }
+                }
+                &listed
+            }
+        };
+        let mut items = Vec::new();
+        for (name, kind) in entries {
+            let rel = if dir.is_empty() { name.clone() } else { format!("{dir}/{name}") };
+            if *kind == Kind::Other {
                 items.push(Item::Unsupported(rel));
                 continue;
             }
             if !ws.subs.contains_key(zones.owner(&rel)) {
                 continue;
             }
-            if ft.is_dir() {
+            if *kind == Kind::Dir {
                 let tracked_below = ix.has_under(&rel);
                 let ignored = stack.is_ignored(&rel, true);
                 if ignored && !tracked_below {
@@ -735,20 +862,19 @@ impl Repo {
                     handles.push((
                         i,
                         sc.spawn(move || {
-                            let r = self.walk_untracked(rel, zones, ws, ix, budget, &child);
+                            let r = self.walk_untracked(rel, zones, ws, ix, budget, &child, ctx);
                             budget.fetch_add(1, Ordering::AcqRel);
                             r
                         }),
                     ));
                 } else {
-                    subs[i] = Some(self.walk_untracked(rel, zones, ws, ix, budget, &child));
+                    subs[i] = Some(self.walk_untracked(rel, zones, ws, ix, budget, &child, ctx));
                 }
             }
             for (i, h) in handles {
                 subs[i] = Some(h.join().expect("walk worker panicked"));
             }
         });
-        let mut out = WalkOut::default();
         let mut subs = subs.into_iter();
         for it in items {
             match it {
@@ -757,6 +883,9 @@ impl Repo {
                 Item::Dir(rel, tracked_below, _) => {
                     let mut sub = subs.next().flatten().expect("one result per subdir")?;
                     out.unsupported.append(&mut sub.unsupported);
+                    out.hits.append(&mut sub.hits);
+                    out.fresh.append(&mut sub.fresh);
+                    out.scanned += sub.scanned;
                     if !sub.untracked.is_empty() {
                         if tracked_below {
                             out.untracked.append(&mut sub.untracked);
