@@ -120,3 +120,23 @@ fn unknown_scheme_is_rejected() {
     let err = fail(&r, &["fetch"]);
     assert!(err.contains("not supported in this build"), "{err}");
 }
+
+#[test]
+fn remote_set_stores_absolute_path_and_publish_works_from_subdir() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().canonicalize().unwrap();
+    ok(&root, &["init", "demo"]);
+    let demo = root.join("demo");
+    write(&demo, "sub/f.txt", "1\n");
+    ok(&demo, &["add", "."]);
+    ok(&demo, &["commit", "-m", "one"]);
+    let sub = demo.join("sub");
+    ok(&sub, &["remote", "set", "../../shared.vcs"]);
+    let saved = std::fs::read_to_string(demo.join(".vcs/remote")).unwrap();
+    let saved = saved.trim();
+    assert!(Path::new(saved).is_absolute(), "not absolute: {saved}");
+    assert!(!saved.contains(".."), "not cleaned: {saved}");
+    assert_eq!(Path::new(saved), root.join("shared.vcs"));
+    ok(&sub, &["publish"]);
+    ok(&demo, &["publish"]);
+}
