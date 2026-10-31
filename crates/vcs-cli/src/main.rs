@@ -36,6 +36,8 @@ enum Cmd {
         #[arg(long)]
         staged: bool,
     },
+    /// Import a `git fast-export` stream (file, or `-` for stdin) into the root zone
+    ImportGit { stream: PathBuf },
     /// Show commit history of a zone branch
     Log {
         /// Zone (default: the zone containing the current directory)
@@ -362,6 +364,31 @@ fn run(cli: Cli) -> Result<(), Error> {
         Cmd::Diff { staged } => {
             let (repo, _) = open()?;
             print!("{}", repo.diff(staged)?);
+        }
+        Cmd::ImportGit { stream } => {
+            let (repo, _) = open()?;
+            let r = if stream.as_os_str() == "-" {
+                repo.import_git(std::io::stdin().lock())?
+            } else {
+                let f = std::fs::File::open(&stream).map_err(|source| Error::Io {
+                    path: stream.clone(),
+                    source,
+                })?;
+                repo.import_git(std::io::BufReader::new(f))?
+            };
+            println!(
+                "imported {} commit(s), {} already present; {} blob(s); {} new object(s)",
+                r.commits_imported, r.commits_skipped, r.blobs, r.objects_written
+            );
+            for (b, id) in &r.branches_updated {
+                println!("  branch {b} -> {}", id.short());
+            }
+            for x in &r.refs_ignored {
+                println!("ignored ref: {x}");
+            }
+            for x in &r.paths_skipped {
+                println!("skipped path: {x}");
+            }
         }
         Cmd::Log { zone, limit, branch } => {
             let (repo, cwd) = open()?;
