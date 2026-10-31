@@ -74,6 +74,9 @@ pub struct CommitReport {
 pub struct FsckReport {
     pub objects: usize,
     pub problems: Vec<String>,
+    /// Objects that are absent but were fetched from the remote (reachable from a remote-tracking
+    /// head), so they are an evictable cache miss, not damage. See docs/cache.md.
+    pub evictable: Vec<ObjectId>,
 }
 
 fn now_ns() -> u64 {
@@ -1019,11 +1022,42 @@ impl Repo {
 
     // ---------- fsck ----------
 
+    /// Ids the remote is known to have: everything reachable, through objects we hold, from a
+    /// remote-tracking head (whose whole closure was verified and fetched). Missing ids are
+    /// included as leaves.
+    fn remote_closure(&self) -> Result<BTreeSet<ObjectId>> {
+        let mut seen = BTreeSet::new();
+        let mut stack: Vec<ObjectId> = self.remote_refs()?.branches.values().copied().collect();
+        while let Some(id) = stack.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            if let Ok(o) = self.store.get(&id) {
+                crate::gc::children(&o, &mut stack);
+            }
+        }
+        Ok(seen)
+    }
+
     /// Verify every object (hash + canonical decode) and graph invariants.
     pub fn fsck(&self) -> Result<FsckReport> {
         let mut rep = FsckReport::default();
         let ids = self.store.list()?;
+        let refetchable = self.remote_closure()?;
         let mut commits: BTreeMap<ObjectId, Commit> = BTreeMap::new();
+        let mut evictable: BTreeSet<ObjectId> = BTreeSet::new();
+        // A missing object is an evictable cache miss only if the remote is known to have it.
+        let mut missing = |this: &Self, id: &ObjectId, what: String, problems: &mut Vec<String>| -> Result<()> {
+            if this.store.contains(id)? {
+                return Ok(());
+            }
+            if refetchable.contains(id) {
+                evictable.insert(*id);
+            } else {
+                problems.push(what);
+            }
+            Ok(())
+        };
         for id in &ids {
             rep.objects += 1;
             match self.store.get(id) {
@@ -1033,28 +1067,37 @@ impl Repo {
                 }
                 Ok(Object::Tree(t)) => {
                     for e in t.entries() {
-                        if !self.store.contains(&e.id)? {
-                            rep.problems.push(format!("tree {id}: missing entry {} -> {}", e.name, e.id));
-                        }
+                        missing(
+                            self,
+                            &e.id,
+                            format!("tree {id}: missing entry {} -> {}", e.name, e.id),
+                            &mut rep.problems,
+                        )?;
                     }
                 }
                 Ok(Object::Snapshot(s)) => {
                     for (a, c) in &s.zones {
-                        if !self.store.contains(c)? {
-                            rep.problems.push(format!("snapshot {id}: missing commit {c} for zone {a}"));
-                        }
+                        missing(
+                            self,
+                            c,
+                            format!("snapshot {id}: missing commit {c} for zone {a}"),
+                            &mut rep.problems,
+                        )?;
                     }
                 }
                 Ok(_) => {}
             }
         }
         for (id, c) in &commits {
-            if !self.store.contains(&c.root)? {
-                rep.problems.push(format!("commit {id}: missing root tree {}", c.root));
-            }
+            missing(
+                self,
+                &c.root,
+                format!("commit {id}: missing root tree {}", c.root),
+                &mut rep.problems,
+            )?;
             for p in &c.parents {
                 match commits.get(p) {
-                    None => rep.problems.push(format!("commit {id}: missing parent {p}")),
+                    None => missing(self, p, format!("commit {id}: missing parent {p}"), &mut rep.problems)?,
                     Some(pc) if pc.zone != c.zone => rep
                         .problems
                         .push(format!("commit {id}: parent {p} is in zone {} not {}", pc.zone, c.zone)),
@@ -1064,18 +1107,20 @@ impl Repo {
         }
         // The index must never name a blob that is not in the store.
         for (p, e) in &self.index()?.entries {
-            if !self.store.contains(&e.id)? {
-                rep.problems.push(format!("index {p}: missing blob {}", e.id));
-            }
+            missing(self, &e.id, format!("index {p}: missing blob {}", e.id), &mut rep.problems)?;
         }
         let refs = self.refs()?;
         for ((a, b), h) in &refs.branches {
             match commits.get(h) {
+                None if refetchable.contains(h) && !self.store.contains(h)? => {
+                    evictable.insert(*h);
+                }
                 None => rep.problems.push(format!("ref {a}/{b}: points to missing/non-commit {h}")),
                 Some(c) if &c.zone != a => rep.problems.push(format!("ref {a}/{b}: commit belongs to zone {}", c.zone)),
                 _ => {}
             }
         }
+        rep.evictable = evictable.into_iter().collect();
         self.fsck_ops(&mut rep.problems);
         Ok(rep)
     }

@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 use vcs_objects::{Object, ObjectId, RefUpdate, Signature, Transaction};
-use vcs_remote::{fetch_heads, load_manifest, Backend, Outcome, PublishError, Publisher};
+use vcs_remote::{fetch_heads, fetch_object, load_manifest, Backend, Outcome, PublishError, Publisher};
 
 #[derive(Debug)]
 pub struct PublishReport {
@@ -238,6 +238,31 @@ impl Repo {
         }
         self.save_remote_refs(&rr)?;
         Ok(got)
+    }
+
+    /// Lazily fetch one missing object: download, verify its hash, then store and sync it.
+    /// A corrupt remote object is rejected before anything is written locally.
+    pub fn fetch_missing(&self, backend: &dyn Backend, id: &ObjectId) -> Result<()> {
+        let obj = fetch_object(backend, id).map_err(publish_err)?;
+        use vcs_store::ObjectStore;
+        self.store.put(&obj)?;
+        self.store.sync()?;
+        Ok(())
+    }
+
+    /// Run `f`; whenever it fails because an object is absent locally, fetch that object from
+    /// the remote and run it again. A corrupt local object is never refetched (see docs/cache.md),
+    /// and an id that is still missing after being fetched is an error, so this terminates.
+    pub fn with_lazy_fetch<T>(&self, backend: &dyn Backend, mut f: impl FnMut() -> Result<T>) -> Result<T> {
+        let mut fetched = BTreeSet::new();
+        loop {
+            match f() {
+                Err(Error::Store(vcs_store::StoreError::NotFound(id))) if fetched.insert(id) => {
+                    self.fetch_missing(backend, &id)?;
+                }
+                r => return r,
+            }
+        }
     }
 
     /// Fetch, then fast-forward each subscribed zone's checked-out branch when safe.
