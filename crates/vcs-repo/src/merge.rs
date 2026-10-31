@@ -241,6 +241,7 @@ impl Repo {
     }
 
     pub(crate) fn clear_merge_state(&self) -> Result<()> {
+        self.clear_proposals();
         let p = self.vcs.join(FILE);
         match fs::remove_file(&p) {
             Ok(()) => Ok(()),

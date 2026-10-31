@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 use vcs_objects::{ObjectId, Signature};
 use vcs_remote::Outcome;
-use vcs_repo::{ChangeKind, Error, MergeOutcome, RebaseOutcome, Repo, SyncAction, ROOT_ZONE};
+use vcs_repo::{AssistResult, ChangeKind, Error, MergeOutcome, RebaseOutcome, Repo, SyncAction, ROOT_ZONE};
 
 mod remote;
 
@@ -92,6 +92,23 @@ enum Cmd {
         /// Do not use the structural Rust merge (only matters when built with `--features structural`)
         #[arg(long)]
         no_structural: bool,
+        /// After a conflicted merge, ask this command (run via the shell) for a resolution of each
+        /// text conflict; answers are saved as proposals, never applied (see `vcs resolve`)
+        #[arg(long, value_name = "COMMAND")]
+        assist: Option<String>,
+        /// Seconds the assistant gets per conflict
+        #[arg(long, default_value_t = 30, requires = "assist")]
+        assist_timeout: u64,
+    },
+    /// Review assistant proposals for the in-progress merge, or accept them
+    Resolve {
+        /// Apply the proposals (all, or just the given paths) and stage them
+        #[arg(long)]
+        accept: bool,
+        /// With --accept: overwrite files edited since the merge stopped
+        #[arg(long, requires = "accept")]
+        force: bool,
+        paths: Vec<String>,
     },
     /// Replay the checked-out branch onto another branch, keeping each change id
     Rebase {
@@ -495,6 +512,8 @@ fn run(cli: Cli) -> Result<(), Error> {
             remote,
             abort,
             no_structural,
+            assist,
+            assist_timeout,
         } => {
             let (mut repo, cwd) = open()?;
             repo.set_structural(!no_structural);
@@ -524,6 +543,28 @@ fn run(cli: Cli) -> Result<(), Error> {
                     println!("automatic merge stopped: {} conflict(s)", paths.len());
                     for p in &paths {
                         println!("  conflict: {p}");
+                    }
+                    if let Some(cmd) = &assist {
+                        let rep = repo.assist_conflicts(cmd, std::time::Duration::from_secs(assist_timeout))?;
+                        let mut n = 0;
+                        for (p, r) in &rep {
+                            let line = match r {
+                                AssistResult::Proposed => {
+                                    n += 1;
+                                    "proposal saved".to_owned()
+                                }
+                                AssistResult::Skipped(w) => format!("skipped ({w})"),
+                                AssistResult::Rejected(w) => format!("assistant answer ignored ({w})"),
+                                AssistResult::TimedOut => format!("assistant timed out after {assist_timeout}s"),
+                                AssistResult::Failed(w) => format!("assistant failed ({w})"),
+                            };
+                            println!("  assist: {p}: {line}");
+                        }
+                        if n > 0 {
+                            println!(
+                                "\n{n} proposal(s) saved, none applied. Review with `vcs resolve`, apply with `vcs resolve --accept`."
+                            );
+                        }
                     }
                     println!("\nResolve the files, `vcs add` each one, then `vcs commit`.");
                     println!("Inspect with `vcs conflict list|show <path>`; give up with `vcs merge --abort`.");
@@ -567,6 +608,31 @@ fn run(cli: Cli) -> Result<(), Error> {
                     println!("\nResolve the files, `vcs add` each one, then `vcs rebase --continue`.");
                     println!("Inspect with `vcs conflict list|show <path>`; give up with `vcs rebase --abort`.");
                     return Err(Error::Msg("rebase has conflicts".into()));
+                }
+            }
+        }
+        Cmd::Resolve { accept, force, paths } => {
+            let (repo, cwd) = open()?;
+            if accept {
+                let rels = paths.iter().map(|p| repo.rel_path(&cwd, p)).collect::<Result<Vec<_>, _>>()?;
+                for p in repo.accept_proposals(&rels, force)? {
+                    println!("accepted proposal for {p} (staged)");
+                }
+                println!("Review the result, then `vcs commit` once every conflict is resolved.");
+            } else {
+                let props = repo.proposals()?;
+                if props.is_empty() {
+                    println!("no proposals");
+                }
+                for p in props {
+                    println!("proposal for {}", p.path);
+                    if !p.explanation.is_empty() {
+                        println!("  assistant says: {}", p.explanation.replace('\n', " "));
+                    }
+                    println!("  diff from our side:");
+                    for l in p.diff.lines() {
+                        println!("    {l}");
+                    }
                 }
             }
         }

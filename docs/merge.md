@@ -98,3 +98,52 @@ that end conflicted; "hunks" counts conflict hunks.
 All 550 clean structural outputs parsed (0 unparsable). The gain is entirely in moves; line diff3 already merges edits
 to different functions when blank lines separate them. The corpus is synthetic and small, so these numbers say nothing
 about real code.
+
+## Assisted merge (`vcs merge --assist`)
+
+An external command may *propose* resolutions for text conflicts. No model is bundled: the command is whatever you
+supply (a script, a wrapper around a hosted model, ...). Implemented in `vcs-merge/src/assist.rs` (pure protocol and
+validation) and `vcs-repo/src/assist.rs` (process running, proposal storage).
+
+```text
+vcs merge <branch> --assist "<command>" [--assist-timeout SECS]   # default 30s per conflict
+vcs resolve                       # show each proposal as a diff from our side, plus the assistant's explanation
+vcs resolve --accept [paths...]   # write the proposal into the file and stage it (marks the conflict resolved)
+vcs commit                        # as usual, once every conflict is resolved
+```
+
+* The merge runs normally first. Only if it stops with conflicts is the command run, once per eligible conflict, through
+  `sh -c` in the repository root (`cmd /C` off unix), with the request on stdin. Eligible: add/add and modify/modify
+  where both sides and the base are UTF-8 text without NUL. Others (binary, delete/modify, mode, file/directory) are
+  skipped and reported.
+* **Never applied silently.** Running the assistant writes only `.vcs/proposals/`. The working tree keeps its conflict
+  markers, the conflict stays unresolved, and `vcs commit` still refuses. `vcs resolve --accept` is the only way in.
+  Accept refuses a file you edited since the merge stopped (`--force` overrides). Proposals are deleted when the merge
+  ends (commit or `--abort`), are tied to the two merge heads, and a re-run replaces them.
+
+Request (one JSON object on stdin; `base` is `null` for add/add):
+
+```json
+{"version":1,"path":"src/a.rs","language":"rust","base":"...","ours":"...","theirs":"..."}
+```
+
+Response (one JSON object on stdout, exit status 0):
+
+```json
+{"resolution":"<the complete resolved file>","explanation":"optional, shown to the reviewer"}
+```
+
+Validation; anything failing is ignored (reported as "assistant answer ignored", the conflict is left as it was):
+stdout over 1 MiB (the process is killed), not UTF-8, not JSON (nesting deeper than 32 is refused), not an object, no
+string `resolution`, a NUL in it, or any line starting with a conflict marker (`<<<<<<<`, `|||||||`, `=======`,
+`>>>>>>>`). Unknown fields are ignored; `explanation` is truncated to 4 KiB. A non-zero exit, a failure to start, or
+running past the timeout also yields no proposal. stderr is discarded.
+
+Not validated: that the resolution is a *good* merge, or that it parses in the file's language. That is what the diff
+review is for. On timeout only the shell is killed; a grandchild that ignores that may linger until it exits. Not done:
+`vcs rebase --assist`, a `--reject` command, batching several conflicts per call, and issue #86's wider `vcs resolve`
+(this change provides the minimal `resolve` / `resolve --accept` it needs).
+
+Tested with scripted fake assistants (shell scripts) in `crates/vcs-cli/tests/assist.rs`: good answers, request shape,
+garbage of eight kinds, oversized output, timeout, edited-file refusal, binary skip; protocol unit tests live beside the
+parser.
