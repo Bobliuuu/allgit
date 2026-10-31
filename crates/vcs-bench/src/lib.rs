@@ -134,6 +134,23 @@ pub fn generate_binary(dir: &Path, n: usize, size: usize, seed: u64) -> io::Resu
     Ok(())
 }
 
+/// Binary-heavy dataset for scale runs: `n` files of `size` random bytes, 100 per directory
+/// (`d0000/f000000.bin`). Returns the relative paths in index order.
+pub fn generate_binary_flat(root: &Path, n: usize, size: usize, seed: u64) -> io::Result<Vec<String>> {
+    let mut rng = Rng::new(seed);
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let rel = format!("d{:04}/f{:06}.bin", i / 100, i);
+        let full = root.join(&rel);
+        if i % 100 == 0 {
+            fs::create_dir_all(full.parent().expect("parent"))?;
+        }
+        fs::write(&full, rng.bytes(size))?;
+        out.push(rel);
+    }
+    Ok(out)
+}
+
 /// Next version of a binary dataset: every file gets `edits` in-place overwrites of `edit_len` bytes.
 pub fn mutate_binary(dir: &Path, n: usize, edits: usize, edit_len: usize, seed: u64) -> io::Result<()> {
     let mut rng = Rng::new(seed);
