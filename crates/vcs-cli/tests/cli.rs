@@ -105,3 +105,38 @@ fn op_log_show_undo_restore_end_to_end() {
     assert!(!vcs(&d, &["op", "restore", "zzzz"]).status.success());
     assert!(ok(&d, &["fsck"]).contains("ok"));
 }
+
+#[test]
+fn snapshot_checkout_zone_and_branch_management() {
+    let t = tempfile::tempdir().unwrap();
+    ok(t.path(), &["init", "r"]);
+    let d = t.path().join("r");
+    std::fs::create_dir_all(d.join("engine")).unwrap();
+    std::fs::write(d.join("engine/a.rs"), "1\n").unwrap();
+    ok(&d, &["zone", "create", "engine", "--path", "engine"]);
+    ok(&d, &["add", "."]);
+    ok(&d, &["commit", "-m", "one"]);
+    ok(&d, &["snapshot", "create", "v1"]);
+    std::fs::write(d.join("engine/a.rs"), "2\n").unwrap();
+    ok(&d, &["add", "."]);
+    ok(&d, &["commit", "-m", "two"]);
+    // dirty tree: snapshot checkout refuses and changes nothing
+    std::fs::write(d.join("engine/a.rs"), "dirty\n").unwrap();
+    assert!(!vcs(&d, &["snapshot", "checkout", "v1"]).status.success());
+    assert_eq!(std::fs::read_to_string(d.join("engine/a.rs")).unwrap(), "dirty\n");
+    std::fs::write(d.join("engine/a.rs"), "2\n").unwrap();
+    assert!(ok(&d, &["snapshot", "checkout", "v1"]).contains("snapshot/v1"));
+    assert_eq!(std::fs::read_to_string(d.join("engine/a.rs")).unwrap(), "1\n");
+    // branch delete: refuses the checked-out branch, deletes another
+    assert!(!vcs(&d, &["branch", "--zone", "engine", "-d", "snapshot/v1"]).status.success());
+    ok(&d, &["zone", "checkout", "engine", "main"]);
+    assert!(ok(&d, &["branch", "--zone", "engine", "-d", "snapshot/v1"]).contains("deleted engine/snapshot/v1"));
+    // zone delete needs --force while history exists
+    assert!(!vcs(&d, &["zone", "delete", "engine"]).status.success());
+    ok(&d, &["zone", "delete", "engine", "--force"]);
+    assert!(!d.join("engine/a.rs").exists());
+    ok(&d, &["zone", "create", "docs", "--path", "docs"]);
+    ok(&d, &["zone", "rename", "docs", "manual"]);
+    assert!(ok(&d, &["zone", "list"]).contains("manual"));
+    assert!(ok(&d, &["fsck"]).contains("ok"));
+}

@@ -180,5 +180,5 @@ cherry-pick creates a new id (records the source in metadata); two live commits 
 
 ## Known limitations (honest list)
 No merge/rebase yet; the operation log ([operations.md](operations.md)) covers local refs/workspace only: snapshots, remote-tracking refs and unrecorded crash-window changes are not undoable, and `undo` across several zones is not atomic; no S3 CLI wiring; no packfiles or chunking; no lock/lease; no Git/P4 interop; no
-filesystem monitor; no authn/authz; `snapshot checkout` and branch deletion are not implemented; `vcs log` has no
+filesystem monitor; no authn/authz; renaming a zone that already has history is not implemented (see [zones.md](zones.md)); `vcs log` has no
 merge-commit support because merges don't exist yet; no unit of concurrency control beyond a coarse repo lock.

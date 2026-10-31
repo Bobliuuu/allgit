@@ -90,6 +90,9 @@ vcs add engine assets && vcs commit -m "Add engine and assets"
 vcs zone branch engine feature       # branch just the engine
 vcs zone checkout engine feature     # assets stays on main
 vcs zone list
+vcs snapshot create v1 && vcs snapshot checkout v1   # every subscribed zone back to its pinned commit
+vcs zone rename old new                 # zones without history only; vcs zone delete <name> [--force]
+vcs branch -d feature                   # refuses the checked-out branch and unmerged work (--force to override)
 ```
 ```text
 created zone engine owning engine/

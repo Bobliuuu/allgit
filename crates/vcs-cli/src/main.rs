@@ -63,6 +63,12 @@ enum Cmd {
         name: Option<String>,
         #[arg(long)]
         zone: Option<String>,
+        /// Delete the named branch instead of creating it (refuses the checked-out branch)
+        #[arg(short = 'd', long)]
+        delete: bool,
+        /// With --delete: delete even if its commits are not reachable from another branch or snapshot
+        #[arg(long, requires = "delete")]
+        force: bool,
     },
     /// Switch branch (in the zone containing cwd, or --zone)
     Switch {
@@ -203,6 +209,17 @@ enum ZoneCmd {
     Remove {
         name: String,
     },
+    /// Rename a zone that has no history yet (commits record their zone name)
+    Rename {
+        old: String,
+        new: String,
+    },
+    /// Delete a zone definition (refuses a dirty zone; --force drops its branches and snapshot pins)
+    Delete {
+        name: String,
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand, Clone)]
@@ -224,6 +241,10 @@ enum SnapCmd {
         name: String,
     },
     List,
+    /// Restore every subscribed zone to its pinned commit (on branch snapshot/<name>); refuses dirty zones
+    Checkout {
+        name: String,
+    },
 }
 
 fn author() -> Signature {
@@ -434,10 +455,15 @@ fn run(cli: Cli) -> Result<(), Error> {
                 println!();
             }
         }
-        Cmd::Branch { name, zone } => {
+        Cmd::Branch { name, zone, delete, force } => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
             match name {
+                Some(n) if delete => {
+                    let h = repo.branch_delete(&zone, &n, force)?;
+                    println!("deleted {zone}/{n} (was {})", h.short());
+                }
+                None if delete => return Err(Error::Msg("--delete needs a branch name".into())),
                 Some(n) => {
                     let h = repo.create_branch(&zone, &n)?;
                     println!("created {zone}/{n} at {}", h.short());
@@ -603,6 +629,14 @@ fn run(cli: Cli) -> Result<(), Error> {
                     repo.zone_remove(&name)?;
                     println!("unsubscribed from zone {name}");
                 }
+                ZoneCmd::Rename { old, new } => {
+                    repo.zone_rename(&old, &new)?;
+                    println!("renamed zone {old} to {new}");
+                }
+                ZoneCmd::Delete { name, force } => {
+                    repo.zone_delete(&name, force)?;
+                    println!("deleted zone {name}");
+                }
             }
         }
         Cmd::Snapshot(s) => {
@@ -617,6 +651,18 @@ fn run(cli: Cli) -> Result<(), Error> {
                     println!("snapshot {name} ({id})");
                     for (a, c) in &s.zones {
                         println!("  {a:<14} {c}");
+                    }
+                }
+                SnapCmd::Checkout { name } => {
+                    let rep = repo.snapshot_checkout(&name)?;
+                    for (a, b, c) in &rep.switched {
+                        println!("zone {a}: now on {b} at {}", c.short());
+                    }
+                    for a in &rep.unchanged {
+                        println!("zone {a}: already at the snapshot");
+                    }
+                    for a in &rep.skipped {
+                        println!("zone {a}: not subscribed, left alone");
                     }
                 }
                 SnapCmd::List => {
