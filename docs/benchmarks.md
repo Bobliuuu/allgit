@@ -204,3 +204,25 @@ New cases (no "before": they did not exist in the old harness):
   cold cache, hyperfine, S3. The roadmap's benchmark plan lists these; they remain open.
 - The git comparison covers a single workflow set at 1k files and is not a fair "who is faster" claim given the
   semantic differences above.
+
+## Touch-on-dedup cost (`add_dedup`, issue #43)
+
+`LocalStore::put` now refreshes an existing object's mtime (docs/gc.md). Bench `repo/add_dedup`: empty index, all objects
+already stored, so every file takes the dedup path (index reset untimed). Release, warm, same machine as above, criterion
+default sampling (10 samples; mid estimate, `[low high]`). Before = touch line disabled, after = enabled, one run each,
+desktop not idle-controlled, so intervals are wide.
+
+| layout/files | before | after |
+|---|---|---|
+| flat 1,000 | 54.4 ms [40.3 76.7] | 65.9 ms [62.7 68.9] |
+| deep 1,000 | 211 ms [185 235] | 191 ms [174 205] |
+| bigdir 1,000 | 67.5 ms [58.6 73.0] | 72.8 ms [67.6 79.6] |
+| flat 10,000 | 843 ms [726 954] | 849 ms [789 916] |
+| deep 10,000 | 1.34 s [1.16 1.60] | 1.90 s [1.77 2.04] |
+| bigdir 10,000 | 684 ms [542 823] | 1.49 s [1.19 1.80] |
+
+Reading: flat and the 1,000-file cases show no distinguishable change; deep and bigdir at 10,000 files are slower
+(intervals do not overlap, roughly +0.5 s to +0.8 s per 10k touches, i.e. tens of microseconds per dedup hit). Treat this as a
+real but noisy cost on the dedup path only. `add` of new content is unaffected, and `add` of unchanged files takes the index
+fast path without calling `put`. Not run: cold cache, repeated runs.
+A cheaper variant (skip the touch when the mtime is already recent) was not built or measured.
