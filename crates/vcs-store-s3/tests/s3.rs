@@ -170,6 +170,7 @@ fn publish(b: &dyn Backend, s: &MemoryStore, ups: &[(&str, Option<ObjectId>, Obj
             updates: u,
             author: sig(),
             message: "m".into(),
+            lock_ops: vec![],
         },
     )
     .run()

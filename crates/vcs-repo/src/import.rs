@@ -658,6 +658,7 @@ impl Repo {
                 updates: updates.clone(),
                 author: author.clone(),
                 message: message.clone(),
+                lock_ops: vec![],
             }))?;
             refs.apply(&updates)?;
             self.store.sync()?;

@@ -168,6 +168,117 @@ pub struct Transaction {
     pub updates: Vec<RefUpdate>,
     pub author: Signature,
     pub message: String,
+    /// Lock operations applied atomically with the updates (docs/locks.md). Encoded only when
+    /// non-empty, so transactions without locks keep their original bytes and ids.
+    pub lock_ops: Vec<LockOp>,
+}
+
+/// One lock operation carried inside a [`Transaction`]. `path` is relative to the zone root.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LockOp {
+    /// Take (or idempotently re-take / extend) the lock for the transaction's principal.
+    Acquire {
+        zone: String,
+        path: String,
+        lease_ms: u64,
+        reason: String,
+    },
+    /// Extend a held lock; only the holder, only with the current token.
+    Renew {
+        zone: String,
+        path: String,
+        token: u64,
+        lease_ms: u64,
+    },
+    /// Drop a lock; the holder with the current token, or anyone once expired.
+    Release { zone: String, path: String, token: u64 },
+    /// Administrative removal at any time (unrestricted until authn/authz exists).
+    Break { zone: String, path: String },
+    /// Names the fencing token the publisher believes it holds. Rejected if not current.
+    Present { zone: String, path: String, token: u64 },
+}
+
+impl LockOp {
+    pub fn zone(&self) -> &str {
+        match self {
+            LockOp::Acquire { zone, .. }
+            | LockOp::Renew { zone, .. }
+            | LockOp::Release { zone, .. }
+            | LockOp::Break { zone, .. }
+            | LockOp::Present { zone, .. } => zone,
+        }
+    }
+    pub fn path(&self) -> &str {
+        match self {
+            LockOp::Acquire { path, .. }
+            | LockOp::Renew { path, .. }
+            | LockOp::Release { path, .. }
+            | LockOp::Break { path, .. }
+            | LockOp::Present { path, .. } => path,
+        }
+    }
+    fn encode(&self, w: &mut Writer) {
+        match self {
+            LockOp::Acquire {
+                zone,
+                path,
+                lease_ms,
+                reason,
+            } => {
+                w.u8(1).str(zone).str(path).varint(*lease_ms).str(reason);
+            }
+            LockOp::Renew {
+                zone,
+                path,
+                token,
+                lease_ms,
+            } => {
+                w.u8(2).str(zone).str(path).varint(*token).varint(*lease_ms);
+            }
+            LockOp::Release { zone, path, token } => {
+                w.u8(3).str(zone).str(path).varint(*token);
+            }
+            LockOp::Break { zone, path } => {
+                w.u8(4).str(zone).str(path);
+            }
+            LockOp::Present { zone, path, token } => {
+                w.u8(5).str(zone).str(path).varint(*token);
+            }
+        }
+    }
+    fn decode(r: &mut Reader) -> Result<Self, DecodeError> {
+        let tag = r.u8()?;
+        let zone = r.str(64)?;
+        names::validate_zone_name(&zone).map_err(|_| DecodeError::Invalid("zone name"))?;
+        let path = r.str(4096)?;
+        names::validate_path(&path).map_err(|_| DecodeError::Invalid("lock path"))?;
+        Ok(match tag {
+            1 => LockOp::Acquire {
+                zone,
+                path,
+                lease_ms: r.varint()?,
+                reason: r.str(1024)?,
+            },
+            2 => LockOp::Renew {
+                zone,
+                path,
+                token: r.varint()?,
+                lease_ms: r.varint()?,
+            },
+            3 => LockOp::Release {
+                zone,
+                path,
+                token: r.varint()?,
+            },
+            4 => LockOp::Break { zone, path },
+            5 => LockOp::Present {
+                zone,
+                path,
+                token: r.varint()?,
+            },
+            _ => return Err(DecodeError::Invalid("lock op tag")),
+        })
+    }
 }
 
 /// Local state captured by an [`Operation`]: every local branch head and the workspace
@@ -259,6 +370,12 @@ impl Object {
                 }
                 t.author.encode(&mut w);
                 w.str(&t.message);
+                if !t.lock_ops.is_empty() {
+                    w.varint(t.lock_ops.len() as u64);
+                    for op in &t.lock_ops {
+                        op.encode(&mut w);
+                    }
+                }
             }
             Object::Operation(o) => {
                 w.varint(o.parents.len() as u64);
@@ -381,7 +498,22 @@ impl Object {
                 }
                 let author = Signature::decode(&mut r)?;
                 let message = r.str(MAX_MESSAGE)?;
-                Object::Transaction(Transaction { updates, author, message })
+                let mut lock_ops = Vec::new();
+                if r.remaining() > 0 {
+                    let n = r.count(4)?;
+                    if n == 0 {
+                        return Err(DecodeError::Invalid("empty lock op list"));
+                    }
+                    for _ in 0..n {
+                        lock_ops.push(LockOp::decode(&mut r)?);
+                    }
+                }
+                Object::Transaction(Transaction {
+                    updates,
+                    author,
+                    message,
+                    lock_ops,
+                })
             }
             Kind::Operation => {
                 let np = r.count(32)?;
@@ -562,8 +694,49 @@ mod tests {
             ],
             author: sig(),
             message: "t".into(),
+            lock_ops: vec![],
         };
-        for o in [Object::Commit(c), Object::Snapshot(s), Object::Transaction(t)] {
+        let mut t2 = t.clone();
+        t2.lock_ops = vec![
+            LockOp::Acquire {
+                zone: "a".into(),
+                path: "x/y.bin".into(),
+                lease_ms: 5,
+                reason: "r".into(),
+            },
+            LockOp::Renew {
+                zone: "a".into(),
+                path: "x/y.bin".into(),
+                token: 3,
+                lease_ms: 9,
+            },
+            LockOp::Release {
+                zone: "a".into(),
+                path: "x/y.bin".into(),
+                token: 3,
+            },
+            LockOp::Break {
+                zone: "a".into(),
+                path: "x/y.bin".into(),
+            },
+            LockOp::Present {
+                zone: "a".into(),
+                path: "x/y.bin".into(),
+                token: 3,
+            },
+        ];
+        assert_ne!(Object::Transaction(t.clone()).encode(), Object::Transaction(t2.clone()).encode());
+        assert_eq!(
+            &Object::Transaction(t2.clone()).encode()[..Object::Transaction(t.clone()).encode().len() - 0],
+            &Object::Transaction(t.clone()).encode()[..],
+            "lock ops are a pure suffix: lock-free transactions keep their bytes"
+        );
+        for o in [
+            Object::Commit(c),
+            Object::Snapshot(s),
+            Object::Transaction(t),
+            Object::Transaction(t2),
+        ] {
             let enc = o.encode();
             assert_eq!(Object::decode(&enc).unwrap(), o);
             assert_eq!(id_of_encoded(&enc), o.id());

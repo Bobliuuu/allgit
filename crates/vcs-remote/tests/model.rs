@@ -58,6 +58,7 @@ fn tx(updates: Vec<(&str, Option<ObjectId>, ObjectId)>, msg: &str) -> Transactio
         updates: u,
         author: sig(),
         message: msg.into(),
+        lock_ops: vec![],
     }
 }
 

@@ -426,6 +426,7 @@ impl Repo {
                 updates: vec![update.clone()],
                 author,
                 message,
+                lock_ops: vec![],
             }))?;
             self.transition(zone, &zones, &old, &new, &mut ix)?;
             self.save_index(&mut ix)?;
