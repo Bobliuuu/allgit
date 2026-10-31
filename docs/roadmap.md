@@ -41,6 +41,6 @@ cases), same machine, cold and warm cache, hardware recorded. First candidates: 
 (index/stat cache), `commit` tree build, `log -n` traversal.
 
 ## M6 – Semantic merging ⬜ · M7 – Interop ⬜
-Tree-sitter structural merge for one language with parse + test validation; Git import first (explicit ID mapping table),
+Tree-sitter structural merge for one language with parse + test validation; Git import first (explicit ID mapping table; fast-export import shipped, see import-git.md),
 then export projection rules; Perforce-style `edit/submit/lock` as thin workflows over the same model.
 Server-enforced locks are only meaningful with the M3 validating-writer component; local-only locks will be labelled advisory.
