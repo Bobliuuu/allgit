@@ -41,7 +41,7 @@ impl PackIndex {
         let pack_len = u64::from_le_bytes(body[12..20].try_into().unwrap());
         let checksum: [u8; 32] = body[20..52].try_into().unwrap();
         let rest = &body[52..];
-        if rest.len() != count * IDX_ENTRY {
+        if count.checked_mul(IDX_ENTRY) != Some(rest.len()) {
             return Err(bad(idx_path, "index length does not match entry count"));
         }
         let mut entries = Vec::with_capacity(count);
@@ -49,7 +49,9 @@ impl PackIndex {
             let id = ObjectId::from_bytes(c[..32].try_into().unwrap());
             let off = u64::from_le_bytes(c[32..40].try_into().unwrap());
             let len = u32::from_le_bytes(c[40..44].try_into().unwrap());
-            if off < HEADER || off + len as u64 > pack_len.saturating_sub(32) {
+            // checked: `off` is attacker-controlled and `off + len` could wrap
+            let end_ok = off.checked_add(len as u64).is_some_and(|end| end <= pack_len.saturating_sub(32));
+            if off < HEADER + 4 || !end_ok {
                 return Err(bad(idx_path, "index entry outside pack"));
             }
             entries.push((id, off, len));
@@ -109,10 +111,12 @@ impl Pack {
         let Some((off, len)) = self.find(id) else { return Ok(None) };
         let mut f = io(&self.pack_path, fs::File::open(&self.pack_path))?;
         io(&self.pack_path, f.seek(SeekFrom::Start(off)))?;
-        let mut buf = vec![0u8; len as usize];
-        match f.read_exact(&mut buf) {
-            Ok(()) => Ok(Some(buf)),
-            Err(_) => Err(StoreError::Corrupt {
+        // `len` comes from the index; never allocate it up front, so a lying index on a short
+        // pack cannot demand gigabytes (the buffer only grows with bytes actually read).
+        let mut buf = Vec::new();
+        match f.take(len as u64).read_to_end(&mut buf) {
+            Ok(n) if n == len as usize => Ok(Some(buf)),
+            _ => Err(StoreError::Corrupt {
                 id: *id,
                 reason: "pack truncated".into(),
             }),

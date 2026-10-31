@@ -1,0 +1,58 @@
+[package]
+name = "vcs-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+tempfile = "3"
+blake3 = "1"
+vcs-objects = { path = "../crates/vcs-objects" }
+vcs-store = { path = "../crates/vcs-store" }
+vcs-remote = { path = "../crates/vcs-remote" }
+vcs-repo = { path = "../crates/vcs-repo" }
+vcs-store-s3 = { path = "../crates/vcs-store-s3" }
+
+# Own workspace root: `cargo build --workspace` in the repository root never sees this crate
+# (it needs nightly and libFuzzer). Run it with `cargo +nightly fuzz run <target>` from here.
+[workspace]
+
+[[bin]]
+name = "object_decode"
+path = "fuzz_targets/object_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "manifest_decode"
+path = "fuzz_targets/manifest_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "pack_index"
+path = "fuzz_targets/pack_index.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "pack_data"
+path = "fuzz_targets/pack_data.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "import_git"
+path = "fuzz_targets/import_git.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "s3_list"
+path = "fuzz_targets/s3_list.rs"
+test = false
+doc = false

@@ -1336,6 +1336,7 @@ name = "vcs-remote"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "proptest",
  "tempfile",
  "thiserror",
  "vcs-objects",
@@ -1372,6 +1373,7 @@ name = "vcs-store-s3"
 version = "0.1.0"
 dependencies = [
  "hmac",
+ "proptest",
  "rcgen",
  "rustls",
  "sha2",

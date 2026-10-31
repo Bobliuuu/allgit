@@ -45,6 +45,15 @@ pub struct Lock {
 #[error("malformed remote manifest: {0}")]
 pub struct ManifestError(pub String);
 
+/// Keys must arrive strictly ascending (the encoder writes map order), so one manifest has
+/// exactly one encoding and a duplicate key cannot silently overwrite an earlier one.
+fn ascending<K: Ord>(prev: Option<&K>, next: &K) -> Result<(), ManifestError> {
+    if prev.is_some_and(|p| p >= next) {
+        return Err(ManifestError("keys not strictly ascending".into()));
+    }
+    Ok(())
+}
+
 impl Manifest {
     pub fn head(&self, zone: &str, branch: &str) -> Option<ObjectId> {
         self.branches.get(&(zone.to_owned(), branch.to_owned())).copied()
@@ -129,11 +138,13 @@ impl Manifest {
             let b = r.str(200).map_err(e)?;
             validate_zone_name(&a).map_err(|x| ManifestError(x.to_string()))?;
             validate_branch_name(&b).map_err(|x| ManifestError(x.to_string()))?;
+            ascending(m.branches.last_key_value().map(|(k, _)| k), &(a.clone(), b.clone()))?;
             m.branches.insert((a, b), r.id().map_err(e)?);
         }
         for _ in 0..r.count(33).map_err(e)? {
             let n = r.str(200).map_err(e)?;
             validate_branch_name(&n).map_err(|x| ManifestError(x.to_string()))?;
+            ascending(m.snapshots.last_key_value().map(|(k, _)| k), &n)?;
             m.snapshots.insert(n, r.id().map_err(e)?);
         }
         let n = r.count(32).map_err(e)?;
@@ -148,6 +159,7 @@ impl Manifest {
             let p = r.str(4096).map_err(e)?;
             validate_zone_name(&n).map_err(|x| ManifestError(x.to_string()))?;
             vcs_objects::names::validate_path(&p).map_err(|x| ManifestError(x.to_string()))?;
+            ascending(m.zones.last_key_value().map(|(k, _)| k), &n)?;
             m.zones.insert(n, p);
         }
         if v >= 2 {
@@ -156,7 +168,12 @@ impl Manifest {
                 let l = r.str(64).map_err(e)?;
                 validate_zone_name(&i).map_err(|x| ManifestError(x.to_string()))?;
                 validate_zone_name(&l).map_err(|x| ManifestError(x.to_string()))?;
+                ascending(m.labels.last_key_value().map(|(k, _)| k), &i)?;
                 m.labels.insert(i, l);
+            }
+            // the encoder writes v2 only when labels exist; an empty v2 would re-encode as v1
+            if v == 2 && m.labels.is_empty() {
+                return Err(ManifestError("v2 manifest without labels".into()));
             }
         }
         if v == 3 {
@@ -177,6 +194,7 @@ impl Manifest {
                 if l.token >= m.next_token {
                     return Err(ManifestError("lock token not below next_token".into()));
                 }
+                ascending(m.locks.last_key_value().map(|(k, _)| k), &(z.clone(), p.clone()))?;
                 m.locks.insert((z, p), l);
             }
             if !m.has_lock_state() {

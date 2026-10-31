@@ -333,30 +333,74 @@ impl Backend for S3Backend {
         let full_prefix = format!("{}{}", self.cfg.prefix, prefix);
         let mut out = Vec::new();
         let mut token: Option<String> = None;
+        let mut pages = 0usize;
         loop {
+            pages += 1;
+            if pages > MAX_LIST_PAGES {
+                return Err(BackendError::Other("list: too many pages".into()));
+            }
             let mut q = vec![("list-type", "2".to_owned()), ("prefix", full_prefix.clone())];
             if let Some(t) = &token {
                 q.push(("continuation-token", t.clone()));
             }
             let body = match self.send("GET", "", &q, &[], b"")? {
-                Resp::Ok { body, .. } => String::from_utf8(body).map_err(|e| BackendError::Other(format!("list: {e}")))?,
+                Resp::Ok { body, .. } => {
+                    if body.len() > MAX_LIST_BODY {
+                        return Err(BackendError::Other("list: response too large".into()));
+                    }
+                    String::from_utf8(body).map_err(|e| BackendError::Other(format!("list: {e}")))?
+                }
                 Resp::Status(c, m) => return Err(Self::unexpected("list", c, m)),
             };
-            for k in tag_values(&body, "Key") {
-                out.push(k[self.cfg.prefix.len()..].to_owned());
+            let page = parse_list_page(&body, &self.cfg.prefix)?;
+            out.extend(page.keys);
+            if out.len() > MAX_LIST_KEYS {
+                return Err(BackendError::Other("list: too many keys".into()));
             }
-            if tag_values(&body, "IsTruncated").first().map(String::as_str) == Some("true") {
-                token = tag_values(&body, "NextContinuationToken").into_iter().next();
-                if token.is_none() {
-                    return Err(BackendError::Other("list: truncated without continuation token".into()));
+            match page.next_token {
+                None => break,
+                // a server that repeats a token would loop us forever
+                Some(t) if token.as_ref() == Some(&t) => {
+                    return Err(BackendError::Other("list: continuation token did not advance".into()));
                 }
-            } else {
-                break;
+                Some(t) => token = Some(t),
             }
         }
         out.sort();
         Ok(out)
     }
+}
+
+/// Largest ListObjectsV2 page body we parse (S3 pages hold at most 1000 keys of <= 1024 bytes).
+const MAX_LIST_BODY: usize = 16 << 20;
+const MAX_LIST_PAGES: usize = 100_000;
+const MAX_LIST_KEYS: usize = 10_000_000;
+
+/// One parsed ListObjectsV2 page; keys are relative to the configured prefix.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ListPage {
+    pub keys: Vec<String>,
+    pub next_token: Option<String>,
+}
+
+/// Parse an untrusted ListObjectsV2 response. Never panics: a key that is not under `prefix`
+/// (a lying or buggy server) is an error, not a slice out of bounds.
+pub fn parse_list_page(xml: &str, prefix: &str) -> Result<ListPage, BackendError> {
+    let mut keys = Vec::new();
+    for k in tag_values(xml, "Key") {
+        let Some(rel) = k.strip_prefix(prefix) else {
+            return Err(BackendError::Other("list: key outside the requested prefix".into()));
+        };
+        keys.push(rel.to_owned());
+    }
+    let mut next_token = None;
+    if tag_values(xml, "IsTruncated").first().map(String::as_str) == Some("true") {
+        next_token = tag_values(xml, "NextContinuationToken").into_iter().next();
+        if next_token.is_none() {
+            return Err(BackendError::Other("list: truncated without continuation token".into()));
+        }
+    }
+    Ok(ListPage { keys, next_token })
 }
 
 /// The headers that enter the SigV4 signature, sorted by name.
@@ -501,6 +545,82 @@ mod tests {
             .err()
             .unwrap();
         assert!(e.to_string().contains("tls"));
+    }
+
+    #[test]
+    fn list_key_outside_prefix_is_an_error_not_a_panic() {
+        // Regression: `k[prefix.len()..]` panicked on a key shorter than the prefix or one that
+        // split a UTF-8 character; a lying server could crash the client.
+        for xml in ["<Key>a</Key>", "<Key></Key>", "<Key>é</Key>", "<Key>other/x</Key>"] {
+            assert!(parse_list_page(xml, "pre/fix/").is_err(), "{xml}");
+        }
+        assert!(parse_list_page("<Key>é</Key>", "\u{e9}x").is_err());
+        let p = parse_list_page("<Key>p/a</Key><Key>p/b&amp;c</Key>", "p/").unwrap();
+        assert_eq!(p.keys, vec!["a", "b&c"]);
+        assert_eq!(p.next_token, None);
+    }
+
+    #[test]
+    fn list_truncation_rules() {
+        assert!(parse_list_page("<IsTruncated>true</IsTruncated>", "").is_err());
+        let p = parse_list_page(
+            "<IsTruncated>true</IsTruncated><NextContinuationToken>t&amp;1</NextContinuationToken>",
+            "",
+        )
+        .unwrap();
+        assert_eq!(p.next_token.as_deref(), Some("t&1"));
+        assert_eq!(parse_list_page("<IsTruncated>false</IsTruncated>", "").unwrap().next_token, None);
+    }
+
+    #[test]
+    fn list_parser_mutation_loop_never_panics() {
+        let seed = "<ListBucketResult><IsTruncated>true</IsTruncated><Contents><Key>p/a&amp;b</Key></Contents><Contents><Key>p/c</Key></Contents><NextContinuationToken>tok</NextContinuationToken></ListBucketResult>";
+        let tokens = [
+            "<Key>",
+            "</Key>",
+            "<",
+            ">",
+            "&",
+            "&amp;",
+            "&lt;",
+            "é",
+            "\u{10000}",
+            "<IsTruncated>true</IsTruncated>",
+            "</",
+            "\0",
+        ];
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        for _ in 0..200_000 {
+            let mut s = seed.to_owned();
+            for _ in 0..1 + next() % 4 {
+                let cuts: Vec<usize> = s.char_indices().map(|(i, _)| i).chain([s.len()]).collect();
+                let at = cuts[(next() as usize) % cuts.len()];
+                match next() % 3 {
+                    0 => s.insert_str(at, tokens[(next() as usize) % tokens.len()]),
+                    1 => s.truncate(at),
+                    _ => {
+                        if at < s.len() {
+                            s.remove(at);
+                        }
+                    }
+                }
+            }
+            let _ = parse_list_page(&s, "p/");
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn list_parser_never_panics_on_any_text(s in "\\PC{0,300}", prefix in "\\PC{0,6}") {
+            let _ = parse_list_page(&s, &prefix);
+            let _ = parse_list_page(&format!("<Key>{s}</Key>"), &prefix);
+        }
     }
 
     #[test]
