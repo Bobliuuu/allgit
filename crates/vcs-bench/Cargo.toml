@@ -35,6 +35,10 @@ path = "src/bin/s3bench.rs"
 required-features = ["s3-tls"]
 
 [[bin]]
+name = "storebench"
+path = "src/bin/storebench.rs"
+
+[[bin]]
 name = "datagen"
 path = "src/bin/datagen.rs"
 
