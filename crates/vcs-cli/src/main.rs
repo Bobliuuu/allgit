@@ -4,10 +4,35 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 use vcs_objects::{ObjectId, Signature};
 use vcs_remote::Outcome;
-use vcs_repo::{ChangeKind, Error, MergeOutcome, RebaseOutcome, Repo, Resolution, SyncAction, ROOT_ZONE};
+use vcs_repo::{AssistResult, ChangeKind, Error, MergeOutcome, RebaseOutcome, Repo, Resolution, SyncAction, ROOT_ZONE};
 
 mod json;
 mod remote;
+
+/// Run the assistant over the unresolved conflicts and print what happened (proposals only).
+fn run_assist(repo: &Repo, cmd: &str, secs: u64) -> Result<(), Error> {
+    let rep = repo.assist_conflicts(cmd, std::time::Duration::from_secs(secs))?;
+    let mut n = 0;
+    for (p, r) in &rep {
+        let line = match r {
+            AssistResult::Proposed => {
+                n += 1;
+                "proposal saved".to_owned()
+            }
+            AssistResult::Skipped(w) => format!("skipped ({w})"),
+            AssistResult::Rejected(w) => format!("assistant answer ignored ({w})"),
+            AssistResult::TimedOut => format!("assistant timed out after {secs}s"),
+            AssistResult::Failed(w) => format!("assistant failed ({w})"),
+        };
+        println!("  assist: {p}: {line}");
+    }
+    if n > 0 {
+        println!(
+            "\n{n} proposal(s) saved, none applied. Review with `vcs conflict proposals`, apply with `vcs resolve <path> --proposal`."
+        );
+    }
+    Ok(())
+}
 
 #[derive(Parser, Clone)]
 #[command(name = "vcs", version, about = "Native zone-aware version control")]
@@ -157,6 +182,13 @@ enum Cmd {
         /// Do not use the structural Rust merge (only matters when built with `--features structural`)
         #[arg(long)]
         no_structural: bool,
+        /// After a conflicted merge, ask this command (run via the shell) for a resolution of each
+        /// text conflict; answers are saved as proposals, never applied (see `vcs conflict proposals`)
+        #[arg(long, value_name = "COMMAND")]
+        assist: Option<String>,
+        /// Seconds the assistant gets per conflict
+        #[arg(long, default_value_t = 30, requires = "assist")]
+        assist_timeout: u64,
     },
     /// Re-apply the change of one commit onto the checked-out branch
     #[command(name = "cherry-pick")]
@@ -191,12 +223,19 @@ enum Cmd {
         /// Do not use the structural Rust merge (only matters when built with `--features structural`)
         #[arg(long)]
         no_structural: bool,
+        /// After a conflicted step, ask this command for a resolution of each text conflict
+        /// (saved as proposals, never applied; see `vcs conflict proposals`)
+        #[arg(long, value_name = "COMMAND")]
+        assist: Option<String>,
+        /// Seconds the assistant gets per conflict
+        #[arg(long, default_value_t = 30, requires = "assist")]
+        assist_timeout: u64,
     },
     /// Inspect conflicts of an in-progress merge
     #[command(subcommand)]
     Conflict(ConflictCmd),
     /// Resolve a conflicted path of a merge or rebase (ours = recorded left side, theirs = right)
-    #[command(group(clap::ArgGroup::new("how").required(true).args(["ours", "theirs", "base", "file", "mark", "check"])))]
+    #[command(group(clap::ArgGroup::new("how").required(true).args(["ours", "theirs", "base", "file", "mark", "check", "proposal"])))]
     Resolve {
         /// Conflicted path (not used with --check)
         path: Option<String>,
@@ -215,6 +254,9 @@ enum Cmd {
         /// Accept the hand-edited working-tree file
         #[arg(long)]
         mark: bool,
+        /// Apply the assistant's saved proposal for this path (see `vcs merge --assist`)
+        #[arg(long)]
+        proposal: bool,
         /// Fail while conflicts are unresolved or conflict markers remain in resolved files
         #[arg(long)]
         check: bool,
@@ -302,6 +344,8 @@ enum OpCmd {
 enum ConflictCmd {
     /// List conflicted paths and whether they are resolved
     List,
+    /// Show the assistant's saved proposals as diffs from our side
+    Proposals,
     /// Show one conflict (ids and a diff3 rendering for text)
     Show { path: String },
 }
@@ -787,6 +831,8 @@ fn run(cli: Cli) -> Result<(), Error> {
             remote,
             abort,
             no_structural,
+            assist,
+            assist_timeout,
         } => {
             let (mut repo, cwd) = open()?;
             repo.set_structural(!no_structural);
@@ -817,6 +863,9 @@ fn run(cli: Cli) -> Result<(), Error> {
                     for p in &paths {
                         println!("  conflict: {p}");
                     }
+                    if let Some(cmd) = &assist {
+                        run_assist(&repo, cmd, assist_timeout)?;
+                    }
                     println!("\nResolve the files, `vcs add` each one, then `vcs commit`.");
                     println!("Inspect with `vcs conflict list|show <path>`; give up with `vcs merge --abort`.");
                     return Err(Error::Msg("merge has conflicts".into()));
@@ -841,6 +890,8 @@ fn run(cli: Cli) -> Result<(), Error> {
             cont,
             abort,
             no_structural,
+            assist,
+            assist_timeout,
         } => {
             let (mut repo, cwd) = open()?;
             repo.set_structural(!no_structural);
@@ -868,6 +919,9 @@ fn run(cli: Cli) -> Result<(), Error> {
                     for p in &paths {
                         println!("  conflict: {p}");
                     }
+                    if let Some(cmd) = &assist {
+                        run_assist(&repo, cmd, assist_timeout)?;
+                    }
                     println!("\nResolve the files, `vcs add` each one, then `vcs rebase --continue`.");
                     println!("Inspect with `vcs conflict list|show <path>`; give up with `vcs rebase --abort`.");
                     return Err(Error::Msg("rebase has conflicts".into()));
@@ -881,6 +935,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             base,
             file,
             mark: _,
+            proposal,
             check,
         } => {
             let (repo, cwd) = open()?;
@@ -906,6 +961,14 @@ fn run(cli: Cli) -> Result<(), Error> {
             } else {
                 let path = path.ok_or_else(|| Error::Msg("resolve needs a <path>".into()))?;
                 let rel = repo.rel_path(&cwd, &path)?;
+                if proposal {
+                    repo.accept_proposal(&rel)?;
+                    println!("resolved {rel} from the assistant's proposal");
+                    if let Some(k) = repo.merge_state()? {
+                        println!("{} conflict(s) left", k.unresolved().len());
+                    }
+                    return Ok(());
+                }
                 let how = if ours {
                     Resolution::Ours
                 } else if theirs {
@@ -963,6 +1026,23 @@ fn run(cli: Cli) -> Result<(), Error> {
                             vcs_repo::merge::kind_name(c.kind),
                             c.path
                         );
+                    }
+                }
+                ConflictCmd::Proposals => {
+                    let props = repo.proposals()?;
+                    if props.is_empty() {
+                        println!("no proposals");
+                    }
+                    for p in props {
+                        println!("proposal for {}", p.path);
+                        if !p.explanation.is_empty() {
+                            println!("  assistant says: {}", p.explanation.replace('\n', " "));
+                        }
+                        println!("  diff from our side:");
+                        for l in p.diff.lines() {
+                            println!("    {l}");
+                        }
+                        println!("  apply with: vcs resolve {} --proposal", p.path);
                     }
                 }
                 ConflictCmd::Show { path } => {

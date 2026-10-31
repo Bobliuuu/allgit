@@ -3,6 +3,7 @@
 //! No filesystem, network or async. Stores are only touched through read-only traits.
 //! See `docs/merge.md`.
 
+pub mod assist;
 pub mod base;
 pub mod diff;
 pub mod error;
