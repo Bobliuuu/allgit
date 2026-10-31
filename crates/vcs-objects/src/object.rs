@@ -4,13 +4,14 @@ use crate::names;
 use std::collections::BTreeMap;
 
 /// Version of the object encoding. Part of the hashed bytes: a format change yields new ids.
+/// v3 added `EntryMode::Symlink` (tree entry mode 4); every id changed with the bump.
 /// v2 added `Kind::Chunked` (chunk manifests for large blobs); every id changed with the bump.
-pub const FORMAT_VERSION: u8 = 2;
-const HASH_CONTEXT: &str = "all-git 2026 object identity v2";
+pub const FORMAT_VERSION: u8 = 3;
+const HASH_CONTEXT: &str = "all-git 2026 object identity v3";
 /// Files of at least this many bytes are stored as a chunk manifest plus chunk blobs; smaller
 /// ones as one blob. Fixed by the format: changing it (or the chunk parameters) is a version bump.
 pub const CHUNK_THRESHOLD: usize = 1 << 20;
-/// Chunking parameters fixed by format v2.
+/// Chunking parameters fixed by format v2 and v3.
 pub const CHUNK_MIN: usize = 4 << 10;
 pub const CHUNK_AVG: usize = 16 << 10;
 pub const CHUNK_MAX: usize = 64 << 10;
@@ -119,6 +120,8 @@ pub enum EntryMode {
     File = 1,
     Executable = 2,
     Directory = 3,
+    /// Symbolic link: the entry id names a Blob holding the link target bytes.
+    Symlink = 4,
 }
 
 impl EntryMode {
@@ -127,6 +130,7 @@ impl EntryMode {
             1 => Ok(Self::File),
             2 => Ok(Self::Executable),
             3 => Ok(Self::Directory),
+            4 => Ok(Self::Symlink),
             _ => Err(DecodeError::Invalid("tree entry mode")),
         }
     }
@@ -745,7 +749,9 @@ mod tests {
         assert_eq!(id.len(), 64);
         assert_eq!(id, GOLDEN_HELLO);
     }
-    const GOLDEN_HELLO: &str = "de6e9755b08af02d38d3d998f15520ff076c051b4b84753e99b098b728bc724a";
+    // Deliberately changed when FORMAT_VERSION went 2 -> 3 (symlink entry mode); the v2 value was
+    // de6e9755b08af02d38d3d998f15520ff076c051b4b84753e99b098b728bc724a.
+    const GOLDEN_HELLO: &str = "31378e608099a5eaeef6479254797e97d56e268011cf52f84a92f77b59b34fac";
 
     fn rnd(n: usize, mut x: u64) -> Vec<u8> {
         (0..n)
@@ -777,10 +783,12 @@ mod tests {
         let big = rnd(CHUNK_THRESHOLD + 12345, 42);
         let o = Object::Chunked(ChunkedBlob::plan(&big).unwrap());
         assert_eq!(Object::decode(&o.encode()).unwrap(), o);
-        // Pins the chunker parameters and manifest encoding (format v2): changing either changes this.
+        // Pins the chunker parameters and manifest encoding (format v3): changing either changes this.
         assert_eq!(o.id().to_hex(), GOLDEN_CHUNKED);
     }
-    const GOLDEN_CHUNKED: &str = "c07e3acd5be026d050469aaf80ec54325a99efc06977a8f9f9d39b6a21133fc4";
+    // Also changed by the v3 bump (the version byte is hashed); the v2 value was
+    // c07e3acd5be026d050469aaf80ec54325a99efc06977a8f9f9d39b6a21133fc4.
+    const GOLDEN_CHUNKED: &str = "1085d7e6e3566bdda2ac7b8a241eb903b16f25b399ae44c7604779ec8d935686";
 
     #[test]
     fn chunked_decode_rejects_malformed() {
@@ -812,6 +820,35 @@ mod tests {
         let mut old = enc;
         old[1] = 1;
         assert_eq!(Object::decode(&old), Err(DecodeError::Version(1)));
+    }
+
+    #[test]
+    fn symlink_entry_roundtrips_and_v2_is_rejected() {
+        let t = Object::Tree(
+            Tree::new(vec![
+                TreeEntry {
+                    name: "f".into(),
+                    mode: EntryMode::File,
+                    id: oid(1),
+                },
+                TreeEntry {
+                    name: "l".into(),
+                    mode: EntryMode::Symlink,
+                    id: oid(2),
+                },
+            ])
+            .unwrap(),
+        );
+        let enc = t.encode();
+        assert_eq!(Object::decode(&enc).unwrap(), t);
+        let mut v1 = enc.clone();
+        v1[1] = 2;
+        assert_eq!(Object::decode(&v1), Err(DecodeError::Version(2)));
+        // mode byte 5 is still unknown
+        let mut bad = enc;
+        let pos = bad.iter().rposition(|b| *b == 4).unwrap();
+        bad[pos] = 5;
+        assert!(Object::decode(&bad).is_err());
     }
 
     #[test]

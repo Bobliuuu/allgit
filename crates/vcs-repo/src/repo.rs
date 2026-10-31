@@ -114,6 +114,38 @@ pub(crate) fn mode_of(m: &fs::Metadata) -> EntryMode {
     EntryMode::File
 }
 
+/// Link target as the bytes stored in a symlink blob.
+fn read_link_bytes(abs: &std::path::Path) -> std::io::Result<Vec<u8>> {
+    let t = fs::read_link(abs)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        Ok(t.as_os_str().as_bytes().to_vec())
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(t.to_string_lossy().into_owned().into_bytes())
+    }
+}
+
+/// Create a symlink at `link` pointing at the raw `target` bytes (unix only).
+pub(crate) fn make_symlink(target: &[u8], link: &std::path::Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let t = std::ffi::OsStr::from_bytes(target);
+        io(link, std::os::unix::fs::symlink(t, link))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = target;
+        msg(format!(
+            "cannot create symlink {}: symlink checkout is only supported on unix (see docs/object-model.md)",
+            link.display()
+        ))
+    }
+}
+
 pub(crate) enum Wt {
     Clean,
     Modified,
@@ -293,6 +325,7 @@ impl Repo {
         for p in rel_paths {
             self.add_one(p, &zones, &ws, &mut ix, &mut rep, &mut todo)?;
         }
+        crate::portable::require_no_collision(ix.entries.keys().map(String::as_str).chain(todo.iter().map(String::as_str)), "add")?;
         // Read + hash + write the blobs on several threads; the index is updated afterwards.
         self.stage_files(&todo, &mut ix)?;
         self.note_resolved(rel_paths, &ix)?;
@@ -346,8 +379,22 @@ impl Repo {
                 rep.staged += 1;
                 Ok(())
             }
-            Ok(_) => msg(format!("{p:?}: symlinks and special files are not supported yet")),
+            Ok(m) if m.file_type().is_symlink() => {
+                validate_path(p)?;
+                self.check_link(p)?;
+                todo.push(p.to_owned());
+                rep.staged += 1;
+                Ok(())
+            }
+            Ok(_) => msg(format!("{p:?}: special files are not supported")),
         }
+    }
+
+    /// Refuse a symlink whose target could leave the worktree.
+    fn check_link(&self, rel: &str) -> Result<()> {
+        let abs = self.worktree.join(rel);
+        let t = io(&abs, read_link_bytes(&abs))?;
+        crate::portable::check_symlink_target(rel, &t).or_else(|why| msg(format!("refusing symlink {rel:?}: {why}")))
     }
 
     fn add_dir(
@@ -379,14 +426,23 @@ impl Repo {
                 continue;
             }
             let ft = io(&abs, e.file_type())?;
-            if ft.is_symlink() || !(ft.is_dir() || ft.is_file()) {
-                rep.skipped.push(format!("{rel} (symlink or special file: unsupported)"));
+            if !(ft.is_symlink() || ft.is_dir() || ft.is_file()) {
+                rep.skipped.push(format!("{rel} (special file: unsupported)"));
                 continue;
             }
             if !ws.subs.contains_key(zones.owner(&rel)) {
                 continue; // not our zone: untouched, not an error
             }
-            if ft.is_dir() {
+            if ft.is_symlink() {
+                if let Err(e) = self.check_link(&rel) {
+                    rep.skipped.push(format!("{rel} ({e})"));
+                    continue;
+                }
+                validate_path(&rel)?;
+                todo.push(rel.clone());
+                seen.insert(rel);
+                rep.staged += 1;
+            } else if ft.is_dir() {
                 self.add_dir(&rel, zones, ws, rep, seen, todo)?;
             } else {
                 validate_path(&rel)?;
@@ -403,7 +459,17 @@ impl Repo {
     fn stage_files(&self, files: &[String], ix: &mut Index) -> Result<()> {
         let one = |rel: &String| -> Result<IndexEntry> {
             let abs = self.worktree.join(rel);
-            let m = io(&abs, fs::metadata(&abs))?; // stat BEFORE read: later edits change mtime/size
+            let m = io(&abs, fs::symlink_metadata(&abs))?; // stat BEFORE read: later edits change mtime/size
+            if m.file_type().is_symlink() {
+                let target = io(&abs, read_link_bytes(&abs))?;
+                let id = self.store.put_blob(&target)?;
+                return Ok(IndexEntry {
+                    id,
+                    mode: EntryMode::Symlink,
+                    size: target.len() as u64,
+                    mtime_ns: mtime_ns(&m),
+                });
+            }
             let data = io(&abs, fs::read(&abs))?;
             let id = self.store.put_content(&data)?;
             Ok(IndexEntry {
@@ -456,6 +522,17 @@ impl Repo {
             Err(x) if x.kind() == std::io::ErrorKind::NotFound => return Ok(Wt::Deleted),
             Err(source) => return Err(Error::Io { path: abs, source }),
         };
+        if e.mode == EntryMode::Symlink {
+            if !m.file_type().is_symlink() {
+                return Ok(Wt::Modified);
+            }
+            let t = io(&abs, read_link_bytes(&abs))?;
+            return Ok(if vcs_objects::blob_id(&t) == e.id {
+                Wt::Clean
+            } else {
+                Wt::Modified
+            });
+        }
         if !m.is_file() {
             return Ok(Wt::Modified);
         }
@@ -553,7 +630,7 @@ impl Repo {
             }
             let rel = if dir.is_empty() { name } else { format!("{dir}/{name}") };
             let ft = io(&abs, e.file_type())?;
-            if ft.is_symlink() || !(ft.is_dir() || ft.is_file()) {
+            if !(ft.is_symlink() || ft.is_dir() || ft.is_file()) {
                 items.push(Item::Unsupported(rel));
                 continue;
             }
@@ -647,7 +724,8 @@ impl Repo {
             for (p, e) in &ix.entries {
                 let abs = self.worktree.join(p);
                 let cur = match fs::symlink_metadata(&abs) {
-                    Ok(m) if m.is_file() => Some(io(&abs, fs::read(&abs))?),
+                    Ok(m) if m.file_type().is_symlink() && e.mode == EntryMode::Symlink => Some(io(&abs, read_link_bytes(&abs))?),
+                    Ok(m) if m.is_file() && e.mode != EntryMode::Symlink => Some(io(&abs, fs::read(&abs))?),
                     Ok(_) => continue,
                     Err(x) if x.kind() == std::io::ErrorKind::NotFound => None,
                     Err(source) => return Err(Error::Io { path: abs, source }),
@@ -986,6 +1064,12 @@ impl Repo {
     /// Preflight validates everything before any file is touched.
     pub(crate) fn transition(&self, zone: &str, zones: &Zones, old: &Flat, new: &Flat, ix: &mut Index) -> Result<()> {
         let changed: Vec<&String> = new.iter().filter(|(p, v)| old.get(*p) != Some(v)).map(|(p, _)| p).collect();
+        crate::portable::require_no_collision(
+            new.keys()
+                .map(String::as_str)
+                .chain(ix.entries.keys().filter(|p| !old.contains_key(*p)).map(String::as_str)),
+            "checkout",
+        )?;
         for p in &changed {
             validate_path(p)?;
             if zones.owner(p) != zone {
@@ -993,6 +1077,13 @@ impl Repo {
                     "branch content for zone {zone:?} contains {p:?}, which belongs to zone {:?}",
                     zones.owner(p)
                 ));
+            }
+            if new[*p].0 == EntryMode::Symlink {
+                let t = self.store.get_blob(&new[*p].1)?;
+                crate::portable::check_symlink_target(p, &t).or_else(|why| msg(format!("refusing to check out symlink {p:?}: {why}")))?;
+                if !cfg!(unix) {
+                    return msg(format!("cannot check out symlink {p:?}: symlinks are only supported on unix"));
+                }
             }
             let abs = self.worktree.join(p);
             if !old.contains_key(*p) && fs::symlink_metadata(&abs).is_ok() {
@@ -1020,7 +1111,7 @@ impl Repo {
         for p in old.keys().filter(|p| !new.contains_key(*p)) {
             let abs = self.worktree.join(p);
             match fs::symlink_metadata(&abs) {
-                Ok(m) if m.is_file() => io(&abs, fs::remove_file(&abs))?,
+                Ok(m) if m.is_file() || m.file_type().is_symlink() => io(&abs, fs::remove_file(&abs))?,
                 Ok(_) => return msg(format!("expected file at {p:?}")),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(source) => return Err(Error::Io { path: abs, source }),
@@ -1038,15 +1129,21 @@ impl Repo {
             let parent = abs.parent().unwrap();
             io(parent, fs::create_dir_all(parent))?;
             let tmp = parent.join(format!(".vcs-tmp-{}", std::process::id()));
-            io(&tmp, fs::write(&tmp, &data))?;
+            if mode == EntryMode::Symlink {
+                let _ = fs::remove_file(&tmp);
+                make_symlink(&data, &tmp)?;
+            } else {
+                io(&tmp, fs::write(&tmp, &data))?;
+            }
             #[cfg(unix)]
-            {
+            if mode != EntryMode::Symlink {
                 use std::os::unix::fs::PermissionsExt;
                 let bits = if mode == EntryMode::Executable { 0o755 } else { 0o644 };
                 io(&tmp, fs::set_permissions(&tmp, fs::Permissions::from_mode(bits)))?;
             }
+            // rename replaces the path itself (including an existing link); it never writes through it
             io(&abs, fs::rename(&tmp, &abs))?;
-            let m = io(&abs, fs::metadata(&abs))?;
+            let m = io(&abs, fs::symlink_metadata(&abs))?;
             ix.entries.remove(p);
             ix.insert(
                 p,

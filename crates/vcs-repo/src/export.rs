@@ -149,7 +149,11 @@ impl Repo {
                         next
                     }
                 };
-                let git_mode = if *mode == EntryMode::Executable { "100755" } else { "100644" };
+                let git_mode = match mode {
+                    EntryMode::Executable => "100755",
+                    EntryMode::Symlink => "120000",
+                    _ => "100644",
+                };
                 writeln!(lines, "M {git_mode} :{m} {}", quote_path(path)).map_err(io_err)?;
             }
             for path in base.keys().filter(|p| !flat.contains_key(*p)) {

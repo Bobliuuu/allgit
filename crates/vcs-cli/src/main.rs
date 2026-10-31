@@ -538,7 +538,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                 );
             }
             for u in &st.unsupported {
-                println!("unsupported (symlink/special): {u}");
+                println!("unsupported (special file): {u}");
             }
             if st.zones.iter().all(|a| a.staged.is_empty() && a.unstaged.is_empty()) && st.untracked.is_empty() {
                 println!("clean");
