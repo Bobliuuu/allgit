@@ -19,7 +19,7 @@ Crates are only created when a real boundary exists. The core never depends on T
 ```
 .vcs/
   format            "all-git repository format 1" (written last by init ⇒ crashed init is not a repo)
-  objects/aa/bbbb…  loose immutable objects, written tmp+fsync+rename; tmp/ for in-flight writes
+  objects/aa/bbbb…  loose immutable objects, written to tmp/, then flushed and renamed in batches at the durability barrier (see Durability)
   refs              all branch heads + named snapshots in ONE file, replaced atomically
   op_head           id of the current Operation (operation log, see operations.md)
   zones             zone name → owned path prefix (root = "")
@@ -40,8 +40,36 @@ for thousands of branches; the remote design shards by zone (below).
 1. take repo lock; load zones/workspace/refs/index
 2. per subscribed zone: build zone-relative tree from index; skip if unchanged vs parent root
 3. write Commit objects, then the Transaction object (immutable data **before** any pointer moves)
-4. `refs.apply` (CAS on `old`), atomic rename of `refs` ← commit point
-5. crash before 4: orphan objects only (harmless, collectable). crash after 4: committed. No state in between.
+4. `ObjectStore::sync()` durability barrier (see below): all of the above objects are durable
+5. `refs.apply` (CAS on `old`), atomic rename of `refs` ← commit point
+6. crash before 5: orphan objects only (harmless, collectable). crash after 5: committed. No state in between.
+
+### Durability [impl]
+**Guarantee:** an object that is visible under its final name in the local store is complete and durable, and no
+ref, index or manifest is written that names an object before that object is durable.
+
+Mechanism (`LocalStore`, batched instead of one fsync per object, #21):
+- `ObjectStore::put` writes the object to `objects/tmp/` **without fsync** and records it as pending. If the object
+  already exists (published or pending) nothing is written. Pending objects are readable through the same store
+  instance, so a flow can write a blob/tree and read it back before the barrier.
+- `ObjectStore::sync()` is the **durability barrier**. It (1) flushes every pending file's data, (2) renames each
+  file to `objects/aa/rest`, (3) flushes the touched directories. On macOS, where `File::sync_all` is the very slow
+  `F_FULLFSYNC`, steps 1 and 3 use plain `fsync` per file/directory plus **one** hardware flush per step (the same idea
+  as git's `core.fsync=batch`); elsewhere `fsync` already is the flush. No-op when nothing is pending.
+- Callers place the barrier immediately **before** the pointer write: `Repo::add` before the index is saved,
+  `Repo::commit` and `snapshot_create` before `refs`, and the fetch path before any ref moves to fetched objects.
+  The pointer files themselves (`index`, `refs`, ...) still use write-temp, fsync, rename.
+- Objects only get a final name inside the barrier, after their data is durable, so a crash can never leave a
+  truncated or empty file under an object name (which "skip if exists" would otherwise trust forever).
+
+Crash outcomes: crash before the barrier loses only the not-yet-referenced objects (stray files remain in
+`objects/tmp/`, never listed or read, harmless); crash after the barrier but before the pointer write leaves
+unreferenced but complete objects (collectable); crash after the pointer write is fully committed. `vcs fsck`
+additionally verifies that every index entry's blob exists. Tested in `crates/vcs-repo/tests/durability.rs`
+and `crates/vcs-store` unit tests.
+
+Limits: the barrier assumes the OS/drive honour `fsync` (and `F_FULLFSYNC` on macOS); a drive that lies defeats any
+such scheme. The durability numbers were measured on APFS only; Linux/ext4 behaviour of the batching is not measured.
 
 ### Index, status and the stat cache [impl]
 Status compares (head tree ↔ index) and (index ↔ worktree). The worktree comparison trusts `(size, mtime, mode)` only if

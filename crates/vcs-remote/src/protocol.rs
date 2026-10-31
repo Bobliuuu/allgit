@@ -404,6 +404,8 @@ pub fn fetch_heads(
         )?;
         out.push((a.clone(), b.clone(), *id));
     }
+    // Durability barrier: fetched objects are durable before the caller moves any ref to them.
+    local.sync()?;
     Ok(out)
 }
 
