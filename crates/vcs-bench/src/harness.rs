@@ -889,6 +889,8 @@ pub fn run(cfg: &Config, spec: &RunSpec, log: &mut dyn FnMut(&str)) -> Result<Ru
                     }
                     Step::RunKilled(c, ms) => run_killed(c, cfg, tool, *ms),
                     Step::Edit { dir, pct, tag, prefix } => {
+                        // offset so per-trial edits never replay a history revision (tags 1..=revisions)
+                        let tag = &(*tag + 1_000_000);
                         let r = match prefix {
                             Some(p) => workloads::evolve_in(&plan, dir, cfg.seed, *tag, (plan.files_in(p).len() * pct / 100).max(1), p),
                             None => workloads::evolve_pct(&plan, dir, cfg.seed, *tag, *pct),

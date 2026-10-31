@@ -248,11 +248,14 @@ and re-run noisy cells; the harness does not refuse to run under load. The metho
 
 ### 7.5 walgit runner (stub)
 
-`--tools walgit` registers the tool and records one `skipped` entry per workload with the reason (binary missing, or present
-but runner not implemented). walgit is a git smart-HTTP server in front of an object store, so a complete runner would start
-`walgit serve --config <local-fs store>` and drive the same git client commands against `http://127.0.0.1:<port>/<repo>.git`
-(clone, sparse clone via partial-clone filters if supported, fetch, push). That is not implemented here; operator steps and
-findings belong to the walgit study.
+`--tools walgit` registers the tool and records one `skipped` entry per workload with the reason (binary not given via
+`--walgit-bin`/`WALGIT_BIN`, or present but runner not implemented). Checked on lambda-final (2026-10-31): a release build
+exists at `~/ref/walgit/target/release/walgit` (`walgit 80e9a20b29e2`). walgit is a git smart-HTTP server in front of an object store.
+Its shipped `walgit.standalone.toml` uses `backend = "s3"` (local MinIO/rustfs at 127.0.0.1:9000) and a self-signed TLS
+certificate, so a complete runner must start local MinIO, run `walgit serve --config <toml>` and drive the same git client
+commands (clone, partial/sparse clone, fetch, push) against `https://127.0.0.1:<port>/<repo>.git` with the CA pinned. That
+setup is not implemented here: the walgit study owns it, and the runner then only needs a `Tool::Walgit` arm in `OpCx::tc`
+that reuses the git commands with a different remote URL. [UNVERIFIED: whether walgit supports `--filter=blob:none`.]
 
 ## Sources
 
