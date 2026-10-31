@@ -21,6 +21,7 @@ Crates are only created when a real boundary exists. The core never depends on T
   format            "all-git repository format 1" (written last by init ⇒ crashed init is not a repo)
   objects/aa/bbbb…  loose immutable objects, written tmp+fsync+rename; tmp/ for in-flight writes
   refs              all branch heads + named snapshots in ONE file, replaced atomically
+  op_head           id of the current Operation (operation log, see operations.md)
   zones             zone name → owned path prefix (root = "")
   workspace         subscribed zones and the branch checked out in each
   index             staged tree: path → (blob id, mode, size, mtime_ns) + write time
@@ -150,6 +151,6 @@ cherry-pick creates a new id (records the source in metadata); two live commits 
 | D9 | Tree flatten | whole-tree per zone | O(n); subtree-skipping + lazy loading in M5 after measurement |
 
 ## Known limitations (honest list)
-No merge/rebase/undo/operation log yet; no remote/S3; no packfiles or chunking; no lock/lease; no Git/P4 interop; no
+No merge/rebase yet; the operation log ([operations.md](operations.md)) covers local refs/workspace only: snapshots, remote-tracking refs and unrecorded crash-window changes are not undoable, and `undo` across several zones is not atomic; no S3 CLI wiring; no packfiles or chunking; no lock/lease; no Git/P4 interop; no
 filesystem monitor; no authn/authz; `snapshot checkout` and branch deletion are not implemented; `vcs log` has no
 merge-commit support because merges don't exist yet; no unit of concurrency control beyond a coarse repo lock.
