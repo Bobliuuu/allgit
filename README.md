@@ -1,10 +1,10 @@
 <div align="center">
 
-# 🌳 all-git
+# 🌳 allgit
 
 **Version control for big repos where code, art, and docs shouldn't share one history.**
 
-[![CI](https://github.com/Bobliuuu/all-git/actions/workflows/ci.yml/badge.svg)](https://github.com/Bobliuuu/all-git/actions/workflows/ci.yml)
+[![CI](https://github.com/Bobliuuu/allgit/actions/workflows/ci.yml/badge.svg)](https://github.com/Bobliuuu/allgit/actions/workflows/ci.yml)
 ![Rust](https://img.shields.io/badge/rust-1.80%2B-orange)
 ![Status](https://img.shields.io/badge/status-early%20research-yellow)
 ![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)
@@ -19,7 +19,7 @@
 
 Imagine a game studio. Programmers touch `engine/`, artists touch `assets/`. With plain Git, everyone shares one history and downloads everything.
 
-With all-git, each part of the repo is an **zone**:
+With allgit, each part of the repo is a **zone**:
 
 - 🧩 Each zone has its **own branches and history**, so an artist's busy week doesn't clutter the programmers' log.
 - 📦 You **subscribe** only to the zones you need. Skipped zones are never downloaded (and never "deleted", just not there).
@@ -148,12 +148,12 @@ That's it: `work/` contains only `engine/`. Later, `vcs fetch` downloads updates
 | Sparse fetch | ✅ | tests assert an unsubscribed zone's bytes are never read |
 | Merge engine | 🟡 | `vcs-merge`: merge-base, diff3 (Myers/patience), structured tree conflicts; wired into `vcs merge` (fast-forward, three-way, conflict state, `--abort`); no rename detection, criss-cross and file/directory conflicts are errors |
 | Benchmarks | 🟡 | first baseline in [docs/benchmarks.md](docs/benchmarks.md); `add` is currently **much slower than Git** (tracked in #21) |
-| Operation log / undo, rebase | ⬜ | [#4](https://github.com/Bobliuuu/all-git/issues/4) |
-| Locks & leases (server-enforced) | ⬜ | design first: [#7](https://github.com/Bobliuuu/all-git/issues/7) |
-| Packfiles, chunking | ⬜ | [#9](https://github.com/Bobliuuu/all-git/issues/9) |
+| Operation log / undo, rebase | ⬜ | [#11](https://github.com/Bobliuuu/allgit/issues/11) |
+| Locks & leases (server-enforced) | ⬜ | design first: [#14](https://github.com/Bobliuuu/allgit/issues/14) |
+| Packfiles, chunking | ⬜ | [#16](https://github.com/Bobliuuu/allgit/issues/16) |
 | Rebase with stable change ids | 🟡 | `vcs rebase <branch>` / `--continue` / `--abort`; keeps change ids, one undoable op; linear ranges only ([docs/rebase.md](docs/rebase.md)) |
-| Semantic / AI-assisted merge | ⬜ | [#10](https://github.com/Bobliuuu/all-git/issues/10) |
-| Git import/export, P4 | ⬜ | [#8](https://github.com/Bobliuuu/all-git/issues/8) |
+| Semantic / AI-assisted merge | ⬜ | [#17](https://github.com/Bobliuuu/allgit/issues/17) |
+| Git import/export, P4 | ⬜ | [#15](https://github.com/Bobliuuu/allgit/issues/15) |
 
 Nothing here is claimed to work without an executable test. Known gaps are listed in [docs/architecture.md](docs/architecture.md#known-limitations-honest-list).
 
@@ -199,4 +199,4 @@ cargo test --workspace                 # includes the ~20 s protocol model check
 VCS_TEST_S3_ENDPOINT=http://127.0.0.1:9000 cargo test -p vcs-store-s3   # MinIO, see docs/s3.md
 ```
 
-Work is tracked in [issues](https://github.com/Bobliuuu/all-git/issues); PRs use Conventional Commits and the template in `.github/`.
+Work is tracked in [issues](https://github.com/Bobliuuu/allgit/issues); PRs use Conventional Commits and the template in `.github/`.
