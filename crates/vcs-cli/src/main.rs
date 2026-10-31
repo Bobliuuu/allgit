@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 use vcs_objects::{ObjectId, Signature};
 use vcs_remote::Outcome;
-use vcs_repo::{ChangeKind, Error, Repo, SyncAction, ROOT_AREA};
+use vcs_repo::{ChangeKind, Error, MergeOutcome, Repo, SyncAction, ROOT_AREA};
 
 mod remote;
 
@@ -55,6 +55,23 @@ enum Cmd {
         #[arg(long)]
         area: Option<String>,
     },
+    /// Merge a branch into the checked-out branch (fast-forward when possible)
+    Merge {
+        /// Branch to merge (not needed with --abort)
+        branch: Option<String>,
+        /// Area (default: the area containing the current directory)
+        #[arg(long)]
+        area: Option<String>,
+        /// Merge the remote-tracking branch (as last fetched) instead of a local one
+        #[arg(long)]
+        remote: bool,
+        /// Abandon the in-progress merge and restore the pre-merge state
+        #[arg(long)]
+        abort: bool,
+    },
+    /// Inspect conflicts of an in-progress merge
+    #[command(subcommand)]
+    Conflict(ConflictCmd),
     /// Manage areas
     #[command(subcommand)]
     Area(AreaCmd),
@@ -86,6 +103,14 @@ enum Cmd {
     Sync,
     /// Verify all objects and graph invariants
     Fsck,
+}
+
+#[derive(Subcommand)]
+enum ConflictCmd {
+    /// List conflicted paths and whether they are resolved
+    List,
+    /// Show one conflict (ids and a diff3 rendering for text)
+    Show { path: String },
 }
 
 #[derive(Subcommand)]
@@ -249,6 +274,24 @@ fn run(cli: Cli) -> Result<(), Error> {
                     }
                 }
             }
+            if let Some(m) = &st.merging {
+                println!(
+                    "merging {} into {}/{}: {} unresolved conflict(s)",
+                    m.theirs_label,
+                    m.area,
+                    m.branch,
+                    m.unresolved().len()
+                );
+                for c in &m.conflicts {
+                    println!(
+                        "    {:<10} {} ({})",
+                        if c.resolved { "resolved" } else { "unresolved" },
+                        c.path,
+                        vcs_repo::merge::kind_name(c.kind)
+                    );
+                }
+                println!("  (fix, `vcs add`, `vcs commit`; or `vcs merge --abort`)");
+            }
             if !st.untracked.is_empty() {
                 println!("untracked:");
                 for u in &st.untracked {
@@ -306,6 +349,65 @@ fn run(cli: Cli) -> Result<(), Error> {
             let area = area_of_cwd(&repo, &cwd, area)?;
             repo.checkout(&area, &branch)?;
             println!("area {area}: switched to {branch}");
+        }
+        Cmd::Merge {
+            branch,
+            area,
+            remote,
+            abort,
+        } => {
+            let (repo, cwd) = open()?;
+            if abort {
+                repo.merge_abort()?;
+                println!("merge aborted; working tree restored");
+                return Ok(());
+            }
+            let Some(branch) = branch else {
+                return Err(Error::Msg(
+                    "usage: vcs merge <branch> [--area A] [--remote] | vcs merge --abort".into(),
+                ));
+            };
+            let area = area_of_cwd(&repo, &cwd, area)?;
+            let out = if remote {
+                repo.merge_remote(&area, &branch, author())?
+            } else {
+                repo.merge(&area, &branch, author())?
+            };
+            match out {
+                MergeOutcome::UpToDate => println!("already up to date"),
+                MergeOutcome::FastForward { from, to } => {
+                    println!("{area}: fast-forward {} -> {}", opt_short(from), to.short())
+                }
+                MergeOutcome::Merged { commit } => println!("{area}: merged, new commit {}", commit.short()),
+                MergeOutcome::Conflicted { paths } => {
+                    println!("automatic merge stopped: {} conflict(s)", paths.len());
+                    for p in &paths {
+                        println!("  conflict: {p}");
+                    }
+                    println!("\nResolve the files, `vcs add` each one, then `vcs commit`.");
+                    println!("Inspect with `vcs conflict list|show <path>`; give up with `vcs merge --abort`.");
+                    return Err(Error::Msg("merge has conflicts".into()));
+                }
+            }
+        }
+        Cmd::Conflict(c) => {
+            let (repo, cwd) = open()?;
+            match c {
+                ConflictCmd::List => {
+                    for c in repo.conflicts()? {
+                        println!(
+                            "{:<10} {:<14} {}",
+                            if c.resolved { "resolved" } else { "unresolved" },
+                            vcs_repo::merge::kind_name(c.kind),
+                            c.path
+                        );
+                    }
+                }
+                ConflictCmd::Show { path } => {
+                    let rel = repo.rel_path(&cwd, &path)?;
+                    print!("{}", repo.conflict_show(&rel)?);
+                }
+            }
         }
         Cmd::Area(a) => {
             let (repo, _) = open()?;
@@ -470,7 +572,10 @@ fn run(cli: Cli) -> Result<(), Error> {
                         format!("fast-forwarded {} -> {}", opt_short(*from), to.short())
                     }
                     SyncAction::Ahead => "ahead of remote (run `vcs publish`)".into(),
-                    SyncAction::Diverged => "diverged (needs merge, not implemented)".into(),
+                    SyncAction::Diverged => {
+                        let r = if a == ROOT_AREA { String::new() } else { format!(" --area {a}") };
+                        format!("diverged; merge with `vcs merge --remote {b}{r}`")
+                    }
                     SyncAction::Dirty => "dirty (left untouched; commit or discard changes first)".into(),
                     SyncAction::NoRemote => "not on the remote yet (run `vcs publish`)".into(),
                 };
