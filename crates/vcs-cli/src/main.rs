@@ -38,6 +38,16 @@ enum Cmd {
     },
     /// Import a `git fast-export` stream (file, or `-` for stdin) into the root area
     ImportGit { stream: PathBuf },
+    /// Write an area branch as a Git fast-import stream (stdout, or --output)
+    ExportGit {
+        /// Area (default: the area containing the current directory)
+        #[arg(long)]
+        area: Option<String>,
+        /// Branch (default: main)
+        branch: Option<String>,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
     /// Show commit history of an area branch
     Log {
         /// Area (default: the area containing the current directory)
@@ -389,6 +399,22 @@ fn run(cli: Cli) -> Result<(), Error> {
             for x in &r.paths_skipped {
                 println!("skipped path: {x}");
             }
+        }
+        Cmd::ExportGit { area, branch, output } => {
+            let (repo, cwd) = open()?;
+            let area = area_of_cwd(&repo, &cwd, area)?;
+            let branch = branch.unwrap_or_else(|| "main".to_string());
+            let rep = match output {
+                Some(p) => {
+                    let mut w =
+                        std::io::BufWriter::new(std::fs::File::create(&p).map_err(|e| Error::Msg(format!("{}: {e}", p.display())))?);
+                    let r = repo.export_git(&area, &branch, &mut w)?;
+                    std::io::Write::flush(&mut w).map_err(|e| Error::Msg(e.to_string()))?;
+                    r
+                }
+                None => repo.export_git(&area, &branch, &mut std::io::BufWriter::new(std::io::stdout().lock()))?,
+            };
+            eprintln!("exported {} commit(s), {} blob(s) to {}", rep.commits, rep.blobs, rep.git_ref);
         }
         Cmd::Log { area, limit, branch } => {
             let (repo, cwd) = open()?;
