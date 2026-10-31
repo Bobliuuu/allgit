@@ -14,6 +14,7 @@ vcs-objects.workspace = true
 vcs-store.workspace = true
 vcs-remote.workspace = true
 vcs-store-s3.workspace = true
+vcs-server.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 clap_mangen.workspace = true

@@ -2,6 +2,7 @@
 use std::path::{Component, Path, PathBuf};
 use vcs_remote::{Backend, FsBackend};
 use vcs_repo::Error;
+use vcs_server::HttpBackend;
 use vcs_store_s3::{S3Backend, S3Config};
 
 fn url_scheme(url: &str) -> Option<&str> {
@@ -56,13 +57,25 @@ pub fn open_backend(url: &str) -> Result<Box<dyn Backend>, Error> {
         None => url.into(),
         Some("file") => url["file://".len()..].into(),
         Some("s3") => return open_s3(url),
+        Some("http") => return open_http(url, std::env::var("VCS_TOKEN").ok()),
         Some(s) => {
             return Err(Error::Msg(format!(
-                "remote scheme {s}:// is not supported in this build (url: {url})\n\nSupported:\n  a local directory path\n  file:///absolute/path\n  s3://bucket/prefix?endpoint=http://host:port"
+                "remote scheme {s}:// is not supported in this build (url: {url})\n\nSupported:\n  a local directory path\n  file:///absolute/path\n  s3://bucket/prefix?endpoint=http://host:port\n  http://host:port (vcs-server; token in VCS_TOKEN, no TLS)"
             )))
         }
     };
     let b = FsBackend::open(path).map_err(|e| Error::Msg(format!("cannot open remote {url}: {e}")))?;
+    Ok(Box::new(b))
+}
+
+/// `http://host:port` = a `vcs-server`. The bearer token comes from `VCS_TOKEN` only (never
+/// the URL, so it is never written to `.vcs/remote`). Set `VCS_PRINCIPAL` to the server-side
+/// principal name so lock holders match. No TLS: use a proxy for anything but a trusted network.
+fn open_http(url: &str, token: Option<String>) -> Result<Box<dyn Backend>, Error> {
+    let token = token.filter(|t| !t.is_empty()).ok_or_else(|| {
+        Error::Msg("missing server token: set the VCS_TOKEN environment variable (tokens are never part of the URL)".into())
+    })?;
+    let b = HttpBackend::new(url, &token).map_err(|e| Error::Msg(format!("cannot open remote {url}: {e}")))?;
     Ok(Box::new(b))
 }
 
@@ -178,6 +191,13 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(e.contains("unknown option") && !e.contains("hunter2"), "{e}");
+    }
+    #[test]
+    fn http_remote_needs_token() {
+        let e = open_http("http://127.0.0.1:1", None).err().unwrap().to_string();
+        assert!(e.contains("VCS_TOKEN"), "{e}");
+        assert!(open_http("http://127.0.0.1:1", Some("t".into())).is_ok());
+        assert_eq!(normalize_url("http://h:1", Path::new("/c")), "http://h:1");
     }
     #[test]
     fn schemes() {
