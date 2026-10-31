@@ -4,10 +4,11 @@
 //! must not depend on Tokio. The S3 backend (Milestone 3) will implement an async twin
 //! at the network boundary; see docs/architecture.md §Storage.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use vcs_objects::{DecodeError, Object, ObjectId};
 
@@ -34,7 +35,17 @@ pub trait ObjectStore: Send + Sync {
     /// Fetch and **verify** (hash must equal `id`) an object.
     fn get(&self, id: &ObjectId) -> Result<Object, StoreError>;
     /// Store an object; idempotent. Returns its id.
+    ///
+    /// Durability: the object is readable through this store immediately, but is only
+    /// guaranteed to survive a crash once [`ObjectStore::sync`] has returned. Callers must call
+    /// `sync()` after their last `put` and **before** writing any ref, index or manifest that
+    /// names the object.
     fn put(&self, obj: &Object) -> Result<ObjectId, StoreError>;
+    /// Durability barrier: when this returns, every object `put` so far is complete and
+    /// durable under its final name. Cheap no-op when nothing is pending.
+    fn sync(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
     fn contains(&self, id: &ObjectId) -> Result<bool, StoreError>;
     /// Enumerate all stored ids (fsck / GC mark phase). Not for hot paths.
     fn list(&self) -> Result<Vec<ObjectId>, StoreError>;
@@ -101,17 +112,67 @@ impl ObjectStore for MemoryStore {
 }
 
 /// Loose-object filesystem store: `<dir>/<aa>/<rest-of-hex>`.
-/// Writes go to a temp file, are fsynced, then renamed: readers never see partial objects.
+///
+/// Durability model (batched, see docs/architecture.md "Durability"):
+/// - `put` writes the encoded object to `<dir>/tmp/` with **no fsync** and remembers it as
+///   pending. Nothing appears under a final object name yet, so a crash can never leave a
+///   partial or zero-length file where an object is expected.
+/// - `sync` is the barrier: flush every pending file's data, one hardware flush, rename the
+///   files to their final names, flush the touched directories, one more hardware flush.
+///   Only after it returns may a ref/index/manifest point at the objects.
+/// - Pending objects are readable via `get`/`contains` from this store instance meanwhile.
+///
 /// Concurrent writers of the same id are safe (identical content; rename is atomic).
 pub struct LocalStore {
     dir: PathBuf,
+    /// id -> tmp file written but not yet published.
+    pending: Mutex<HashMap<ObjectId, PathBuf>>,
+    seq: AtomicU64,
+}
+
+/// Push a file's data to the device. On macOS `File::sync_all` is `F_FULLFSYNC` (flushes the
+/// drive cache, very slow); plain `fsync` only hands data to the drive, so the batch uses it
+/// per file and pays for ONE full flush per barrier phase instead (git's `core.fsync=batch`
+/// does the same). Elsewhere `fsync` already is the real flush.
+fn flush_file(f: &fs::File) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::io::AsRawFd;
+        // SAFETY: the fd is valid for the duration of the call.
+        if unsafe { libc::fsync(f.as_raw_fd()) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        f.sync_all()
+    }
+}
+
+/// Make everything handed to the drive so far durable (hardware cache flush). Only needed on
+/// macOS, where `flush_file` does not do it; `sync_all` there is `F_FULLFSYNC`.
+fn hardware_flush(f: &fs::File) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        f.sync_all()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = f;
+        Ok(())
+    }
 }
 
 impl LocalStore {
     pub fn open(dir: impl Into<PathBuf>) -> Result<Self, StoreError> {
         let dir = dir.into();
         io(&dir, fs::create_dir_all(dir.join("tmp")))?;
-        Ok(Self { dir })
+        Ok(Self {
+            dir,
+            pending: Mutex::new(HashMap::new()),
+            seq: AtomicU64::new(0),
+        })
     }
     fn path_of(&self, id: &ObjectId) -> PathBuf {
         let h = id.to_hex();
@@ -121,7 +182,8 @@ impl LocalStore {
 
 impl ObjectStore for LocalStore {
     fn get(&self, id: &ObjectId) -> Result<Object, StoreError> {
-        let p = self.path_of(id);
+        let pending = self.pending.lock().unwrap().get(id).cloned();
+        let p = pending.unwrap_or_else(|| self.path_of(id));
         match fs::read(&p) {
             Ok(b) => decode_verified(id, &b),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(StoreError::NotFound(*id)),
@@ -132,24 +194,68 @@ impl ObjectStore for LocalStore {
     fn put(&self, obj: &Object) -> Result<ObjectId, StoreError> {
         let enc = obj.encode();
         let id = vcs_objects::id_of_encoded(&enc);
-        let dest = self.path_of(&id);
-        if dest.exists() {
+        // Existing objects are never rewritten: one stat (or a map lookup), no write I/O.
+        if self.pending.lock().unwrap().contains_key(&id) || self.path_of(&id).exists() {
             return Ok(id);
         }
-        let parent = dest.parent().expect("object path has parent");
-        io(parent, fs::create_dir_all(parent))?;
-        let tmp = self.dir.join("tmp").join(format!("{}.{}.tmp", id.short(), std::process::id()));
+        let n = self.seq.fetch_add(1, Ordering::Relaxed);
+        let tmp = self.dir.join("tmp").join(format!("{}.{}.{n}.tmp", id.to_hex(), std::process::id()));
         {
             let mut f = io(&tmp, fs::File::create(&tmp))?;
             io(&tmp, f.write_all(&enc))?;
-            io(&tmp, f.sync_all())?;
         }
-        io(&dest, fs::rename(&tmp, &dest))?;
+        self.pending.lock().unwrap().insert(id, tmp);
         Ok(id)
     }
 
+    fn sync(&self) -> Result<(), StoreError> {
+        // Held for the whole barrier so readers never observe "neither pending nor published".
+        let mut pending = self.pending.lock().unwrap();
+        if pending.is_empty() {
+            return Ok(());
+        }
+        // 1. object data to the device, then one hardware flush covering all of it.
+        let mut last = None;
+        for tmp in pending.values() {
+            let f = io(tmp, fs::File::open(tmp))?;
+            io(tmp, flush_file(&f))?;
+            last = Some(f);
+        }
+        if let Some(f) = last {
+            io(&self.dir, hardware_flush(&f))?;
+        }
+        // 2. publish under final names (data is already durable, so a visible name is complete).
+        let mut dirs = BTreeSet::new();
+        for (id, tmp) in pending.iter() {
+            let dest = self.path_of(id);
+            let parent = dest.parent().expect("object path has parent").to_owned();
+            if dirs.insert(parent.clone()) {
+                io(&parent, fs::create_dir_all(&parent))?;
+            }
+            if dest.exists() {
+                let _ = fs::remove_file(tmp); // another writer won the race; same content
+            } else {
+                io(&dest, fs::rename(tmp, &dest))?;
+            }
+        }
+        // 3. directory entries (renames, new fan-out dirs) durable before anything refers to them.
+        dirs.insert(self.dir.clone());
+        dirs.insert(self.dir.join("tmp"));
+        let mut last = None;
+        for d in &dirs {
+            let f = io(d, fs::File::open(d))?;
+            io(d, flush_file(&f))?;
+            last = Some(f);
+        }
+        if let Some(f) = last {
+            io(&self.dir, hardware_flush(&f))?;
+        }
+        pending.clear();
+        Ok(())
+    }
+
     fn contains(&self, id: &ObjectId) -> Result<bool, StoreError> {
-        Ok(self.path_of(id).exists())
+        Ok(self.pending.lock().unwrap().contains_key(id) || self.path_of(id).exists())
     }
 
     fn list(&self) -> Result<Vec<ObjectId>, StoreError> {
@@ -184,6 +290,7 @@ mod tests {
         assert_eq!(s.get_blob(&id).unwrap(), b"hello");
         let missing = ObjectId::from_bytes([7; 32]);
         assert!(matches!(s.get(&missing), Err(StoreError::NotFound(_))));
+        s.sync().unwrap();
         assert_eq!(s.list().unwrap(), vec![id]);
     }
 
@@ -215,11 +322,39 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let s = LocalStore::open(d.path().join("o")).unwrap();
         let id = s.put_blob(b"important data").unwrap();
+        s.sync().unwrap();
         let p = s.path_of(&id);
         let mut b = fs::read(&p).unwrap();
         *b.last_mut().unwrap() ^= 1;
         fs::write(&p, b).unwrap();
         assert!(matches!(s.get(&id), Err(StoreError::Corrupt { .. })));
+    }
+
+    #[test]
+    fn local_unsynced_objects_are_not_published_and_synced_ones_are() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("o");
+        let (a, b) = {
+            let s = LocalStore::open(&dir).unwrap();
+            let a = s.put_blob(b"durable").unwrap();
+            s.sync().unwrap();
+            let b = s.put_blob(b"not yet durable").unwrap();
+            // readable in-process before the barrier
+            assert_eq!(s.get_blob(&b).unwrap(), b"not yet durable");
+            assert!(s.contains(&b).unwrap());
+            // "crash": store dropped without sync()
+            (a, b)
+        };
+        let s = LocalStore::open(&dir).unwrap();
+        assert_eq!(s.get_blob(&a).unwrap(), b"durable");
+        assert!(!s.contains(&b).unwrap(), "unsynced object must not appear under a final name");
+        assert!(matches!(s.get(&b), Err(StoreError::NotFound(_))));
+        assert_eq!(s.list().unwrap(), vec![a]);
+        // re-putting after the crash writes it properly
+        assert_eq!(s.put_blob(b"not yet durable").unwrap(), b);
+        s.sync().unwrap();
+        assert_eq!(s.get_blob(&b).unwrap(), b"not yet durable");
+        s.sync().unwrap(); // no-op barrier
     }
 
     #[test]
@@ -230,7 +365,9 @@ mod tests {
             let s = LocalStore::open(&dir).unwrap();
             // simulate crash mid-write: stray tmp file must not be visible as an object
             fs::write(dir.join("tmp").join("junk.tmp"), b"partial").unwrap();
-            s.put_blob(b"x").unwrap()
+            let id = s.put_blob(b"x").unwrap();
+            s.sync().unwrap();
+            id
         };
         let s = LocalStore::open(&dir).unwrap();
         assert_eq!(s.get_blob(&id).unwrap(), b"x");

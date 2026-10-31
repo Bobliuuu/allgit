@@ -8,5 +8,8 @@ license.workspace = true
 vcs-objects.workspace = true
 thiserror.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tempfile.workspace = true

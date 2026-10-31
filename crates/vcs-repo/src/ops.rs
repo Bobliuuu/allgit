@@ -79,6 +79,7 @@ impl Repo {
     }
 
     pub(crate) fn write_op_head(&self, id: &ObjectId) -> Result<()> {
+        self.store.sync()?; // the Operation object must be durable before op_head names it
         write_atomic(&self.vcs.join(OP_HEAD), &frame(b"AGOH", id.as_bytes().to_vec()))
     }
 

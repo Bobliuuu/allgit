@@ -236,6 +236,7 @@ impl Repo {
     }
 
     fn save_merge_state(&self, st: &MergeState) -> Result<()> {
+        self.store.sync()?;
         write_atomic(&self.vcs.join(FILE), &st.encode())
     }
 
@@ -424,6 +425,7 @@ impl Repo {
             self.transition(area, &areas, &old, &new, &mut ix)?;
             self.save_index(&mut ix)?;
             refs.apply(&[update])?;
+            self.store.sync()?; // merge commit + transaction durable before refs name them
             write_atomic(&self.vcs.join("refs"), &refs.encode())?;
             self.record_op(&format!("{msg_prefix} into {area}/{branch}"), None)?;
             return Ok(MergeOutcome::Merged { commit: cid });
