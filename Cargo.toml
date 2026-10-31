@@ -19,6 +19,7 @@ vcs-store = { path = "crates/vcs-store" }
 vcs-merge = { path = "crates/vcs-merge" }
 vcs-remote = { path = "crates/vcs-remote" }
 vcs-repo = { path = "crates/vcs-repo" }
+vcs-store-s3 = { path = "crates/vcs-store-s3" }
 
 [profile.test]
 opt-level = 3
