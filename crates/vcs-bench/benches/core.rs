@@ -112,8 +112,18 @@ fn bench_repo(c: &mut Criterion) {
             let r = fresh(d.path());
             r.add(&[String::new()]).unwrap();
             r.commit("initial", sig(1)).unwrap();
+            // Let the generated files age past the racy-entry window (2 s) and re-stage so the
+            // index is written after that. Without this, a fast `add` leaves every entry "racy"
+            // and each `status` re-hashes every file, which would measure hashing, not the scan.
+            std::thread::sleep(Duration::from_millis(2_200));
+            r.add(&[String::new()]).unwrap();
 
             g.bench_function(BenchmarkId::new("status_clean", &id), |b| b.iter(|| r.status().unwrap()));
+
+            // re-add of an unchanged, already-stored tree: measures the "object already exists" check
+            g.bench_function(BenchmarkId::new("add_unchanged", &id), |b| {
+                b.iter(|| r.add(&[String::new()]).unwrap())
+            });
 
             // commit with one changed file staged
             let mut ts = 2u64;

@@ -219,6 +219,8 @@ impl Repo {
         Index::decode(&self.rd("index")?)
     }
     pub(crate) fn save_index(&self, ix: &mut Index) -> Result<()> {
+        // Durability barrier (no-op if nothing pending): blobs the index names must be durable.
+        self.store.sync()?;
         ix.written_ns = now_ns();
         write_atomic(&self.vcs.join("index"), &ix.encode())
     }
@@ -259,6 +261,8 @@ impl Repo {
             self.add_one(p, &zones, &ws, &mut ix, &mut rep)?;
         }
         self.note_resolved(rel_paths, &ix)?;
+        // Durability barrier: every blob the index is about to name must be durable first.
+        self.store.sync()?;
         self.save_index(&mut ix)?;
         Ok(rep)
     }
@@ -650,6 +654,8 @@ impl Repo {
             Some(b) => refs
                 .head(zone, b)
                 .ok_or_else(|| Error::Msg(format!("no such branch {zone}/{b}")))?
+        // Durability barrier: trees, commits and the transaction are durable before refs name them.
+        self.store.sync()?;
                 .into(),
             None => self.current_head(zone, &ws, &refs),
         };
@@ -993,6 +999,7 @@ impl Repo {
     // ---------- fsck ----------
 
     /// Verify every object (hash + canonical decode) and graph invariants.
+        self.store.sync()?;
     pub fn fsck(&self) -> Result<FsckReport> {
         let mut rep = FsckReport::default();
         let ids = self.store.list()?;
@@ -1055,6 +1062,12 @@ pub(crate) fn fresh_change_id(zone: &str, root: &ObjectId, parent: Option<&Objec
     static CTR: AtomicU64 = AtomicU64::new(0);
     let mut h = blake3::Hasher::new_derive_key("all-git 2026 change id v1");
     h.update(zone.as_bytes());
+        // The index must never name a blob that is not in the store.
+        for (p, e) in &self.index()?.entries {
+            if !self.store.contains(&e.id)? {
+                rep.problems.push(format!("index {p}: missing blob {}", e.id));
+            }
+        }
     h.update(root.as_bytes());
     if let Some(p) = parent {
         h.update(p.as_bytes());
