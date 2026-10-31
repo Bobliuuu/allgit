@@ -6,6 +6,7 @@
 
 pub mod backend;
 pub mod fsbackend;
+pub mod locks;
 pub mod manifest;
 pub mod membackend;
 pub mod packfetch;
@@ -13,6 +14,7 @@ pub mod protocol;
 
 pub use backend::{Backend, BackendError, Versioned};
 pub use fsbackend::FsBackend;
-pub use manifest::Manifest;
+pub use locks::LockFault;
+pub use manifest::{Lock, Manifest};
 pub use membackend::{CasFault, MemBackend};
-pub use protocol::{fetch_heads, fetch_object, load_manifest, Outcome, PublishError, Publisher, Step};
+pub use protocol::{changed_paths, fetch_heads, fetch_object, load_manifest, Outcome, PublishError, Publisher, Step};
