@@ -255,7 +255,7 @@ fn build_inner(cmd: &Cmd) -> Result<J, Error> {
                 ],
             )
         }
-        Cmd::Log { zone, limit, branch } => {
+        Cmd::Log { zone, limit, branch, .. } => {
             let zone = zone_of_cwd(&repo, &cwd, zone.clone())?;
             let defs = repo.zones()?;
             let commits = repo

@@ -78,3 +78,41 @@ Fails (stderr, nonzero) when no merge is in progress.
 ```
 
 Golden tests for every schema: `crates/vcs-cli/tests/json.rs`.
+
+# Log options, completions and man pages
+
+## `vcs log`
+
+```
+vcs log [--zone Z] [-n N] [--oneline] [--graph] [--author TEXT] [--color auto|always|never] [BRANCH] [-- PATH...]
+```
+
+| Option | Effect |
+|---|---|
+| `-n N` | At most N commits (default 20). Applied after `--author` and path filtering. |
+| `--oneline` | `<short id> <subject>` per commit. |
+| `--graph` | ASCII lanes (`*`, `\|`, `\`, `/`). Commits are ordered children before parents. |
+| `--author TEXT` | Keep commits whose author name or email contains TEXT (case-insensitive). |
+| `-- PATH...` | Keep commits whose content under any PATH differs from every parent (a root commit counts if it contains any). Paths are relative to the current directory. |
+| `--color` | `auto` colours only when stdout is a terminal and `NO_COLOR` is unset or empty. |
+
+Notes and limits:
+
+* With `--graph` and a filter, only edges between shown commits are drawn; skipped commits are not
+  bridged (git's history rewriting is not implemented).
+* Filtering walks the zone's whole first-reachable history and flattens each commit's tree, so it is
+  linear in history size times tree size (see `docs/research.md` for acceleration ideas).
+* A path filter looks at one zone: the zone containing the current directory, or `--zone`.
+
+## Shell completions and man pages
+
+```
+vcs gen completions bash > ~/.local/share/bash-completion/completions/vcs
+vcs gen completions zsh  > "${fpath[1]}/_vcs"
+vcs gen completions fish > ~/.config/fish/completions/vcs.fish
+vcs gen man                       # vcs(1) on stdout
+vcs gen man --dir ./man           # vcs.1 plus one vcs-<command>.1 per command
+```
+
+Both are generated from the same clap definition as `--help`, so they cannot drift from the binary.
+Completions also support `elvish` and `powershell`.
