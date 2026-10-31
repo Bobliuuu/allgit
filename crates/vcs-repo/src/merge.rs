@@ -425,6 +425,7 @@ impl Repo {
             self.save_index(&mut ix)?;
             refs.apply(&[update])?;
             write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+            self.record_op(&format!("{msg_prefix} into {area}/{branch}"), None)?;
             return Ok(MergeOutcome::Merged { commit: cid });
         }
         let touched: BTreeSet<String> = old
@@ -478,6 +479,7 @@ impl Repo {
             new: to,
         }])?;
         write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+        self.record_op(&format!("merge: fast-forward {area}/{branch}"), None)?;
         Ok(MergeOutcome::FastForward { from, to })
     }
 
@@ -553,7 +555,9 @@ impl Repo {
             }
         }
         self.save_index(&mut ix)?;
-        self.clear_merge_state()
+        self.clear_merge_state()?;
+        self.record_op(&format!("merge --abort {}/{}", st.area, st.branch), None)?;
+        Ok(())
     }
 
     /// Conflicts of the in-progress merge.
