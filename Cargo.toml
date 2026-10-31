@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = ["crates/vcs-objects", "crates/vcs-store", "crates/vcs-repo", "crates/vcs-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.80"
+
+[workspace.dependencies]
+blake3 = "1"
+thiserror = "1"
+clap = { version = "4", features = ["derive"] }
+tempfile = "3"
+proptest = "1"
+vcs-objects = { path = "crates/vcs-objects" }
+vcs-store = { path = "crates/vcs-store" }
+vcs-repo = { path = "crates/vcs-repo" }
