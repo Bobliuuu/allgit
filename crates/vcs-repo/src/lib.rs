@@ -12,6 +12,7 @@ pub mod manage;
 pub mod merge;
 pub mod meta;
 pub mod ops;
+pub mod pick;
 pub mod rebase;
 pub mod repo;
 pub mod sync;

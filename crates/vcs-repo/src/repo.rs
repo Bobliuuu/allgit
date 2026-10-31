@@ -670,6 +670,11 @@ impl Repo {
         let _l = self.lock()?;
         self.rebase_guard("commit")?;
         let merging = self.merge_commit_guard()?;
+        // A cherry-pick/revert stopped on conflicts commits a single-parent commit.
+        let is_pick = match (&merging, self.pick_marker()?) {
+            (Some(m), Some((_, src))) => m.theirs == src,
+            _ => false,
+        };
         let zones = self.zones()?;
         let ws = self.workspace()?;
         let mut refs = self.refs()?;
@@ -695,7 +700,7 @@ impl Repo {
             let root = treeops::build(&self.store, entries)?;
             let second = merging
                 .as_ref()
-                .filter(|m| m.zone == *zone && Some(m.ours) == parent)
+                .filter(|m| !is_pick && m.zone == *zone && Some(m.ours) == parent)
                 .map(|m| m.theirs);
             if Some(root) == parent_root && second.is_none() {
                 continue;

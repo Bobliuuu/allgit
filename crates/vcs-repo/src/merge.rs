@@ -255,7 +255,7 @@ impl MergeState {
     }
 }
 
-fn me(e: vcs_merge::MergeError) -> Error {
+pub(crate) fn me(e: vcs_merge::MergeError) -> Error {
     Error::Msg(format!("merge: {e}"))
 }
 
@@ -278,12 +278,13 @@ impl Repo {
         Ok(Some(st))
     }
 
-    fn save_merge_state(&self, st: &MergeState) -> Result<()> {
+    pub(crate) fn save_merge_state(&self, st: &MergeState) -> Result<()> {
         self.store.sync()?;
         write_atomic(&self.vcs.join(FILE), &st.encode())
     }
 
     pub(crate) fn clear_merge_state(&self) -> Result<()> {
+        self.clear_pick_marker()?;
         let p = self.vcs.join(FILE);
         match fs::remove_file(&p) {
             Ok(()) => Ok(()),
@@ -496,6 +497,7 @@ impl Repo {
             conflicts: recs,
         };
         // State first: a crash afterwards is recoverable with `vcs merge --abort`.
+        self.clear_pick_marker()?; // a leftover marker must never turn this merge into a pick
         self.save_merge_state(&state)?;
         if let Err(e) = self.transition(zone, &zones, &old, &new, &mut ix) {
             self.clear_merge_state()?; // preflight failed before touching files

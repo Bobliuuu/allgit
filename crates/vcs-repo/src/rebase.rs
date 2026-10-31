@@ -476,6 +476,7 @@ impl Repo {
     }
 
     fn save_rebase_files(&self, ms: &MergeState, rs: &RebaseState) -> Result<()> {
+        self.clear_pick_marker()?;
         self.store.sync()?;
         write_atomic(&self.vcs.join("conflicts"), &ms.encode())?;
         write_atomic(&self.vcs.join(FILE), &rs.encode())
