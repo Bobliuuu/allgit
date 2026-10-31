@@ -4,6 +4,7 @@
 pub mod diff;
 pub mod error;
 pub mod gc;
+pub mod import;
 pub mod index;
 pub mod merge;
 pub mod meta;
@@ -15,6 +16,7 @@ pub mod treeops;
 
 pub use error::{Error, Result};
 pub use gc::GcReport;
+pub use import::ImportReport;
 pub use merge::{ConflictRec, MergeOutcome, MergeState};
 pub use meta::{DEFAULT_BRANCH, ROOT_ZONE};
 pub use rebase::{RebaseOutcome, RebaseState};
