@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 vcs-remote.workspace = true
-ureq = { version = "2", default-features = false }
+ureq = { version = "3", default-features = false }
 sha2 = "0.10"
 hmac = "0.12"
 
