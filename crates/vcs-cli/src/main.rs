@@ -6,6 +6,7 @@ use vcs_objects::{ObjectId, Signature};
 use vcs_remote::Outcome;
 use vcs_repo::{AssistResult, ChangeKind, Error, MergeOutcome, RebaseOutcome, Repo, Resolution, SyncAction, ROOT_ZONE};
 
+mod config;
 mod generate;
 mod json;
 mod logfmt;
@@ -82,9 +83,13 @@ enum Cmd {
     },
     /// Commit staged changes in all subscribed zones atomically
     Commit {
+        /// Commit message (omit to write it in core.editor / $EDITOR)
         #[arg(short, long)]
-        message: String,
+        message: Option<String>,
     },
+    /// Get, set, list or unset settings (repo .vcs/config, user config, environment)
+    #[command(subcommand)]
+    Config(ConfigCmd),
     /// Show staged, unstaged and untracked changes per zone
     Status,
     /// Show unstaged changes (or --staged)
@@ -429,6 +434,27 @@ enum ZoneCmd {
 }
 
 #[derive(Subcommand, Clone)]
+enum ConfigCmd {
+    /// Print the effective value of a key (exit 1 if unset)
+    Get { key: String },
+    /// Set a key in the repository config (or the user config with --user)
+    Set {
+        key: String,
+        value: String,
+        #[arg(long)]
+        user: bool,
+    },
+    /// Remove a key from the repository config (or the user config with --user)
+    Unset {
+        key: String,
+        #[arg(long)]
+        user: bool,
+    },
+    /// List effective settings and where each comes from
+    List,
+}
+
+#[derive(Subcommand, Clone)]
 enum RemoteCmd {
     /// Set the remote location (path or file:// URL)
     Set { url: String },
@@ -471,14 +497,17 @@ enum StashCmd {
     Drop { index: Option<usize> },
 }
 
-fn author() -> Signature {
-    let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
-    let name = env("VCS_AUTHOR_NAME").or_else(|| env("USER")).unwrap_or_else(|| "unknown".into());
-    let email = env("VCS_AUTHOR_EMAIL").unwrap_or_else(|| format!("{name}@localhost"));
-    let timestamp = env("VCS_TIMESTAMP")
+fn timestamp() -> u64 {
+    std::env::var("VCS_TIMESTAMP")
+        .ok()
         .and_then(|t| t.parse().ok())
-        .unwrap_or_else(|| SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0));
-    Signature { name, email, timestamp }
+        .unwrap_or_else(|| SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0))
+}
+
+/// Author from `user.name` / `user.email` (see `vcs config`); a helpful error when unset.
+fn author() -> Result<Signature, Error> {
+    let (name, email) = config::Config::load()?.identity()?;
+    Ok(Signature { name, email, timestamp: timestamp() })
 }
 
 /// Identity used for lock decisions: `VCS_PRINCIPAL`, else the author email.
@@ -486,7 +515,8 @@ fn principal() -> String {
     std::env::var("VCS_PRINCIPAL")
         .ok()
         .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| author().email)
+        .or_else(|| config::Config::load().ok().and_then(|c| c.get("user.email")))
+        .unwrap_or_else(|| "unknown@localhost".into())
 }
 
 fn open() -> Result<(Repo, PathBuf), Error> {
@@ -541,6 +571,7 @@ fn list_or_none(v: &[String]) -> String {
 
 fn need_remote(repo: &Repo) -> Result<String, Error> {
     repo.remote_url()?
+        .or_else(|| config::Config::load().ok().and_then(|c| c.get("remote.default")))
         .ok_or_else(|| Error::Msg("no remote configured\n\nOptions:\n  vcs remote set <url>".into()))
 }
 
@@ -589,9 +620,39 @@ fn run(cli: Cli) -> Result<(), Error> {
                 println!("{a} -> {b}");
             }
         }
+        Cmd::Config(c) => {
+            use config::{Config, Scope};
+            let sc = |user: bool| if user { Scope::User } else { Scope::Repo };
+            match c {
+                ConfigCmd::Get { key } => {
+                    config::validate_key(&key)?;
+                    match Config::load()?.get(&key) {
+                        Some(v) => println!("{v}"),
+                        None => return Err(Error::Msg(format!("{key} is not set"))),
+                    }
+                }
+                ConfigCmd::Set { key, value, user } => config::set(sc(user), &key, &value)?,
+                ConfigCmd::Unset { key, user } => {
+                    if !config::unset(sc(user), &key)? {
+                        return Err(Error::Msg(format!("{key} is not set in the {} config", if user { "user" } else { "repository" })));
+                    }
+                }
+                ConfigCmd::List => {
+                    for (k, v, src) in config::list(&Config::load()?) {
+                        println!("{k}={v}  ({})", src.label());
+                    }
+                }
+            }
+        }
         Cmd::Commit { message } => {
             let (repo, _) = open()?;
-            let rep = repo.commit(&message, author())?;
+            let cfg = config::Config::load()?;
+            cfg.identity()?;
+            let message = match message {
+                Some(m) => m,
+                None => config::edit_message(&cfg, &repo.worktree().join(".vcs"))?,
+            };
+            let rep = repo.commit(&message, author()?)?;
             let defs = repo.zones()?;
             for (zone, branch, id) in &rep.commits {
                 let zone = defs.label(zone);
@@ -767,6 +828,7 @@ fn run(cli: Cli) -> Result<(), Error> {
         } => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
+            let oneline = oneline || config::Config::load()?.oneline_log()?;
             let opts = logfmt::Opts {
                 oneline,
                 graph,
@@ -810,9 +872,10 @@ fn run(cli: Cli) -> Result<(), Error> {
                     println!("deleted tag {n} (was {})", c.short());
                 }
                 Some(n) => {
-                    let ann = message
-                        .as_deref()
-                        .map(|m| (m, author(), signature.unwrap_or_default().into_bytes()));
+                    let ann = match message.as_deref() {
+                        Some(m) => Some((m, author()?, signature.unwrap_or_default().into_bytes())),
+                        None => None,
+                    };
                     let c = repo.tag_create(&zone, &n, rev.as_deref(), ann)?;
                     println!("tagged {n} at {}", c.short());
                 }
@@ -891,7 +954,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             assist_timeout,
         } => {
             let (mut repo, cwd) = open()?;
-            repo.set_structural(!no_structural);
+            repo.set_structural(!no_structural && config::Config::load()?.structural()?);
             if abort {
                 repo.merge_abort()?;
                 println!("merge aborted; working tree restored");
@@ -904,9 +967,9 @@ fn run(cli: Cli) -> Result<(), Error> {
             };
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
             let out = if remote {
-                repo.merge_remote(&zone, &branch, author())?
+                repo.merge_remote(&zone, &branch, author()?)?
             } else {
-                repo.merge(&zone, &branch, author())?
+                repo.merge(&zone, &branch, author()?)?
             };
             match out {
                 MergeOutcome::UpToDate => println!("already up to date"),
@@ -931,13 +994,13 @@ fn run(cli: Cli) -> Result<(), Error> {
         Cmd::CherryPick { rev, zone } => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
-            let out = repo.cherry_pick(&zone, &rev, author())?;
+            let out = repo.cherry_pick(&zone, &rev, author()?)?;
             print_pick(&zone, out, "cherry-pick")?;
         }
         Cmd::Revert { rev, zone } => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
-            let out = repo.revert(&zone, &rev, author())?;
+            let out = repo.revert(&zone, &rev, author()?)?;
             print_pick(&zone, out, "revert")?;
         }
         Cmd::Rebase {
@@ -950,20 +1013,20 @@ fn run(cli: Cli) -> Result<(), Error> {
             assist_timeout,
         } => {
             let (mut repo, cwd) = open()?;
-            repo.set_structural(!no_structural);
+            repo.set_structural(!no_structural && config::Config::load()?.structural()?);
             if abort {
                 repo.rebase_abort()?;
                 println!("rebase aborted; original branch restored");
                 return Ok(());
             }
             let out = if cont {
-                repo.rebase_continue(author())?
+                repo.rebase_continue(author()?)?
             } else {
                 let Some(onto) = onto else {
                     return Err(Error::Msg("usage: vcs rebase <branch> [--zone A] | --continue | --abort".into()));
                 };
                 let zone = zone_of_cwd(&repo, &cwd, zone)?;
-                repo.rebase(&zone, &onto, author())?
+                repo.rebase(&zone, &onto, author()?)?
             };
             match out {
                 RebaseOutcome::UpToDate => println!("already up to date"),
@@ -1047,7 +1110,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             let (repo, _) = open()?;
             match c {
                 StashCmd::Push { message } => {
-                    let zs = repo.stash_push(message.as_deref(), author())?;
+                    let zs = repo.stash_push(message.as_deref(), author()?)?;
                     println!("stashed changes in zone(s): {}", zs.join(", "));
                 }
                 StashCmd::Pop { index } => match repo.stash_pop(index.unwrap_or(0))? {
@@ -1191,7 +1254,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             let (repo, _) = open()?;
             match s {
                 SnapCmd::Create { name, message } => {
-                    let id = repo.snapshot_create(&name, &message, author())?;
+                    let id = repo.snapshot_create(&name, &message, author()?)?;
                     println!("snapshot {name} = {}", id.short());
                 }
                 SnapCmd::Show { name } => {
@@ -1263,7 +1326,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             let (repo, _) = open()?;
             let backend = remote::open_backend(&need_remote(&repo)?)?;
             let want = (!zones.is_empty()).then_some(zones.as_slice());
-            let rep = repo.publish_as(backend.as_ref(), want, author(), &principal())?;
+            let rep = repo.publish_as(backend.as_ref(), want, author()?, &principal())?;
             if rep.updated.is_empty() {
                 println!("nothing to publish");
             }
@@ -1285,7 +1348,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                 &rel,
                 lease_secs.saturating_mul(1000),
                 &reason,
-                author(),
+                author()?,
                 &principal(),
             )?;
             let defs = repo.zones()?;
@@ -1297,7 +1360,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             let (repo, cwd) = open()?;
             let backend = remote::open_backend(&need_remote(&repo)?)?;
             let rel: Vec<String> = paths.iter().map(|p| repo.rel_path(&cwd, p)).collect::<Result<_, _>>()?;
-            repo.unlock_paths(backend.as_ref(), &rel, admin_break, author(), &principal())?;
+            repo.unlock_paths(backend.as_ref(), &rel, admin_break, author()?, &principal())?;
             println!("unlocked {} path(s)", rel.len());
         }
         Cmd::Locks => {
