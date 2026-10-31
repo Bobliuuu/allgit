@@ -5,7 +5,7 @@
 //! it", never an error. Results with and without it are identical (property-tested).
 
 use crate::error::{Error, Result};
-use crate::meta::write_atomic;
+use crate::meta::write_cache_atomic;
 use crate::repo::Repo;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -73,7 +73,7 @@ impl Repo {
             })
             .ok()?;
         if g.len() != old.len() {
-            let _ = write_atomic(&self.vcs.join(CG_FILE), &g.encode()); // best effort: it is only a cache
+            let _ = write_cache_atomic(&self.vcs.join(CG_FILE), &g.encode()); // best effort: it is only a cache
         }
         Some(g)
     }

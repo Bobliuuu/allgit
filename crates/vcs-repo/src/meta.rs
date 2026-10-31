@@ -15,8 +15,18 @@ pub const DEFAULT_BRANCH: &str = "main";
 const STATE_VERSION: u8 = 1;
 
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    write_atomic_inner(path, bytes, true)
+}
+
+/// Like [`write_atomic`] for pure caches (never state): crash injection does not count these
+/// writes, because a failed cache write is ignored by design.
+pub(crate) fn write_cache_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    write_atomic_inner(path, bytes, false)
+}
+
+fn write_atomic_inner(path: &Path, bytes: &[u8], inject: bool) -> Result<()> {
     let tmp = path.with_extension(format!("tmp{}", std::process::id()));
-    if crate::failpoint::tick() {
+    if inject && crate::failpoint::tick() {
         // Simulated crash mid-write: a torn temp file is left behind, the target is untouched.
         let _ = fs::write(&tmp, &bytes[..bytes.len() / 2]);
         return Err(Error::Io {
