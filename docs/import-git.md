@@ -11,7 +11,12 @@ vcs import-git ../repo.stream                                 # or: ... | vcs im
 
 ## Mapping
 
-* `refs/heads/<name>` becomes branch `<name>` of the **root** zone; tags, remotes and notes are listed as ignored.
+* `refs/heads/<name>` becomes branch `<name>` of the **root** zone.
+* Lightweight tags (`reset refs/tags/<name>` / `commit refs/tags/<name>`) become lightweight tags of the root zone;
+  annotated tags (`tag <name>`) become annotated tags (tagger, message; the tagger falls back to the commit author).
+  A tag whose name vcs rejects, whose target is not a commit, or whose name already points elsewhere is skipped and
+  listed in `tags_skipped` (never moved). Signatures embedded in the message text are kept as text, not verified.
+* Remotes and notes are listed as ignored refs.
 * History, file contents and the executable bit are preserved; merges keep both parents. Commit `change_id`s are derived
   from the Git key, so they are stable across re-imports.
 * Table `.vcs/git-import` (`<our object id> <git key>` per line) maps Git commit ids (`original-oid`, emitted by
@@ -22,8 +27,10 @@ vcs import-git ../repo.stream                                 # or: ... | vcs im
 
 ## Behaviour and limits
 
-* Symlinks (120000), submodules (160000) and paths vcs cannot represent (reserved names, non-UTF-8) are skipped and
-  reported. Empty directories are not represented.
+* Symlinks (mode 120000) are imported as symlink entries; the blob holds the link target.
+* Submodules (gitlink, 160000) are skipped and listed in the report (`submodules`, printed as `skipped submodule:`);
+  their contents are never fetched. Paths vcs cannot represent (reserved names, non-UTF-8) are skipped and listed in
+  `paths_skipped`. Empty directories are not represented.
 * Fresh repository: the checked-out branch is materialised in the working tree. A checked-out branch that already has
   history is never moved (check out another branch first); a branch whose local history is not an ancestor of the
   imported head is refused.

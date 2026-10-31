@@ -1,6 +1,6 @@
 # Interop: Git export and Perforce
 
-Status: Git export of one zone branch is a **prototype** (`vcs export-git`, `Repo::export_git`, tested). Everything
+Status: Git export of one zone branch (with tags, symlinks and incremental re-export) is a **prototype** (`vcs export-git`, `Repo::export_git`, tested). Everything
 else here, including the Perforce mapping, is **design only**; nothing in the Perforce section is built.
 
 The core never runs `git` or links libgit2: export writes a `git fast-import` stream, import (see
@@ -15,27 +15,31 @@ Git commit id (from `--show-original-ids`) or `mark:<n>`.
 |---|---|---|---|
 | import | commit | commit id (BLAKE3-256) | recorded in `.vcs/git-import`; `change_id` is derived from the Git key |
 | import | blob, tree | not recorded | fast-export streams carry no tree ids; ours are recomputed from content |
-| export | commit | not recorded yet | the Git SHA-1 exists only inside the receiving Git |
+| export | commit | recorded as `mark:<n>` in `.vcs/git-export` | the stream refers to old commits by mark; the SHA-1 exists only inside the receiving Git |
 | export | `change_id` | carried in a `Vcs-Change-Id: <32 hex>` message trailer | added unless already present |
 
 Ids are never equal across systems: ours hash `kind || version || payload` under a domain-separated BLAKE3 key, Git's hash
 `type size\0payload` with SHA-1/SHA-256. They cannot be converted, only mapped.
 
-Stable-mapping rules (design, to be implemented together with trailer import):
+Incremental export (implemented):
 
-1. A commit with an entry in `.vcs/git-import` is exported under its original Git identity when the target repo already
-   has it: the exporter would use the incremental form (`from <git sha>`) instead of re-emitting it. Today export always
-   emits the whole branch, so re-exporting into the repo it came from produces *new* Git commits (different SHAs: we
-   write timezone `+0000` and committer = author, which the import does not retain).
-2. Export records `<our commit id> <git sha>` in a new `.vcs/git-export` table only after the receiving side reports the
-   SHAs (`git fast-import --export-marks`, then `git rev-parse`); marks are not ids and are not persisted.
-3. On import, a `Vcs-Change-Id` trailer overrides the derived `change_id`, so a rebased-then-exported-then-imported change
-   keeps its logical identity. The importer on main does not read it yet; follow-up.
+1. `vcs export-git` records `<our commit id> mark:<n>` in `.vcs/git-export` for every commit it writes, and on the next run
+   skips those commits: new commits reference their parent as `from :<n>` and marks continue after the highest recorded
+   one. The receiving Git must keep its marks: `git fast-import --export-marks=M --import-marks-if-exists=M`. Then old
+   commits keep their SHAs (tested with a real git: `main~1` is unchanged after the second import). One table belongs to
+   one target repository; use `--full` to export everything again and reset the table.
+2. `--onto-origin` additionally treats commits that came from `import-git` as already present in the target and refers to
+   them by their original SHA (`from <sha>`), for exporting back into the repository they were imported from.
+   Not tested against a real round trip of an imported repository.
+3. Not done: on import, a `Vcs-Change-Id` trailer should override the derived `change_id` (the importer does not read it).
 
 ## Prototype: what export does
 
 `vcs export-git [--zone A] [branch] [-o file]` writes `refs/heads/<branch>` of one zone:
 
+* Symlinks (`120000`) and the zone's tags are exported: lightweight tags as `reset refs/tags/<n>` + `from`, annotated tags
+  as `tag` (tagger, message; the signature field is dropped). A tag whose commit is not in the exported branch, or whose name is
+  not a valid Git ref, is skipped and reported. Tags are re-emitted on every run (same content, so same Git ids).
 * Commits parents-first, deterministic (same repo state gives byte-identical output; tested). Merges use `from` +
   `merge`; file changes are diffed against the first parent (`M`/`D`).
 * Each distinct blob is emitted once, at first use (tested: two identical files produce one blob).
@@ -56,8 +60,8 @@ Git -> vcs -> Git (via `import-git` then `export-git` of the root zone):
 | file contents, paths, executable bit | Git commit SHAs (rewritten; see rule 1) |
 | first-parent order and merge topology | committer identity and author/committer timezones |
 | author name, email, timestamp, message | message gains a `Vcs-Change-Id` trailer |
-| branch names (`refs/heads/*`) | tags, notes, remotes, other refs (ignored on import) |
-| | symlinks, submodules, empty directories, non-representable paths (skipped on import) |
+| branch names (`refs/heads/*`), symlinks, lightweight and annotated tags | notes, remotes, other refs (ignored on import) |
+| | submodules (reported and skipped on import), empty directories, non-representable paths |
 | | file modes other than 644/755, `.gitattributes`-driven filters (content is bytes as stored) |
 | | octopus-merge parent order beyond what `merge` lines preserve; signed commits/tags (signatures dropped) |
 

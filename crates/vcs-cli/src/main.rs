@@ -106,6 +106,12 @@ enum Cmd {
         branch: Option<String>,
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// Export the whole branch again and reset the export table (default: only commits not yet exported)
+        #[arg(long)]
+        full: bool,
+        /// Reference commits that came from import-git by their original Git SHA (target = the origin repo)
+        #[arg(long)]
+        onto_origin: bool,
     },
     /// Show commit history of a zone branch
     Log {
@@ -705,22 +711,48 @@ fn run(cli: Cli) -> Result<(), Error> {
             for x in &r.paths_skipped {
                 println!("skipped path: {x}");
             }
+            for x in &r.submodules {
+                println!("skipped submodule: {x}");
+            }
+            if r.symlinks > 0 || r.tags_imported > 0 {
+                println!("{} symlink entr(ies), {} tag(s) imported", r.symlinks, r.tags_imported);
+            }
+            for x in &r.tags_skipped {
+                println!("skipped tag: {x}");
+            }
         }
-        Cmd::ExportGit { zone, branch, output } => {
+        Cmd::ExportGit {
+            zone,
+            branch,
+            output,
+            full,
+            onto_origin,
+        } => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
             let branch = branch.unwrap_or_else(|| "main".to_string());
+            let opts = vcs_repo::ExportOptions {
+                incremental: !full,
+                onto_origin,
+                record: true,
+            };
             let rep = match output {
                 Some(p) => {
                     let mut w =
                         std::io::BufWriter::new(std::fs::File::create(&p).map_err(|e| Error::Msg(format!("{}: {e}", p.display())))?);
-                    let r = repo.export_git(&zone, &branch, &mut w)?;
+                    let r = repo.export_git_with(&zone, &branch, &mut w, opts)?;
                     std::io::Write::flush(&mut w).map_err(|e| Error::Msg(e.to_string()))?;
                     r
                 }
-                None => repo.export_git(&zone, &branch, &mut std::io::BufWriter::new(std::io::stdout().lock()))?,
+                None => repo.export_git_with(&zone, &branch, &mut std::io::BufWriter::new(std::io::stdout().lock()), opts)?,
             };
-            eprintln!("exported {} commit(s), {} blob(s) to {}", rep.commits, rep.blobs, rep.git_ref);
+            eprintln!(
+                "exported {} commit(s) ({} already exported), {} blob(s), {} tag(s) to {}",
+                rep.commits, rep.commits_known, rep.blobs, rep.tags, rep.git_ref
+            );
+            for x in &rep.tags_skipped {
+                eprintln!("skipped tag: {x}");
+            }
         }
         Cmd::Log {
             zone,
