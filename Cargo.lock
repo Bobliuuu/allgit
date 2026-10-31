@@ -927,6 +927,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcs-merge"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "thiserror",
+ "vcs-objects",
+ "vcs-store",
+]
+
+[[package]]
 name = "vcs-objects"
 version = "0.1.0"
 dependencies = [
