@@ -17,7 +17,8 @@ racy-stat handling. CLI demo from the task statement runs verbatim (`crates/vcs-
 ✅ zone create/list/show/branches/branch/checkout/add/remove; non-overlap enforced; independent branch heads per zone;
 sparse materialization with "unsubscribed ≠ deleted"; multi-zone atomic local commit via Transaction; Snapshot create/show/list.
 ✅ snapshot checkout, zone rename/delete, branch delete (see [docs/zones.md](zones.md)).
-⬜ rename of zones that have history; move-across-zones; dependency metadata; per-zone policies (storage/merge/lock/ACL).
+✅ rename of zones that have history (display-name alias, see [docs/zones.md](zones.md)).
+⬜ move-across-zones; dependency metadata; per-zone policies (storage/merge/lock/ACL).
 
 ## M3 – Remote storage 🟡
 ✅ backend trait + conformance suite, Mem/Fs backends, manifest CAS protocol, model checker, sparse fetch, publish/fetch/sync/clone in `vcs-repo`.

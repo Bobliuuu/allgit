@@ -290,3 +290,34 @@ fn corrupt_remote_object_is_rejected_and_never_stored() {
     assert!(b.with_lazy_fetch(&remote, || b.zone_add("engine", None)).is_err());
     assert!(!b.store().contains(&blob).unwrap());
 }
+
+#[test]
+fn renamed_zone_publishes_its_name_and_clones_and_syncs_under_it() {
+    let d = tempfile::tempdir().unwrap();
+    let remote = MemBackend::new();
+    let a = seeded(&remote, d.path());
+    let b = Repo::clone_from(&remote, "mem", &d.path().join("b"), None).unwrap();
+    a.zone_rename("engine", "core").unwrap();
+    write(&a, "engine/core.rs", "core v2");
+    commit_all(&a, "after rename");
+    a.publish(&remote, Some(&["core".to_string()]), sig()).unwrap();
+    let (m, _) = load_manifest(&remote).unwrap();
+    assert_eq!(m.labels.get("engine").map(String::as_str), Some("core"));
+    assert!(m.branches.contains_key(&("engine".into(), "main".into())), "refs stay keyed by id");
+    // existing clone learns the name and fast-forwards; a fresh sparse clone can ask for it by name
+    b.sync(&remote).unwrap();
+    assert_eq!(b.zones().unwrap().label("engine"), "core");
+    assert_eq!(read(&b, "engine/core.rs"), "core v2");
+    let c = Repo::clone_from(&remote, "mem", &d.path().join("c"), Some(&["core".to_string()])).unwrap();
+    assert_eq!(read(&c, "engine/core.rs"), "core v2");
+    assert_eq!(c.log("core", None, 10).unwrap().len(), 2);
+    for r in [&a, &b, &c] {
+        assert!(r.fsck().unwrap().problems.is_empty());
+    }
+    // a rename made before publishing history, then renaming back, clears the published name
+    a.zone_rename("core", "engine").unwrap();
+    write(&a, "engine/core.rs", "core v3");
+    commit_all(&a, "back");
+    a.publish(&remote, None, sig()).unwrap();
+    assert!(load_manifest(&remote).unwrap().0.labels.is_empty());
+}

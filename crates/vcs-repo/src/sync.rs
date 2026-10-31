@@ -131,6 +131,12 @@ impl Repo {
         Ok(false)
     }
 
+    /// Resolve user-supplied zone names (display names or ids) of a publish/fetch filter to ids.
+    fn resolve_filter(&self, zones: Option<&[String]>) -> Result<Option<Vec<String>>> {
+        let defs = self.zones()?;
+        Ok(zones.map(|w| w.iter().map(|x| defs.resolve(x).unwrap_or_else(|| x.clone())).collect()))
+    }
+
     /// Publish checked-out branches (all subscribed zones, or `zones`) in ONE atomic remote
     /// transaction. Refuses non-fast-forward; never overwrites remote work.
     pub fn publish(&self, backend: &dyn Backend, zones: Option<&[String]>, author: Signature) -> Result<PublishReport> {
@@ -140,8 +146,11 @@ impl Repo {
         let refs = self.refs()?;
         let tracked = self.remote_refs()?;
         let (manifest, _) = load_manifest(backend).map_err(publish_err)?;
+        let zones = self.resolve_filter(zones)?;
+        let zones = zones.as_deref();
         let mut updates = Vec::new();
         let mut zone_defs = BTreeMap::new();
+        let mut label_defs = BTreeMap::new();
         for (zone, branch) in &ws.subs {
             if zones.is_some_and(|w| !w.contains(zone)) {
                 continue;
@@ -174,6 +183,9 @@ impl Repo {
             });
             if zone != ROOT_ZONE {
                 zone_defs.insert(zone.clone(), defs.path_of(zone).unwrap().to_owned());
+                if defs.label(zone) != zone {
+                    label_defs.insert(zone.clone(), defs.label(zone).to_owned());
+                }
             }
         }
         if updates.is_empty() {
@@ -190,6 +202,7 @@ impl Repo {
         };
         let outcome = Publisher::new(backend, &self.store, tx)
             .with_zones(zone_defs)
+            .with_labels(label_defs)
             .run()
             .map_err(publish_err)?;
         let mut rr = self.remote_refs()?;
@@ -211,7 +224,8 @@ impl Repo {
 
     fn fetch_locked(&self, backend: &dyn Backend, zones: Option<&[String]>) -> Result<Vec<(String, String, ObjectId)>> {
         let ws = self.workspace()?;
-        let want: Vec<String> = match zones {
+        let zones = self.resolve_filter(zones)?;
+        let want: Vec<String> = match zones.as_deref() {
             Some(a) => a.to_vec(),
             None => ws.subs.keys().cloned().collect(),
         };
@@ -226,6 +240,13 @@ impl Repo {
                 }
                 Some(q) if q == p => {}
                 Some(q) => return msg(format!("zone {n:?} is at {q:?} locally but {p:?} on the remote")),
+            }
+        }
+        // Adopt a remote display name only where this repository has not renamed the zone itself
+        // (or the name is taken locally); a local rename wins until it is published.
+        for (id, l) in &m.labels {
+            if defs.exists(id) && defs.label(id) == id && defs.set_label(id, l).is_ok() {
+                changed = true;
             }
         }
         if changed {
@@ -336,15 +357,22 @@ impl Repo {
             for (n, p) in &m.zones {
                 defs.create(n, p)?;
             }
+            for (id, l) in &m.labels {
+                if defs.exists(id) {
+                    let _ = defs.set_label(id, l);
+                }
+            }
             write_atomic(&repo.vcs.join("zones"), &defs.encode())?;
             let want: Vec<String> = match zones {
                 Some(a) => {
+                    let mut ids = Vec::new();
                     for x in a {
-                        if !defs.exists(x) {
-                            return msg(format!("remote has no zone {x:?}"));
+                        match defs.resolve(x) {
+                            Some(id) => ids.push(id),
+                            None => return msg(format!("remote has no zone {x:?}")),
                         }
                     }
-                    a.to_vec()
+                    ids
                 }
                 None => defs.names().map(str::to_owned).collect(),
             };

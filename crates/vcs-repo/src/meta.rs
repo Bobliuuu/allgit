@@ -50,7 +50,10 @@ fn corrupt(what: &str, e: impl std::fmt::Display) -> Error {
 /// The implicit `root` zone (path "") owns every path not owned by another zone.
 #[derive(Clone, Debug)]
 pub struct Zones {
+    /// Zone id -> path. The id is the name embedded in commits; it never changes.
     defs: BTreeMap<String, String>,
+    /// Zone id -> display name, only for renamed zones (absent: the id is the name).
+    labels: BTreeMap<String, String>,
 }
 
 impl Default for Zones {
@@ -63,10 +66,49 @@ impl Zones {
     pub fn new() -> Self {
         let mut defs = BTreeMap::new();
         defs.insert(ROOT_ZONE.to_string(), String::new());
-        Self { defs }
+        Self {
+            defs,
+            labels: BTreeMap::new(),
+        }
     }
+    /// Stable zone ids (the names commits, refs, snapshots and the remote manifest use).
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.defs.keys().map(String::as_str)
+    }
+    /// Display name of zone `id` (the id itself unless the zone was renamed).
+    pub fn label<'a>(&'a self, id: &'a str) -> &'a str {
+        self.labels.get(id).map(String::as_str).unwrap_or(id)
+    }
+    /// `(id, display name)` of every renamed zone.
+    pub fn labels(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.labels.iter().map(|(i, l)| (i.as_str(), l.as_str()))
+    }
+    /// Map a user-supplied name (current display name, or the original id) to the zone id.
+    pub fn resolve(&self, name: &str) -> Option<String> {
+        self.labels
+            .iter()
+            .find(|(_, l)| l.as_str() == name)
+            .map(|(i, _)| i.clone())
+            .or_else(|| self.defs.contains_key(name).then(|| name.to_owned()))
+    }
+    fn name_taken(&self, name: &str) -> bool {
+        self.defs.contains_key(name) || self.labels.values().any(|l| l == name)
+    }
+    /// Set the display name of zone `id` (no checks; `""`-free). Used when learning labels from a remote.
+    pub fn set_label(&mut self, id: &str, label: &str) -> Result<()> {
+        validate_zone_name(label)?;
+        if !self.defs.contains_key(id) || id == ROOT_ZONE {
+            return msg(format!("no such zone {id:?}"));
+        }
+        if label == id {
+            self.labels.remove(id);
+        } else if self.labels.get(id).map(String::as_str) != Some(label) {
+            if self.name_taken(label) {
+                return msg(format!("zone name {label:?} is already in use"));
+            }
+            self.labels.insert(id.to_owned(), label.to_owned());
+        }
+        Ok(())
     }
     pub fn path_of(&self, zone: &str) -> Option<&str> {
         self.defs.get(zone).map(String::as_str)
@@ -102,7 +144,7 @@ impl Zones {
     pub fn create(&mut self, name: &str, path: &str) -> Result<()> {
         validate_zone_name(name)?;
         validate_path(path)?;
-        if self.defs.contains_key(name) {
+        if self.name_taken(name) {
             return msg(format!("zone {name:?} already exists"));
         }
         for (n, p) in &self.defs {
@@ -113,29 +155,32 @@ impl Zones {
         self.defs.insert(name.to_owned(), path.to_owned());
         Ok(())
     }
-    /// Give `old` the name `new`; its path is unchanged. The root zone cannot be renamed.
-    pub fn rename(&mut self, old: &str, new: &str) -> Result<()> {
+    /// Give zone `old` (display name or id) the display name `new`; path and id are unchanged,
+    /// so commits, refs and snapshots stay valid. Returns the zone id. Root cannot be renamed.
+    pub fn rename(&mut self, old: &str, new: &str) -> Result<String> {
         validate_zone_name(new)?;
-        if old == ROOT_ZONE || new == ROOT_ZONE {
-            return msg("the root zone cannot be renamed");
-        }
-        if self.defs.contains_key(new) {
-            return msg(format!("zone {new:?} already exists"));
-        }
-        let Some(path) = self.defs.remove(old) else {
+        let Some(id) = self.resolve(old) else {
             return msg(format!("no such zone {old:?}"));
         };
-        self.defs.insert(new.to_owned(), path);
-        Ok(())
+        if id == ROOT_ZONE || new == ROOT_ZONE {
+            return msg("the root zone cannot be renamed");
+        }
+        if self.label(&id) == new || (new != id && self.name_taken(new)) {
+            return msg(format!("zone {new:?} already exists"));
+        }
+        self.set_label(&id, new)?;
+        Ok(id)
     }
     /// Drop a zone definition; its paths fall back to the root zone. Root cannot be removed.
     pub fn remove(&mut self, name: &str) -> Result<()> {
         if name == ROOT_ZONE {
             return msg("the root zone cannot be deleted");
         }
-        if self.defs.remove(name).is_none() {
+        let Some(id) = self.resolve(name) else {
             return msg(format!("no such zone {name:?}"));
-        }
+        };
+        self.defs.remove(&id);
+        self.labels.remove(&id);
         Ok(())
     }
     pub fn encode(&self) -> Vec<u8> {
@@ -144,12 +189,23 @@ impl Zones {
         for (n, p) in &self.defs {
             w.str(n).str(p);
         }
-        frame(b"AGAR", w.finish())
+        if self.labels.is_empty() {
+            return frame(b"AGAR", w.finish());
+        }
+        w.varint(self.labels.len() as u64);
+        for (i, l) in &self.labels {
+            w.str(i).str(l);
+        }
+        frame(b"AGA2", w.finish())
     }
     pub fn decode(bytes: &[u8]) -> Result<Self> {
-        let body = unframe(b"AGAR", bytes, "zones")?;
+        let with_labels = bytes.starts_with(b"AGA2");
+        let body = unframe(if with_labels { b"AGA2" } else { b"AGAR" }, bytes, "zones")?;
         let mut r = Reader::new(body);
-        let mut a = Zones { defs: BTreeMap::new() };
+        let mut a = Zones {
+            defs: BTreeMap::new(),
+            labels: BTreeMap::new(),
+        };
         let n = r.count(2).map_err(|e| corrupt("zones", e))?;
         for _ in 0..n {
             let name = r.str(64).map_err(|e| corrupt("zones", e))?;
@@ -164,6 +220,20 @@ impl Zones {
                 }
             }
             a.defs.insert(name, path);
+        }
+        if with_labels {
+            for _ in 0..r.count(2).map_err(|e| corrupt("zones", e))? {
+                let id = r.str(64).map_err(|e| corrupt("zones", e))?;
+                let label = r.str(64).map_err(|e| corrupt("zones", e))?;
+                if id == ROOT_ZONE || !a.defs.contains_key(&id) || label == id {
+                    return Err(Error::Corrupt(format!("zones: bad label for {id:?}")));
+                }
+                if a.name_taken(&label) {
+                    return Err(Error::Corrupt(format!("zones: duplicate name {label:?}")));
+                }
+                validate_zone_name(&label)?;
+                a.labels.insert(id, label);
+            }
         }
         r.finish().map_err(|e| corrupt("zones", e))?;
         if a.defs.get(ROOT_ZONE).map(|p| !p.is_empty()) != Some(false) {
@@ -332,13 +402,28 @@ mod tests {
         assert!(a.rename("engine", "root").is_err());
         assert!(a.rename("nope", "x").is_err());
         assert!(a.rename("engine", "bad name").is_err());
+        assert_eq!(a.rename("engine", "core").unwrap(), "engine");
+        // the id stays the storage key; the new name and the old one both resolve to it
+        assert_eq!(a.path_of("engine"), Some("src/engine"));
+        assert_eq!(a.label("engine"), "core");
+        assert_eq!(a.resolve("core").as_deref(), Some("engine"));
+        assert_eq!(a.resolve("engine").as_deref(), Some("engine"));
+        assert_eq!(a.owner("src/engine/x"), "engine");
+        assert!(a.create("core", "other").is_err(), "label taken");
+        assert!(a.create("engine", "other").is_err(), "id taken");
+        assert!(a.rename("assets", "engine").is_err(), "another zone's id");
+        let b = Zones::decode(&a.encode()).unwrap();
+        assert_eq!(b.label("engine"), "core");
+        // renaming back to the id clears the label (and keeps the legacy encoding)
+        a.rename("core", "engine").unwrap();
+        assert_eq!(a.label("engine"), "engine");
+        assert!(a.encode().starts_with(b"AGAR"));
         a.rename("engine", "core").unwrap();
-        assert_eq!(a.path_of("core"), Some("src/engine"));
-        assert!(!a.exists("engine"));
         assert!(a.remove("root").is_err());
-        assert!(a.remove("engine").is_err());
+        assert!(a.remove("nope").is_err());
         a.remove("core").unwrap();
         assert_eq!(a.owner("src/engine/x"), "root");
+        assert_eq!(a.labels().count(), 0);
     }
 
     #[test]

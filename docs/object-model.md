@@ -61,6 +61,15 @@ Symlinks are intentionally unsupported in v1 (they are the main path-escape vect
 6. A Snapshot's commits each belong to the zone they are keyed under *(checked when created from refs; `fsck` currently
    checks existence only)*.
 
+## Zone names, ids and display names
+
+Commits embed their zone name and are immutable, so a rename cannot rewrite them without changing every commit id
+(which would diverge every published clone). **Decision:** the embedded name is the zone's permanent *id*; renaming sets
+a *display name* kept in the `zones` file and, once published, in the remote manifest. Refs, snapshots, transactions,
+workspace, operation views and manifest branches all use ids; user-facing commands resolve a display name (or the id) to
+the id first. Rejected: rewriting history (new commit/snapshot/op ids, breaks published clones and the op log).
+Invariant: ids and display names share one namespace, so a name is never ambiguous.
+
 ## One global graph, many zones – the decision
 
 **Problem.** Zones must evolve independently (no repo-wide linear history, so `engine` and `assets` writers don't conflict),
