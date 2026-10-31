@@ -1,4 +1,8 @@
-//! Experimental structural three-way merge for Rust sources (feature `structural`).
+//! Experimental structural three-way merge (features `structural` for Rust, `structural-python`,
+//! `structural-typescript`, `structural-go`; all off by default).
+//!
+//! The item-matching logic below is shared; each language is a small [`Lang`] table (grammar, trivia
+//! kinds, container bodies, item keys) in `langs.rs`.
 //!
 //! The file is parsed with tree-sitter into a sequence of top-level items; `impl`, `trait` and
 //! inline `mod` bodies are parsed one level at a time, recursively. Items are keyed by kind and
@@ -11,9 +15,26 @@
 //! only if it parses too. Otherwise the whole file becomes one conflict. See `docs/merge.md`.
 
 pub mod corpus;
+mod langs;
+
+pub use langs::*;
 
 use crate::{merge3, Algorithm, Hunk, TextMerge};
 use tree_sitter::{Node, Parser, Tree};
+
+/// Per-language description used by the shared item-matching code.
+pub struct Lang {
+    pub name: &'static str,
+    language: fn() -> tree_sitter::Language,
+    /// Node kinds that are trivia (comments, attributes): they travel with the item that follows.
+    trivia: &'static [&'static str],
+    /// The container body of an item whose members are merged one level down (`impl`, `class`, ...).
+    body: fn(Node) -> Option<Node>,
+    /// Identity of an item (kind and name); two sides edit "the same item" when keys are equal.
+    key: fn(&[u8], Node) -> String,
+    /// Bytes of opening and closing delimiter of a body (`{` and `}` are 1 and 1, Python blocks 0 and 0).
+    delims: (usize, usize),
+}
 
 /// Which path produced a [`StructuralMerge`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,9 +55,9 @@ pub struct StructuralMerge {
     pub outcome: Outcome,
 }
 
-fn parse(src: &[u8]) -> Option<Tree> {
+fn parse(lang: &Lang, src: &[u8]) -> Option<Tree> {
     let mut p = Parser::new();
-    p.set_language(&tree_sitter_rust::LANGUAGE.into()).ok()?;
+    p.set_language(&(lang.language)()).ok()?;
     let t = p.parse(src, None)?;
     if t.root_node().has_error() {
         None
@@ -45,27 +66,27 @@ fn parse(src: &[u8]) -> Option<Tree> {
     }
 }
 
-/// Whether `src` parses as Rust without any error node.
-pub fn parses(src: &[u8]) -> bool {
-    parse(src).is_some()
+/// Whether `src` parses in the language without any error node.
+pub fn parses_as(lang: &Lang, src: &[u8]) -> bool {
+    parse(lang, src).is_some()
 }
 
-/// Three-way merge of Rust sources, structural first, line-based diff3 as the fallback.
-pub fn merge_rust(alg: Algorithm, base: &[u8], left: &[u8], right: &[u8]) -> StructuralMerge {
+/// Three-way merge, structural first, line-based diff3 as the fallback.
+pub fn merge_with(lang: &Lang, alg: Algorithm, base: &[u8], left: &[u8], right: &[u8]) -> StructuralMerge {
     let text = || merge3(alg, base, left, right);
-    let (Some(tb), Some(tl), Some(tr)) = (parse(base), parse(left), parse(right)) else {
+    let (Some(tb), Some(tl), Some(tr)) = (parse(lang, base), parse(lang, left), parse(lang, right)) else {
         return StructuralMerge {
             merge: text(),
             outcome: Outcome::ParseFailed,
         };
     };
-    let b = seq_of(base, tb.root_node(), 0, base.len());
-    let l = seq_of(left, tl.root_node(), 0, left.len());
-    let r = seq_of(right, tr.root_node(), 0, right.len());
+    let b = seq_of(lang, base, tb.root_node(), 0, base.len());
+    let l = seq_of(lang, left, tl.root_node(), 0, left.len());
+    let r = seq_of(lang, right, tr.root_node(), 0, right.len());
     if let Some(out) = merge_seq(alg, &b, &l, &r) {
         let mut bytes = Vec::new();
         flatten(&out, &mut bytes);
-        if parses(&bytes) {
+        if parses_as(lang, &bytes) {
             return StructuralMerge {
                 merge: TextMerge::Clean(bytes),
                 outcome: Outcome::Structural,
@@ -73,7 +94,7 @@ pub fn merge_rust(alg: Algorithm, base: &[u8], left: &[u8], right: &[u8]) -> Str
         }
     }
     match text() {
-        TextMerge::Clean(bytes) if !parses(&bytes) => StructuralMerge {
+        TextMerge::Clean(bytes) if !parses_as(lang, &bytes) => StructuralMerge {
             merge: whole_file_conflict(base, left, right),
             outcome: Outcome::Downgraded,
         },
@@ -133,10 +154,6 @@ fn flatten_seg(g: &Seg, out: &mut Vec<u8>) {
     out.extend_from_slice(&g.close);
 }
 
-fn is_trivia(kind: &str) -> bool {
-    matches!(kind, "line_comment" | "block_comment" | "attribute_item" | "inner_attribute_item")
-}
-
 fn text_of(src: &[u8], n: Node) -> String {
     String::from_utf8_lossy(&src[n.start_byte()..n.end_byte()]).into_owned()
 }
@@ -145,50 +162,42 @@ fn norm_ws(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Container body of items we recurse into.
-fn body_of(n: Node) -> Option<Node> {
-    if matches!(n.kind(), "impl_item" | "trait_item" | "mod_item") {
-        n.child_by_field_name("body").filter(|b| b.kind() == "declaration_list")
-    } else {
-        None
-    }
-}
-
-fn key_of(src: &[u8], n: Node) -> String {
-    if let Some(b) = body_of(n) {
-        // Header text without the body: `impl Trait for Type`, `mod name`, ...
-        let h = String::from_utf8_lossy(&src[n.start_byte()..b.start_byte()]).into_owned();
-        return format!("{}:{}", n.kind(), norm_ws(&h));
-    }
-    match n.child_by_field_name("name") {
-        Some(name) => format!("{}:{}", n.kind(), text_of(src, name)),
-        None => format!("{}:{}", n.kind(), norm_ws(&text_of(src, n))),
-    }
-}
-
 /// Build the segments for the children of `parent` that lie inside `start..end`.
-fn seq_of(src: &[u8], parent: Node, start: usize, end: usize) -> Seq {
+fn seq_of(lang: &Lang, src: &[u8], parent: Node, start: usize, end: usize) -> Seq {
     let mut segs: Vec<Seg> = Vec::new();
     let mut seen: std::collections::BTreeMap<String, usize> = Default::default();
     let mut pos = start;
     let mut cur = parent.walk();
     for n in parent.children(&mut cur) {
-        if n.start_byte() < start || n.end_byte() > end || is_trivia(n.kind()) {
+        if n.start_byte() < start || n.end_byte() > end || !n.is_named() || lang.trivia.contains(&n.kind()) {
             continue;
         }
-        let mut key = key_of(src, n);
+        let mut key = (lang.key)(src, n);
         let c = seen.entry(key.clone()).or_insert(0);
         *c += 1;
         if *c > 1 {
             key = format!("{key}#{c}");
         }
-        let seg = match body_of(n) {
-            Some(b) => Seg {
-                key,
-                head: src[pos..b.start_byte() + 1].to_vec(),
-                inner: Some(seq_of(src, b, b.start_byte() + 1, b.end_byte() - 1)),
-                close: src[b.end_byte() - 1..n.end_byte()].to_vec(),
-            },
+        let (open, close) = lang.delims;
+        let seg = match (lang.body)(n).filter(|b| b.start_byte() >= pos && b.end_byte() <= n.end_byte()) {
+            Some(b) => {
+                let mut inner_start = b.start_byte() + open;
+                if open == 0 {
+                    // Indentation-delimited body: let the first member own its indentation.
+                    let col = b.start_position().column;
+                    let line_start = b.start_byte().saturating_sub(col);
+                    if line_start >= pos && src[line_start..b.start_byte()].iter().all(|c| *c == b' ' || *c == b'\t') {
+                        inner_start = line_start;
+                    }
+                }
+                let inner_end = b.end_byte() - close;
+                Seg {
+                    key,
+                    head: src[pos..inner_start].to_vec(),
+                    inner: Some(seq_of(lang, src, b, inner_start, inner_end)),
+                    close: src[inner_end..n.end_byte()].to_vec(),
+                }
+            }
             None => Seg {
                 key,
                 head: src[pos..n.end_byte()].to_vec(),

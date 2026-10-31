@@ -10,15 +10,22 @@ vcs-store.workspace = true
 thiserror.workspace = true
 tree-sitter = { version = "0.25", optional = true }
 tree-sitter-rust = { version = "0.24", optional = true }
+tree-sitter-python = { version = "0.25", optional = true }
+tree-sitter-typescript = { version = "0.23", optional = true }
+tree-sitter-go = { version = "0.25", optional = true }
 
 [features]
 default = []
 # Experimental structural (syntax-aware) merge driver for Rust sources. Off by default.
 structural = ["dep:tree-sitter", "dep:tree-sitter-rust"]
+# Same driver for Python, TypeScript (.ts) and Go. Each is independent and off by default.
+structural-python = ["dep:tree-sitter", "dep:tree-sitter-python"]
+structural-typescript = ["dep:tree-sitter", "dep:tree-sitter-typescript"]
+structural-go = ["dep:tree-sitter", "dep:tree-sitter-go"]
 
 [dev-dependencies]
 proptest.workspace = true
 
 [[example]]
 name = "structural_corpus"
-required-features = ["structural"]
+# Needs at least one of the structural* features; prints a hint otherwise.

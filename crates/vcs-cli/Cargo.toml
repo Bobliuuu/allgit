@@ -23,6 +23,9 @@ clap.workspace = true
 [features]
 default = []
 structural = ["vcs-repo/structural"]
+structural-python = ["vcs-repo/structural-python"]
+structural-typescript = ["vcs-repo/structural-typescript"]
+structural-go = ["vcs-repo/structural-go"]
 
 [dev-dependencies]
 tempfile.workspace = true
