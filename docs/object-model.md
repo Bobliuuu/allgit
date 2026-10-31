@@ -41,7 +41,8 @@ round-trip, order-independence of tree construction, and no panics on arbitrary 
 | Commit | `zone, parents[], root, change_id, author, message` | one **zone**; `root` is the tree of that zone, paths zone-relative |
 | Snapshot | `zone → commit`, author, message | pins a consistent set of zone versions |
 | Transaction | sorted `RefUpdate{zone, branch, old?, new}`, author, message | immutable record of one atomic publication |
-| Conflict / Operation | – | *(designed, Milestone 4)* |
+| Operation | parents[], view (local branch heads + workspace subs), description, author | Kind 6; see operations.md |
+| Conflict | – | *(designed, Milestone 4)* |
 
 Symlinks are intentionally unsupported in v1 (they are the main path-escape vector); they are skipped with a warning on
 `add` and refused on checkout traversal.
