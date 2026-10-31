@@ -727,7 +727,7 @@ mod tests {
         ];
         assert_ne!(Object::Transaction(t.clone()).encode(), Object::Transaction(t2.clone()).encode());
         assert_eq!(
-            &Object::Transaction(t2.clone()).encode()[..Object::Transaction(t.clone()).encode().len() - 0],
+            &Object::Transaction(t2.clone()).encode()[..Object::Transaction(t.clone()).encode().len()],
             &Object::Transaction(t.clone()).encode()[..],
             "lock ops are a pure suffix: lock-free transactions keep their bytes"
         );

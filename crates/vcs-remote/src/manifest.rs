@@ -20,6 +20,22 @@ pub struct Manifest {
     pub applied: Vec<ObjectId>,
     /// Zone name -> owned path prefix (non-root zones). Needed so a clone knows the layout.
     pub zones: BTreeMap<String, String>,
+    /// (zone, zone-relative path) -> lock. Empty unless locks are used (docs/locks.md).
+    pub locks: BTreeMap<(String, String), Lock>,
+    /// Fencing counter; never reused.
+    pub next_token: u64,
+    /// High-water mark of validator time (unix ms); never decreases.
+    pub time_hw: u64,
+}
+
+/// One lock record. `holder` is the validator-trusted principal, not the self-asserted author.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Lock {
+    pub holder: String,
+    pub token: u64,
+    pub acquired_at: u64,
+    pub expires_at: u64,
+    pub reason: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -31,9 +47,18 @@ impl Manifest {
         self.branches.get(&(zone.to_owned(), branch.to_owned())).copied()
     }
 
+    /// True once any lock state exists. Only then is the v2 format used, so manifests of
+    /// repositories that never lock stay byte-identical to v1 (old readers reject v2).
+    pub fn has_lock_state(&self) -> bool {
+        !self.locks.is_empty() || self.next_token != 0 || self.time_hw != 0
+    }
+
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::new();
-        w.raw(b"AGMF").u8(1).varint(self.generation).varint(self.branches.len() as u64);
+        w.raw(b"AGMF")
+            .u8(if self.has_lock_state() { 2 } else { 1 })
+            .varint(self.generation)
+            .varint(self.branches.len() as u64);
         for ((a, b), id) in &self.branches {
             w.str(a).str(b).id(id);
         }
@@ -49,6 +74,18 @@ impl Manifest {
         for (n, p) in &self.zones {
             w.str(n).str(p);
         }
+        if self.has_lock_state() {
+            w.varint(self.next_token).varint(self.time_hw).varint(self.locks.len() as u64);
+            for ((z, p), l) in &self.locks {
+                w.str(z)
+                    .str(p)
+                    .str(&l.holder)
+                    .varint(l.token)
+                    .varint(l.acquired_at)
+                    .varint(l.expires_at)
+                    .str(&l.reason);
+            }
+        }
         w.finish()
     }
 
@@ -59,7 +96,7 @@ impl Manifest {
             return Err(ManifestError("bad magic".into()));
         }
         let v = r.u8().map_err(e)?;
-        if v != 1 {
+        if v != 1 && v != 2 {
             return Err(ManifestError(format!("unsupported version {v}")));
         }
         let mut m = Manifest {
@@ -92,6 +129,30 @@ impl Manifest {
             vcs_objects::names::validate_path(&p).map_err(|x| ManifestError(x.to_string()))?;
             m.zones.insert(n, p);
         }
+        if v == 2 {
+            m.next_token = r.varint().map_err(e)?;
+            m.time_hw = r.varint().map_err(e)?;
+            for _ in 0..r.count(7).map_err(e)? {
+                let z = r.str(64).map_err(e)?;
+                let p = r.str(4096).map_err(e)?;
+                validate_zone_name(&z).map_err(|x| ManifestError(x.to_string()))?;
+                vcs_objects::names::validate_path(&p).map_err(|x| ManifestError(x.to_string()))?;
+                let l = Lock {
+                    holder: r.str(512).map_err(e)?,
+                    token: r.varint().map_err(e)?,
+                    acquired_at: r.varint().map_err(e)?,
+                    expires_at: r.varint().map_err(e)?,
+                    reason: r.str(1024).map_err(e)?,
+                };
+                if l.token >= m.next_token {
+                    return Err(ManifestError("lock token not below next_token".into()));
+                }
+                m.locks.insert((z, p), l);
+            }
+            if !m.has_lock_state() {
+                return Err(ManifestError("v2 manifest without lock state".into()));
+            }
+        }
         r.finish().map_err(e)?;
         Ok(m)
     }
@@ -109,9 +170,35 @@ mod tests {
         m.branches.insert(("a".into(), "main".into()), ObjectId::from_bytes([1; 32]));
         m.applied.push(ObjectId::from_bytes([2; 32]));
         assert_eq!(Manifest::decode(&m.encode()).unwrap(), m);
+        assert_eq!(m.encode()[4], 1, "no locks: v1 bytes");
         assert!(Manifest::decode(b"junk").is_err());
         let mut bad = m.encode();
         bad.push(0);
         assert!(Manifest::decode(&bad).is_err());
+    }
+
+    #[test]
+    fn v2_roundtrip_only_with_lock_state() {
+        let mut m = Manifest {
+            next_token: 2,
+            time_hw: 99,
+            ..Default::default()
+        };
+        m.locks.insert(
+            ("z".into(), "a/b.bin".into()),
+            Lock {
+                holder: "alice".into(),
+                token: 1,
+                acquired_at: 10,
+                expires_at: 50,
+                reason: "editing".into(),
+            },
+        );
+        let b = m.encode();
+        assert_eq!(b[4], 2);
+        assert_eq!(Manifest::decode(&b).unwrap(), m);
+        let mut bad = m.clone();
+        bad.locks.get_mut(&("z".into(), "a/b.bin".into())).unwrap().token = 2;
+        assert!(Manifest::decode(&bad.encode()).is_err(), "token must be below next_token");
     }
 }
