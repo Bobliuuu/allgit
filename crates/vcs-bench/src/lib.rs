@@ -153,3 +153,29 @@ mod tests {
         assert!(d.path().join(&p[49]).is_file());
     }
 }
+
+/// Binary-heavy dataset: `n` files of `size` random (incompressible) bytes at `bin/fNNNNNN.bin`.
+pub fn generate_binary(dir: &Path, n: usize, size: usize, seed: u64) -> io::Result<()> {
+    fs::create_dir_all(dir.join("bin"))?;
+    let mut rng = Rng::new(seed);
+    for i in 0..n {
+        fs::write(dir.join(format!("bin/f{i:06}.bin")), rng.bytes(size))?;
+    }
+    Ok(())
+}
+
+/// Next version of a binary dataset: every file gets `edits` in-place overwrites of `edit_len` bytes.
+pub fn mutate_binary(dir: &Path, n: usize, edits: usize, edit_len: usize, seed: u64) -> io::Result<()> {
+    let mut rng = Rng::new(seed);
+    for i in 0..n {
+        let p = dir.join(format!("bin/f{i:06}.bin"));
+        let mut b = fs::read(&p)?;
+        for _ in 0..edits {
+            let at = (rng.next_u64() as usize) % (b.len() - edit_len);
+            let patch = rng.bytes(edit_len);
+            b[at..at + edit_len].copy_from_slice(&patch);
+        }
+        fs::write(&p, b)?;
+    }
+    Ok(())
+}
