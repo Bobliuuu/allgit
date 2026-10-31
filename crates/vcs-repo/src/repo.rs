@@ -87,14 +87,14 @@ pub struct FsckReport {
     pub evictable: Vec<ObjectId>,
 }
 
-fn now_ns() -> u64 {
+pub(crate) fn now_ns() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0)
 }
 
-fn mtime_ns(m: &fs::Metadata) -> u64 {
+pub(crate) fn mtime_ns(m: &fs::Metadata) -> u64 {
     m.modified()
         .ok()
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
@@ -102,7 +102,7 @@ fn mtime_ns(m: &fs::Metadata) -> u64 {
         .unwrap_or(0)
 }
 
-fn mode_of(m: &fs::Metadata) -> EntryMode {
+pub(crate) fn mode_of(m: &fs::Metadata) -> EntryMode {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -114,7 +114,7 @@ fn mode_of(m: &fs::Metadata) -> EntryMode {
     EntryMode::File
 }
 
-enum Wt {
+pub(crate) enum Wt {
     Clean,
     Modified,
     Deleted,
@@ -449,7 +449,7 @@ impl Repo {
 
     // ---------- status ----------
 
-    fn wt_state(&self, path: &str, e: &IndexEntry, written_ns: u64) -> Result<Wt> {
+    pub(crate) fn wt_state(&self, path: &str, e: &IndexEntry, written_ns: u64) -> Result<Wt> {
         let abs = self.worktree.join(path);
         let m = match fs::symlink_metadata(&abs) {
             Ok(m) => m,

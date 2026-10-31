@@ -2,6 +2,7 @@
 //! See docs/architecture.md.
 
 pub mod diff;
+pub mod edit;
 pub mod error;
 pub mod export;
 pub mod gc;

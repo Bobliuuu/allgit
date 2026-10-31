@@ -24,6 +24,31 @@ enum Cmd {
     Init { path: Option<PathBuf> },
     /// Stage files or directories (also stages deletions)
     Add { paths: Vec<String> },
+    /// Discard working-tree changes (from the index) or unstage them (--staged, from HEAD)
+    Restore {
+        paths: Vec<String>,
+        /// Restore the index from HEAD instead of the working tree from the index
+        #[arg(long)]
+        staged: bool,
+    },
+    /// Remove tracked files from the index and working tree
+    Rm {
+        paths: Vec<String>,
+        /// Only stop tracking; keep the files
+        #[arg(long)]
+        cached: bool,
+        /// Remove even files with uncommitted changes
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// Move or rename a tracked file or directory (within one zone)
+    Mv {
+        src: String,
+        dst: String,
+        /// Overwrite an existing destination
+        #[arg(short, long)]
+        force: bool,
+    },
     /// Commit staged changes in all subscribed zones atomically
     Commit {
         #[arg(short, long)]
@@ -321,6 +346,27 @@ fn run(cli: Cli) -> Result<(), Error> {
                 eprintln!("warning: skipped {s}");
             }
             println!("staged {} file(s), {} removal(s)", rep.staged, rep.removed);
+        }
+        Cmd::Restore { paths, staged } => {
+            let (repo, cwd) = open()?;
+            let rel: Vec<String> = paths.iter().map(|p| repo.rel_path(&cwd, p)).collect::<Result<_, _>>()?;
+            let rep = repo.restore(&rel, staged)?;
+            println!("restored {} {}", rep.restored, if staged { "index entr(ies)" } else { "file(s)" });
+        }
+        Cmd::Rm { paths, cached, force } => {
+            let (repo, cwd) = open()?;
+            let rel: Vec<String> = paths.iter().map(|p| repo.rel_path(&cwd, p)).collect::<Result<_, _>>()?;
+            let rep = repo.rm(&rel, cached, force)?;
+            for p in &rep.removed {
+                println!("rm {p}");
+            }
+        }
+        Cmd::Mv { src, dst, force } => {
+            let (repo, cwd) = open()?;
+            let rep = repo.mv(&repo.rel_path(&cwd, &src)?, &repo.rel_path(&cwd, &dst)?, force)?;
+            for (a, b) in &rep.moved {
+                println!("{a} -> {b}");
+            }
         }
         Cmd::Commit { message } => {
             let (repo, _) = open()?;
