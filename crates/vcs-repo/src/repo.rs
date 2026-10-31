@@ -209,6 +209,11 @@ impl Repo {
         let p = self.vcs.join(name);
         io(&p, fs::read(&p))
     }
+    /// Map a user-supplied area name (display name or original id) to the area id used by
+    /// commits, refs and snapshots. Unknown names are returned unchanged so callers report them.
+    pub fn resolve_area(&self, name: &str) -> Result<String> {
+        Ok(self.areas()?.resolve(name).unwrap_or_else(|| name.to_owned()))
+    }
     pub fn areas(&self) -> Result<Areas> {
         Areas::decode(&self.rd("areas")?)
     }
@@ -669,6 +674,8 @@ impl Repo {
     /// History reachable from the branch checked out for `area` (or `main` if unsubscribed),
     /// newest first (by timestamp, ties by id).
     pub fn log(&self, area: &str, branch: Option<&str>, limit: usize) -> Result<Vec<(ObjectId, Commit)>> {
+        let area = self.resolve_area(area)?;
+        let area = area.as_str();
         let areas = self.areas()?;
         if !areas.exists(area) {
             return msg(format!("no such area {area:?}"));
@@ -717,6 +724,8 @@ impl Repo {
     // ---------- branches ----------
 
     pub fn branches(&self, area: &str) -> Result<Vec<(String, Option<ObjectId>, bool)>> {
+        let area = self.resolve_area(area)?;
+        let area = area.as_str();
         let areas = self.areas()?;
         if !areas.exists(area) {
             return msg(format!("no such area {area:?}"));
@@ -733,6 +742,8 @@ impl Repo {
 
     /// Create `branch` in `area` at the current head of the checked-out branch.
     pub fn create_branch(&self, area: &str, branch: &str) -> Result<ObjectId> {
+        let area = self.resolve_area(area)?;
+        let area = area.as_str();
         validate_branch_name(branch)?;
         let _l = self.lock()?;
         let areas = self.areas()?;
@@ -777,6 +788,8 @@ impl Repo {
 
     /// Switch the checked-out branch of one area. Other areas are untouched.
     pub fn checkout(&self, area: &str, branch: &str) -> Result<()> {
+        let area = self.resolve_area(area)?;
+        let area = area.as_str();
         validate_branch_name(branch)?;
         let _l = self.lock()?;
         let areas = self.areas()?;
@@ -834,6 +847,8 @@ impl Repo {
 
     /// Subscribe to an existing area and materialize it (sparse checkout by area).
     pub fn area_add(&self, area: &str, branch: Option<&str>) -> Result<()> {
+        let area = self.resolve_area(area)?;
+        let area = area.as_str();
         let _l = self.lock()?;
         let areas = self.areas()?;
         let mut ws = self.workspace()?;
@@ -866,6 +881,8 @@ impl Repo {
 
     /// Unsubscribe: remove the area's tracked files from the working tree. Refuses if dirty.
     pub fn area_remove(&self, area: &str) -> Result<()> {
+        let area = self.resolve_area(area)?;
+        let area = area.as_str();
         if area == ROOT_AREA {
             return msg("the root area cannot be removed from the workspace");
         }

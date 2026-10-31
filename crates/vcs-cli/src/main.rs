@@ -209,7 +209,7 @@ enum AreaCmd {
     Remove {
         name: String,
     },
-    /// Rename an area that has no history yet (commits record their area name)
+    /// Rename an area (also with history: commits keep the original name as the area's id)
     Rename {
         old: String,
         new: String,
@@ -317,7 +317,9 @@ fn run(cli: Cli) -> Result<(), Error> {
         Cmd::Commit { message } => {
             let (repo, _) = open()?;
             let rep = repo.commit(&message, author())?;
+            let defs = repo.areas()?;
             for (area, branch, id) in &rep.commits {
+                let area = defs.label(area);
                 println!("[{area}/{branch} {}] {}", id.short(), message.lines().next().unwrap_or(""));
             }
             if rep.commits.len() > 1 {
@@ -331,13 +333,14 @@ fn run(cli: Cli) -> Result<(), Error> {
         Cmd::Status => {
             let (repo, _) = open()?;
             let st = repo.status()?;
+            let defs = repo.areas()?;
             for a in &st.areas {
                 let loc = if a.path.is_empty() {
                     String::new()
                 } else {
                     format!(" ({}/)", a.path)
                 };
-                println!("area {}{loc}: branch {} @ {}", a.area, a.branch, opt_short(a.head));
+                println!("area {}{loc}: branch {} @ {}", defs.label(&a.area), a.branch, opt_short(a.head));
                 if !a.staged.is_empty() {
                     println!("  staged:");
                     for c in &a.staged {
@@ -441,12 +444,13 @@ fn run(cli: Cli) -> Result<(), Error> {
             let (repo, cwd) = open()?;
             let area = area_of_cwd(&repo, &cwd, area)?;
             let entries = repo.log(&area, branch.as_deref(), limit)?;
+            let defs = repo.areas()?;
             if entries.is_empty() {
-                println!("area {area}: no commits yet");
+                println!("area {}: no commits yet", defs.label(&area));
             }
             for (id, c) in entries {
                 println!("commit {id}");
-                println!("change {}   area {}", c.change_id, c.area);
+                println!("change {}   area {}", c.change_id, defs.label(&c.area));
                 println!("Author: {} <{}>", c.author.name, c.author.email);
                 println!("Date:   {}", c.author.timestamp);
                 for l in c.message.lines() {
@@ -581,13 +585,14 @@ fn run(cli: Cli) -> Result<(), Error> {
                     let refs = repo.refs()?;
                     for n in areas.names() {
                         let p = areas.path_of(n).unwrap();
+                        let shown = areas.label(n);
                         let sub = match ws.subs.get(n) {
                             Some(b) => format!("subscribed, on {b}"),
                             None => "not subscribed".into(),
                         };
                         let nb = refs.branches_of(n).len();
                         println!(
-                            "{n:<14} {:<20} {sub}; {nb} branch(es)",
+                            "{shown:<14} {:<20} {sub}; {nb} branch(es)",
                             if p.is_empty() { "(rest of repo)" } else { p }
                         );
                     }
@@ -595,11 +600,19 @@ fn run(cli: Cli) -> Result<(), Error> {
                 AreaCmd::Show { name } => {
                     let areas = repo.areas()?;
                     let ws = repo.workspace()?;
-                    let Some(p) = areas.path_of(&name) else {
+                    let Some(id) = areas.resolve(&name) else {
                         return Err(Error::Msg(format!("no such area {name:?}")));
                     };
+                    let p = areas.path_of(&id).unwrap();
+                    let name = id;
                     println!(
-                        "area:   {name}\npath:   {}",
+                        "area:   {}{}\npath:   {}",
+                        areas.label(&name),
+                        if areas.label(&name) != name {
+                            format!(" (id {name})")
+                        } else {
+                            String::new()
+                        },
                         if p.is_empty() {
                             "(everything not owned by another area)"
                         } else {

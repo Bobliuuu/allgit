@@ -132,27 +132,97 @@ fn area_rename_empty_area_keeps_paths_and_is_logged() {
     r.create_area("engine", "engine").unwrap();
     r.area_rename("engine", "core").unwrap();
     let areas = r.areas().unwrap();
-    assert!(!areas.exists("engine") && areas.path_of("core") == Some("engine"));
-    assert_eq!(branch_of(&r, "core"), "main");
-    assert!(!r.workspace().unwrap().subs.contains_key("engine"));
+    assert_eq!(areas.label("engine"), "core");
+    assert_eq!(areas.path_of("engine"), Some("engine"));
     assert_eq!(descs(&r)[0], "area rename engine core");
     // still fully usable under the new name
     write(&r, "engine/a.rs", "e");
     let c = commit_all(&r, "in core");
-    assert_eq!(c[0].0, "core");
+    assert_eq!(c[0].0, "engine", "commits carry the id");
+    assert_eq!(r.log("core", None, 10).unwrap().len(), 1);
+    fsck_ok(&r);
+}
+
+#[test]
+fn area_rename_with_history_keeps_branches_snapshots_and_log() {
+    let (_d, r) = two_areas();
+    r.create_branch("engine", "feature").unwrap();
+    let before = r.log("engine", None, 10).unwrap();
+    assert_eq!(before.len(), 2);
+    r.area_rename("engine", "core").unwrap();
+    assert_eq!(r.log("core", None, 10).unwrap(), before, "same commits, same ids");
+    assert_eq!(r.log("engine", None, 10).unwrap(), before, "old name still resolves");
+    let names: Vec<_> = r.branches("core").unwrap().into_iter().map(|b| b.0).collect();
+    assert_eq!(names, ["feature", "main"]);
+    // checkout by new name, commit, snapshot checkout and fsck
+    r.checkout("core", "feature").unwrap();
+    write(&r, "engine/b.rs", "b");
+    let c = commit_all(&r, "on feature");
+    assert_eq!(c[0].0, "engine");
+    r.checkout("core", "main").unwrap();
+    let rep = r.snapshot_checkout("v1").unwrap();
+    assert!(rep.switched.iter().any(|s| s.0 == "engine"), "{rep:?}");
+    assert_eq!(read(&r, "engine/a.rs"), "e1");
+    assert_eq!(r.snapshot_get("v1").unwrap().1.areas.len(), 2);
+    r.branch_delete("core", "feature", true).unwrap();
+    r.area_add("core", None).unwrap_err(); // already subscribed
+    fsck_ok(&r);
+}
+
+#[test]
+fn area_rename_back_and_name_reuse_rules() {
+    let (_d, r) = two_areas();
+    r.create_area("docs", "docs").unwrap();
+    r.area_rename("engine", "core").unwrap();
+    assert!(err(r.area_rename("docs", "core")).contains("already exists"));
+    assert!(err(r.area_rename("docs", "engine")).contains("already exists"), "ids stay reserved");
+    assert!(err(r.create_area("core", "other")).contains("already exists"));
+    assert!(err(r.create_area("engine", "other")).contains("already exists"));
+    assert!(err(r.area_rename("core", "core")).contains("already exists"));
+    r.area_rename("core", "engine").unwrap();
+    assert_eq!(r.areas().unwrap().label("engine"), "engine");
+    r.area_rename("engine", "core").unwrap();
+    // deleting a renamed area removes its name too
+    r.area_delete("core", true).unwrap();
+    assert!(r.areas().unwrap().resolve("core").is_none());
     fsck_ok(&r);
 }
 
 #[test]
 fn area_rename_refusals() {
     let (_d, r) = two_areas();
-    assert!(err(r.area_rename("engine", "x")).contains("has branches"));
     assert!(err(r.area_rename("root", "x")).contains("root"));
     assert!(err(r.area_rename("nope", "x")).contains("no such area"));
     r.create_area("docs", "docs").unwrap();
     assert!(err(r.area_rename("docs", "engine")).contains("already exists"));
     assert!(err(r.area_rename("docs", "bad name")).contains("area name"));
-    assert!(r.areas().unwrap().exists("engine"));
+    write(&r, "engine/a.rs", "dirty");
+    assert!(err(r.area_rename("engine", "core")).contains("engine"), "dirty area refused");
+    assert_eq!(r.areas().unwrap().label("engine"), "engine");
+}
+
+#[test]
+fn undo_across_rename_works_and_undoing_the_rename_is_refused() {
+    let (_d, r) = two_areas();
+    r.area_rename("engine", "core").unwrap();
+    assert!(err(r.op_undo()).contains("renamed an area"));
+    write(&r, "engine/a.rs", "e3");
+    commit_all(&r, "three");
+    assert_eq!(r.log("core", None, 10).unwrap().len(), 3);
+    r.op_undo().unwrap(); // undoes the commit made after the rename
+    assert_eq!(r.log("core", None, 10).unwrap().len(), 2);
+    assert_eq!(r.areas().unwrap().label("engine"), "core");
+    // restoring to an operation from before the rename keeps working, and keeps the name
+    let before = r
+        .op_log(100)
+        .unwrap()
+        .into_iter()
+        .find(|(_, o)| o.description.starts_with("commit"))
+        .unwrap()
+        .0;
+    r.op_restore(&before).unwrap();
+    assert_eq!(r.areas().unwrap().label("engine"), "core");
+    fsck_ok(&r);
 }
 
 #[test]

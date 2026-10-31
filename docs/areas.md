@@ -17,9 +17,23 @@ Restores every **subscribed** area whose checked-out branch is not already at th
 
 ## `vcs area rename <old> <new>`
 
-Only for an area **without history**: no local or remote-tracking branches, not pinned by a snapshot, not mid-merge.
-Commits embed their area name and are immutable, so renaming an area with commits would need history rewriting.
-The path does not change, so no workspace file moves. The root area cannot be renamed.
+Works for any area, with or without history. Chosen design: an **alias layer**, not history rewriting (see
+[object-model.md](object-model.md#area-names-ids-and-display-names)).
+
+* The name embedded in an area's commits is its permanent **id**. A rename stores only a **display name** in the
+  `areas` file (`AGA2` encoding; an area that was never renamed keeps the old `AGAR` bytes).
+* Branches, snapshots, workspace, index, operation views and the remote manifest stay keyed by id, so no commit id
+  changes and nothing else is rewritten. `vcs log`, branches, `snapshot checkout`, `fsck` keep working.
+* Every command accepts the display name or the id. Output shows the display name. Both stay reserved: a new area
+  or another rename cannot take either.
+* Refuses: the root area, an unknown area, a name already in use, a dirty area, an area mid-merge.
+* Operation log: a rename is recorded (`area rename old new`), but names are not part of an operation view. So
+  `vcs op undo` immediately after a rename is **refused** with a message (rename back instead), and
+  `op undo`/`op restore` of other operations works across a rename and keeps the new name.
+* Published repositories: `publish` records `id -> display name` in the remote manifest (v2; v1 bytes unchanged when
+  no area is renamed) together with that publish's transaction, so it appears with the next publish that touches the
+  area (a rename alone does not publish). `fetch`/`sync` and `clone` adopt a remote name unless the local area was
+  renamed already or the name is taken; a local rename wins until it is published. Last publisher wins.
 
 ## `vcs area delete <name> [--force]`
 

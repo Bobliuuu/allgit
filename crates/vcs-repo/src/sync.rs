@@ -131,6 +131,12 @@ impl Repo {
         Ok(false)
     }
 
+    /// Resolve user-supplied area names (display names or ids) of a publish/fetch filter to ids.
+    fn resolve_filter(&self, areas: Option<&[String]>) -> Result<Option<Vec<String>>> {
+        let defs = self.areas()?;
+        Ok(areas.map(|w| w.iter().map(|x| defs.resolve(x).unwrap_or_else(|| x.clone())).collect()))
+    }
+
     /// Publish checked-out branches (all subscribed areas, or `areas`) in ONE atomic remote
     /// transaction. Refuses non-fast-forward; never overwrites remote work.
     pub fn publish(&self, backend: &dyn Backend, areas: Option<&[String]>, author: Signature) -> Result<PublishReport> {
@@ -140,8 +146,11 @@ impl Repo {
         let refs = self.refs()?;
         let tracked = self.remote_refs()?;
         let (manifest, _) = load_manifest(backend).map_err(publish_err)?;
+        let areas = self.resolve_filter(areas)?;
+        let areas = areas.as_deref();
         let mut updates = Vec::new();
         let mut area_defs = BTreeMap::new();
+        let mut label_defs = BTreeMap::new();
         for (area, branch) in &ws.subs {
             if areas.is_some_and(|w| !w.contains(area)) {
                 continue;
@@ -174,6 +183,9 @@ impl Repo {
             });
             if area != ROOT_AREA {
                 area_defs.insert(area.clone(), defs.path_of(area).unwrap().to_owned());
+                if defs.label(area) != area {
+                    label_defs.insert(area.clone(), defs.label(area).to_owned());
+                }
             }
         }
         if updates.is_empty() {
@@ -190,6 +202,7 @@ impl Repo {
         };
         let outcome = Publisher::new(backend, &self.store, tx)
             .with_areas(area_defs)
+            .with_labels(label_defs)
             .run()
             .map_err(publish_err)?;
         let mut rr = self.remote_refs()?;
@@ -211,7 +224,8 @@ impl Repo {
 
     fn fetch_locked(&self, backend: &dyn Backend, areas: Option<&[String]>) -> Result<Vec<(String, String, ObjectId)>> {
         let ws = self.workspace()?;
-        let want: Vec<String> = match areas {
+        let areas = self.resolve_filter(areas)?;
+        let want: Vec<String> = match areas.as_deref() {
             Some(a) => a.to_vec(),
             None => ws.subs.keys().cloned().collect(),
         };
@@ -226,6 +240,13 @@ impl Repo {
                 }
                 Some(q) if q == p => {}
                 Some(q) => return msg(format!("area {n:?} is at {q:?} locally but {p:?} on the remote")),
+            }
+        }
+        // Adopt a remote display name only where this repository has not renamed the area itself
+        // (or the name is taken locally); a local rename wins until it is published.
+        for (id, l) in &m.labels {
+            if defs.exists(id) && defs.label(id) == id && defs.set_label(id, l).is_ok() {
+                changed = true;
             }
         }
         if changed {
@@ -336,15 +357,22 @@ impl Repo {
             for (n, p) in &m.areas {
                 defs.create(n, p)?;
             }
+            for (id, l) in &m.labels {
+                if defs.exists(id) {
+                    let _ = defs.set_label(id, l);
+                }
+            }
             write_atomic(&repo.vcs.join("areas"), &defs.encode())?;
             let want: Vec<String> = match areas {
                 Some(a) => {
+                    let mut ids = Vec::new();
                     for x in a {
-                        if !defs.exists(x) {
-                            return msg(format!("remote has no area {x:?}"));
+                        match defs.resolve(x) {
+                            Some(id) => ids.push(id),
+                            None => return msg(format!("remote has no area {x:?}")),
                         }
                     }
-                    a.to_vec()
+                    ids
                 }
                 None => defs.names().map(str::to_owned).collect(),
             };

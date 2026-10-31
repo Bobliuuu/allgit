@@ -295,6 +295,8 @@ impl Repo {
 
     /// Merge local branch `area/branch` into the checked-out branch of `area`.
     pub fn merge(&self, area: &str, branch: &str, author: Signature) -> Result<MergeOutcome> {
+        let area = self.resolve_area(area)?;
+        let area = area.as_str();
         let refs = self.refs()?;
         let Some(theirs) = refs.head(area, branch) else {
             return msg(format!("no such branch {area}/{branch}"));
@@ -304,6 +306,8 @@ impl Repo {
 
     /// Merge the remote-tracking branch `area/branch` (as last fetched) into `area`.
     pub fn merge_remote(&self, area: &str, branch: &str, author: Signature) -> Result<MergeOutcome> {
+        let area = self.resolve_area(area)?;
+        let area = area.as_str();
         let Some(theirs) = self.remote_refs()?.head(area, branch) else {
             return msg(format!("no remote-tracking branch {area}/{branch} (run `vcs fetch`)"));
         };
