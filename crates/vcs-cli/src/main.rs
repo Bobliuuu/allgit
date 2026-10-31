@@ -89,6 +89,9 @@ enum Cmd {
         /// Abandon the in-progress merge and restore the pre-merge state
         #[arg(long)]
         abort: bool,
+        /// Do not use the structural Rust merge (only matters when built with `--features structural`)
+        #[arg(long)]
+        no_structural: bool,
     },
     /// Replay the checked-out branch onto another branch, keeping each change id
     Rebase {
@@ -103,6 +106,9 @@ enum Cmd {
         /// Abandon the in-progress rebase and restore the original branch
         #[arg(long)]
         abort: bool,
+        /// Do not use the structural Rust merge (only matters when built with `--features structural`)
+        #[arg(long)]
+        no_structural: bool,
     },
     /// Inspect conflicts of an in-progress merge
     #[command(subcommand)]
@@ -488,8 +494,10 @@ fn run(cli: Cli) -> Result<(), Error> {
             zone,
             remote,
             abort,
+            no_structural,
         } => {
-            let (repo, cwd) = open()?;
+            let (mut repo, cwd) = open()?;
+            repo.set_structural(!no_structural);
             if abort {
                 repo.merge_abort()?;
                 println!("merge aborted; working tree restored");
@@ -523,8 +531,15 @@ fn run(cli: Cli) -> Result<(), Error> {
                 }
             }
         }
-        Cmd::Rebase { onto, zone, cont, abort } => {
-            let (repo, cwd) = open()?;
+        Cmd::Rebase {
+            onto,
+            zone,
+            cont,
+            abort,
+            no_structural,
+        } => {
+            let (mut repo, cwd) = open()?;
+            repo.set_structural(!no_structural);
             if abort {
                 repo.rebase_abort()?;
                 println!("rebase aborted; original branch restored");

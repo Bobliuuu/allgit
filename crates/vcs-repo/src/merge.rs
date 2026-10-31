@@ -17,7 +17,7 @@ use crate::treeops::{self, Flat};
 use std::collections::BTreeSet;
 use std::fs;
 use vcs_merge::{
-    merge3, merge_base, merge_flat, render_markers, Algorithm, Conflict, ConflictKind, MarkerLabels, StoreBlobs, StoreGraph, TextMerge,
+    merge3, merge_base, merge_flat_with, render_markers, Algorithm, Conflict, ConflictKind, MarkerLabels, StoreBlobs, StoreGraph, TextMerge,
 };
 use vcs_objects::codec::{Reader, Writer};
 use vcs_objects::{Commit, EntryMode, Object, ObjectId, RefUpdate, Signature, Transaction};
@@ -365,7 +365,7 @@ impl Repo {
         };
         let root_of = |id: &ObjectId| -> Result<Flat> { treeops::flatten(&self.store, Some(self.commit_obj(id)?.root), &prefix) };
         let (fb, fr) = (root_of(&base)?, root_of(&theirs)?);
-        let tm = merge_flat(&StoreBlobs(&self.store), Algorithm::Myers, &fb, &old, &fr).map_err(me)?;
+        let tm = merge_flat_with(&StoreBlobs(&self.store), Algorithm::Myers, self.structural, &fb, &old, &fr).map_err(me)?;
         if let Some(c) = tm.conflicts.iter().find(|c| c.kind == ConflictKind::FileDirectory) {
             return msg(format!(
                 "{:?} is a file on one side and a directory on the other; file/directory conflicts are not supported yet (nothing was changed)",

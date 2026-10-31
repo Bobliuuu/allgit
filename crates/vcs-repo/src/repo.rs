@@ -26,6 +26,7 @@ pub struct Repo {
     pub(crate) worktree: PathBuf,
     pub(crate) vcs: PathBuf,
     pub(crate) store: LocalStore,
+    pub(crate) structural: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,6 +121,12 @@ enum Wt {
 }
 
 impl Repo {
+    /// Enable or disable the structural Rust merge in `merge`/`rebase` (default on; it only has
+    /// an effect when built with feature `structural`).
+    pub fn set_structural(&mut self, on: bool) {
+        self.structural = on;
+    }
+
     // ---------- open / init ----------
 
     pub fn init(path: &Path) -> Result<Repo> {
@@ -131,7 +138,12 @@ impl Repo {
         }
         io(&vcs, fs::create_dir_all(vcs.join("objects")))?;
         let store = LocalStore::open(vcs.join("objects"))?;
-        let r = Repo { worktree, vcs, store };
+        let r = Repo {
+            worktree,
+            vcs,
+            store,
+            structural: true,
+        };
         write_atomic(&r.vcs.join("zones"), &Zones::new().encode())?;
         write_atomic(&r.vcs.join("refs"), &Refs::default().encode())?;
         let mut ws = Workspace::default();
@@ -154,7 +166,12 @@ impl Repo {
                     return msg(format!("unsupported repository format: {:?}", f.trim()));
                 }
                 let store = LocalStore::open(vcs.join("objects"))?;
-                return Ok(Repo { worktree: cur, vcs, store });
+                return Ok(Repo {
+                    worktree: cur,
+                    vcs,
+                    store,
+                    structural: true,
+                });
             }
             if !cur.pop() {
                 return Err(Error::NotARepo);
