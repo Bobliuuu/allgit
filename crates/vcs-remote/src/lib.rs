@@ -14,4 +14,4 @@ pub use backend::{Backend, BackendError, Versioned};
 pub use fsbackend::FsBackend;
 pub use manifest::Manifest;
 pub use membackend::{CasFault, MemBackend};
-pub use protocol::{fetch_heads, load_manifest, Outcome, PublishError, Publisher, Step};
+pub use protocol::{fetch_heads, fetch_object, load_manifest, Outcome, PublishError, Publisher, Step};

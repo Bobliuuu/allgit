@@ -214,3 +214,79 @@ fn clone_into_nonempty_dir_refused() {
     assert_eq!(fs::read_to_string(d.path().join("x/keep")).unwrap(), "k");
     let _ = &remote as &dyn Backend;
 }
+
+fn object_path(r: &Repo, id: &vcs_objects::ObjectId) -> std::path::PathBuf {
+    let h = id.to_hex();
+    r.worktree().join(".vcs/objects").join(&h[..2]).join(&h[2..])
+}
+
+/// Blob id of `engine/core.rs` in the clone `b`, via its head commit's tree.
+fn core_blob(b: &Repo) -> vcs_objects::ObjectId {
+    use vcs_objects::Object;
+    let head = b.refs().unwrap().head("engine", "main").unwrap();
+    let Object::Commit(c) = b.store().get(&head).unwrap() else {
+        panic!()
+    };
+    let Object::Tree(t) = b.store().get(&c.root).unwrap() else {
+        panic!()
+    };
+    let e = t.entries().iter().find(|e| e.name == "core.rs").expect("core.rs");
+    e.id
+}
+
+#[test]
+fn evicted_object_is_refetched_on_demand_and_fsck_calls_it_cache() {
+    let d = tempfile::tempdir().unwrap();
+    let remote = MemBackend::new();
+    seeded(&remote, d.path());
+    let b = Repo::clone_from(&remote, "mem", &d.path().join("b"), Some(&["engine".to_string()])).unwrap();
+    let blob = core_blob(&b);
+    fs::remove_file(object_path(&b, &blob)).unwrap();
+    // Evicted: fsck sees a cache miss, not damage.
+    let rep = b.fsck().unwrap();
+    assert!(rep.problems.is_empty(), "{:?}", rep.problems);
+    assert_eq!(rep.evictable, vec![blob]);
+    // Without lazy fetch the command fails; with it, it refetches and succeeds.
+    b.zone_remove("engine").unwrap_or(());
+    assert!(b.zone_add("engine", None).is_err());
+    b.with_lazy_fetch(&remote, || b.zone_add("engine", None)).unwrap();
+    assert_eq!(read(&b, "engine/core.rs"), "core v1");
+    assert!(b.store().contains(&blob).unwrap());
+    let rep = b.fsck().unwrap();
+    assert!(rep.problems.is_empty() && rep.evictable.is_empty());
+}
+
+#[test]
+fn missing_local_only_object_is_corruption_not_cache() {
+    let d = tempfile::tempdir().unwrap();
+    let remote = MemBackend::new();
+    let a = seeded(&remote, d.path());
+    write(&a, "engine/new.rs", "unpublished");
+    commit_all(&a, "local only");
+    let head = a.refs().unwrap().head("engine", "main").unwrap();
+    let vcs_objects::Object::Commit(c) = a.store().get(&head).unwrap() else {
+        panic!()
+    };
+    fs::remove_file(object_path(&a, &c.root)).unwrap();
+    let rep = a.fsck().unwrap();
+    assert!(rep.evictable.is_empty());
+    assert!(rep.problems.iter().any(|p| p.contains("missing root tree")), "{:?}", rep.problems);
+}
+
+#[test]
+fn corrupt_remote_object_is_rejected_and_never_stored() {
+    let d = tempfile::tempdir().unwrap();
+    let remote = MemBackend::new();
+    seeded(&remote, d.path());
+    let b = Repo::clone_from(&remote, "mem", &d.path().join("b"), Some(&["engine".to_string()])).unwrap();
+    let blob = core_blob(&b);
+    fs::remove_file(object_path(&b, &blob)).unwrap();
+    let key = vcs_remote::protocol::object_key(&blob);
+    remote.tamper(&key, vcs_objects::Object::Blob(b"evil".to_vec()).encode());
+    let err = b.fetch_missing(&remote, &blob).unwrap_err().to_string();
+    assert!(err.contains("hash verification"), "{err}");
+    assert!(!b.store().contains(&blob).unwrap());
+    assert!(!object_path(&b, &blob).exists());
+    assert!(b.with_lazy_fetch(&remote, || b.zone_add("engine", None)).is_err());
+    assert!(!b.store().contains(&blob).unwrap());
+}

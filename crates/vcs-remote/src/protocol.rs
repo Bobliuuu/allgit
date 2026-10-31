@@ -369,6 +369,18 @@ pub fn load_manifest(backend: &dyn Backend) -> Result<(Manifest, Option<String>)
     }
 }
 
+/// Fetch ONE object by id from the remote and verify its hash before returning it.
+/// Nothing is stored: the caller decides, so a corrupt remote object can never reach a store.
+pub fn fetch_object(backend: &dyn Backend, id: &ObjectId) -> Result<Object, PublishError> {
+    let v = backend
+        .get(&object_key(id))?
+        .ok_or_else(|| PublishError::Remote(format!("object {id} missing on remote")))?;
+    if id_of_encoded(&v.data) != *id {
+        return Err(PublishError::Remote(format!("object {id} fails hash verification")));
+    }
+    Object::decode(&v.data).map_err(|e| PublishError::Remote(format!("object {id}: {e}")))
+}
+
 /// Fetch the closure of the heads of `zones` (None = all) into `local`, storing
 /// dependencies first and verifying every object's hash. Returns the fetched heads.
 /// Only objects reachable from the requested zones are read.
