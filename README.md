@@ -1,9 +1,8 @@
 <div align="center">
 
-# all-git
+# 🌳 all-git
 
-**A native, zone-aware version control system in Rust.**
-Git's immutable history · Perforce-scale sparse workspaces · Jujutsu-style recoverability · object-storage-backed remotes.
+**Version control for big repos where code, art, and docs shouldn't share one history.**
 
 [![CI](https://github.com/Bobliuuu/all-git/actions/workflows/ci.yml/badge.svg)](https://github.com/Bobliuuu/all-git/actions/workflows/ci.yml)
 ![Rust](https://img.shields.io/badge/rust-1.80%2B-orange)
@@ -12,36 +11,40 @@ Git's immutable history · Perforce-scale sparse workspaces · Jujutsu-style rec
 
 </div>
 
-> **Not a Git wrapper.** It has its own object model, commit graph, refs, workspace, and transaction protocol. Git is never invoked and is not the storage format.
+`vcs` is a version control tool written in Rust, for teams whose repository mixes very different things (say, game code, shaders, and gigabytes of art) and who want to download and work on only the parts they need. It is **not** a Git wrapper: it has its own storage and never calls Git.
 
-## Why
+> ⚠️ Early research project. It works and is tested, but expect rough edges. See [what works today](#-what-works-today).
 
-Large repositories mix things with very different shapes: engine code, shaders, multi-gigabyte assets, docs. One linear history and one checkout is the wrong unit for all of them. all-git keeps **one global content-addressed object graph** but lets each **zone** evolve on its own branches, lets a developer **subscribe to only the zones they need**, and still makes a **cross-zone change atomic**.
+## 💡 The big idea
 
-```mermaid
-flowchart LR
-  subgraph Remote["Remote (object store)"]
-    M[("manifest<br/>CAS = linearization point")]
-    O[("objects/ · tx/")]
-  end
-  subgraph Graph["One global object graph"]
-    E["engine<br/>commits"] ~~~ S["shaders<br/>commits"] ~~~ A["assets<br/>commits"]
-    T["Transaction<br/>(what moved together)"]
-    P["Snapshot<br/>(what is pinned together)"]
-  end
-  W["Sparse workspace<br/>engine + shaders only"] -->|publish: one atomic tx| M
-  M --- O
-  Graph --- O
-  M -->|sparse fetch| W
-```
+Imagine a game studio. Programmers touch `engine/`, artists touch `assets/`. With plain Git, everyone shares one history and downloads everything.
 
-## Quickstart
+With all-git, each part of the repo is an **zone**:
+
+- 🧩 Each zone has its **own branches and history**, so an artist's busy week doesn't clutter the programmers' log.
+- 📦 You **subscribe** only to the zones you need. Skipped zones are never downloaded (and never "deleted", just not there).
+- ⚛️ One commit can still change several zones **atomically**: either all of them move, or none do.
+
+## 🚀 Try it in 60 seconds
+
+You need [Rust](https://rustup.rs) 1.80+. Every command and output below was run for real.
+
+**1. Build and make a repo**
 
 ```bash
-cargo build --release            # binary: target/release/vcs
+cargo build --release
 export PATH="$PWD/target/release:$PATH"
+export VCS_AUTHOR_NAME=Ada VCS_AUTHOR_EMAIL=ada@example.com   # who you are
 
 vcs init demo && cd demo
+```
+```text
+Initialized empty vcs repository in /path/to/demo/.vcs
+```
+
+**2. Commit, change, and look at the history**
+
+```bash
 echo hello > hello.txt
 vcs add hello.txt && vcs commit -m "Initial commit"
 echo world >> hello.txt
@@ -49,40 +52,88 @@ vcs status && vcs diff
 vcs add hello.txt && vcs commit -m "Update greeting"
 vcs log
 ```
+```text
+staged 1 file(s), 0 removal(s)
+[root/main 96d49f6fc5b5] Initial commit
+zone root: branch main @ 96d49f6fc5b5
+  not staged:
+    modified:  hello.txt
+diff --vcs a/hello.txt b/hello.txt
+--- a/hello.txt
++++ b/hello.txt
+@@ -1,1 +1,2 @@
+ hello
++world
+staged 1 file(s), 0 removal(s)
+[root/main e670fef25d9b] Update greeting
+commit e670fef25d9b260392538cebb7f2eb9ac9170237e51c90ab1019bc7a5eb23927
+change e53b19aa3c7a90559906ac5a611c9321   zone root
+Author: Ada <ada@example.com>
+Date:   1793477306
+    Update greeting
 
-Set `VCS_AUTHOR_NAME` / `VCS_AUTHOR_EMAIL` to control authorship.
+commit 96d49f6fc5b58621a3005c7c8508e00f5f64504fb533f219630c7954cd1e8850
+change 58ff190e27c4bafe507dbedca2a01929   zone root
+Author: Ada <ada@example.com>
+Date:   1793477306
+    Initial commit
+```
 
-### Zones: independent histories, one repository
+**3. Split the repo into zones** (a commit touching both is one atomic transaction)
 
 ```bash
 mkdir engine assets
+echo 'fn main(){}' > engine/main.rs && echo bin > assets/logo.bin
 vcs zone create engine --path engine
 vcs zone create assets --path assets
-
-vcs zone branch engine feature          # branch only the engine zone
-vcs zone checkout engine feature        # assets stays on main
-vcs status                              # shows each zone's own branch + head
+vcs add engine assets && vcs commit -m "Add engine and assets"
+vcs zone branch engine feature       # branch just the engine
+vcs zone checkout engine feature     # assets stays on main
 vcs zone list
 ```
-
-Zones own non-overlapping path prefixes (enforced). A commit that touches several zones advances all their branch heads in **one atomic update**.
-
-### Remotes: publish, sparse clone, sync
-
-```bash
-vcs remote set /srv/shared/game-engine.vcs     # directory remote (file://); S3 backend crate exists, CLI wiring pending
-vcs publish                                    # all changed branches, ONE atomic remote transaction
-
-vcs clone /srv/shared/game-engine.vcs work --zone engine --zone shaders
-#   downloads and materializes only those zones; `assets` is "not subscribed", never "deleted"
-
-vcs fetch      # download + update remote-tracking refs (local branches untouched)
-vcs sync       # fetch, then fast-forward where safe; dirty or diverged zones are reported, not touched
+```text
+created zone engine owning engine/
+created zone assets owning assets/
+staged 2 file(s), 0 removal(s)
+[assets/main 764099d40c74] Add engine and assets
+[engine/main d4fbb8635c1d] Add engine and assets
+atomic transaction 218e46ade70a covering 2 zones
+created engine/feature at d4fbb8635c1d
+zone engine: switched to feature
+assets         assets               subscribed, on main; 1 branch(es)
+engine         engine               subscribed, on feature; 2 branch(es)
+root           (rest of repo)       subscribed, on main; 1 branch(es)
 ```
 
-A non-fast-forward publish is refused with guidance instead of overwriting remote work.
+**4. Share it, then clone only the engine**
 
-## What works today
+```bash
+vcs zone checkout engine main        # back to main; publish sends every branch
+vcs remote set ~/shared.vcs          # any directory works as a remote
+vcs publish
+cd .. && vcs clone ~/shared.vcs work --zone engine
+cd work && vcs status
+```
+```text
+zone engine: switched to main
+remote set to /Users/you/shared.vcs
+assets/main (none) -> dfd635917b38
+engine/main (none) -> fd4d2ccc4144
+published atomically (remote generation 1)
+Cloned /Users/you/shared.vcs into work
+downloaded zones: engine
+skipped zones (not subscribed): assets, root
+  add one later with `vcs zone add <name>` then `vcs fetch --zone <name>`
+zone engine (engine/): branch main @ fd4d2ccc4144
+not subscribed (not downloaded/materialized, NOT deleted): assets, root
+clean
+```
+
+That's it: `work/` contains only `engine/`. Later, `vcs fetch` downloads updates and `vcs sync` fast-forwards when safe (it reports dirty or diverged zones instead of touching them). A publish that would overwrite someone else's work is refused with guidance.
+
+> Hashes and timestamps differ on every run, and the outputs above are trimmed to the relevant lines. Step 4's output came from a separate fresh run of steps 1 to 3 (the hashes differ from step 3's).
+
+## ✅ What works today
 
 | Zone | Status | Notes |
 |---|---|---|
@@ -102,13 +153,23 @@ A non-fast-forward publish is refused with guidance instead of overwriting remot
 
 Nothing here is claimed to work without an executable test. Known gaps are listed in [docs/architecture.md](docs/architecture.md#known-limitations-honest-list).
 
-## How safety is established
+## 🛡️ Why you can trust it
 
-- **Integrity:** every read re-hashes; objects have one canonical encoding (`decode(b) = o ⇒ encode(o) = b`).
-- **Atomicity:** a publish becomes visible at exactly one point, the successful manifest compare-and-swap. The protocol is a step machine, and an executable model explores every interleaving of two writers with a crash or lost request/response injected at any step, checking *no lost update, exactly-once apply, dependency-closed remote objects, reported-success is durable*. The model is mutation-checked: removing the idempotency check or reversing upload order makes it fail.
-- **Untrusted input:** path validation rejects `..`, absolute paths, and `.vcs` (case-insensitive); checkout refuses to write through symlinks or clobber untracked files; fetched objects are hash-verified before storage.
+- **Integrity:** every read re-hashes the data; each object has exactly one valid encoding.
+- **Atomic publishing:** a publish becomes visible at one instant. An executable model tries every interleaving of two writers with crashes and lost messages injected, and checks nothing is lost or applied twice.
+- **Untrusted input:** paths like `..` or `.vcs` are rejected, and checkout won't write through symlinks or overwrite untracked files.
 
-## Repository layout
+Details: [architecture](docs/architecture.md).
+
+## 🗺️ How the pieces fit
+
+```mermaid
+flowchart LR
+  W["Your sparse workspace<br/>engine only"] -->|publish: one atomic step| R[("Remote<br/>object store + manifest")]
+  R -->|fetch only subscribed zones| W
+```
+
+## 🧱 Code layout
 
 | Crate | Role |
 |---|---|
@@ -121,11 +182,11 @@ Nothing here is claimed to work without an executable test. Known gaps are liste
 | `vcs-bench` | seeded dataset generator and criterion benchmarks |
 | `vcs-cli` | the `vcs` binary |
 
-## Docs
+## 📚 Learn more
 
 [Architecture](docs/architecture.md) · [Object model](docs/object-model.md) · [Roadmap](docs/roadmap.md) · [Merge](docs/merge.md) · [S3 backend](docs/s3.md) · [Benchmarks](docs/benchmarks.md) · [Research notes](docs/research.md) *(from memory, unverified)*
 
-## Development
+## 🛠️ Contributing
 
 ```bash
 cargo fmt --all --check
