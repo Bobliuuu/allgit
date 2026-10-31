@@ -1,6 +1,6 @@
 # Operation log
 
-Status: **implemented** (`vcs-objects` Kind 6, `vcs-repo::ops`, `vcs op …`). Tracks issue #4 (rebase is still open).
+Status: **implemented** (`vcs-objects` Kind 6, `vcs-repo::ops`, `vcs op …`). `vcs rebase` records one operation (see rebase.md).
 
 A Jujutsu-style log of *what you did to the repository*, separate from the commit DAG. It makes local mistakes recoverable.
 

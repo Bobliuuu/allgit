@@ -97,6 +97,7 @@ A non-fast-forward publish is refused with guidance instead of overwriting remot
 | Operation log / undo, rebase | ⬜ | [#4](https://github.com/Bobliuuu/all-git/issues/4) |
 | Locks & leases (server-enforced) | ⬜ | design first: [#7](https://github.com/Bobliuuu/all-git/issues/7) |
 | Packfiles, chunking | ⬜ | [#9](https://github.com/Bobliuuu/all-git/issues/9) |
+| Rebase with stable change ids | 🟡 | `vcs rebase <branch>` / `--continue` / `--abort`; keeps change ids, one undoable op; linear ranges only ([docs/rebase.md](docs/rebase.md)) |
 | Semantic / AI-assisted merge | ⬜ | [#10](https://github.com/Bobliuuu/all-git/issues/10) |
 | Git import/export, P4 | ⬜ | [#8](https://github.com/Bobliuuu/all-git/issues/8) |
 
@@ -123,7 +124,7 @@ Nothing here is claimed to work without an executable test. Known gaps are liste
 
 ## Docs
 
-[Architecture](docs/architecture.md) · [Object model](docs/object-model.md) · [Roadmap](docs/roadmap.md) · [Merge](docs/merge.md) · [S3 backend](docs/s3.md) · [Benchmarks](docs/benchmarks.md) · [Research notes](docs/research.md) *(from memory, unverified)*
+[Architecture](docs/architecture.md) · [Object model](docs/object-model.md) · [Roadmap](docs/roadmap.md) · [Merge](docs/merge.md) · [Rebase](docs/rebase.md) · [S3 backend](docs/s3.md) · [Benchmarks](docs/benchmarks.md) · [Research notes](docs/research.md) *(from memory, unverified)*
 
 ## Development
 
