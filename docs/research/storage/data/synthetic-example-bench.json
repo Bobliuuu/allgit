@@ -1,0 +1,22 @@
+{
+  "schema": "allgit-bench/v1",
+  "synthetic": true,
+  "note": "HAND-MADE numbers used only to test scripts/storage_score.py. NOT measurements. Do not cite.",
+  "machine": {"description": "none (synthetic)"},
+  "results": [
+    {"design": "A-loose",   "workload": "w-sparse", "cache": "cold", "correct": true,
+     "metrics": {"stored_bytes": 1000, "gets": 900, "p95_ms": [80, 90, 100]}},
+    {"design": "B-pack",    "workload": "w-sparse", "cache": "cold", "correct": true,
+     "metrics": {"stored_bytes": 800,  "gets": 100, "p95_ms": [60, 70, 80]}},
+    {"design": "C-pack-zstd","workload": "w-sparse", "cache": "cold", "correct": true,
+     "metrics": {"stored_bytes": 500,  "gets": 100, "p95_ms": [90, 100, 110]}},
+    {"design": "D-bigblock","workload": "w-sparse", "cache": "cold", "correct": true,
+     "metrics": {"stored_bytes": 600,  "gets": 20,  "p95_ms": [200, 210, 220]}},
+    {"design": "E-broken",  "workload": "w-sparse", "cache": "cold", "correct": false,
+     "metrics": {"stored_bytes": 100,  "gets": 1,   "p95_ms": [1, 1, 1]}},
+    {"design": "A-loose",   "workload": "w-sparse", "cache": "warm", "correct": true,
+     "metrics": {"stored_bytes": 1000, "gets": 0, "p95_ms": [5, 5, 5]}},
+    {"design": "B-pack",    "workload": "w-sparse", "cache": "warm", "correct": true,
+     "metrics": {"stored_bytes": 800,  "gets": 0, "p95_ms": [4, 4, 6]}}
+  ]
+}
