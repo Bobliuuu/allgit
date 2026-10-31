@@ -45,7 +45,7 @@ impl PackIndex {
             return Err(bad(idx_path, "index length does not match entry count"));
         }
         let mut entries = Vec::with_capacity(count);
-        for c in rest.chunks_exact(IDX_ENTRY) {
+        for c in rest.as_chunks::<IDX_ENTRY>().0 {
             let id = ObjectId::from_bytes(c[..32].try_into().unwrap());
             let off = u64::from_le_bytes(c[32..40].try_into().unwrap());
             let len = u32::from_le_bytes(c[40..44].try_into().unwrap());
@@ -173,7 +173,7 @@ impl Pack {
 /// Write a pack + index for `objects` (id, encoded bytes) into `dir`; returns the opened pack.
 /// Pack is renamed into place first, index last: a pack without an index is ignored.
 pub fn write_pack(dir: &Path, tmp_dir: &Path, mut objects: Vec<(ObjectId, Vec<u8>)>) -> Result<Pack, StoreError> {
-    objects.sort_by(|a, b| a.0.cmp(&b.0));
+    objects.sort_by_key(|o| o.0);
     objects.dedup_by(|a, b| a.0 == b.0);
     io(dir, fs::create_dir_all(dir))?;
     let mut pack = Vec::new();
