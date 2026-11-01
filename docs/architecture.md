@@ -5,16 +5,21 @@ Status legend: **[impl]** implemented and tested · **[design]** specified, not 
 ## Crates
 
 ```
-vcs-objects  ids, canonical codec, object types, name/path validation   (no I/O, no async)      [impl]
-vcs-store    ObjectStore trait; MemoryStore, LocalStore (loose objects) (sync I/O)              [impl]
-vcs-repo     zones, refs, index, workspace, status/diff/commit/log, snapshots, fsck             [impl]
-vcs-cli      `vcs` binary (clap)                                                                [impl]
-vcs-remote   Backend trait, Mem/Fs backends, manifest, publish step machine, sparse fetch, model tests [impl]
-vcs-store-s3  S3-compatible Backend (not wired into the CLI)                                    [impl]
-vcs-merge     merge-base, diff3, three-way tree merge                                            [impl]
-vcs-bench     dataset generator, criterion benchmarks                                            [impl]
-(operation log, packs, locks and git import/export live in vcs-repo / vcs-remote)
+vcs-objects   ids, canonical codec, object types, name/path validation   (no I/O, no async)      [impl]
+vcs-store     ObjectStore trait; MemoryStore, LocalStore (loose objects), packs (sync I/O)       [impl]
+vcs-repo      zones, refs, index, workspace, status/diff/commit/log, snapshots, fsck, op log, locks,
+              stash, rebase, GC, git/p4 import and export, publish/fetch/sync/clone              [impl]
+vcs-remote    Backend trait, Mem/Fs backends, manifest, publish step machine, remote packs,
+              sparse and lazy fetch, model tests                                                 [impl]
+vcs-store-s3  S3-compatible Backend (selectable with s3:// remotes; https behind feature `tls`) [impl]
+vcs-merge     merge-base, diff3, tree merge, rename-aware merge, optional structural merge       [impl]
+vcs-server    `vcs-server` binary: HTTP validating writer + HttpBackend (auth, audit, TLS)       [impl]
+vcs-assist-claude  helper binary for `merge --assist` (Anthropic API, never run live)            [impl]
+vcs-cli       `vcs` and `git-remote-allgit` binaries (clap)                                     [impl]
+vcs-bench     dataset generator, criterion benchmarks, s3bench, storebench                       [impl]
 ```
+Outside the cargo workspace (research only, not built by CI): `vcs-storage-lab`, `vcs-storage-lab-packing`,
+`vcs-compress-lab`. `fuzz/` is its own cargo-fuzz project (decoders, pack, import, S3 list parsing).
 Crates are only created when a real boundary exists. The core never depends on Tokio or any S3 SDK.
 
 ## Local repository layout [impl]
@@ -104,7 +109,7 @@ Preflight validates every path before touching disk: path syntax, zone ownership
 write through symlinked or file ancestors (tested with a symlink pointing outside the worktree). `.vcs` is rejected
 case-insensitively in any component. Dirty zones refuse to switch.
 
-## Remote design [impl: protocol + Fs/Mem backends; S3 backend exists, not wired to the CLI]
+## Remote design [impl: protocol, Fs/Mem/S3/HTTP backends, remote packs]
 
 **Required backend capabilities** (`vcs-remote::Backend`): read-after-write for new keys, range GET, create-only PUT
 (S3 `If-None-Match: *`), and compare-and-swap PUT on an opaque version tag (S3 `If-Match`). Providers lacking either
@@ -162,17 +167,17 @@ branches with local changes; refuses non-fast-forward with guidance; unchanged b
 `sync` (fast-forward only; dirty zones and divergence are reported, never touched), `clone_from` (sparse by zone).
 Zone definitions travel in the manifest, merged atomically with the publishing tx, with name/path/overlap conflicts rejected.
 
-**Not done:** S3 backend CLI wiring, server-enforced locks (needs a validating writer; locks today are validated by the client, see [locks.md](locks.md)), range-read optimisation, destructive GC,
-manifest `applied` window > 4096 (older retries are rejected as Diverged, never double-applied).
+**Not done:** S3 and HTTP remote GC and remote pack compaction (#232, #248), S3 connection reuse (#243), a cloud TLS interop test, manifest `applied` window > 4096 (older retries are rejected as Diverged, never double-applied). Locks are enforced when publishing through `vcs-server` ([server.md](server.md)); against a bare directory or bucket they are validated by the client only ([locks.md](locks.md)). Remote objects are published as one pack per transaction ([remote-packs.md](remote-packs.md)).
 
-## Garbage collection [design]
-Mark from: all branch heads in retained manifests, named snapshots, protected operation history, tags, in-flight
-transactions (leases), pinned objects. Sweep only objects older than the grace window and absent from the mark set.
-No destructive GC will be implemented until the reachability tests (including a concurrent-publish model test) exist.
-Local `fsck` (read-only) and `vcs gc --dry-run` (report-only) exist today. Full design: [gc.md](gc.md).
+## Garbage collection [impl: local and directory remotes]
+Mark from: all branch heads, named snapshots, tags, protected operation history, in-flight transactions (leases).
+Sweep only objects older than the grace window and absent from the mark set; `put` refreshes the age of a deduplicated
+object so a re-adopted orphan is not swept. `vcs gc` deletes locally; `vcs gc --remote --yes` does the same for directory
+remotes; `--dry-run` only reports. S3 and HTTP remotes are refused (#232). Models: sharded commit and GC race in
+`crates/vcs-remote/tests`. Full design: [gc.md](gc.md).
 
-## Merge / operations / semantic layers [merge, rebase, op log impl; semantic merge design]
-See [merge.md](merge.md), [rebase.md](rebase.md), [operations.md](operations.md). Semantic merge is only research notes. Hooks used: `Commit.change_id` (fresh per new commit today; rewrite operations
+## Merge / operations / semantic layers [impl]
+See [merge.md](merge.md), [rebase.md](rebase.md), [operations.md](operations.md), [assist.md](assist.md). Structural merge (Rust, Python, TypeScript, Go) is behind cargo features and off by default; rename-aware merge is opt-in; assisted merge has never been called live. Hooks used: `Commit.change_id` (fresh per new commit today; rewrite operations
 will carry it forward), `Transaction` as the unit that an operation-log entry will reference.
 
 ## Change identity [impl for create, rebase; others partial]
@@ -195,11 +200,13 @@ cherry-pick creates a new id (records the source in metadata); two live commits 
 | D9 | Tree flatten | whole-tree per zone | O(n); subtree-skipping + lazy loading in M5 after measurement |
 
 ## Known limitations (honest list)
-- Merge: no rename detection; criss-cross merges and file/directory conflicts are errors. Rebase handles linear ranges only.
+- Merge: criss-cross merges and file/directory conflicts are errors; rename detection is opt-in. Rebase handles linear ranges only.
 - Operation log covers local refs/workspace only: snapshots, remote-tracking refs and unrecorded crash-window changes are not undoable, and `undo` across several zones is not atomic ([operations.md](operations.md)).
-- S3 backend is not selectable from the CLI; remotes are directories.
-- Packs: `repack` only; no deltas, chunking or range reads. GC: report-only, nothing is deleted.
-- Locks are advisory: no validating writer, no authn/authz, `unlock --break` is unrestricted, no clock-skew margin ([locks.md](locks.md)).
-- Git: import and a one-branch export prototype; no Perforce.
-- No filesystem monitor; a coarse repo lock is the only local concurrency control; `log` shows first-parent history per zone branch.
-- Symlinks unsupported in v1. `vcs rm` of the last file in your current directory removes the directory and the next command in it fails (observed, not yet filed).
+- Packs: `repack` only, no delta or entry compression, loose objects cost 4 KiB each on ext4 (no automatic repack yet). Chunk manifests cover big files.
+- GC: S3 and HTTP remotes are not supported; remote packs are never rewritten or compacted, so pack count grows with publishes.
+- Locks: enforced only through `vcs-server`; `unlock --break` is unrestricted; no clock-skew margin without `--skew-epsilon-ms` ([locks.md](locks.md)).
+- Server: plain HTTP unless built with `--features tls`; TLS never tested against a real cloud endpoint or public CA.
+- Git: import and an incremental export; the remote helper is lightly tested. Perforce: fixture-tested import only.
+- Windows is compile-checked in CI, never run. Symlink handling on Windows is untested.
+- S3 numbers come from one run from one residential connection; no in-region measurement.
+- No filesystem monitor; a coarse repo lock is the only local concurrency control; `log` shows first-parent history per zone branch; `status` on 100k-file flat repos is slower than git.

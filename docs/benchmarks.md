@@ -317,6 +317,55 @@ baselines earlier in this file (load), so this row pair is not reliable evidence
 Reproduce: `cargo build --release -p vcs-cli -p vcs-bench && scripts/bench_scale.sh flat 100000 5` (also `deep`, `binary`;
 needs about 1.5 GB free for flat, about 2.5 GB for deep/binary per tool at 100k; the script aborts below `MIN_FREE_GB`, default 4).
 
+## 100k files again on current main: git vs vcs, 2026-11-01 (before and after)
+
+Same harness and method as the section above (`scripts/bench_scale.sh <layout> 100000 5`, 5 runs per cell, median
+reported, warm cache, seed 42, datasets generated per tool and deleted afterwards). Raw runs are in the box's output
+files `~/rt/bench100k/out-flat.log`, `out-deep.log`, `out-binary.log`; only completed tables are used here.
+
+Machine: the same Linux box as before (AMD EPYC 7J13, 30 cores, 216 GiB RAM, ext4, git 2.34.1, kernel 6.8), release
+build of vcs. Runs started 2026-11-01 01:30, 01:37 and 01:53 UTC; load1 at the start was 4.4 (flat), 10.7 (deep), 6.7
+(binary). The exact commit of the vcs build was not recorded; the source tree synced to the box for this run already
+contained the stat-cache `add`, cache-tree `commit` (#229) and the big-file and checkout perf pass (#221), and the
+real local GC, but I could not tell whether it contained the newest main commits.
+
+**Load caveat (read this before comparing cells).** The harness runs all git cells first, then all vcs cells. Other
+agents were using the box, and the vcs cells ran at a higher load than the git cells of the same run (flat: git cells
+at load1 3.3 to 4.4, vcs cells 11 to 21; deep: git 3.0 to 5.1 apart from the first cell at 10, vcs 7 to 20; binary: git 4.0
+to 6.7, vcs 24 to 36). That makes the vcs numbers pessimistic: on a quiet box they should be the same or better. It
+also means the "before" column below, which had different load on both sides, is not strictly comparable with the "after"
+column. Nothing was re-run on a quiet machine.
+
+Median ms, git / vcs. "Before" is the table of the 2026-10-31 run above (vcs at `c47fcda`); "after" is this run.
+
+| workflow | flat before | flat after | deep before | deep after | binary before | binary after |
+|---|---|---|---|---|---|---|
+| add . (fresh index) | 22,170 / 47,741 | 9,562 / 12,510 | 15,189 / 39,804 | 11,593 / 14,676 | 23,634 / 29,297 | 22,252 / 13,959 |
+| commit (all staged) | 729 / 684 | 647 / 291 | 19,041 / 30,405 | 15,861 / 12,517 | 652 / 637 | 639 / 344 |
+| status, clean | 121 / 558 | 106 / 188 | 1,034 / 1,150 | 1,032 / 508 | 106 / 555 | 104 / 521 |
+| status, 1% modified | 122 / 570 | 117 / 199 | 1,080 / 1,145 | 1,083 / 516 | 112 / 671 | 116 / 404 |
+| log (50 commits) | 20.1 / 3.8 | 19.9 / 4.3 | 34.4 / 4.0 | 35.0 / 4.5 | 20.7 / 4.1 | 21.4 / 4.1 |
+| checkout (1% differ) | 605 / 1,067 | 584 / 285 | 865 / 3,200 | 748 / 497 | 580 / 1,121 | 577 / 297 |
+
+Store size after the first commit (KiB, git / vcs): flat 421,656 / 439,972; deep 777,884 / 792,848; binary 821,660 /
+840,036. Both store loose objects; vcs does not compress.
+
+What the data says (differences well outside the run-to-run spread of the raw runs):
+- vcs is now faster than git at `commit` on all three layouts (flat 291 vs 647 ms, deep 12.5 vs 15.9 s, binary 344 vs 639 ms), at `checkout` (about 2x on flat and binary, 1.5x on deep), at `log`, and at `status` on deep (508 vs 1,032 ms).
+- `add .` on 100k files: git is still faster on flat (9.6 vs 12.5 s) and deep (11.6 vs 14.7 s); vcs is faster on binary (14.0 vs 22.3 s). Before, git was 2.2x to 2.6x faster on flat and deep.
+- `status` on flat and binary is still slower in vcs (188 vs 106 ms and 521 vs 104 ms). The binary vcs cells ran at load1 28 to 35, so that gap is the least reliable one in the table.
+- The previous table's biggest vcs losses (flat `add` 2.2x, deep `checkout` 3.7x, flat and binary `status` 4.6x to 6x) are all smaller now, but the machine load differed, so the size of the improvement is not a clean measurement.
+
+PRs that landed between the two runs (#195 to #239 on main): the ones that touch the measured local paths are #229
+(stat-cache `add`, cache-tree `commit`, racy refresh, faster index load) and #221 (faster chunking, fsck and checkout
+at scale). The rest of that range (remote packs #212, auth and server #205 #207 #215, git remote helper #210, assisted
+merge #208, rename-aware merge #219, real GC #235, tag sync #206, and fixes) does not touch the local `add`, `commit`,
+`status`, `log` or `checkout` paths measured here, but I did not bisect, so I do not attribute any cell to a single PR.
+Local per-change measurements are in the "After" sections of this file.
+
+Not measured in this run: cold cache, a quiet machine, fsmonitor or untracked-cache git, 100k-commit history,
+git with repacked objects, macOS or Windows.
+
 ## Caveats
 
 - One machine, one run session, `--quick` sampling; treat differences under ~2x as noise.
