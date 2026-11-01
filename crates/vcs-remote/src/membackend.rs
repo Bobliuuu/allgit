@@ -79,7 +79,8 @@ impl MemBackend {
         self.inner.lock().unwrap().objects.keys().cloned().collect()
     }
     /// Test hook: corrupt object `id` wherever it lives. A loose object is replaced by `evil`;
-    /// inside a pack the object's bytes are flipped in place (the pack keeps its length).
+    /// inside a pack the object's bytes are flipped in place (the pack keeps its length; in a v2
+    /// pack the entry is also re-marked raw so it still decodes and fails the hash check).
     #[doc(hidden)]
     pub fn tamper_object(&self, id: &vcs_objects::ObjectId, evil: Vec<u8>) {
         let h = id.to_hex();
@@ -93,7 +94,13 @@ impl MemBackend {
             if let Some((off, len)) = idx.find(id) {
                 let pk = format!("{}.pack", k.trim_end_matches(".idx"));
                 let mut data = self.inner.lock().unwrap().objects[&pk].0.clone();
-                for b in &mut data[off as usize..off as usize + len as usize] {
+                let mut range = off as usize..off as usize + len as usize;
+                if idx.version() == 2 {
+                    // keep the entry decodable (raw codec) so the failure is a hash mismatch
+                    data[range.start] = vcs_store::pack::CODEC_RAW;
+                    range.start += 1;
+                }
+                for b in &mut data[range] {
                     *b ^= 0x5A;
                 }
                 return self.tamper(&pk, data);

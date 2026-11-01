@@ -127,7 +127,8 @@ fn incremental_fetch_downloads_only_new_objects() {
     let before = remote.bytes_read();
     fetch_heads(&remote, &dst, None).unwrap();
     let used = remote.bytes_read() - before;
-    assert!(used < 2000, "incremental fetch read {used} bytes");
+    // 4000: a v2 pack index carries a 1 KiB fanout table that the fetch downloads with each index
+    assert!(used < 4000, "incremental fetch read {used} bytes");
     assert!(dst.contains(&h2).unwrap());
 }
 
