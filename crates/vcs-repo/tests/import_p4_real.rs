@@ -67,8 +67,8 @@ fn commit_for(r: &Repo, n: u64) -> ObjectId {
 }
 
 /// Known discrepancies (documented in docs/research/perforce-benchmark.md); skipped by the tree comparison:
-/// * depot paths with p4-escaped characters (`%40` for `@`, `%23` `#`, `%25` `%`, `%2A` `*`) are kept escaped;
-///   `p4 sync` writes the decoded name (checked by the ignored test below),
+/// * depot paths with p4-escaped characters (`%40` `%23` `%25` `%2A`): decoded since the p4-escaped-paths fix, and
+///   checked by `real_escaped_names_are_decoded`,
 /// * `utf16` file content: `p4 print` returns UTF-8 text, `p4 sync` writes the UTF-16 bytes.
 fn known_diff(l: &str) -> bool {
     let p = path_of(l);
@@ -116,7 +116,6 @@ fn real_metadata_matches() {
 
 /// Ground truth for the escaped-name discrepancy: `p4 sync` wrote `we@ird#na%me*.txt`.
 #[test]
-#[ignore = "known discrepancy: percent-escaped depot paths are not decoded (see issue)"]
 fn real_escaped_names_are_decoded() {
     let (r, _d) = {
         let d = tempfile::tempdir().unwrap();
