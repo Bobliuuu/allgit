@@ -514,3 +514,82 @@ pub fn write_pack_fmt(dir: &Path, tmp_dir: &Path, mut objects: Vec<(ObjectId, Ve
     }
     Pack::open(&ip)
 }
+
+struct HashWriter<W: Write> {
+    inner: W,
+    hasher: blake3::Hasher,
+    len: u64,
+}
+
+impl<W: Write> HashWriter<W> {
+    fn put(&mut self, b: &[u8]) -> std::io::Result<()> {
+        self.hasher.update(b);
+        self.len += b.len() as u64;
+        self.inner.write_all(b)
+    }
+}
+
+/// Stream `count` objects (id, encoded bytes) into one new pack + index under `<store>/pack`,
+/// without holding the whole pack in memory. Same format and crash order as [`write_pack`]:
+/// data fsynced, pack renamed, index renamed last, directories fsynced.
+pub fn write_pack_streaming<'a>(
+    store_dir: &Path,
+    count: usize,
+    objects: impl Iterator<Item = Result<(ObjectId, std::borrow::Cow<'a, [u8]>), StoreError>>,
+) -> Result<Pack, StoreError> {
+    let (dir, tmp_dir) = (store_dir.join("pack"), store_dir.join("tmp"));
+    io(&dir, fs::create_dir_all(&dir))?;
+    let tmp = tmp_dir.join(format!("stream.{}.{:p}.packtmp", std::process::id(), &count));
+    let mut ents: Vec<(ObjectId, u64, u32)> = Vec::with_capacity(count);
+    let sum = {
+        let f = io(&tmp, fs::File::create(&tmp))?;
+        let mut w = HashWriter {
+            inner: std::io::BufWriter::with_capacity(1 << 20, f),
+            hasher: blake3::Hasher::new(),
+            len: 0,
+        };
+        io(&tmp, w.put(PACK_MAGIC))?;
+        io(&tmp, w.put(&(count as u32).to_le_bytes()))?;
+        for o in objects {
+            let (id, enc) = o?;
+            io(&tmp, w.put(&(enc.len() as u32).to_le_bytes()))?;
+            ents.push((id, w.len, enc.len() as u32));
+            io(&tmp, w.put(&enc))?;
+        }
+        let sum = *w.hasher.finalize().as_bytes();
+        io(&tmp, w.inner.write_all(&sum))?;
+        w.len += 32;
+        let f = io(&tmp, w.inner.into_inner().map_err(|e| e.into_error()))?;
+        io(&tmp, f.sync_all())?;
+        (sum, w.len)
+    };
+    let (sum, pack_len) = sum;
+    ents.sort_by_key(|e| e.0);
+    let mut idx = Vec::with_capacity(8 + 4 + 8 + 32 + ents.len() * IDX_ENTRY + 32);
+    idx.extend_from_slice(IDX_MAGIC);
+    idx.extend_from_slice(&(ents.len() as u32).to_le_bytes());
+    idx.extend_from_slice(&pack_len.to_le_bytes());
+    idx.extend_from_slice(&sum);
+    for (id, off, len) in &ents {
+        idx.extend_from_slice(id.as_bytes());
+        idx.extend_from_slice(&off.to_le_bytes());
+        idx.extend_from_slice(&len.to_le_bytes());
+    }
+    idx.extend_from_slice(blake3::hash(&idx).as_bytes());
+    let name = ObjectId::from_bytes(sum).to_hex();
+    let (pp, ip) = (dir.join(format!("pack-{name}.pack")), dir.join(format!("pack-{name}.idx")));
+    let itmp = tmp_dir.join(format!("stream.{}.{:p}.idxtmp", std::process::id(), &count));
+    {
+        let mut f = io(&itmp, fs::File::create(&itmp))?;
+        io(&itmp, f.write_all(&idx))?;
+        io(&itmp, f.sync_all())?;
+    }
+    io(&pp, fs::rename(&tmp, &pp))?;
+    io(&ip, fs::rename(&itmp, &ip))?;
+    #[cfg(unix)]
+    for d in [&dir, store_dir, &tmp_dir] {
+        let f = io(d, fs::File::open(d))?;
+        io(d, f.sync_all())?;
+    }
+    Pack::open(&ip)
+}
