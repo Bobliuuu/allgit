@@ -20,7 +20,7 @@ use vcs_server::{auth, backend_url, AuditLog, Config, Policy, RateLimit, Server,
 const USAGE: &str = "usage: vcs-server (--root <dir> | --backend <s3://...|dir>) --tokens <file> [--listen host:port] [--audit-log <file> [--audit-key <file>]] \
 [--rate-limit <burst>,<per-sec>] [--max-connections <n>] [--max-conns-per-ip <n>] [--auth-fail-limit <burst>,<per-sec>] [--max-body <bytes>] [--policy <file>] [--allowed-signers <file>] [--revoked-signers <file>] [--max-lease-secs N] [--skew-epsilon-ms N] [--tls-cert <pem> --tls-key <pem> [--tls-client-ca <pem>]] \
 [--config <file>] [--log-format json|text] [--log-level error|warn|info|debug] [--shutdown-grace <secs>] [--metrics-token <token|@file>] \
-[--backend-retries N] [--backend-timeout <secs>] [--breaker-threshold N] [--breaker-cooldown <secs>]\n       \
+[--backend-retries N] [--backend-timeout <secs>] [--breaker-threshold N] [--breaker-cooldown <secs>] [--check-client-cannot-write-manifest]\n       \
 vcs-server hash-token <token>\n       vcs-server audit verify <file> [--key <file>]";
 
 fn die(m: &str) -> ! {
@@ -90,10 +90,12 @@ fn main() {
     let (mut log_format, mut log_level, mut grace, mut metrics_tok) = (None, None, None, None);
     let (mut retries, mut timeout, mut brk_n, mut brk_cool) = (None, None, None, None);
     let (mut allowed_signers, mut revoked_signers) = (None, None);
+    let mut check_client = false;
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         let mut val = |n: &str| it.next().unwrap_or_else(|| die(&format!("{n} needs a value")));
         match a.as_str() {
+            "--check-client-cannot-write-manifest" => check_client = true,
             "--root" => root = Some(val("--root")),
             "--tokens" => tokens = Some(val("--tokens")),
             "--listen" => listen = val("--listen"),
@@ -149,6 +151,9 @@ fn main() {
     let table = TokenTable::parse(&text).unwrap_or_else(|e| die(&e));
     if table.is_empty() {
         die("tokens file has no entries");
+    }
+    if check_client {
+        backend_url::check_client_cannot_write_manifest(&backend_url, &|k| std::env::var(k).ok()).unwrap_or_else(|e| die(&e));
     }
     let backend = backend_url::open(&backend_url).unwrap_or_else(|e| die(&e));
     let mut cfg = Config::new(table);
