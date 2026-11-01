@@ -35,6 +35,7 @@ use crate::backend::{Backend, BackendError, Conditional};
 use crate::manifest::{self, Manifest, MAX_APPLIED};
 use crate::packfetch;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 use vcs_objects::{id_of_encoded, EntryMode, Object, ObjectId, Transaction};
 use vcs_store::pack::{build_pack, BuiltPack};
 use vcs_store::{ObjectStore, StoreError};
@@ -1264,11 +1265,18 @@ pub fn fetch_object(backend: &dyn Backend, id: &ObjectId) -> Result<Object, Publ
 /// [`packfetch::fetch_many`]), verifying every hash. Order of the result is not specified.
 /// Nothing is stored. An id the remote lacks is an error.
 pub fn fetch_objects(backend: &dyn Backend, ids: &[ObjectId]) -> Result<Vec<(ObjectId, Object)>, PublishError> {
+    fetch_objects_with(backend, &packfetch::PackCatalog::new(), ids)
+}
+
+/// [`fetch_objects`] with a shared [`packfetch::PackCatalog`] (packs listed and indexed once).
+/// `fetch_many_with` has already verified every hash, on the wire bytes.
+pub fn fetch_objects_with(
+    backend: &dyn Backend,
+    cat: &packfetch::PackCatalog,
+    ids: &[ObjectId],
+) -> Result<Vec<(ObjectId, Object)>, PublishError> {
     let mut out = Vec::with_capacity(ids.len());
-    for (id, data) in packfetch::fetch_many(backend, ids)? {
-        if id_of_encoded(&data) != id {
-            return Err(PublishError::Remote(format!("object {id} fails hash verification")));
-        }
+    for (id, data) in packfetch::fetch_many_with(backend, cat, ids)? {
         out.push((
             id,
             Object::decode(&data).map_err(|e| PublishError::Remote(format!("object {id}: {e}")))?,
@@ -1286,7 +1294,7 @@ pub fn fetch_heads(
     zones: Option<&[String]>,
 ) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
     let (m, _) = load_manifest(backend)?;
-    fetch_heads_impl(backend, local, zones, false, &m)
+    fetch_heads_impl(backend, local, zones, false, &m, &Arc::new(packfetch::PackCatalog::new()))
 }
 
 /// Fetch the closure (commits and trees only) of every remote tag of `zones` (None = all) into
@@ -1307,8 +1315,21 @@ pub fn fetch_tags_lazy_with(
     zones: Option<&[String]>,
     m: &Manifest,
 ) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
+    fetch_tags_lazy_shared(backend, local, zones, m, &Arc::new(packfetch::PackCatalog::new()))
+}
+
+/// [`fetch_tags_lazy_with`] sharing a [`packfetch::PackCatalog`] with the caller's other steps.
+/// With no tag to fetch it makes no request at all.
+pub fn fetch_tags_lazy_shared(
+    backend: &dyn Backend,
+    local: &dyn ObjectStore,
+    zones: Option<&[String]>,
+    m: &Manifest,
+    cat: &Arc<packfetch::PackCatalog>,
+) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
+    let mut src = packfetch::RemoteSource::new(backend, packfetch::ReadAhead::None).with_catalog(cat.clone());
     for ((z, n), id) in &m.tags {
         if zones.is_some_and(|w| !w.iter().any(|x| x == z)) {
             continue;
@@ -1316,7 +1337,12 @@ pub fn fetch_tags_lazy_with(
         post_order(
             *id,
             &mut |i| Ok(local.contains(i)?),
-            &mut |i| fetch_object(backend, i),
+            &mut |i| {
+                let data = src
+                    .fetch(i)?
+                    .ok_or_else(|| PublishError::Remote(format!("object {i} missing on remote")))?;
+                Object::decode(&data).map_err(|e| PublishError::Remote(format!("object {i}: {e}")))
+            },
             &mut |_, o| {
                 local.put(o)?;
                 Ok(())
@@ -1338,7 +1364,7 @@ pub fn fetch_heads_lazy(
     zones: Option<&[String]>,
 ) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
     let (m, _) = load_manifest(backend)?;
-    fetch_heads_impl(backend, local, zones, true, &m)
+    fetch_heads_impl(backend, local, zones, true, &m, &Arc::new(packfetch::PackCatalog::new()))
 }
 
 /// [`fetch_heads_lazy`] against a manifest the caller already holds, so one fetch reads the
@@ -1349,7 +1375,19 @@ pub fn fetch_heads_lazy_with(
     zones: Option<&[String]>,
     m: &Manifest,
 ) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
-    fetch_heads_impl(backend, local, zones, true, m)
+    fetch_heads_impl(backend, local, zones, true, m, &Arc::new(packfetch::PackCatalog::new()))
+}
+
+/// [`fetch_heads_lazy_with`] sharing a [`packfetch::PackCatalog`] with the caller's other steps,
+/// so the packs are listed and indexed once per operation, not once per step.
+pub fn fetch_heads_lazy_shared(
+    backend: &dyn Backend,
+    local: &dyn ObjectStore,
+    zones: Option<&[String]>,
+    m: &Manifest,
+    cat: &Arc<packfetch::PackCatalog>,
+) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
+    fetch_heads_impl(backend, local, zones, true, m, cat)
 }
 
 /// File objects (and the chunks of chunked files) probed per lazy fetch. A lazy fetch does not
@@ -1360,7 +1398,7 @@ pub const LAZY_VERIFY_BUDGET: usize = 128;
 
 /// Check that up to `budget` of `files` exist on the remote and, for chunk manifests among
 /// them, that every chunk exists too.
-fn verify_files_exist(backend: &dyn Backend, files: &[ObjectId], budget: usize) -> Result<(), PublishError> {
+fn verify_files_exist(backend: &dyn Backend, cat: &packfetch::PackCatalog, files: &[ObjectId], budget: usize) -> Result<(), PublishError> {
     let files = &files[..files.len().min(budget)];
     let missing = |what: &str, ids: Vec<ObjectId>| {
         PublishError::Remote(format!(
@@ -1369,7 +1407,7 @@ fn verify_files_exist(backend: &dyn Backend, files: &[ObjectId], budget: usize) 
             ids.len()
         ))
     };
-    let probed = packfetch::probe_kinds(backend, files)?;
+    let probed = packfetch::probe_kinds_with(backend, cat, files)?;
     let gone: Vec<ObjectId> = probed.iter().filter(|(_, k)| k.is_none()).map(|(i, _)| *i).collect();
     if !gone.is_empty() {
         return Err(missing("file", gone));
@@ -1383,14 +1421,14 @@ fn verify_files_exist(backend: &dyn Backend, files: &[ObjectId], budget: usize) 
         return Ok(());
     }
     let mut chunks = Vec::new();
-    for (_, o) in fetch_objects(backend, &manifests)? {
+    for (_, o) in fetch_objects_with(backend, cat, &manifests)? {
         if let Object::Chunked(m) = o {
             chunks.extend(m.chunks.iter().map(|c| c.id));
         }
     }
     chunks.sort();
     chunks.dedup();
-    let gone: Vec<ObjectId> = packfetch::probe_kinds(backend, &chunks)?
+    let gone: Vec<ObjectId> = packfetch::probe_kinds_with(backend, cat, &chunks)?
         .into_iter()
         .filter(|(_, k)| k.is_none())
         .map(|(i, _)| i)
@@ -1408,6 +1446,7 @@ fn fetch_heads_impl(
     zones: Option<&[String]>,
     skip_files: bool,
     m: &Manifest,
+    cat: &Arc<packfetch::PackCatalog>,
 ) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
@@ -1428,7 +1467,11 @@ fn fetch_heads_impl(
         .filter(|((a, _), _)| !zones.is_some_and(|w| !w.iter().any(|x| x == a)))
         .map(|(_, id)| *id)
         .collect();
-    let mut src = packfetch::RemoteSource::new(backend, ahead).with_roots(roots);
+    let mut src = packfetch::RemoteSource::new(backend, ahead)
+        .with_roots(roots)
+        .with_catalog(cat.clone());
+    // Wire bytes of fetched objects, kept until emitted so the store need not re-encode and re-hash them.
+    let raw: std::cell::RefCell<HashMap<ObjectId, Vec<u8>>> = Default::default();
     for ((a, b), id) in &m.branches {
         if zones.is_some_and(|w| !w.iter().any(|x| x == a)) {
             continue;
@@ -1441,12 +1484,12 @@ fn fetch_heads_impl(
                 let data = src
                     .fetch(i)?
                     .ok_or_else(|| PublishError::Remote(format!("object {i} missing on remote")))?;
-                if id_of_encoded(&data) != *i {
-                    return Err(PublishError::Remote(format!("object {i} fails hash verification")));
-                }
-                Object::decode(&data).map_err(|e| PublishError::Remote(format!("object {i}: {e}")))
+                // `RemoteSource::fetch` has verified `data` against `i` already.
+                let o = Object::decode(&data).map_err(|e| PublishError::Remote(format!("object {i}: {e}")))?;
+                raw.borrow_mut().insert(*i, data);
+                Ok(o)
             },
-            &mut |_, o| {
+            &mut |i_, o| {
                 if let (true, Object::Tree(t)) = (skip_files, o) {
                     for e in t.entries().iter().filter(|e| e.mode != EntryMode::Directory) {
                         if new_files.len() < LAZY_VERIFY_BUDGET && !local.contains(&e.id)? {
@@ -1454,14 +1497,19 @@ fn fetch_heads_impl(
                         }
                     }
                 }
-                local.put(o)?;
+                match raw.borrow_mut().remove(i_) {
+                    Some(enc) => local.put_encoded_prehashed(i_, &enc)?,
+                    None => {
+                        local.put(o)?;
+                    }
+                }
                 Ok(())
             },
             &mut seen,
             &|o| deps_of(o, skip_files),
         )?;
         if skip_files {
-            verify_files_exist(backend, &new_files, LAZY_VERIFY_BUDGET).map_err(|e| PublishError::Remote(format!("{a}/{b}: {e}")))?;
+            verify_files_exist(backend, cat, &new_files, LAZY_VERIFY_BUDGET).map_err(|e| PublishError::Remote(format!("{a}/{b}: {e}")))?;
         }
         out.push((a.clone(), b.clone(), *id));
     }

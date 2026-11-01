@@ -65,6 +65,24 @@ pub trait ObjectStore: Send + Sync {
     fn put_blob(&self, data: &[u8]) -> Result<ObjectId, StoreError> {
         self.put(&Object::Blob(data.to_vec()))
     }
+    /// Store an object from its canonical encoding `enc`, whose id the caller already verified
+    /// (`id == vcs_objects::id_of_encoded(enc)`), without decoding, re-encoding or hashing it
+    /// again. The caller must have checked that `enc` is a well-formed object (a decode, or for
+    /// a blob the two header bytes); a later `get` still decodes and re-verifies it. The default
+    /// decodes and goes through `put`, so it is always correct, just not cheaper.
+    fn put_encoded_prehashed(&self, id: &ObjectId, enc: &[u8]) -> Result<(), StoreError> {
+        let obj = Object::decode(enc).map_err(|e| StoreError::Corrupt {
+            id: *id,
+            reason: e.to_string(),
+        })?;
+        if self.put(&obj)? != *id {
+            return Err(StoreError::Corrupt {
+                id: *id,
+                reason: "encoded object does not hash to its id".into(),
+            });
+        }
+        Ok(())
+    }
     /// Store a blob whose id the caller already computed (`id == vcs_objects::blob_id(data)`), so
     /// the store need not hash it again. The default re-derives the id and checks it.
     fn put_blob_prehashed(&self, id: &ObjectId, data: &[u8]) -> Result<(), StoreError> {
@@ -777,6 +795,11 @@ impl ObjectStore for LocalStore {
         Ok(id)
     }
 
+    fn put_encoded_prehashed(&self, id: &ObjectId, enc: &[u8]) -> Result<(), StoreError> {
+        debug_assert_eq!(*id, vcs_objects::id_of_encoded(enc));
+        self.store_encoded(id, &[], enc)
+    }
+
     fn put_blob_prehashed(&self, id: &ObjectId, data: &[u8]) -> Result<(), StoreError> {
         debug_assert_eq!(*id, vcs_objects::blob_id(data));
         // Same bytes as `Object::Blob(data).encode()`, written without building that copy.
@@ -949,6 +972,40 @@ mod tests {
         assert!(matches!(s.get(&missing), Err(StoreError::NotFound(_))));
         s.sync().unwrap();
         assert_eq!(s.list().unwrap(), vec![id]);
+    }
+
+    /// `put_encoded_prehashed` stores exactly what `put` would, in both stores, in batches large
+    /// enough to become a pack, and the default (memory) path refuses bytes that are not an object.
+    fn encoded_roundtrip(s: &dyn ObjectStore) {
+        let mut ids = Vec::new();
+        for i in 0..300u32 {
+            let obj = Object::Blob(format!("blob number {i}").into_bytes());
+            let enc = obj.encode();
+            let id = vcs_objects::id_of_encoded(&enc);
+            s.put_encoded_prehashed(&id, &enc).unwrap();
+            ids.push((id, obj));
+        }
+        s.sync().unwrap();
+        for (id, obj) in &ids {
+            assert_eq!(&s.get(id).unwrap(), obj);
+            assert_eq!(s.put(obj).unwrap(), *id, "same id through put");
+        }
+        assert_eq!(s.list().unwrap().len(), ids.len());
+    }
+
+    #[test]
+    fn put_encoded_prehashed_matches_put() {
+        encoded_roundtrip(&MemoryStore::new());
+        let d = tempfile::tempdir().unwrap();
+        encoded_roundtrip(&LocalStore::open(d.path().join("o")).unwrap());
+        let m = MemoryStore::new();
+        let bad = ObjectId::from_bytes([9; 32]);
+        assert!(m.put_encoded_prehashed(&bad, b"\xff garbage").is_err());
+        let enc = Object::Blob(b"x".to_vec()).encode();
+        assert!(
+            m.put_encoded_prehashed(&bad, &enc).is_err(),
+            "wrong id is refused by the default path"
+        );
     }
 
     #[test]
