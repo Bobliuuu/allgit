@@ -275,6 +275,7 @@ fn build_inner(cmd: &Cmd) -> Result<J, Error> {
                 color: false,
                 paths: paths.clone(),
                 x: x.clone(),
+                trust: None,
             };
             let commits = crate::logfmt::select(&repo, &cwd, &zone, branch.as_deref(), *limit, &o)?
                 .0
