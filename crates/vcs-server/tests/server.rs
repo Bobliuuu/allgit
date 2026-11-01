@@ -297,3 +297,41 @@ fn holder_may_publish_locked_path_others_may_not() {
     let e = publish(&bob, &s, tx("z", Some(c2), c3, vec![], "bob"), "bob", 1_600).unwrap_err();
     assert!(matches!(e, PublishError::LockedBy { .. }), "{e}");
 }
+
+/// #232: touch / object age / clock over HTTP. A GC-capable backend behind the server makes the
+/// client a GC-capable backend (`conformance_gc`), with roles enforced; a backend that cannot be
+/// collected, or an old server, keeps `supports_gc() == false`.
+#[test]
+fn gc_primitives_over_http_follow_roles_and_the_backend() {
+    let d = tempfile::tempdir().unwrap();
+    let fs = Arc::new(FsBackend::open(d.path().join("r")).unwrap());
+    let srv = Server::start(fs.clone(), Config::new(table()), "127.0.0.1:0").unwrap();
+    let url = format!("http://{}", srv.local_addr());
+    let admin = client(&url, "t-admin");
+    assert!(admin.supports_gc());
+    vcs_remote::backend::conformance_gc(&admin);
+    // roles: the clock is for anyone, ages for admins, touch for writers
+    fs.put_if_absent("objects/aa/bb", b"x").unwrap();
+    assert!(client(&url, "t-reader").now_ms().is_ok());
+    assert!(client(&url, "t-alice").modified_ms("objects/aa/bb").unwrap_err().to_string().contains("403"));
+    assert!(client(&url, "t-reader").touch("objects/aa/bb").unwrap_err().to_string().contains("403"));
+    assert!(client(&url, "t-alice").touch("objects/aa/bb").unwrap());
+    assert!(!client(&url, "t-alice").touch("objects/aa/missing").unwrap());
+    assert!(admin.modified_ms("objects/aa/bb").unwrap().is_some());
+    // the manifest and shelf keys are not for a writer to touch
+    fs.put_if_absent(manifest::KEY, b"m").unwrap();
+    assert!(client(&url, "t-alice").touch(manifest::KEY).unwrap_err().to_string().contains("403"));
+    assert!(client(&url, "t-alice").touch("shelves/alice/w/meta").unwrap_err().to_string().contains("403"));
+    // unauthenticated requests learn nothing
+    assert!(client(&url, "nope").now_ms().is_err());
+    // a backend that cannot be collected: 501, supports_gc stays false (no handshake is attempted)
+    let (_s2, _m, url2) = start(1);
+    let c = client(&url2, "t-admin");
+    assert!(!c.supports_gc());
+    assert!(c.now_ms().is_err());
+    // the anchored clock does not hit the network on every reading
+    let c = client(&url, "t-alice");
+    let a = c.now_ms().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    assert!(c.now_ms().unwrap() >= a + 25);
+}
