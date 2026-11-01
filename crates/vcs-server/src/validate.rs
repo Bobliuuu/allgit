@@ -165,7 +165,9 @@ pub fn validate_and_normalize(
         }
         let foreign_live = o.filter(|l| live(l.expires_at, now) && l.holder != who.name);
         if let Some(n) = n {
-            if n.holder != who.name && n.holder != o.map(|l| l.holder.clone()).unwrap_or_default() {
+            // A changed lock record always names the writer: nobody may renew or re-stamp a lock in
+            // another principal's name, live or expired (an unchanged record is skipped above).
+            if n.holder != who.name {
                 return Err(Reject::Forbidden(format!(
                     "lock holder {:?} is not the authenticated principal {:?}",
                     n.holder, who.name
