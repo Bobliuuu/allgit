@@ -84,6 +84,7 @@ Commands:
   unlock         Release locks you hold (`--break` removes anyone's lock; the server requires an admin token)
   locks          Show locks recorded on the remote (as of now; advisory until a validating writer exists)
   fetch          Download remote objects and update remote-tracking refs (local branches untouched)
+  prefetch       Download the file contents of subscribed zones' heads now (to work offline later)
   sync           Fetch, then fast-forward local branches where safe
   fsck           Verify all objects and graph invariants
   repack         Move loose objects into a pack (one pack + index under .vcs/objects/pack). With --format, existing packs are rewritten to that format too
@@ -2612,6 +2613,23 @@ Usage: vcs fetch [OPTIONS] [SOURCE]
 
 Arguments:
   [SOURCE]  Fetch from this bundle file instead of the remote
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --zone <ZONES>   
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --stats          Print the number of remote requests and bytes transferred
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+## `vcs prefetch`
+
+```text
+Download the file contents of subscribed zones' heads now (to work offline later)
+
+Usage: vcs prefetch [OPTIONS]
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)

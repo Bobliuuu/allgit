@@ -565,6 +565,14 @@ enum Cmd {
         #[arg(long)]
         stats: bool,
     },
+    /// Download the file contents of subscribed zones' heads now (to work offline later)
+    Prefetch {
+        #[arg(long = "zone")]
+        zones: Vec<String>,
+        /// Print the number of remote requests and bytes transferred
+        #[arg(long)]
+        stats: bool,
+    },
     /// Fetch, then fast-forward local branches where safe
     Sync,
     /// Verify all objects and graph invariants
@@ -2063,6 +2071,17 @@ fn run(cli: Cli) -> Result<(), Error> {
             for (a, b, id) in got {
                 println!("fetched {a}/{b} @ {}", id.short());
             }
+        }
+        Cmd::Prefetch { zones, stats } => {
+            let (repo, _) = open()?;
+            let backend = remote::open_backend(&need_remote(&repo)?)?;
+            let counting = vcs_remote::CountingBackend::new(backend.as_ref());
+            let want = (!zones.is_empty()).then_some(zones.as_slice());
+            let n = repo.prefetch_subscribed(&counting, want)?;
+            if stats {
+                println!("{}", counting.stats());
+            }
+            println!("prefetched {n} object(s)");
         }
         Cmd::Sync => {
             let (repo, _) = open()?;

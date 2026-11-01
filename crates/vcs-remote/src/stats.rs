@@ -209,6 +209,15 @@ mod tests {
     use super::*;
     use crate::MemBackend;
 
+    /// #116: counting must not change behaviour; the backend conformance suites pass through it.
+    #[test]
+    fn conformance_suites_pass_through_the_counting_wrapper() {
+        let m = MemBackend::new();
+        let c = CountingBackend::new(&m);
+        crate::backend::conformance(&c);
+        assert!(c.stats().requests > 0);
+    }
+
     #[test]
     fn counts_requests_and_bytes() {
         let m = MemBackend::new();

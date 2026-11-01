@@ -32,6 +32,7 @@ mod pathbloom;
 pub mod pick;
 pub mod plumbing;
 pub mod portable;
+pub mod prefetch;
 pub mod rebase;
 pub mod rebase_todo;
 pub mod repo;
