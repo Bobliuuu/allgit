@@ -24,10 +24,12 @@ pub mod plumbing;
 pub mod portable;
 pub mod rebase;
 pub mod repo;
+pub mod sparse;
 pub mod stash;
 pub mod sync;
 pub mod tags;
 pub mod treeops;
+pub mod worktree_fs;
 
 pub use assist::{AssistResult, ProposalInfo};
 pub use error::{Error, Result};
@@ -40,6 +42,7 @@ pub use merge::{ConflictRec, MergeOutcome, MergeState, Resolution, ResolveCheck}
 pub use meta::{DEFAULT_BRANCH, ROOT_ZONE};
 pub use rebase::{RebaseOutcome, RebaseState};
 pub use repo::{AddReport, Change, ChangeKind, CommitReport, FsckReport, Repo, Status, StatusOpts, WorkCounts, ZoneStatus};
+pub use sparse::SparseReport;
 pub use stash::{StashEntry, StashPopOutcome, StashZone};
 pub use sync::{PublishReport, SyncAction, SyncReport};
 pub use tags::{BlameLine, ShowReport, TagInfo};

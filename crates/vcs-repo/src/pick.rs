@@ -171,6 +171,7 @@ impl Repo {
                 x.path
             ));
         }
+        self.require_conflicts_materialized(zone, tm.conflicts.iter().map(|c| c.path.as_str()), verb)?;
         for (id, data) in &tm.new_blobs {
             if self.store.put_blob(data)? != *id {
                 return Err(Error::Corrupt("merged blob id mismatch".into()));

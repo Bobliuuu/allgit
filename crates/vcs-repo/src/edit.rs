@@ -97,7 +97,13 @@ impl Repo {
         let mut out = BTreeSet::new();
         for p in specs {
             self.require_subscribed(zones, ws, p)?;
-            let hits: Vec<String> = ix.under(p).into_iter().filter(|q| ws.subs.contains_key(zones.owner(q))).collect();
+            let all: Vec<String> = ix.under(p).into_iter().filter(|q| ws.subs.contains_key(zones.owner(q))).collect();
+            let hits: Vec<String> = all.iter().filter(|q| !ws.skips(zones.owner(q), q)).cloned().collect();
+            if hits.is_empty() && !all.is_empty() {
+                return msg(format!(
+                    "pathspec {p:?} is outside this workspace's sparse set (not materialized); `vcs sparse add` it first"
+                ));
+            }
             if hits.is_empty() && !p.is_empty() {
                 return msg(format!("pathspec {p:?} did not match any {what} files"));
             }
@@ -360,6 +366,11 @@ impl Repo {
         if old.is_empty() {
             return msg(format!("{src:?} is not tracked"));
         }
+        if let Some(o) = old.iter().find(|o| ws.skips(zones.owner(o), o)) {
+            return msg(format!(
+                "{o:?} is outside this workspace's sparse set (not materialized); `vcs sparse add` it first"
+            ));
+        }
         let into_dir = match fs::symlink_metadata(self.worktree.join(dst)) {
             Ok(m) => m.is_dir() && !ix.entries.contains_key(dst),
             Err(_) => false,
@@ -386,6 +397,11 @@ impl Repo {
                 format!("{base}{}", &o[src.len()..])
             };
             validate_path(&n)?;
+            if ws.skips(zones.owner(&n), &n) {
+                return msg(format!(
+                    "destination {n:?} is outside this workspace's sparse set; `vcs sparse add` it first"
+                ));
+            }
             if zones.owner(o) != zones.owner(&n) {
                 return msg(format!(
                     "cannot move {o:?} to {n:?}: they belong to different zones ({:?} and {:?})",

@@ -524,7 +524,7 @@ impl Repo {
         if let Some(h) = head {
             use vcs_store::ObjectStore;
             if self.store.contains(&h)? {
-                self.prefetch_files(backend, self.commit_obj(&h)?.root)?;
+                self.prefetch_zone_files(backend, &z, self.commit_obj(&h)?.root)?;
             }
         }
         self.zone_add(&z, branch)
@@ -534,26 +534,60 @@ impl Repo {
     /// tree `root` that is not already stored. Trees must be present (fetch stores them eagerly).
     /// Returns how many objects were fetched. Every object is hash-verified before it is stored.
     pub fn prefetch_files(&self, backend: &dyn Backend, root: ObjectId) -> Result<usize> {
+        self.prefetch_filtered(backend, root, "", None)
+    }
+
+    /// [`Self::prefetch_files`] for the zone `zone` rooted at `root`: when the workspace keeps
+    /// only some paths of the zone (sparse set), only the blobs of those paths are downloaded,
+    /// and trees outside the set are not even read. Without a sparse set it fetches everything.
+    pub fn prefetch_zone_files(&self, backend: &dyn Backend, zone: &str, root: ObjectId) -> Result<usize> {
+        let ws = self.workspace()?;
+        let zones = self.zones()?;
+        self.prefetch_filtered(backend, root, zones.path_of(zone).unwrap_or(""), ws.sparse.get(zone))
+    }
+
+    /// Prefetch the blobs of `root` (a zone tree at repo path `prefix`) that lie in `set`
+    /// (`None` = all).
+    pub(crate) fn prefetch_filtered(
+        &self,
+        backend: &dyn Backend,
+        root: ObjectId,
+        prefix: &str,
+        set: Option<&BTreeSet<String>>,
+    ) -> Result<usize> {
         use vcs_objects::EntryMode;
         use vcs_store::ObjectStore;
-        let mut trees = vec![root];
+        let mut trees = vec![(root, prefix.to_owned())];
         let mut seen = BTreeSet::new();
         let mut files = BTreeSet::new();
-        while let Some(t) = trees.pop() {
-            if !seen.insert(t) {
+        while let Some((t, dir)) = trees.pop() {
+            if !seen.insert((t, dir.clone())) {
                 continue;
             }
             let Object::Tree(t) = self.store.get(&t)? else {
                 return msg(format!("object {t} is not a tree"));
             };
             for e in t.entries() {
+                let path = if dir.is_empty() {
+                    e.name.clone()
+                } else {
+                    format!("{dir}/{}", e.name)
+                };
                 if e.mode == EntryMode::Directory {
-                    trees.push(e.id);
-                } else if !self.store.contains(&e.id)? {
+                    if set.is_none_or(|s| crate::meta::sparse_may_contain(s, &path)) {
+                        trees.push((e.id, path));
+                    }
+                } else if set.is_none_or(|s| crate::meta::in_sparse_set(s, &path)) && !self.store.contains(&e.id)? {
                     files.insert(e.id);
                 }
             }
         }
+        self.prefetch_ids(backend, files)
+    }
+
+    /// Download `files` (and the chunks of chunked ones) that are not stored, in batches.
+    pub(crate) fn prefetch_ids(&self, backend: &dyn Backend, files: BTreeSet<ObjectId>) -> Result<usize> {
+        use vcs_store::ObjectStore;
         let mut total = 0;
         let mut batch: Vec<ObjectId> = files.into_iter().collect();
         while !batch.is_empty() {
@@ -614,7 +648,7 @@ impl Repo {
                     if !a.staged.is_empty() || !a.unstaged.is_empty() {
                         SyncAction::Dirty
                     } else {
-                        self.prefetch_files(backend, self.commit_obj(&r)?.root)?;
+                        self.prefetch_zone_files(backend, &zone, self.commit_obj(&r)?.root)?;
                         let old = self.head_flat(&zone, &defs, &ws, &refs)?;
                         let new = treeops::flatten(&self.store, Some(self.commit_obj(&r)?.root), defs.path_of(&zone).unwrap())?;
                         self.transition(&zone, &defs, &old, &new, &mut ix)?;

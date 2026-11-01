@@ -5,10 +5,12 @@ use crate::ignore::IgnoreStack;
 use crate::index::{Index, IndexEntry};
 use crate::meta::{write_atomic, LockGuard, Refs, Workspace, Zones, DEFAULT_BRANCH, ROOT_ZONE};
 use crate::treeops::{self, Flat};
+use crate::worktree_fs::{FileKind, RealFs, WorktreeFs};
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use vcs_objects::names::{validate_branch_name, validate_component, validate_path, validate_zone_name, META_DIR};
 use vcs_objects::{ChangeId, Commit, EntryMode, Object, ObjectId, RefUpdate, Signature, Snapshot, Transaction};
@@ -67,6 +69,8 @@ pub struct Repo {
     /// Width of the index "racy" window (ns); only tests shorten it.
     pub(crate) index_racy_ns: u64,
     pub(crate) counters: Counters,
+    /// The working tree, behind a trait so checkout/status can run on an in-memory fake.
+    pub(crate) wfs: Arc<dyn WorktreeFs>,
 }
 
 /// Work counters for tests and benchmarks (see [`Repo::counters`]).
@@ -259,6 +263,7 @@ impl Repo {
         io(&vcs, fs::create_dir_all(vcs.join("objects")))?;
         let store = LocalStore::open(vcs.join("objects"))?;
         let r = Repo {
+            wfs: Arc::new(RealFs::new(worktree.clone())),
             worktree,
             vcs,
             store,
@@ -291,6 +296,7 @@ impl Repo {
                 }
                 let store = LocalStore::open(vcs.join("objects"))?;
                 return Ok(Repo {
+                    wfs: Arc::new(RealFs::new(cur.clone())),
                     worktree: cur,
                     vcs,
                     store,
@@ -305,6 +311,13 @@ impl Repo {
                 return Err(Error::NotARepo);
             }
         }
+    }
+
+    /// Use `wfs` for the working tree (checkout writes and status reads go through it). `.vcs/`
+    /// state stays on disk. The default is [`RealFs`] rooted at [`Self::worktree`].
+    pub fn with_worktree_fs(mut self, wfs: Arc<dyn WorktreeFs>) -> Repo {
+        self.wfs = wfs;
+        self
     }
 
     pub fn worktree(&self) -> &Path {
@@ -474,9 +487,19 @@ impl Repo {
                 if gone.is_empty() {
                     return msg(format!("pathspec {p:?} did not match any files"));
                 }
+                let mut any = false;
                 for g in gone {
+                    if ws.skips(zones.owner(&g), &g) {
+                        continue; // not materialized: absent from disk by design, not deleted
+                    }
+                    any = true;
                     ix.entries.remove(&g);
                     rep.removed += 1;
+                }
+                if !any {
+                    return msg(format!(
+                        "{p:?} is outside this workspace's sparse set (not materialized, NOT deleted); `vcs sparse add` it first"
+                    ));
                 }
                 Ok(())
             }
@@ -494,7 +517,7 @@ impl Repo {
                     self.add_dir(p, zones, ws, ix, rep, &mut seen, todo, &stack)?;
                 }
                 for g in ix.under(p) {
-                    if !seen.contains(&g) {
+                    if !seen.contains(&g) && !ws.skips(zones.owner(&g), &g) {
                         ix.entries.remove(&g);
                         rep.removed += 1;
                     }
@@ -503,6 +526,11 @@ impl Repo {
             }
             Ok(m) if m.is_file() => {
                 validate_path(p)?;
+                if ws.skips(zones.owner(p), p) {
+                    return msg(format!(
+                        "{p:?} is outside this workspace's sparse set; `vcs sparse add` it before staging"
+                    ));
+                }
                 if !ix.entries.contains_key(p) && self.ignore_stack_above(p)?.is_ignored(p, false) {
                     rep.skipped.push(format!("{p} (ignored)"));
                     return Ok(());
@@ -533,7 +561,7 @@ impl Repo {
     /// to the path `rel` itself: the ignore files of every proper ancestor directory. A directory
     /// that is ignored on the way down makes everything below it ignored.
     fn ignore_stack_above(&self, rel: &str) -> Result<IgnoreStack> {
-        let mut stack = IgnoreStack::default().descend(&self.worktree, "")?;
+        let mut stack = IgnoreStack::default().descend(self.wfs.as_ref(), &self.worktree, "")?;
         let comps: Vec<&str> = rel.split('/').filter(|c| !c.is_empty()).collect();
         let mut acc = String::new();
         for c in comps.iter().take(comps.len().saturating_sub(1)) {
@@ -544,7 +572,7 @@ impl Repo {
             if stack.is_ignored(&acc, true) {
                 stack = stack.inherit();
             }
-            stack = stack.descend(&self.worktree, &acc)?;
+            stack = stack.descend(self.wfs.as_ref(), &self.worktree, &acc)?;
         }
         Ok(stack)
     }
@@ -569,7 +597,7 @@ impl Repo {
         todo: &mut Vec<String>,
         parent_stack: &IgnoreStack,
     ) -> Result<()> {
-        let stack = parent_stack.descend(&self.worktree, dir)?;
+        let stack = parent_stack.descend(self.wfs.as_ref(), &self.worktree, dir)?;
         let abs = if dir.is_empty() {
             self.worktree.clone()
         } else {
@@ -596,6 +624,9 @@ impl Repo {
             }
             if !ws.subs.contains_key(zones.owner(&rel)) {
                 continue; // not our zone: untouched, not an error
+            }
+            if !ft.is_dir() && ws.skips(zones.owner(&rel), &rel) {
+                continue; // outside the sparse set: left alone
             }
             let tracked = if ft.is_dir() {
                 ix.has_under(&rel)
@@ -752,18 +783,18 @@ impl Repo {
 
     /// [`Self::wt_state`] plus whether the verdict came from reading the file's content.
     pub(crate) fn wt_state_read(&self, path: &str, e: &IndexEntry, written_ns: u64) -> Result<(Wt, bool)> {
-        let abs = self.worktree.join(path);
-        let m = match fs::symlink_metadata(&abs) {
+        let abs = || self.worktree.join(path);
+        let m = match self.wfs.stat(path) {
             Ok(m) => m,
             // A path whose parent became a file (`a/b` tracked, `a` replaced by a file) is ENOTDIR.
             Err(x) if x.kind() == std::io::ErrorKind::NotFound || is_not_a_directory(&x) => return Ok((Wt::Deleted, false)),
-            Err(source) => return Err(Error::Io { path: abs, source }),
+            Err(source) => return Err(Error::Io { path: abs(), source }),
         };
         if e.mode == EntryMode::Symlink {
-            if !m.file_type().is_symlink() {
+            if m.kind != FileKind::Symlink {
                 return Ok((Wt::Modified, false));
             }
-            let t = io(&abs, read_link_bytes(&abs))?;
+            let t = io(&abs(), self.wfs.read_link(path))?;
             return Ok((
                 if vcs_objects::blob_id(&t) == e.id {
                     Wt::Clean
@@ -773,19 +804,17 @@ impl Repo {
                 false,
             ));
         }
-        if !m.is_file() {
+        if m.kind != FileKind::File {
             return Ok((Wt::Modified, false));
         }
-        let mt = mtime_ns(&m);
-        let ct = ctime_ns(&m);
-        let ct_ok = e.ctime_ns == 0 || e.ctime_ns == ct;
-        if m.len() == e.size && mt == e.mtime_ns && ct_ok && mode_of(&m) == e.mode && e.stat_edge(self.index_racy_ns) <= written_ns {
+        let ct_ok = e.ctime_ns == 0 || e.ctime_ns == m.ctime_ns;
+        if m.len == e.size && m.mtime_ns == e.mtime_ns && ct_ok && m.mode == e.mode && e.stat_edge(self.index_racy_ns) <= written_ns {
             return Ok((Wt::Clean, false));
         }
-        let data = io(&abs, fs::read(&abs))?;
+        let data = io(&abs(), self.wfs.read(path))?;
         self.counters.content_reads.fetch_add(1, Ordering::Relaxed);
         Ok((
-            if vcs_objects::content_id(&data) == e.id && mode_of(&m) == e.mode {
+            if vcs_objects::content_id(&data) == e.id && m.mode == e.mode {
                 Wt::Clean
             } else {
                 Wt::Modified
@@ -823,7 +852,11 @@ impl Repo {
         let mut racy_clean: BTreeSet<String> = BTreeSet::new();
         let mut st = Status::default();
         for (zone, branch) in &ws.subs {
-            let mine: BTreeMap<&String, &IndexEntry> = ix.entries.iter().filter(|(p, _)| zones.owner(p) == zone).collect();
+            let mine: BTreeMap<&String, &IndexEntry> = ix
+                .entries
+                .iter()
+                .filter(|(p, _)| zones.owner(p) == zone && !ws.skips(zone, p))
+                .collect();
             // Subtree-skipping diff: directories whose cached or computed tree id equals HEAD's
             // are skipped; HEAD's trees are read only on paths that actually differ.
             let head_root = match self.current_head(zone, &ws, &refs) {
@@ -969,20 +1002,22 @@ impl Repo {
         parent_stack: &IgnoreStack,
         ctx: &WalkCtx,
     ) -> Result<WalkOut> {
-        let stack = parent_stack.descend(&self.worktree, dir)?;
+        let stack = parent_stack.descend(self.wfs.as_ref(), &self.worktree, dir)?;
         enum Item {
             Unsupported(String),
             File(String),
             Dir(String, bool, bool),
         }
-        let abs = if dir.is_empty() {
-            self.worktree.clone()
-        } else {
-            self.worktree.join(dir)
+        let abs = || {
+            if dir.is_empty() {
+                self.worktree.clone()
+            } else {
+                self.worktree.join(dir)
+            }
         };
         let mut out = WalkOut::default();
         let stamp0 = if ctx.use_cache {
-            fs::metadata(&abs).ok().and_then(|m| stamp_of(&m))
+            self.wfs.stat(dir).ok().and_then(|m| stamp_of(&m))
         } else {
             None
         };
@@ -997,30 +1032,25 @@ impl Repo {
                 e
             }
             None => {
-                let mut ents: Vec<_> = io(&abs, fs::read_dir(&abs))?
-                    .collect::<std::result::Result<Vec<_>, _>>()
-                    .map_err(|source| Error::Io { path: abs.clone(), source })?;
-                ents.sort_by_key(|e| e.file_name());
+                let mut ents = io(&abs(), self.wfs.read_dir(dir))?;
+                ents.sort_by(|a, b| a.name.cmp(&b.name));
                 let mut v = Vec::with_capacity(ents.len());
                 for e in ents {
-                    let name = e.file_name().to_string_lossy().into_owned();
+                    let name = e.name;
                     if name.eq_ignore_ascii_case(META_DIR) || validate_component(&name).is_err() {
                         continue;
                     }
-                    let ft = io(&abs, e.file_type())?;
-                    let kind = if !(ft.is_symlink() || ft.is_dir() || ft.is_file()) {
-                        Kind::Other
-                    } else if ft.is_dir() {
-                        Kind::Dir
-                    } else {
-                        Kind::File
+                    let kind = match e.kind {
+                        FileKind::Other => Kind::Other,
+                        FileKind::Dir => Kind::Dir,
+                        _ => Kind::File,
                     };
                     v.push((name, kind));
                 }
                 out.scanned += 1;
                 // Trust the stamp only if it was identical before and after the listing.
                 let stamp1 = if ctx.use_cache {
-                    fs::metadata(&abs).ok().and_then(|m| stamp_of(&m))
+                    self.wfs.stat(dir).ok().and_then(|m| stamp_of(&m))
                 } else {
                     None
                 };
@@ -1142,7 +1172,11 @@ impl Repo {
                 out.push_str(&diff::unified(p, o.as_deref(), n.as_deref()));
             }
         } else {
+            let (ws, zones) = (self.workspace()?, self.zones()?);
             for (p, e) in &ix.entries {
+                if ws.skips(zones.owner(p), p) {
+                    continue;
+                }
                 let abs = self.worktree.join(p);
                 let cur = match fs::symlink_metadata(&abs) {
                     Ok(m) if m.file_type().is_symlink() && e.mode == EntryMode::Symlink => Some(io(&abs, read_link_bytes(&abs))?),
@@ -1489,6 +1523,7 @@ impl Repo {
         let mut ix = self.index()?;
         self.transition(zone, &zones, &old, &Flat::new(), &mut ix)?;
         ws.subs.remove(zone);
+        ws.sparse.remove(zone);
         self.save_index(&mut ix)?;
         self.save_ws(&ws)?;
         self.record_op(&format!("zone remove {zone}"), None)?;
@@ -1529,6 +1564,11 @@ impl Repo {
     /// Everything in the preflight except the whole-tree collision scan. `old` and `new` may be
     /// the changed parts of the two trees only (unchanged paths in neither).
     fn transition_check_paths(&self, zone: &str, zones: &Zones, old: &Flat, new: &Flat) -> Result<()> {
+        let ws = self.workspace()?;
+        self.transition_check_paths_ws(&ws, zone, zones, old, new)
+    }
+
+    pub(crate) fn transition_check_paths_ws(&self, ws: &Workspace, zone: &str, zones: &Zones, old: &Flat, new: &Flat) -> Result<()> {
         let changed: Vec<&String> = new.iter().filter(|(p, v)| old.get(*p) != Some(v)).map(|(p, _)| p).collect();
         for p in &changed {
             validate_path(p)?;
@@ -1545,24 +1585,29 @@ impl Repo {
                     return msg(format!("cannot check out symlink {p:?}: symlinks are only supported on unix"));
                 }
             }
-            let abs = self.worktree.join(p);
-            if !old.contains_key(*p) && fs::symlink_metadata(&abs).is_ok() {
+            if ws.skips(zone, p) {
+                continue; // not materialized: nothing is written, so nothing on disk can be in the way
+            }
+            if !old.contains_key(*p) && self.wfs.stat(p).is_ok() {
                 return msg(format!("untracked path {p:?} would be overwritten; move or remove it first"));
             }
             // no symlinked / file ancestors
-            let mut acc = self.worktree.clone();
+            let mut rel = String::new();
             let comps: Vec<&str> = p.split('/').collect();
             for c in &comps[..comps.len() - 1] {
-                acc.push(c);
-                match fs::symlink_metadata(&acc) {
-                    Ok(m) if crate::portable::is_link_like(&m) => {
-                        return msg(format!("refusing to write through symlink at {}", acc.display()))
+                if !rel.is_empty() {
+                    rel.push('/');
+                }
+                rel.push_str(c);
+                match self.wfs.stat(&rel) {
+                    Ok(m) if m.kind == FileKind::Symlink => {
+                        return msg(format!(
+                            "refusing to write through symlink at {}",
+                            self.worktree.join(&rel).display()
+                        ))
                     }
-                    Ok(m) if m.is_file() => {
-                        let rel = acc.strip_prefix(&self.worktree).unwrap().to_string_lossy().replace('\\', "/");
-                        if !old.contains_key(&rel) || new.contains_key(&rel) {
-                            return msg(format!("cannot create {p:?}: {rel:?} is a file"));
-                        }
+                    Ok(m) if m.kind == FileKind::File && (!old.contains_key(&rel) || new.contains_key(&rel)) => {
+                        return msg(format!("cannot create {p:?}: {rel:?} is a file"));
                     }
                     _ => {}
                 }
@@ -1571,53 +1616,55 @@ impl Repo {
         Ok(())
     }
 
-    fn transition_apply(&self, _zone: &str, old: &Flat, new: &Flat, ix: &mut Index) -> Result<()> {
-        let changed: Vec<&String> = new.iter().filter(|(p, v)| old.get(*p) != Some(v)).map(|(p, _)| p).collect();
+    fn transition_apply(&self, zone: &str, old: &Flat, new: &Flat, ix: &mut Index) -> Result<()> {
+        let ws = self.workspace()?;
+        self.transition_apply_ws(&ws, zone, old, new, ix)
+    }
+
+    /// [`Self::transition_apply`] under an explicit workspace (its sparse sets decide which paths
+    /// reach the disk). Paths outside the zone's sparse set only move in the index, with an empty
+    /// stat, so the commit that follows carries them over from the tree unchanged.
+    pub(crate) fn transition_apply_ws(&self, ws: &Workspace, zone: &str, old: &Flat, new: &Flat, ix: &mut Index) -> Result<()> {
+        let skip = |p: &str| ws.skips(zone, p);
+        let all_changed: Vec<&String> = new.iter().filter(|(p, v)| old.get(*p) != Some(v)).map(|(p, _)| p).collect();
+        let (virt, changed): (Vec<&String>, Vec<&String>) = all_changed.into_iter().partition(|p| skip(p));
         // deletions
-        let mut dirs: BTreeSet<PathBuf> = BTreeSet::new();
+        let mut dirs: BTreeSet<String> = BTreeSet::new();
         for p in old.keys().filter(|p| !new.contains_key(*p)) {
-            let abs = self.worktree.join(p);
-            match fs::symlink_metadata(&abs) {
-                Ok(m) if m.is_file() || m.file_type().is_symlink() => io(&abs, fs::remove_file(&abs))?,
+            if skip(p) {
+                ix.entries.remove(p);
+                continue;
+            }
+            match self.wfs.stat(p) {
+                Ok(m) if matches!(m.kind, FileKind::File | FileKind::Symlink) => io(&self.worktree.join(p), self.wfs.remove(p))?,
                 Ok(_) => return msg(format!("expected file at {p:?}")),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(source) => return Err(Error::Io { path: abs, source }),
+                Err(source) => {
+                    return Err(Error::Io {
+                        path: self.worktree.join(p),
+                        source,
+                    })
+                }
             }
             ix.entries.remove(p);
-            if let Some(par) = abs.parent() {
-                dirs.insert(par.to_owned());
-            }
+            dirs.insert(p.rsplit_once('/').map_or("", |(d, _)| d).to_owned());
         }
         // writes: independent per path, so a big batch runs on a bounded pool (8 threads)
         let write_one = |p: &String| -> Result<IndexEntry> {
             let (mode, id) = new[p];
             let data = self.store.get_content(&id)?;
-            let abs = self.worktree.join(p);
-            let parent = abs.parent().unwrap();
-            io(parent, fs::create_dir_all(parent))?;
-            static SEQ: AtomicUsize = AtomicUsize::new(0);
-            let tmp = parent.join(format!(".vcs-tmp-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
-            if mode == EntryMode::Symlink {
-                let _ = fs::remove_file(&tmp);
-                make_symlink(&data, &tmp)?;
+            let abs = || self.worktree.join(p);
+            let m = if mode == EntryMode::Symlink {
+                io(&abs(), self.wfs.symlink(&data, p))?
             } else {
-                io(&tmp, fs::write(&tmp, &data))?;
-            }
-            #[cfg(unix)]
-            if mode != EntryMode::Symlink {
-                use std::os::unix::fs::PermissionsExt;
-                let bits = if mode == EntryMode::Executable { 0o755 } else { 0o644 };
-                io(&tmp, fs::set_permissions(&tmp, fs::Permissions::from_mode(bits)))?;
-            }
-            // rename replaces the path itself (including an existing link); it never writes through it
-            io(&abs, fs::rename(&tmp, &abs))?;
-            let m = io(&abs, fs::symlink_metadata(&abs))?;
+                io(&abs(), self.wfs.write(p, &data, mode))?
+            };
             Ok(IndexEntry {
                 id,
                 mode,
-                size: m.len(),
-                mtime_ns: mtime_ns(&m),
-                ctime_ns: ctime_ns(&m),
+                size: m.len,
+                mtime_ns: m.mtime_ns,
+                ctime_ns: m.ctime_ns,
             })
         };
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
@@ -1639,9 +1686,32 @@ impl Repo {
             ix.entries.remove(p);
             ix.insert(p, e)?;
         }
+        for p in virt {
+            let (mode, id) = new[p];
+            ix.entries.remove(p);
+            ix.insert(
+                p,
+                IndexEntry {
+                    id,
+                    mode,
+                    size: 0,
+                    mtime_ns: 0,
+                    ctime_ns: 0,
+                },
+            )?;
+        }
         // prune now-empty directories (never the worktree root)
-        self.prune_dirs(dirs);
+        self.prune_dirs_fs(dirs);
         Ok(())
+    }
+
+    /// Remove each directory in `dirs` (worktree-relative) and its parents while they are empty.
+    pub(crate) fn prune_dirs_fs(&self, dirs: BTreeSet<String>) {
+        for mut d in dirs {
+            while !d.is_empty() && self.wfs.remove_dir(&d).is_ok() {
+                d = d.rsplit_once('/').map_or("", |(p, _)| p).to_owned();
+            }
+        }
     }
 
     // ---------- snapshots ----------

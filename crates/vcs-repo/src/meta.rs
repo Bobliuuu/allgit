@@ -2,7 +2,7 @@
 //! All are written atomically (temp file + fsync + rename).
 
 use crate::error::{io, msg, Error, Result};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -356,10 +356,21 @@ impl Refs {
 }
 
 /// Which zones this workspace materializes, and which branch of each is checked out.
+///
+/// `sparse` lists, per subscribed zone, the repo-relative path prefixes (directories or files) the
+/// workspace materializes. A zone without an entry is fully materialized. Paths of a sparse zone
+/// outside its set stay tracked in the index (so commits carry them over unchanged) but are not
+/// written to disk and are never reported as deleted.
+///
+/// On disk: `AGWS` v1 is the legacy form (subscriptions only; still read, and still written when
+/// no zone is sparse so older binaries keep working); `AGW2` v1 appends the sparse sets.
 #[derive(Clone, Debug, Default)]
 pub struct Workspace {
     pub subs: BTreeMap<String, String>,
+    pub sparse: BTreeMap<String, BTreeSet<String>>,
 }
+
+const WS2_MAGIC: &[u8; 4] = b"AGW2";
 
 impl Workspace {
     pub fn encode(&self) -> Vec<u8> {
@@ -368,10 +379,22 @@ impl Workspace {
         for (a, b) in &self.subs {
             w.str(a).str(b);
         }
-        frame(b"AGWS", w.finish())
+        if self.sparse.is_empty() {
+            return frame(b"AGWS", w.finish());
+        }
+        w.varint(self.sparse.len() as u64);
+        for (z, set) in &self.sparse {
+            w.str(z);
+            w.varint(set.len() as u64);
+            for p in set {
+                w.str(p);
+            }
+        }
+        frame(WS2_MAGIC, w.finish())
     }
     pub fn decode(bytes: &[u8]) -> Result<Self> {
-        let body = unframe(b"AGWS", bytes, "workspace")?;
+        let v2 = bytes.len() >= 4 && &bytes[..4] == WS2_MAGIC;
+        let body = unframe(if v2 { WS2_MAGIC } else { b"AGWS" }, bytes, "workspace")?;
         let mut r = Reader::new(body);
         let e = |x| corrupt("workspace", x);
         let mut ws = Workspace::default();
@@ -382,9 +405,58 @@ impl Workspace {
             validate_branch_name(&b)?;
             ws.subs.insert(a, b);
         }
+        if v2 {
+            for _ in 0..r.count(2).map_err(e)? {
+                let z = r.str(64).map_err(e)?;
+                validate_zone_name(&z)?;
+                let mut set = BTreeSet::new();
+                for _ in 0..r.count(1).map_err(e)? {
+                    let p = r.str(4096).map_err(e)?;
+                    validate_path(&p)?;
+                    set.insert(p);
+                }
+                if !set.is_empty() {
+                    ws.sparse.insert(z, set);
+                }
+            }
+        }
         r.finish().map_err(e)?;
         Ok(ws)
     }
+
+    /// Is `path` (repo-relative, owned by `zone`) outside the zone's sparse set?
+    pub fn skips(&self, zone: &str, path: &str) -> bool {
+        match self.sparse.get(zone) {
+            None => false,
+            Some(set) => !in_sparse_set(set, path),
+        }
+    }
+}
+
+/// Could any path beneath directory `dir` be in `set`? True when `dir` is a prefix of, equal to,
+/// or inside one of the set's prefixes.
+pub fn sparse_may_contain(set: &BTreeSet<String>, dir: &str) -> bool {
+    if in_sparse_set(set, dir) {
+        return true;
+    }
+    let lo = format!("{dir}/");
+    set.range(lo.clone()..).next().is_some_and(|p| p.starts_with(&lo))
+}
+
+/// Is `path` equal to, or beneath, one of the prefixes in `set`?
+pub fn in_sparse_set(set: &BTreeSet<String>, path: &str) -> bool {
+    // A prefix of `path` ends at a '/' boundary (or is the whole path): probe each.
+    if set.contains(path) {
+        return true;
+    }
+    let mut end = path.len();
+    while let Some(i) = path[..end].rfind('/') {
+        end = i;
+        if set.contains(&path[..end]) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Exclusive repository lock (create_new). Released on drop.

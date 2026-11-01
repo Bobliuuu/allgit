@@ -183,6 +183,7 @@ impl Repo {
         refs.branches.retain(|(a, _), _| a != zone);
         refs.tags.retain(|(a, _), _| a != zone);
         ws.subs.remove(zone);
+        ws.sparse.remove(zone);
         write_atomic(&self.vcs.join("refs"), &refs.encode())?;
         write_atomic(&self.vcs.join("zones"), &zones.encode())?;
         self.save_ws(&ws)?;

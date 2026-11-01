@@ -249,8 +249,12 @@ impl Repo {
             refs.tags = tags.clone();
         }
         write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+        // A zone that stays subscribed keeps its sparse set.
+        let mut sparse = ws.sparse.clone();
+        sparse.retain(|z, _| target.workspace.contains_key(z));
         self.save_ws(&Workspace {
             subs: target.workspace.clone(),
+            sparse,
         })
     }
 

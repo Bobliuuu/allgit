@@ -2,7 +2,7 @@
 # Scale benchmark: git vs vcs CLI on one large generated dataset, one tool at a time.
 #
 # usage: scripts/bench_scale.sh <flat|deep|binary> [n=100000] [runs=5]
-#   env: VCS_BIN, DATAGEN (default target/release/...; CARGO_TARGET_DIR is honoured),
+#   env: TOOLS (default "git vcs"; "vcs" skips the git half), VCS_BIN, DATAGEN (default target/release/...; CARGO_TARGET_DIR is honoured),
 #        BENCH_TMP (scratch parent dir), MIN_FREE_GB (abort below this free space, default 4)
 # Workflows: add, commit, status (clean / 1% modified), log (50 commits), checkout (switch, 1% differ).
 # Output: raw per-run milliseconds and the median per cell, plus machine load before/after each cell.
@@ -101,7 +101,7 @@ echo "|----------------------------|----------|---------------|--------|------|"
 
 GEN() { "$DATAGEN" "$LAYOUT" "$N" "$1" >/dev/null; }
 
-for TOOL in git vcs; do
+for TOOL in ${TOOLS:-git vcs}; do
   W="$WORK/$TOOL"; mkdir -p "$W"
   guard; GEN "$W"; cd "$W"
   if [ "$TOOL" = git ]; then

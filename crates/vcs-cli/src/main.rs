@@ -198,6 +198,9 @@ enum Cmd {
     /// Set tracked changes aside (push, pop, list, drop); untracked files are left alone
     #[command(subcommand)]
     Stash(StashCmd),
+    /// Materialize only some paths of a zone (set, add, remove, list, disable); the rest stays tracked, not deleted
+    #[command(subcommand)]
+    Sparse(SparseCmd),
     /// List tags of the current zone, create one (lightweight, or annotated with -m), or delete one with -d
     Tag {
         name: Option<String>,
@@ -600,6 +603,20 @@ enum SnapCmd {
 }
 
 #[derive(Subcommand, Clone)]
+enum SparseCmd {
+    /// Materialize only these paths (directories or files) of the zone; fetches just their blobs
+    Set { zone: String, paths: Vec<String> },
+    /// Also materialize these paths
+    Add { zone: String, paths: Vec<String> },
+    /// Stop materializing these listed paths (files leave the working tree, stay tracked)
+    Remove { zone: String, paths: Vec<String> },
+    /// Show the sparse sets of this workspace
+    List,
+    /// Materialize the whole zone again
+    Disable { zone: String },
+}
+
+#[derive(Subcommand, Clone)]
 enum StashCmd {
     /// Save staged and unstaged changes of tracked files and reset to the branch heads
     Push {
@@ -856,6 +873,9 @@ fn run(cli: Cli) -> Result<(), Error> {
                     "not subscribed (not downloaded/materialized, NOT deleted): {}",
                     st.unsubscribed.join(", ")
                 );
+            }
+            for (z, ps) in repo.sparse_list()? {
+                println!("sparse zone {z} (other paths not materialized, NOT deleted): {}", ps.join(" "));
             }
             for u in &st.unsupported {
                 println!("unsupported (special file): {u}");
@@ -1270,6 +1290,35 @@ fn run(cli: Cli) -> Result<(), Error> {
                     println!("{} conflict(s) left", k.unresolved().len());
                 }
             }
+        }
+        Cmd::Sparse(c) => {
+            let (repo, cwd) = open()?;
+            let backend = match repo.remote_url()? {
+                Some(url) => Some(remote::open_backend(&url)?),
+                None => None,
+            };
+            let b = backend.as_deref();
+            let rels = |paths: &[String]| -> Result<Vec<String>, Error> { paths.iter().map(|p| repo.rel_path(&cwd, p)).collect() };
+            let rep = match c {
+                SparseCmd::List => {
+                    let l = repo.sparse_list()?;
+                    if l.is_empty() {
+                        println!("no sparse sets: every subscribed zone is fully materialized");
+                    }
+                    for (z, ps) in l {
+                        println!("{z}: {}", ps.join(" "));
+                    }
+                    return Ok(());
+                }
+                SparseCmd::Set { zone, paths } => repo.sparse_set(b, &zone, &rels(&paths)?)?,
+                SparseCmd::Add { zone, paths } => repo.sparse_add(b, &zone, &rels(&paths)?)?,
+                SparseCmd::Remove { zone, paths } => repo.sparse_remove(&zone, &rels(&paths)?)?,
+                SparseCmd::Disable { zone } => repo.sparse_disable(b, &zone)?,
+            };
+            println!(
+                "{} file(s) written, {} removed from the working tree",
+                rep.materialized, rep.dematerialized
+            );
         }
         Cmd::Stash(c) => {
             let (repo, _) = open()?;
