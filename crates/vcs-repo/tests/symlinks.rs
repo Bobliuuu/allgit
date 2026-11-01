@@ -251,3 +251,67 @@ fn stash_saves_and_restores_symlinks_as_links() {
     assert_eq!(fs::read_link(r.worktree().join("link")).unwrap().to_str(), Some("plain.txt"));
     assert!(fs::symlink_metadata(r.worktree().join("link")).unwrap().is_symlink());
 }
+
+// ---- macOS (APFS: case-insensitive, normalization-insensitive but preserving) ----
+// The tests above return early when the filesystem folds names. These run ONLY there and assert
+// the folding really happens, so a checkout that would collide on APFS is exercised for real.
+
+#[cfg(target_os = "macos")]
+fn fs_folds_case(dir: &std::path::Path) -> bool {
+    let p = dir.join("CaseProbe");
+    fs::write(&p, "x").unwrap();
+    let folds = dir.join("caseprobe").exists();
+    fs::remove_file(&p).unwrap();
+    folds
+}
+
+#[cfg(target_os = "macos")]
+fn names(r: &Repo) -> Vec<String> {
+    let mut v: Vec<String> = fs::read_dir(r.worktree())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|n| !n.starts_with('.'))
+        .collect();
+    v.sort();
+    v
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn apfs_checkout_of_a_case_only_rename_leaves_one_file_with_the_new_spelling() {
+    let (d, r) = setup();
+    assert!(fs_folds_case(d.path()), "the macOS temp dir is expected to be case-insensitive");
+    write(&r, "readme", "old");
+    write(&r, "keep", "k");
+    r.add(&["".into()]).unwrap();
+    r.commit("base", sig()).unwrap();
+    plant_branch(
+        &r,
+        "evil",
+        vec![("README", EntryMode::File, b"new"), ("keep", EntryMode::File, b"k")],
+    );
+    r.checkout("root", "evil").unwrap();
+    assert_eq!(names(&r), ["README", "keep"], "stale lower-case entry or wrong spelling");
+    assert_eq!(fs::read_to_string(r.worktree().join("readme")).unwrap(), "new");
+    assert!(clean(&r));
+    r.checkout("root", "main").unwrap();
+    assert_eq!(names(&r), ["keep", "readme"]);
+    assert_eq!(fs::read_to_string(r.worktree().join("README")).unwrap(), "old");
+    assert!(clean(&r));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn apfs_checkout_of_a_normalization_only_rename_leaves_one_file() {
+    let (d, r) = setup();
+    assert!(fs_folds_case(d.path()));
+    let (nfc, nfd) = ("caf\u{e9}", "cafe\u{301}");
+    write(&r, nfc, "old");
+    r.add(&["".into()]).unwrap();
+    r.commit("base", sig()).unwrap();
+    plant_branch(&r, "nfd", vec![(nfd, EntryMode::File, b"new")]);
+    r.checkout("root", "nfd").unwrap();
+    assert_eq!(names(&r).len(), 1, "{:?}", names(&r));
+    assert_eq!(fs::read_to_string(r.worktree().join(nfc)).unwrap(), "new");
+    assert!(clean(&r));
+}

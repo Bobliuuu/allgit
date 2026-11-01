@@ -436,4 +436,35 @@ mod real {
         same(&r, &m, "stale journal");
         assert_eq!(r.status_monitored(opts(), &m).unwrap().zones[0].unstaged.len(), 1);
     }
+
+    /// FSEvents reports real paths (`/private/var/...` for a `/var/...` temp dir), coalesces
+    /// events, and sees a case-only rename as a rename: none of that may hide a change.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn fsevents_sees_case_renames_atomic_replaces_and_unicode_names() {
+        let (d, r) = base();
+        assert!(d.path().starts_with("/var") || d.path().starts_with("/private"), "{:?}", d.path());
+        let (_dm, m) = start(&r);
+        same(&r, &m, "cold");
+        same(&r, &m, "warm");
+        fs::rename(r.worktree().join("top.txt"), r.worktree().join("TOP.txt")).unwrap();
+        same(&r, &m, "case-only rename");
+        fs::rename(r.worktree().join("TOP.txt"), r.worktree().join("top.txt")).unwrap();
+        same(&r, &m, "renamed back");
+        // editor-style atomic save: write a temp file, rename it over the tracked file
+        fs::write(r.worktree().join("a/x.tmp"), "saved atomically").unwrap();
+        fs::rename(r.worktree().join("a/x.tmp"), r.worktree().join("a/x.txt")).unwrap();
+        same(&r, &m, "atomic replace");
+        // a decomposed (NFD) name; APFS keeps the spelling it was given
+        w(&r, "cafe\u{301}/in.txt", "x");
+        same(&r, &m, "nfd directory");
+        // many files at once (event coalescing)
+        for i in 0..200 {
+            w(&r, &format!("burst/f{i}.txt"), "x");
+        }
+        fs::remove_file(r.worktree().join("burst/f7.txt")).unwrap();
+        same(&r, &m, "burst");
+        settle();
+        same(&r, &m, "burst settled");
+    }
 }

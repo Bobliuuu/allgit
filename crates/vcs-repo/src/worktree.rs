@@ -326,7 +326,14 @@ impl Repo {
         } else {
             io(path, std::env::current_dir())?.join(path)
         };
-        let abs = abs.canonicalize().unwrap_or(abs);
+        // a directory removed by hand cannot be canonicalized; resolve its parent instead (macOS
+        // temp dirs live under the /var -> /private/var link, so the registered path differs)
+        let abs = abs
+            .canonicalize()
+            .unwrap_or_else(|_| match (abs.parent().and_then(|p| p.canonicalize().ok()), abs.file_name()) {
+                (Some(parent), Some(base)) => parent.join(base),
+                _ => abs.clone(),
+            });
         if abs == self.main_worktree() {
             return msg("the main worktree cannot be removed");
         }

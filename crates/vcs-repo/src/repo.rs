@@ -1753,7 +1753,7 @@ impl Repo {
             if ws.skips(zone, p) {
                 continue; // not materialized: nothing is written, so nothing on disk can be in the way
             }
-            if !old.contains_key(*p) && self.wfs.stat(p).is_ok() {
+            if !old.contains_key(*p) && self.wfs.stat(p).is_ok() && !replaces_folded_old_path(&self.worktree, p, old, new) {
                 return msg(format!("untracked path {p:?} would be overwritten; move or remove it first"));
             }
             // no symlinked / file ancestors
@@ -2167,4 +2167,25 @@ pub(crate) fn fresh_change_id(zone: &str, root: &ObjectId, parent: Option<&Objec
     let mut b = [0u8; 16];
     b.copy_from_slice(&h.finalize().as_bytes()[..16]);
     ChangeId::from_bytes(b)
+}
+
+/// On a case- or normalization-folding filesystem (APFS, HFS+, NTFS) a path of `new` that is not
+/// in `old` can still find a file on disk: the tracked file this transition removes under a
+/// differently spelled name (`readme` -> `README`). That file is ours to replace, not an
+/// untracked file in the way. Proven by identity: both spellings must name the same inode, so on
+/// a case-sensitive filesystem an unrelated untracked `README` still blocks the checkout.
+#[cfg(unix)]
+fn replaces_folded_old_path(root: &Path, p: &str, old: &Flat, new: &Flat) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let fold = |s: &str| s.split('/').map(crate::portable::fold_component).collect::<Vec<_>>().join("/");
+    let want = fold(p);
+    let Ok(here) = std::fs::symlink_metadata(root.join(p)) else { return false };
+    old.keys().filter(|k| !new.contains_key(*k) && fold(k) == want).any(|k| {
+        std::fs::symlink_metadata(root.join(k)).is_ok_and(|m| m.dev() == here.dev() && m.ino() == here.ino())
+    })
+}
+
+#[cfg(not(unix))]
+fn replaces_folded_old_path(_root: &Path, _p: &str, _old: &Flat, _new: &Flat) -> bool {
+    false
 }

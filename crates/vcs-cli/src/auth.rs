@@ -342,16 +342,38 @@ pub mod keychain {
     /// Talks to the `security` command. `path` overrides PATH for the lookup (used by tests).
     pub struct Keychain {
         path: Option<OsString>,
+        /// A specific keychain file instead of the default search list (tests use a temporary one).
+        keychain: Option<std::path::PathBuf>,
     }
 
     impl Keychain {
         #[cfg(target_os = "macos")]
         pub fn system() -> Keychain {
-            Keychain { path: None }
+            Keychain {
+                path: None,
+                keychain: None,
+            }
         }
         #[cfg(test)]
         pub fn with_path(path: OsString) -> Keychain {
-            Keychain { path: Some(path) }
+            Keychain {
+                path: Some(path),
+                keychain: None,
+            }
+        }
+        #[cfg(all(test, target_os = "macos"))]
+        pub fn with_keychain(file: std::path::PathBuf) -> Keychain {
+            Keychain {
+                path: None,
+                keychain: Some(file),
+            }
+        }
+        /// Trailing `security` argument naming the keychain file, if one was chosen.
+        fn kc_arg(&self) -> String {
+            match &self.keychain {
+                Some(k) => format!(" \"{}\"", k.display()),
+                None => String::new(),
+            }
         }
         fn cmd(&self) -> Command {
             let mut c = Command::new("security");
@@ -364,6 +386,7 @@ pub mod keychain {
             let out = self
                 .cmd()
                 .args(["find-generic-password", "-s", "vcs", "-a", host, "-w"])
+                .args(self.keychain.iter())
                 .output()
                 .map_err(|e| Error::Msg(format!("cannot run `security`: {e}")))?;
             match out.status.code() {
@@ -377,7 +400,11 @@ pub mod keychain {
             if t.expose().contains(['"', '\\', '\'']) {
                 return msg("this token has characters the keychain helper cannot store; use credential.helper = file");
             }
-            let line = format!("add-generic-password -U -s vcs -a \"{host}\" -w \"{}\"\n", t.expose());
+            let line = format!(
+                "add-generic-password -U -s vcs -a \"{host}\" -w \"{}\"{}\n",
+                t.expose(),
+                self.kc_arg()
+            );
             let mut child = self
                 .cmd()
                 .arg("-i")
@@ -405,6 +432,7 @@ pub mod keychain {
             let out = self
                 .cmd()
                 .args(["delete-generic-password", "-s", "vcs", "-a", host])
+                .args(self.keychain.iter())
                 .output()
                 .map_err(|e| Error::Msg(format!("cannot run `security`: {e}")))?;
             match out.status.code() {
@@ -668,5 +696,41 @@ exit 1
         assert!(k.get("h:1").unwrap().is_none());
         k.erase("h:1").unwrap();
         assert!(k.store("h:1", &Token::new("bad\"q").unwrap()).is_err());
+    }
+
+    /// Opt-in test against the REAL `security` tool: `VCS_TEST_REAL_KEYCHAIN=1`. It creates a
+    /// throwaway keychain file in a tempdir (never the login keychain), uses only that file, and
+    /// deletes it afterwards.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn keychain_with_real_security_tool() {
+        if std::env::var("VCS_TEST_REAL_KEYCHAIN").as_deref() != Ok("1") {
+            eprintln!("skipped: set VCS_TEST_REAL_KEYCHAIN=1 to run against the real `security` tool");
+            return;
+        }
+        let d = tempfile::tempdir().unwrap();
+        let kc = d.path().join("vcs-test.keychain-db");
+        let sec = |args: &[&str]| std::process::Command::new("security").args(args).output().unwrap();
+        let kcs = kc.to_str().unwrap();
+        assert!(sec(&["create-keychain", "-p", "pw", kcs]).status.success());
+        // unlock and never auto-lock, so the test does not prompt
+        assert!(sec(&["unlock-keychain", "-p", "pw", kcs]).status.success());
+        let run = || -> Result<(), String> {
+            let k = keychain::Keychain::with_keychain(kc.clone());
+            assert!(k.get("h:1").unwrap().is_none());
+            k.store("h:1", &Token::new("kc-token").unwrap()).unwrap();
+            assert_eq!(k.get("h:1").unwrap().unwrap().expose(), "kc-token");
+            k.store("h:1", &Token::new("kc-token2").unwrap()).unwrap(); // -U updates in place
+            assert_eq!(k.get("h:1").unwrap().unwrap().expose(), "kc-token2");
+            k.erase("h:1").unwrap();
+            assert!(k.get("h:1").unwrap().is_none());
+            k.erase("h:1").unwrap();
+            Ok(())
+        };
+        let r = std::panic::catch_unwind(run);
+        let _ = sec(&["delete-keychain", kcs]);
+        if let Err(e) = r {
+            std::panic::resume_unwind(e);
+        }
     }
 }
