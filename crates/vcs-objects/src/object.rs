@@ -167,6 +167,10 @@ impl Tree {
     pub fn entries(&self) -> &[TreeEntry] {
         &self.entries
     }
+    /// The entries by value (no copy).
+    pub fn into_entries(self) -> Vec<TreeEntry> {
+        self.entries
+    }
     pub fn get(&self, name: &str) -> Option<&TreeEntry> {
         self.entries
             .binary_search_by(|e| e.name.as_str().cmp(name))

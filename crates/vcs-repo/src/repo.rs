@@ -1623,8 +1623,11 @@ impl Repo {
         };
         let new_root = self.commit_obj(&target)?.root;
         // Subtrees that are identical on both branches are never read.
-        let diff = treeops::diff_trees(&self.store, old_root, Some(new_root), prefix)?;
+        let diff = treeops::diff_trees_checkout(&self.store, old_root, Some(new_root), prefix)?;
         self.transition_diff(zone, &zones, &diff, &mut ix)?;
+        // The index now equals the new tree (it equalled the old one: no staged or unstaged
+        // change), so the directories read on the way give the next status/commit their tree ids.
+        ix.entries.store_trees(zones_fp(&zones), diff.new_trees.iter().cloned().collect());
         ws.subs.insert(zone.into(), branch.into());
         self.save_index(&mut ix)?;
         self.save_ws(&ws)?;

@@ -18,6 +18,7 @@
 
 use crate::error::{Error, Result};
 use crate::ignore::Pattern;
+use crate::index::Index;
 use crate::repo::Repo;
 use crate::treeops::Flat;
 use std::collections::{BTreeMap, BTreeSet};
@@ -184,18 +185,44 @@ pub fn is_read_only(path: &Path) -> bool {
     fs::symlink_metadata(path).map(|m| m.permissions().readonly()).unwrap_or(false)
 }
 
+/// Does `hay` contain `needle` (libc `memmem`: vectorized, no allocation)?
+fn bytes_contain(hay: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if hay.len() < needle.len() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        // SAFETY: both pointers are valid for the given lengths.
+        let p = unsafe { libc::memmem(hay.as_ptr().cast(), hay.len(), needle.as_ptr().cast(), needle.len()) };
+        !p.is_null()
+    }
+    #[cfg(not(unix))]
+    {
+        hay.windows(needle.len()).any(|w| w == needle)
+    }
+}
+
 impl Repo {
     /// Attribute files of the tracked tree (those in the index plus a root one on disk).
     pub fn attrs(&self) -> Result<Attrs> {
         let mut bases: BTreeSet<String> = BTreeSet::new();
         bases.insert(String::new());
-        let ix = self.index()?;
-        for p in ix.entries.keys() {
-            if p == ATTR_FILE {
-                continue;
-            }
-            if let Some(dir) = p.strip_suffix(ATTR_FILE).and_then(|d| d.strip_suffix('/')) {
-                bases.insert(dir.to_owned());
+        // Paths are stored verbatim in the index file, so an index that never mentions the
+        // attribute file's name holds none: skip decoding it (a status or checkout has already
+        // paid for one decode of the same file).
+        let raw = self.rd("index")?;
+        if bytes_contain(&raw, ATTR_FILE.as_bytes()) {
+            let ix = Index::decode(&raw)?;
+            for p in ix.entries.keys() {
+                if p == ATTR_FILE {
+                    continue;
+                }
+                if let Some(dir) = p.strip_suffix(ATTR_FILE).and_then(|d| d.strip_suffix('/')) {
+                    bases.insert(dir.to_owned());
+                }
             }
         }
         let mut a = Attrs::default();
