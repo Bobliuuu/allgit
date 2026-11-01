@@ -65,6 +65,10 @@ impl PackIndex {
             checksum,
         })
     }
+    /// The pack's whole-file checksum, which is also the pack's last 32 bytes (its trailer).
+    pub fn checksum(&self) -> &[u8; 32] {
+        &self.checksum
+    }
     /// `(offset, len)` of the object's encoded bytes within the pack file.
     pub fn find(&self, id: &ObjectId) -> Option<(u64, u32)> {
         self.entries

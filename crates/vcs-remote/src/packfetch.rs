@@ -5,6 +5,22 @@ use std::path::Path;
 use vcs_objects::{id_of_encoded, ObjectId};
 use vcs_store::pack::PackIndex;
 
+/// Check the remote pack really ends where its index says: the last 32 bytes (the trailer) must
+/// equal the index's pack checksum and nothing may follow. One 33-byte ranged GET. Ranged object
+/// reads never touch the trailer, so without this a pack cut short by a half-finished upload,
+/// or one with extra bytes, would be accepted.
+fn check_trailer(b: &dyn Backend, stem: &str, idx: &PackIndex) -> Result<(), BackendError> {
+    let bad = |why: &str| BackendError::Other(format!("pack {stem}: {why}"));
+    let start = idx.pack_len.checked_sub(32).ok_or_else(|| bad("index pack length too small"))?;
+    match b.get_range(&format!("{stem}.pack"), start, 33)? {
+        None => Err(bad("pack file missing")),
+        Some(t) if t.len() == 32 && t[..] == idx.checksum()[..] => Ok(()),
+        Some(t) if t.len() < 32 => Err(bad("pack is shorter than its index says (truncated trailer?)")),
+        Some(t) if t.len() > 32 => Err(bad("pack is longer than its index says")),
+        Some(_) => Err(bad("pack trailer does not match its index")),
+    }
+}
+
 /// Fetch `id` from the pack stored at `<stem>.pack` / `<stem>.idx`. Downloads the index
 /// (small, 44 bytes per object) and then exactly the object's byte range. The bytes are
 /// verified against `id`. `Ok(None)` if the pack, index or object is absent.
@@ -14,6 +30,7 @@ pub fn fetch_from_pack(b: &dyn Backend, stem: &str, id: &ObjectId) -> Result<Opt
     };
     let idx = PackIndex::parse(&idx.data, Path::new(stem)).map_err(|e| BackendError::Other(e.to_string()))?;
     let Some((off, len)) = idx.find(id) else { return Ok(None) };
+    check_trailer(b, stem, &idx)?;
     let Some(bytes) = b.get_range(&format!("{stem}.pack"), off, len as u64)? else {
         return Ok(None);
     };
@@ -70,6 +87,9 @@ pub fn fetch_many(b: &dyn Backend, ids: &[ObjectId]) -> Result<Vec<(ObjectId, Ve
                 None => true,
             });
             hits.sort_by_key(|h| h.0);
+            if !hits.is_empty() {
+                check_trailer(b, stem, &idx)?;
+            }
             let pack_key = format!("{stem}.pack");
             let mut i = 0;
             while i < hits.len() {
