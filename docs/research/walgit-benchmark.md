@@ -46,6 +46,88 @@ Server CPU = utime+stime (+ reaped children) delta of the walgit-server / vcs-se
 
 ## Results (clean pass, gc.auto=0)
 
+### binary 10000 files (39.1 MiB, g0 = 1000 files), reps 5, init reps 5, load1 at start 13.97, end 10.52
+
+Wall ms, median (min-max). srv = front-server CPU seconds (walgit-server incl. reaped git children / vcs-server), rf = RustFS CPU seconds.
+
+| op | variant | git (local bare) | walgit | vcs-server |
+|---|---|---|---|---|
+| initial push | 51 commits | 3419 (3305-3519) | 3896 (3813-4975) srv 0.71s rf 0.31s | 585 (560-671) srv 0.12s rf 0.26s |
+| 1-file push |  | 49 (35-63) | 78 (74-103) srv 0.02s rf 0.02s | 35 (34-39) srv 0.00s rf 0.02s |
+| full clone | warm | 1063 (896-1205) | 832 (825-876) srv 0.31s rf 0.00s | 2699 (2676-2791) srv 0.14s rf 0.22s |
+| full clone | cold_os | 907 (893-912) | 922 (907-942) srv 0.35s rf 0.00s | 2789 (2690-2897) srv 0.13s rf 0.24s |
+| full clone | cold_server | n/a | 994 (988-1033) srv 0.44s rf 0.10s | n/a |
+| partial clone (10%) | warm | 184 (181-226) | 207 (203-216) srv 0.06s rf 0.00s | 336 (312-349) srv 0.02s rf 0.04s |
+| partial clone (10%) | cold_os | 244 (243-259) | 262 (260-291) srv 0.08s rf 0.00s | 352 (329-364) srv 0.03s rf 0.04s |
+| partial clone (10%) | cold_server | n/a | 380 (371-490) srv 0.19s rf 0.09s | n/a |
+| fetch 1 commit | warm | 27 (25-51) | 37 (35-58) srv 0.01s rf 0.00s | 212 (187-238) srv 0.07s rf 0.10s |
+| fetch 1 commit | cold_os | 70 (64-74) | 95 (93-103) srv 0.01s rf 0.00s | 287 (277-322) srv 0.09s rf 0.14s |
+| fetch 1 commit | cold_server | n/a | 235 (225-275) srv 0.18s rf 0.12s | n/a |
+
+| fact | git | walgit | vcs |
+|---|---|---|---|
+| remote store per repo after initial push (du; walgit/vcs bucket du / 5 identical repos) | 39.9 MiB | 39.8 MiB | 40.5 MiB |
+| full clone: files checked out / client store | 10000 / 40.8 MiB | 10000 / 40.8 MiB | 10000 / 81.8 MiB |
+| partial clone: files checked out / client store | 1000 / 5.3 MiB | 1000 / 5.3 MiB | 1000 / 9.2 MiB |
+
+Object-store requests / payload bytes (counting proxy, 1 run per op; up = to store, down = from store):
+
+| op | walgit req (GET/PUT/other) up / down | vcs-server req (GET/PUT/other) up / down |
+|---|---|---|
+| init_push | 23 (13/5/5) 39.8 MiB / 1 KiB | 8 (4/4/0) 40.4 MiB / 0 KiB |
+| idle_65s_after_push | 120 (69/31/20) 6 KiB / 3 KiB | 0 (0/0/0) 0 KiB / 0 KiB |
+| inc_push | 7 (3/4/0) 10 KiB / 0 KiB | 8 (3/4/1) 10 KiB / 1 KiB |
+| clone_full_warm | 4 (4/0/0) 0 KiB / 0 KiB | 95 (95/0/0) 0 KiB / 49.8 MiB |
+| clone_full_cold_os | 4 (4/0/0) 0 KiB / 0 KiB | 95 (95/0/0) 0 KiB / 49.8 MiB |
+| clone_full_cold_server | 13 (13/0/0) 0 KiB / 39.7 MiB | n/a |
+| clone_partial_warm | 7 (7/0/0) 0 KiB / 0 KiB | 19 (19/0/0) 0 KiB / 6.6 MiB |
+| clone_partial_cold_os | 7 (7/0/0) 0 KiB / 0 KiB | 19 (19/0/0) 0 KiB / 6.6 MiB |
+| clone_partial_cold_server | 16 (16/0/0) 0 KiB / 39.7 MiB | n/a |
+| fetch_1_warm | 4 (4/0/0) 0 KiB / 0 KiB | 49 (49/0/0) 0 KiB / 4.8 MiB |
+| fetch_1_cold_os | 4 (4/0/0) 0 KiB / 0 KiB | 60 (60/0/0) 0 KiB / 4.8 MiB |
+| fetch_1_cold_server | 22 (22/0/0) 0 KiB / 39.8 MiB | n/a |
+
+### deep 10000 files (5.7 MiB, g0 = 1000 files), reps 5, init reps 5, load1 at start 21.78, end 13.80
+
+Wall ms, median (min-max). srv = front-server CPU seconds (walgit-server incl. reaped git children / vcs-server), rf = RustFS CPU seconds.
+
+| op | variant | git (local bare) | walgit | vcs-server |
+|---|---|---|---|---|
+| initial push | 51 commits | 3113 (3022-4111) | 3355 (3324-3372) srv 0.51s rf 0.11s | 631 (571-1237) srv 0.02s rf 0.09s |
+| 1-file push |  | 145 (142-145) | 91 (89-112) srv 0.05s rf 0.02s | 32 (30-34) srv 0.00s rf 0.02s |
+| full clone | warm | 1984 (1891-2168) | 1821 (1787-2186) srv 0.04s rf 0.07s | 7901 (6875-9198) srv 0.13s rf 0.22s |
+| full clone | cold_os | 2001 (1964-2635) | 2521 (1936-4750) srv 0.04s rf 0.00s | 9352 (7722-9742) srv 0.14s rf 0.22s |
+| full clone | cold_server | n/a | 3124 (2461-3743) srv 0.24s rf 0.02s | n/a |
+| partial clone (10%) | warm | 551 (515-614) | 506 (503-577) srv 0.04s rf 0.00s | 821 (765-841) srv 0.03s rf 0.04s |
+| partial clone (10%) | cold_os | 577 (559-598) | 565 (555-587) srv 0.05s rf 0.00s | 810 (782-863) srv 0.03s rf 0.05s |
+| partial clone (10%) | cold_server | n/a | 795 (773-886) srv 0.25s rf 0.03s | n/a |
+| fetch 1 commit | warm | 59 (56-65) | 72 (69-84) srv 0.01s rf 0.00s | 331 (315-370) srv 0.07s rf 0.10s |
+| fetch 1 commit | cold_os | 110 (107-112) | 131 (126-138) srv 0.01s rf 0.00s | 412 (398-449) srv 0.10s rf 0.14s |
+| fetch 1 commit | cold_server | n/a | 373 (357-408) srv 0.26s rf 0.05s | n/a |
+
+| fact | git | walgit | vcs |
+|---|---|---|---|
+| remote store per repo after initial push (du; walgit/vcs bucket du / 5 identical repos) | 6.2 MiB | 6.0 MiB | 8.9 MiB |
+| full clone: files checked out / client store | 10000 / 7.9 MiB | 10000 / 7.9 MiB | 10000 / 150.1 MiB |
+| partial clone: files checked out / client store | 1000 / 4.4 MiB | 1000 / 4.4 MiB | 1000 / 15.6 MiB |
+
+Object-store requests / payload bytes (counting proxy, 1 run per op; up = to store, down = from store):
+
+| op | walgit req (GET/PUT/other) up / down | vcs-server req (GET/PUT/other) up / down |
+|---|---|---|
+| init_push | 11 (6/5/0) 6.0 MiB / 0 KiB | 8 (4/4/0) 8.8 MiB / 0 KiB |
+| idle_65s_after_push | 132 (76/31/25) 6 KiB / 4 KiB | 0 (0/0/0) 0 KiB / 0 KiB |
+| inc_push | 7 (3/4/0) 4 KiB / 0 KiB | 8 (3/4/1) 2 KiB / 1 KiB |
+| clone_full_warm | 30 (18/10/2) 2 KiB / 0 KiB | 95 (95/0/0) 0 KiB / 43.0 MiB |
+| clone_full_cold_os | 5 (5/0/0) 0 KiB / 0 KiB | 95 (95/0/0) 0 KiB / 43.0 MiB |
+| clone_full_cold_server | 12 (12/0/0) 0 KiB / 6.0 MiB | n/a |
+| clone_partial_warm | 7 (7/0/0) 0 KiB / 0 KiB | 20 (20/0/0) 0 KiB / 10.4 MiB |
+| clone_partial_cold_os | 7 (7/0/0) 0 KiB / 0 KiB | 20 (20/0/0) 0 KiB / 10.4 MiB |
+| clone_partial_cold_server | 15 (15/0/0) 0 KiB / 6.0 MiB | n/a |
+| fetch_1_warm | 4 (4/0/0) 0 KiB / 0 KiB | 48 (48/0/0) 0 KiB / 16.7 MiB |
+| fetch_1_cold_os | 4 (4/0/0) 0 KiB / 0 KiB | 59 (59/0/0) 0 KiB / 16.7 MiB |
+| fetch_1_cold_server | 21 (21/0/0) 0 KiB / 6.0 MiB | n/a |
+
 ### flat 10000 files (5.7 MiB, g0 = 1000 files), reps 5, init reps 5, load1 at start 17.36, end 20.02
 
 Wall ms, median (min-max). srv = front-server CPU seconds (walgit-server incl. reaped git children / vcs-server), rf = RustFS CPU seconds.
@@ -103,7 +185,7 @@ vcs does, walgit does not:
 * **One atomic multi-zone transaction** and per-zone write policy at the server (see docs/server.md); walgit's partitions are pack groups, not paths.
 * A server with **no local state** (nothing to warm, evict or place).
 
-Where vcs is worse in these measurements: full clone and fetch are several times slower than git/walgit and read far more from the store (fetch of 1 commit downloads MiB where git/walgit move KiB); the client store is up to 8x larger (loose objects). The cause of the fetch volume was not diagnosed here (HYPOTHESIS: it re-reads per-zone history/manifest data; unverified). Also the vcs initial push uploads loose objects while git uploads one pack; at flat 10k the vcs initial push is faster than git's because git has to pack 10k loose objects first.
+Where vcs is worse in these measurements: full clone and fetch are several times slower than git/walgit and read far more from the store (fetch of 1 commit downloads MiB where git/walgit move KiB); the client store is 2x (binary) to roughly 10-20x (flat/deep) larger than git's (see the client-store rows; vcs keeps loose objects). The cause of the fetch volume was not diagnosed here (HYPOTHESIS: it re-reads per-zone history/manifest data; unverified). Also the vcs initial push uploads loose objects while git uploads one pack; at flat 10k the vcs initial push is faster than git's because git has to pack 10k loose objects first.
 
 ## walgit test suite with git 2.56.0 (re-run)
 
@@ -127,7 +209,7 @@ How git was obtained: `sudo add-apt-repository ppa:git-core/ppa` and `sudo apt-g
 * The proxy pass is a single run per operation; counts are deterministic here but walgit's background maintainer adds a few requests of its own.
 * One RustFS node on local disk: request latency is microseconds-to-milliseconds, so the request counts are the portable result and the wall times are not predictive of S3.
 * The plain git reference uses `file://` and so has no network or HTTP cost at all; it is a lower bound, not a like-for-like server.
-* Only 100k-file datasets with fewer reps (3) and the `deep` layout's client-side checkout cost dominate clone time for every tool.
+* For the clone rows of every tool, client-side checkout (writing the files) is part of the wall time and dominates on the `deep` layout.
 
 ## Not run
 

@@ -15,7 +15,7 @@ vcs does, walgit does not:
 * **One atomic multi-zone transaction** and per-zone write policy at the server (see docs/server.md); walgit's partitions are pack groups, not paths.
 * A server with **no local state** (nothing to warm, evict or place).
 
-Where vcs is worse in these measurements: full clone and fetch are several times slower than git/walgit and read far more from the store (fetch of 1 commit downloads MiB where git/walgit move KiB); the client store is up to 8x larger (loose objects). The cause of the fetch volume was not diagnosed here (HYPOTHESIS: it re-reads per-zone history/manifest data; unverified). Also the vcs initial push uploads loose objects while git uploads one pack; at flat 10k the vcs initial push is faster than git's because git has to pack 10k loose objects first.
+Where vcs is worse in these measurements: full clone and fetch are several times slower than git/walgit and read far more from the store (fetch of 1 commit downloads MiB where git/walgit move KiB); the client store is 2x (binary) to roughly 10-20x (flat/deep) larger than git's (see the client-store rows; vcs keeps loose objects). The cause of the fetch volume was not diagnosed here (HYPOTHESIS: it re-reads per-zone history/manifest data; unverified). Also the vcs initial push uploads loose objects while git uploads one pack; at flat 10k the vcs initial push is faster than git's because git has to pack 10k loose objects first.
 
 ## walgit test suite with git 2.56.0 (re-run)
 
@@ -39,7 +39,7 @@ How git was obtained: `sudo add-apt-repository ppa:git-core/ppa` and `sudo apt-g
 * The proxy pass is a single run per operation; counts are deterministic here but walgit's background maintainer adds a few requests of its own.
 * One RustFS node on local disk: request latency is microseconds-to-milliseconds, so the request counts are the portable result and the wall times are not predictive of S3.
 * The plain git reference uses `file://` and so has no network or HTTP cost at all; it is a lower bound, not a like-for-like server.
-* Only 100k-file datasets with fewer reps (3) and the `deep` layout's client-side checkout cost dominate clone time for every tool.
+* For the clone rows of every tool, client-side checkout (writing the files) is part of the wall time and dominates on the `deep` layout.
 
 ## Not run
 
