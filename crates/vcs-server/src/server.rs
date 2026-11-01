@@ -88,6 +88,11 @@ struct Shared {
     backend: Arc<dyn Backend>,
     cfg: Config,
     tokens: RwLock<Arc<TokenTable>>,
+    /// Current validator settings (the policy is replaceable at runtime).
+    validator: RwLock<Arc<ValidatorConfig>>,
+    #[cfg(feature = "tls")]
+    tls: RwLock<Option<Arc<rustls::ServerConfig>>>,
+    read_index: Mutex<crate::readguard::ReadIndex>,
     limiter: Option<Limiter>,
     active: AtomicUsize,
     stop: AtomicBool,
@@ -97,6 +102,25 @@ struct ConnGuard(Arc<Shared>);
 impl Drop for ConnGuard {
     fn drop(&mut self) {
         self.0.active.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Reload access to a running server; see [`Server::handle`].
+#[derive(Clone)]
+pub struct Handle(Arc<Shared>);
+
+impl Handle {
+    pub fn reload_tokens(&self, t: TokenTable) {
+        *self.0.tokens.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(t);
+    }
+    pub fn reload_policy(&self, p: crate::Policy) {
+        let mut v = (**self.0.validator.read().unwrap_or_else(|e| e.into_inner())).clone();
+        v.policy = p;
+        *self.0.validator.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(v);
+    }
+    #[cfg(feature = "tls")]
+    pub fn reload_tls(&self, c: Arc<rustls::ServerConfig>) {
+        *self.0.tls.write().unwrap_or_else(|e| e.into_inner()) = Some(c);
     }
 }
 
@@ -122,6 +146,10 @@ impl Server {
             backend,
             limiter: cfg.rate_limit.map(Limiter::new),
             tokens: RwLock::new(Arc::new(tokens)),
+            validator: RwLock::new(Arc::new(cfg.validator.clone())),
+            #[cfg(feature = "tls")]
+            tls: RwLock::new(cfg.tls.clone()),
+            read_index: Mutex::new(Default::default()),
             cfg,
             active: AtomicUsize::new(0),
             stop: AtomicBool::new(false),
@@ -191,7 +219,22 @@ impl Server {
     }
     /// Replace the token table now (revocation and expiry changes take effect for the next request).
     pub fn reload_tokens(&self, t: TokenTable) {
-        *self.shared.tokens.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(t);
+        self.handle().reload_tokens(t)
+    }
+    /// Replace the path/read policy now (applies to the next request).
+    pub fn reload_policy(&self, p: crate::Policy) {
+        self.handle().reload_policy(p)
+    }
+    /// Replace the TLS configuration (certificate and key) for connections accepted from now on;
+    /// connections already established keep the one they were accepted with.
+    #[cfg(feature = "tls")]
+    pub fn reload_tls(&self, c: Arc<rustls::ServerConfig>) {
+        self.handle().reload_tls(c)
+    }
+    /// A cloneable handle for reloading from another thread (a signal handler thread) after
+    /// [`join`](Self::join) has taken the server.
+    pub fn handle(&self) -> Handle {
+        Handle(self.shared.clone())
     }
     /// Connections currently being served.
     pub fn active_connections(&self) -> usize {
@@ -224,7 +267,7 @@ impl Drop for Server {
 /// Over the connection cap: answer 503 on plain connections (best effort, 1 s write budget), drop TLS ones.
 fn refuse(#[allow(unused_variables)] sh: &Shared, mut conn: TcpStream) {
     #[cfg(feature = "tls")]
-    if sh.cfg.tls.is_some() {
+    if sh.tls.read().unwrap_or_else(|e| e.into_inner()).is_some() {
         return;
     }
     // Consume what the client already sent (briefly) so that closing does not reset the connection
@@ -288,7 +331,8 @@ fn handle_conn(sh: &Shared, conn: TcpStream) {
     let io: Box<dyn Io> = {
         #[cfg(feature = "tls")]
         {
-            match &sh.cfg.tls {
+            let cur = sh.tls.read().unwrap_or_else(|e| e.into_inner()).clone();
+            match &cur {
                 Some(c) => match rustls::ServerConnection::new(c.clone()) {
                     Ok(sc) => Box::new(rustls::StreamOwned::new(sc, ds)),
                     Err(_) => return,
@@ -427,6 +471,14 @@ fn dispatch(sh: &Shared, req: &Request, who: &Principal) -> Response {
         }
         ("GET", "/v1/list") => {
             let prefix = req.query_param("prefix").unwrap_or_default();
+            if restricted(sh, who) {
+                // Listing would enumerate object ids of every zone. Packs are hidden (they mix zones);
+                // tx/, tomb/ and the rest name ids too.
+                if prefix.starts_with("packs/") {
+                    return Response::new(200, "");
+                }
+                return text(403, "Forbidden: listing is not available to a read-restricted token");
+            }
             match sh.backend.list(&prefix) {
                 Ok(keys) => Response::new(200, keys.join("\n")),
                 Err(e) => backend_err(e),
@@ -443,7 +495,7 @@ fn dispatch(sh: &Shared, req: &Request, who: &Principal) -> Response {
                 return text(400, "key is a variant spelling of the manifest key");
             }
             match m {
-                "GET" | "HEAD" => object_read(sh, req, &key, m == "HEAD"),
+                "GET" | "HEAD" => object_read(sh, req, who, &key, m == "HEAD"),
                 "PUT" => object_put(sh, req, who, &key),
                 "DELETE" => object_delete(sh, who, &key),
                 _ => text(405, "method not allowed"),
@@ -463,7 +515,41 @@ fn shadows_manifest(key: &str) -> bool {
     base.eq_ignore_ascii_case(manifest::KEY)
 }
 
-fn object_read(sh: &Shared, req: &Request, key: &str, head: bool) -> Response {
+/// Does the read policy limit this principal? (Admins never.)
+fn restricted(sh: &Shared, who: &Principal) -> bool {
+    who.role < Role::Admin
+        && sh
+            .validator
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .policy
+            .read_restricted(&who.name)
+}
+
+/// For a read-restricted principal: may it read `key`? Whitelist: the manifest, and canonical object
+/// keys that are not reachable only from zones it may not read. Everything else (packs, tx, tomb,
+/// non-canonical spellings) is reported as absent, the same answer as for a key that does not exist.
+fn read_allowed(sh: &Shared, who: &Principal, key: &str) -> Result<bool, BackendError> {
+    if key == manifest::KEY {
+        return Ok(true);
+    }
+    let Some(id) = crate::readguard::canonical_object_id(key) else {
+        return Ok(false);
+    };
+    let policy = sh.validator.read().unwrap_or_else(|e| e.into_inner()).policy.clone();
+    let mut idx = sh.read_index.lock().unwrap_or_else(|e| e.into_inner());
+    idx.refresh(sh.backend.as_ref())?;
+    Ok(!idx.denied_only(&id, &|z| policy.read_zone_allowed(&who.name, z)))
+}
+
+fn object_read(sh: &Shared, req: &Request, who: &Principal, key: &str, head: bool) -> Response {
+    if restricted(sh, who) {
+        match read_allowed(sh, who, key) {
+            Ok(true) => {}
+            Ok(false) => return if head { Response::new(404, "") } else { text(404, "not found") },
+            Err(e) => return backend_err(e),
+        }
+    }
     if head {
         return match sh.backend.exists(key) {
             Ok(true) => Response::new(200, ""),
@@ -570,7 +656,8 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str) -> Respons
             Ok(m) => m,
             Err(e) => return text(422, &format!("Invalid: {e}")),
         };
-        if let Err(r) = validate_and_normalize(sh.backend.as_ref(), &cur, &mut new, who, (sh.cfg.clock)(), &sh.cfg.validator) {
+        let vcfg = sh.validator.read().unwrap_or_else(|e| e.into_inner()).clone();
+        if let Err(r) = validate_and_normalize(sh.backend.as_ref(), &cur, &mut new, who, (sh.cfg.clock)(), &vcfg) {
             return reject_response(r);
         }
         // the server may have rewritten lock times: store its version, not the client's bytes

@@ -12,6 +12,7 @@ User=vcs
 Group=vcs
 # Optional S3 credentials / settings (mode 0600, owned by root). Leave the file out for --root mode.
 EnvironmentFile=-/etc/vcs/server.env
+ExecReload=/bin/kill -HUP $MAINPID
 ExecStart=/usr/local/bin/vcs-server --root /var/lib/vcs/data --tokens /etc/vcs/tokens \
   --policy /etc/vcs/policy --listen 127.0.0.1:8480 --max-lease-secs 86400
 # S3 instead of a directory: replace --root with
