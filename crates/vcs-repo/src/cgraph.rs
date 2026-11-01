@@ -59,7 +59,14 @@ impl Repo {
             }
         }
         let old = self.load_cg_file(&zone).unwrap_or_default();
-        let mut tips: Vec<ObjectId> = self.refs().ok()?.branches.iter().filter(|((z, _), _)| *z == zone).map(|(_, id)| *id).collect();
+        let mut tips: Vec<ObjectId> = self
+            .refs()
+            .ok()?
+            .branches
+            .iter()
+            .filter(|((z, _), _)| *z == zone)
+            .map(|(_, id)| *id)
+            .collect();
         tips.extend_from_slice(extra);
         // A parent must live in its child's zone. Commits entering the graph are checked here
         // (against each other, and against parents already in the file) so that the graph never

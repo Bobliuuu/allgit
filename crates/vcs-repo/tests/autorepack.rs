@@ -5,7 +5,11 @@ use vcs_objects::Signature;
 use vcs_repo::{GcOptions, Repo};
 
 fn sig() -> Signature {
-    Signature { name: "T".into(), email: "t@x".into(), timestamp: 1 }
+    Signature {
+        name: "T".into(),
+        email: "t@x".into(),
+        timestamp: 1,
+    }
 }
 
 fn repo_with(n: usize) -> (tempfile::TempDir, Repo) {
@@ -60,7 +64,11 @@ fn packs_only_old_loose_objects_and_keeps_everything_readable() {
     // a fresh handle (reads packs from disk) sees the same, and real GC keeps live objects
     let r2 = Repo::discover(r.worktree()).unwrap();
     assert_eq!(r2.store().list().unwrap(), all);
-    r2.gc_sweep_at(later + Duration::from_secs(60 * 86400), GcOptions::new(Duration::from_secs(14 * 86400))).unwrap();
+    r2.gc_sweep_at(
+        later + Duration::from_secs(60 * 86400),
+        GcOptions::new(Duration::from_secs(14 * 86400)),
+    )
+    .unwrap();
     assert!(r2.fsck().unwrap().problems.is_empty());
     assert_eq!(r2.log("root", None, 10).unwrap().len(), 1);
 }

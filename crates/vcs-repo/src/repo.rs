@@ -1861,7 +1861,13 @@ impl Repo {
     /// objects older than `grace` into one pack under the repository lock. `force` skips the
     /// threshold (`vcs repack --auto` still honours it; tests use `force`). Returns the number
     /// packed, or `None` when nothing was due or another process holds the lock (try again later).
-    pub fn auto_repack_at(&self, now: std::time::SystemTime, limit: usize, grace: std::time::Duration, force: bool) -> Result<Option<usize>> {
+    pub fn auto_repack_at(
+        &self,
+        now: std::time::SystemTime,
+        limit: usize,
+        grace: std::time::Duration,
+        force: bool,
+    ) -> Result<Option<usize>> {
         if !force && (limit == 0 || self.store.loose_estimate() <= limit) {
             return Ok(None);
         }

@@ -248,7 +248,10 @@ impl Config {
     pub fn auto_pack_limit(&self) -> Result<usize, Error> {
         match self.get("gc.autoPackLimit") {
             None => Ok(vcs_repo::Repo::AUTO_PACK_LIMIT),
-            Some(v) => v.trim().parse().or_else(|_| msg(format!("gc.autoPackLimit must be a non-negative integer, got '{v}'"))),
+            Some(v) => v
+                .trim()
+                .parse()
+                .or_else(|_| msg(format!("gc.autoPackLimit must be a non-negative integer, got '{v}'"))),
         }
     }
 
