@@ -25,3 +25,4 @@ Index of documents under `docs/research/storage/`. Add new documents here, one l
 Scripts: `scripts/storage_cost_model.py`, `scripts/storage_score.py` (tests: `scripts/test_storage_*.py`). Data: `data/`.
 
 Lab code for #184: `crates/vcs-storage-lab` (own workspace; table generator `tools/tables.py`). Data: `data/packing/`.
+- [s3-aws-results.md](s3-aws-results.md): measured AWS S3 contract checks and latency (2026-11-01), including the ETag A-B-A finding.
