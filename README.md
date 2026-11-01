@@ -227,12 +227,31 @@ Build: current `origin/main` at `08ff4cc`, release. Layout: **flat, 100,000 file
 | log (50 commits) | 12 | 15 | 1.22 [1.11, 1.40] | 26 | 42 | 1.51 [0.64, 1.77] |
 | checkout (1% differ) | 634 | 725 | 1.14 [0.33, 3.48] | 562 | 397 | 0.54 [0.40, 0.75] |
 
+**Deep (depth 8) and binary (4 KiB random files) layouts, 100k files, Lambda box only** (30 cores, shared; load1 4 to 20 for deep, 3 to 7 for binary; git 2.56.0; same build and method; not run on the quiet c6i box):
+
+| cell | git CPU ms | vcs CPU ms | CPU ratio vcs/git | git wall ms | vcs wall ms | wall ratio |
+|---|---|---|---|---|---|---|
+| deep: add . | 24,630 | 11,610 | 0.54 [0.23, 0.70] | 46,404 | 13,098 | 0.31 [0.09, 0.53] |
+| deep: commit | 16,109 | 1,411 | 0.09 [0.07, 0.10] | 16,801 | 931 | 0.05 [0.04, 0.06] |
+| deep: status, clean | 1,446 | 1,883 | **1.31** [1.29, 2.27] | 1,008 | 385 | 0.38 [0.38, 0.61] |
+| deep: status, 1% modified | 1,472 | 1,843 | **1.25** [1.20, 1.31] | 1,026 | 363 | 0.35 [0.34, 0.40] |
+| deep: log | 5 | 7 | 1.04 [0.80, 1.50] | 6 | 7 | 1.04 [0.77, 1.63] |
+| deep: checkout | 950 | 1,117 | **1.16** [1.12, 1.20] | 580 | 381 | 0.63 [0.52, 0.79] |
+| binary: add . | 22,654 | 8,136 | 0.36 [0.31, 0.38] | 23,792 | 2,075 | 0.09 [0.05, 0.09] |
+| binary: commit | 830 | 316 | 0.39 [0.36, 0.39] | 636 | 205 | 0.31 [0.29, 0.39] |
+| binary: status, clean | 311 | 416 | **1.35** [1.30, 1.63] | 115 | 107 | 0.98 [0.92, 1.02] |
+| binary: status, 1% modified | 309 | 439 | **1.42** [1.33, 1.47] | 118 | 110 | 1.00 [0.92, 1.06] |
+| binary: log | 5 | 5 | 0.95 [0.91, 1.03] | 5 | 5 | 0.96 [0.86, 1.04] |
+| binary: checkout | 536 | 690 | **1.29** [1.26, 1.33] | 338 | 257 | 0.76 [0.74, 0.83] |
+
+On these layouts vcs again uses less CPU for `add` and `commit` and more CPU (1.16x to 1.42x) for `status` and `checkout`. On deep, wall time for `status` and `checkout` is lower than git (the git run there had a long wall-to-CPU gap); do not read that as a CPU win.
+
 **What this says, and what it does not**
 
 - vcs used less CPU than git for `add` and `commit` on flat 100k on both boxes.
 - **Cells where vcs is slower than git (CPU):** clean and modified `status` on the quiet box (about 1.7x git; on the noisy box about equal, with intervals that include 1), `checkout` (1.33x on the quiet box; the noisy box's interval is too wide to say), and `log` on the noisy box (1.2x; equal on the quiet box). Wall time for `status` is within 10% of git on both boxes; vcs spends more CPU to get there.
 - An earlier version of this README said vcs was faster than git on `checkout` (285 vs 584 ms) and `log`. Interleaved runs do **not** reproduce that, so those claims are removed.
-- **Not re-measured:** the deep and binary layouts (the old numbers for them were not reproduced either and are dropped), 10k-file repos (see [interleaved-comparison.md](docs/research/interleaved-comparison.md) for an older, noisy 10k run), a git with fsmonitor, vcs with the optional `watcher` feature, cold cache, and any machine other than these two.
+- **Not re-measured:** deep and binary on the quiet box (they ran only on the shared Lambda box), 10k-file repos (see [interleaved-comparison.md](docs/research/interleaved-comparison.md) for an older, noisy 10k run), a git with fsmonitor, vcs with the optional `watcher` feature, cold cache, and any machine other than these two.
 
 ### Compared with other version control tools
 
