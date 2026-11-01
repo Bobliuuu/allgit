@@ -82,11 +82,11 @@ Tokens are never stored in `.vcs/remote` or printed in errors.
 
 ## API
 
-`GET /healthz` (no auth), `GET /v1/whoami`, `GET|HEAD /v1/o/<key>[?offset=&len=]`, `PUT /v1/o/<key>` with
+`GET /healthz` and `GET /readyz` (no auth, constant bodies; see [deploy.md](deploy.md#operating-health-metrics-logs-shutdown)), `GET /metrics` (admin or metrics token), `GET /v1/whoami`, `GET|HEAD /v1/o/<key>[?offset=&len=]`, `PUT /v1/o/<key>` with
 `If-None-Match: *` or `If-Match: "<tag>"` (unconditional PUT is refused, 428), `GET /v1/list?prefix=`.
 Status mapping: 401 bad/missing/expired token, 429 rate limited (`Retry-After`), 408 request timed out, 413 body too
 large, 431 headers too large, 503 too many connections, 403 role or zone policy, 409 `LockedBy`, 412 precondition failed, 422 invalid
-manifest, 503 backend unavailable.
+manifest, 503 backend unavailable or circuit breaker open (both carry `Retry-After`). Every response has an `X-Request-Id`.
 
 ## What is validated on a write of the `manifest` key
 

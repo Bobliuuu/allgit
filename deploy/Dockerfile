@@ -18,6 +18,8 @@ COPY --from=build /src/target/release/vcs-server /usr/local/bin/vcs-server
 USER vcs
 VOLUME /data
 EXPOSE 8480
-HEALTHCHECK --interval=30s --timeout=3s CMD ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8480 && printf 'GET /healthz HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q 200 <&3"]
+# /readyz: 200 only while the backend answers (cached 2 s server side); /healthz is plain liveness.
+HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=3 CMD ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8480; printf 'GET /readyz HTTP/1.0\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200 '"]
+STOPSIGNAL SIGTERM
 ENTRYPOINT ["vcs-server"]
 CMD ["--root", "/data", "--tokens", "/etc/vcs/tokens", "--listen", "0.0.0.0:8480"]

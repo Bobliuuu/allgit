@@ -1,0 +1,13 @@
+# Sample scrape config. /metrics needs an admin token or the server's --metrics-token.
+global:
+  scrape_interval: 15s
+rule_files:
+  - vcs-server.rules.yml
+scrape_configs:
+  - job_name: vcs-server
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/vcs-metrics-token   # the plain token, mode 0600
+    static_configs:
+      - targets: ["127.0.0.1:8480"]

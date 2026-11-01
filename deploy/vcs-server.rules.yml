@@ -1,0 +1,47 @@
+groups:
+  - name: vcs-server
+    rules:
+      - alert: VcsServerDown
+        expr: up{job="vcs-server"} == 0
+        for: 2m
+        labels: {severity: page}
+        annotations: {summary: "vcs-server is not scrapeable"}
+      - alert: VcsServerBackendCircuitOpen
+        expr: vcs_server_backend_circuit_open == 1
+        for: 1m
+        labels: {severity: page}
+        annotations: {summary: "backend circuit breaker open: clients get 503 + Retry-After"}
+      - alert: VcsServerBackendErrors
+        expr: sum(rate(vcs_server_backend_errors_total[5m])) > 0.1
+        for: 10m
+        labels: {severity: ticket}
+        annotations: {summary: "sustained backend errors (storage or S3 trouble)"}
+      - alert: VcsServerAuditErrors
+        expr: increase(vcs_server_audit_errors_total[10m]) > 0
+        labels: {severity: page}
+        annotations: {summary: "audit log appends failing: writes are answered 503 (disk full or read-only?)"}
+      - alert: VcsServerServerErrors
+        expr: sum(rate(vcs_server_requests_total{status=~"5.."}[5m])) / sum(rate(vcs_server_requests_total[5m])) > 0.05
+        for: 10m
+        labels: {severity: ticket}
+        annotations: {summary: "more than 5% of requests fail with 5xx"}
+      - alert: VcsServerAuthFailureSpike
+        expr: rate(vcs_server_auth_failures_total[5m]) > 1
+        for: 10m
+        labels: {severity: ticket}
+        annotations: {summary: "many rejected tokens: expired token roll-out or credential guessing"}
+      - alert: VcsServerRateLimiting
+        expr: rate(vcs_server_rate_limited_total[5m]) > 0.5
+        for: 15m
+        labels: {severity: info}
+        annotations: {summary: "a principal is regularly hitting the rate limit"}
+      - alert: VcsServerSlow
+        expr: histogram_quantile(0.95, sum by (le) (rate(vcs_server_request_duration_seconds_bucket[5m]))) > 2.5
+        for: 15m
+        labels: {severity: ticket}
+        annotations: {summary: "p95 request latency above 2.5 s"}
+      - alert: VcsServerNearConnectionCap
+        expr: vcs_server_open_connections > 200
+        for: 5m
+        labels: {severity: ticket}
+        annotations: {summary: "open connections near the default --max-connections 256"}
