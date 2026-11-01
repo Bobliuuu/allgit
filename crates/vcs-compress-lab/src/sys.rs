@@ -47,11 +47,21 @@ pub fn pct(v: &mut Vec<f64>, p: f64) -> f64 {
 pub fn machine_meta() -> serde_json::Value {
     let cpu = fs::read_to_string("/proc/cpuinfo")
         .ok()
-        .and_then(|s| s.lines().find(|l| l.starts_with("model name")).map(|l| l.split(':').nth(1).unwrap_or("").trim().to_string()))
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("model name"))
+                .map(|l| l.split(':').nth(1).unwrap_or("").trim().to_string())
+        })
         .unwrap_or_default();
-    let kernel = fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default().trim().to_string();
+    let kernel = fs::read_to_string("/proc/sys/kernel/osrelease")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
     let load = fs::read_to_string("/proc/loadavg").unwrap_or_default().trim().to_string();
-    let mem = fs::read_to_string("/proc/meminfo").ok().and_then(|s| s.lines().next().map(|l| l.to_string())).unwrap_or_default();
+    let mem = fs::read_to_string("/proc/meminfo")
+        .ok()
+        .and_then(|s| s.lines().next().map(|l| l.to_string()))
+        .unwrap_or_default();
     let nproc = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0);
     serde_json::json!({
         "cpu": cpu, "kernel": kernel, "loadavg_at_start": load, "memtotal": mem, "nproc": nproc,
