@@ -17,7 +17,7 @@
 use crate::error::{io, msg, Error, Result};
 use crate::index::{Index, IndexEntry};
 use crate::meta::{Workspace, Zones};
-use crate::repo::{ctime_ns, mtime_ns, Repo, Wt};
+use crate::repo::{Repo, Wt};
 use crate::treeops::Flat;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -57,6 +57,27 @@ impl Repo {
             return msg(format!(
                 "{p:?} belongs to zone {owner:?}, which this workspace has not subscribed to (vcs zone add {owner})"
             ));
+        }
+        Ok(())
+    }
+
+    /// [`Self::check_ancestors`] that remembers directories already found fine, so a big batch
+    /// examines each directory once instead of once per file beneath it.
+    fn check_ancestors_memo(&self, p: &str, ok: &mut std::collections::HashSet<String>) -> Result<()> {
+        let Some((dir, _)) = p.rsplit_once('/') else { return Ok(()) };
+        if ok.contains(dir) {
+            return Ok(());
+        }
+        self.check_ancestors(p)?;
+        let mut d = dir;
+        loop {
+            if !ok.insert(d.to_owned()) {
+                break;
+            }
+            match d.rsplit_once('/') {
+                Some((up, _)) => d = up,
+                None => break,
+            }
         }
         Ok(())
     }
@@ -142,63 +163,77 @@ impl Repo {
     }
 
     fn restore_worktree(&self, specs: &[String], zones: &Zones, ws: &Workspace, ix: &mut Index) -> Result<usize> {
+        use crate::repo::ChangeKind;
         let paths = self.match_index(specs, zones, ws, ix, "tracked")?;
-        // 1. decide and validate everything first
-        let mut todo = Vec::new();
-        for p in &paths {
-            let e = &ix.entries[p];
-            if matches!(self.wt_state(p, e, ix.written_ns)?, Wt::Clean) {
-                continue;
-            }
-            self.check_ancestors(p)?;
-            match fs::symlink_metadata(self.worktree.join(p)) {
-                Ok(m) if m.is_file() || m.file_type().is_symlink() => {}
-                Ok(_) => return msg(format!("cannot restore {p:?}: a directory or special file is in the way")),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(source) => {
-                    return Err(Error::Io {
-                        path: self.worktree.join(p),
-                        source,
-                    })
+        // 1. decide and validate everything first. The stat of every matched path (and the
+        // content check of a racy one) runs on the status worker pool.
+        let list: Vec<(&String, &IndexEntry)> = paths.iter().map(|p| (p, &ix.entries[p])).collect();
+        let (changed, _clean) = self.unstaged_changes(&list, ix.written_ns)?;
+        let mut ok_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut todo: Vec<(String, bool)> = Vec::with_capacity(changed.len()); // (path, known absent)
+        for c in &changed {
+            let p = &c.path;
+            self.check_ancestors_memo(p, &mut ok_dirs)?;
+            let absent = c.kind == ChangeKind::Deleted;
+            if !absent {
+                match fs::symlink_metadata(self.worktree.join(p)) {
+                    Ok(m) if m.is_file() || m.file_type().is_symlink() => {}
+                    Ok(_) => return msg(format!("cannot restore {p:?}: a directory or special file is in the way")),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(source) => {
+                        return Err(Error::Io {
+                            path: self.worktree.join(p),
+                            source,
+                        })
+                    }
                 }
             }
-            todo.push(p.clone());
+            todo.push((p.clone(), absent));
         }
-        // 2. write
-        for p in &todo {
+        // 2. write: independent per path, so a big batch runs on a bounded pool (8 threads)
+        let write_one = |(p, absent): &(String, bool)| -> Result<IndexEntry> {
             let (mode, id) = (ix.entries[p].mode, ix.entries[p].id);
             let data = self.store.get_content(&id)?;
-            let abs = self.worktree.join(p);
-            let parent = abs.parent().unwrap();
-            io(parent, fs::create_dir_all(parent))?;
-            let tmp = parent.join(format!(".vcs-tmp-{}", std::process::id()));
-            if mode == EntryMode::Symlink {
+            let abs = || self.worktree.join(p);
+            let m = if mode == EntryMode::Symlink {
                 crate::portable::check_symlink_target(p, &data).or_else(|why| msg(format!("refusing to restore symlink {p:?}: {why}")))?;
-                let _ = fs::remove_file(&tmp);
-                crate::repo::make_symlink(&data, &tmp)?;
+                io(&abs(), self.wfs.symlink(&data, p))?
+            } else if *absent {
+                // known absent a moment ago: create in place; if something appeared, replace atomically
+                match self.wfs.create_new(p, &data, mode) {
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => io(&abs(), self.wfs.write(p, &data, mode))?,
+                    r => io(&abs(), r)?,
+                }
             } else {
-                io(&tmp, fs::write(&tmp, &data))?;
-            }
-            #[cfg(unix)]
-            if mode != EntryMode::Symlink {
-                use std::os::unix::fs::PermissionsExt;
-                let bits = if mode == EntryMode::Executable { 0o755 } else { 0o644 };
-                io(&tmp, fs::set_permissions(&tmp, fs::Permissions::from_mode(bits)))?;
-            }
-            io(&abs, fs::rename(&tmp, &abs))?;
-            let m = io(&abs, fs::symlink_metadata(&abs))?;
-            ix.entries.insert(
-                p.clone(),
-                IndexEntry {
-                    id,
-                    mode,
-                    size: m.len(),
-                    mtime_ns: mtime_ns(&m),
-                    ctime_ns: ctime_ns(&m),
-                },
-            );
+                io(&abs(), self.wfs.write(p, &data, mode))?
+            };
+            Ok(IndexEntry {
+                id,
+                mode,
+                size: m.len,
+                mtime_ns: m.mtime_ns,
+                ctime_ns: m.ctime_ns,
+            })
+        };
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
+        let written: Vec<Result<IndexEntry>> = if threads <= 1 || todo.len() < 64 {
+            todo.iter().map(write_one).collect()
+        } else {
+            let per = todo.len().div_ceil(threads);
+            std::thread::scope(|sc| {
+                let write_one = &write_one;
+                let hs: Vec<_> = todo
+                    .chunks(per)
+                    .map(|part| sc.spawn(move || part.iter().map(write_one).collect::<Vec<_>>()))
+                    .collect();
+                hs.into_iter().flat_map(|h| h.join().expect("restore writer panicked")).collect()
+            })
+        };
+        let n = todo.len();
+        for ((p, _), e) in todo.into_iter().zip(written) {
+            ix.entries.insert(p, e?);
         }
-        Ok(todo.len())
+        Ok(n)
     }
 
     fn restore_staged(&self, specs: &[String], zones: &Zones, ws: &Workspace, ix: &mut Index) -> Result<usize> {

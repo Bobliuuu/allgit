@@ -12,7 +12,7 @@ use crate::repo::{ctime_ns, make_symlink, mode_of, mtime_ns, read_link_bytes};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use vcs_objects::EntryMode;
@@ -56,6 +56,13 @@ pub trait WorktreeFs: Send + Sync {
     /// Atomically replace `path` with a regular file (creating parent directories); never writes
     /// through an existing link. Returns the stat of the new file.
     fn write(&self, path: &str, data: &[u8], mode: EntryMode) -> io::Result<FsStat>;
+    /// Create a regular file at a path the caller has verified is absent (creating parent
+    /// directories). Fails with `AlreadyExists` instead of replacing anything; a real filesystem
+    /// writes it in place (no temporary file + rename), so a crash can leave a partial file at
+    /// the path. Callers fall back to [`WorktreeFs::write`] on `AlreadyExists`.
+    fn create_new(&self, path: &str, data: &[u8], mode: EntryMode) -> io::Result<FsStat> {
+        self.write(path, data, mode)
+    }
     /// Atomically replace `path` with a symlink to `target`.
     fn symlink(&self, target: &[u8], path: &str) -> io::Result<FsStat>;
     /// Remove a file or symlink.
@@ -70,11 +77,19 @@ pub trait WorktreeFs: Send + Sync {
 
 pub struct RealFs {
     root: PathBuf,
+    /// The worktree root, opened once: `stat` resolves paths relative to it (`fstatat`), so the
+    /// kernel walks the 2-3 components of a repository path instead of the whole absolute path.
+    #[cfg(unix)]
+    root_fd: std::sync::OnceLock<Option<fs::File>>,
 }
 
 impl RealFs {
     pub fn new(root: PathBuf) -> Self {
-        RealFs { root }
+        RealFs {
+            root,
+            #[cfg(unix)]
+            root_fd: std::sync::OnceLock::new(),
+        }
     }
     fn abs(&self, p: &str) -> PathBuf {
         if p.is_empty() {
@@ -115,6 +130,48 @@ fn stat_of(m: &fs::Metadata) -> FsStat {
     }
 }
 
+/// `lstat` of `path` relative to the open directory `dir`; `None` if the path cannot be passed to
+/// the kernel (embedded NUL), in which case the caller uses the std path.
+#[cfg(unix)]
+fn stat_at(dir: &fs::File, path: &str) -> Option<io::Result<FsStat>> {
+    use std::os::unix::io::AsRawFd;
+    let c = std::ffi::CString::new(path).ok()?;
+    // SAFETY: `st` is a plain-old-data out parameter, `c` is NUL-terminated, `dir` is a valid fd.
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    let rc = unsafe { libc::fstatat(dir.as_raw_fd(), c.as_ptr(), &mut st, libc::AT_SYMLINK_NOFOLLOW) };
+    if rc != 0 {
+        return Some(Err(io::Error::last_os_error()));
+    }
+    let fmt = st.st_mode & libc::S_IFMT;
+    let kind = if fmt == libc::S_IFLNK {
+        FileKind::Symlink
+    } else if fmt == libc::S_IFDIR {
+        FileKind::Dir
+    } else if fmt == libc::S_IFREG {
+        FileKind::File
+    } else {
+        FileKind::Other
+    };
+    let ns = |s: i64, n: i64| (s.max(0) as u64).saturating_mul(1_000_000_000).saturating_add(n.max(0) as u64);
+    Some(Ok(FsStat {
+        kind,
+        len: st.st_size as u64,
+        // like `mtime_ns`: a time before the epoch reads as 0
+        mtime_ns: if st.st_mtime < 0 {
+            0
+        } else {
+            ns(st.st_mtime as i64, st.st_mtime_nsec as i64)
+        },
+        ctime_ns: ns(st.st_ctime as i64, st.st_ctime_nsec as i64),
+        mode: if st.st_mode & 0o111 != 0 {
+            EntryMode::Executable
+        } else {
+            EntryMode::File
+        },
+        ino: st.st_ino as u64,
+    }))
+}
+
 impl WorktreeFs for RealFs {
     fn read_dir(&self, dir: &str) -> io::Result<Vec<DirEnt>> {
         let mut v = Vec::new();
@@ -128,6 +185,14 @@ impl WorktreeFs for RealFs {
         Ok(v)
     }
     fn stat(&self, path: &str) -> io::Result<FsStat> {
+        #[cfg(unix)]
+        if !path.is_empty() {
+            if let Some(fd) = self.root_fd.get_or_init(|| fs::File::open(&self.root).ok()) {
+                if let Some(r) = stat_at(fd, path) {
+                    return r;
+                }
+            }
+        }
         fs::symlink_metadata(self.abs(path)).map(|m| stat_of(&m))
     }
     fn read(&self, path: &str) -> io::Result<Vec<u8>> {
@@ -139,20 +204,59 @@ impl WorktreeFs for RealFs {
     fn write(&self, path: &str, data: &[u8], mode: EntryMode) -> io::Result<FsStat> {
         let abs = self.abs(path);
         let parent = abs.parent().expect("worktree file has a parent");
-        fs::create_dir_all(parent)?;
         let tmp = parent.join(tmp_name());
-        fs::write(&tmp, data)?;
+        // The directory almost always exists: create it only when the first attempt says it does not
+        // (saves a mkdir + stat per file on a big checkout).
+        let mut f = match create_tmp(&tmp, mode) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                fs::create_dir_all(parent)?;
+                create_tmp(&tmp, mode)?
+            }
+            r => r?,
+        };
+        {
+            use std::io::Write;
+            f.write_all(data)?;
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let bits = if mode == EntryMode::Executable { 0o755 } else { 0o644 };
-            fs::set_permissions(&tmp, fs::Permissions::from_mode(bits))?;
+            // The creation mode was filtered by the umask: set the exact bits.
+            if umask_filters(mode) {
+                f.set_permissions(fs::Permissions::from_mode(want_bits(mode)))?;
+            }
         }
-        #[cfg(not(unix))]
-        let _ = mode;
+        drop(f);
         // rename replaces the path itself (including an existing link); it never writes through it
         fs::rename(&tmp, &abs)?;
         self.stat(path)
+    }
+    fn create_new(&self, path: &str, data: &[u8], mode: EntryMode) -> io::Result<FsStat> {
+        let abs = self.abs(path);
+        let parent = abs.parent().expect("worktree file has a parent");
+        let mut f = match create_file(&abs, mode) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                fs::create_dir_all(parent)?;
+                create_file(&abs, mode)?
+            }
+            r => r?,
+        };
+        let res = (|| {
+            use std::io::Write;
+            f.write_all(data)?;
+            #[cfg(unix)]
+            if umask_filters(mode) {
+                use std::os::unix::fs::PermissionsExt;
+                f.set_permissions(fs::Permissions::from_mode(want_bits(mode)))?;
+            }
+            // Stat the open file: the result is the final state (nothing changes it after this).
+            f.metadata().map(|m| stat_of(&m))
+        })();
+        if res.is_err() {
+            drop(f);
+            let _ = fs::remove_file(&abs); // our own half-written file: never leave it behind
+        }
+        res
     }
     fn symlink(&self, target: &[u8], path: &str) -> io::Result<FsStat> {
         let abs = self.abs(path);
@@ -188,9 +292,53 @@ impl WorktreeFs for RealFs {
     }
 }
 
+fn want_bits(mode: EntryMode) -> u32 {
+    if mode == EntryMode::Executable {
+        0o755
+    } else {
+        0o644
+    }
+}
+
+/// Whether the process umask would change the creation mode of a file with `mode`, so an explicit
+/// chmod is needed. Read once from `/proc/self/status` (Linux); elsewhere, always chmod.
+#[cfg(unix)]
+fn umask_filters(mode: EntryMode) -> bool {
+    static UMASK: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    let m = *UMASK.get_or_init(|| {
+        let s = fs::read_to_string("/proc/self/status").ok()?;
+        let l = s.lines().find_map(|l| l.strip_prefix("Umask:"))?;
+        u32::from_str_radix(l.trim(), 8).ok()
+    });
+    m.is_none_or(|m| want_bits(mode) & m != 0)
+}
+
+fn create_file(path: &Path, mode: EntryMode) -> io::Result<fs::File> {
+    create_tmp(path, mode)
+}
+
+fn create_tmp(tmp: &Path, mode: EntryMode) -> io::Result<fs::File> {
+    let mut o = fs::OpenOptions::new();
+    o.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.mode(want_bits(mode));
+    }
+    #[cfg(not(unix))]
+    let _ = mode;
+    o.open(tmp)
+}
+
 fn tmp_name() -> String {
     static SEQ: AtomicUsize = AtomicUsize::new(0);
-    format!(".vcs-tmp-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed))
+    // `getpid` is a real syscall on current glibc: ask once.
+    static PID: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    format!(
+        ".vcs-tmp-{}-{}",
+        PID.get_or_init(std::process::id),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 // ---------------------------------------------------------------- memory
@@ -544,6 +692,62 @@ mod tests {
         let _ = fs.remove_dir("a/b");
         let _ = fs.remove_dir("a");
         assert!(fs.remove_dir("").is_err(), "never the root");
+    }
+
+    /// The `fstatat` fast path must report exactly what `symlink_metadata` does.
+    #[cfg(unix)]
+    #[test]
+    fn real_fs_stat_matches_std() {
+        let d = tempfile::tempdir().unwrap();
+        let fs_ = RealFs::new(d.path().to_path_buf());
+        fs_.write("a/b/file.txt", b"hello", EntryMode::File).unwrap();
+        fs_.write("a/run.sh", b"#!/bin/sh\n", EntryMode::Executable).unwrap();
+        fs_.symlink(b"b/file.txt", "a/link").unwrap();
+        for p in [
+            "a",
+            "a/b",
+            "a/b/file.txt",
+            "a/run.sh",
+            "a/link",
+            "a/missing",
+            "a/b/file.txt/under",
+            "nope/deeper",
+        ] {
+            let want = fs::symlink_metadata(d.path().join(p));
+            let got = fs_.stat(p);
+            match (want, got) {
+                (Ok(m), Ok(g)) => assert_eq!(stat_of(&m), g, "{p}"),
+                (Err(a), Err(b)) => assert_eq!(a.kind(), b.kind(), "{p}"),
+                (a, b) => panic!("{p}: std {a:?} vs fast {b:?}"),
+            }
+        }
+    }
+
+    /// `create_new` makes parents, sets exact bits, reports the final stat, and never replaces.
+    #[cfg(unix)]
+    #[test]
+    fn real_fs_create_new_never_replaces() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let fs_ = RealFs::new(d.path().to_path_buf());
+        let st = fs_.create_new("x/y/a.txt", b"one", EntryMode::File).unwrap();
+        assert_eq!((st.kind, st.len), (FileKind::File, 3));
+        assert_eq!(st, fs_.stat("x/y/a.txt").unwrap(), "returned stat is the final state");
+        let st = fs_.create_new("x/run.sh", b"#!/bin/sh\n", EntryMode::Executable).unwrap();
+        assert_eq!(st.mode, EntryMode::Executable);
+        assert_eq!(fs::metadata(d.path().join("x/run.sh")).unwrap().permissions().mode() & 0o777, 0o755);
+        assert_eq!(
+            fs::metadata(d.path().join("x/y/a.txt")).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+        // an existing file and a link are left alone
+        let e = fs_.create_new("x/y/a.txt", b"two", EntryMode::File).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(d.path().join("x/y/a.txt")).unwrap(), b"one");
+        fs_.symlink(b"y/a.txt", "x/link").unwrap();
+        let e = fs_.create_new("x/link", b"three", EntryMode::File).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(d.path().join("x/y/a.txt")).unwrap(), b"one");
     }
 
     #[test]
