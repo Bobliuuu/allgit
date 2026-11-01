@@ -88,6 +88,11 @@ pub fn encode_payload(fmt: PackFormat, enc: &[u8]) -> Vec<u8> {
 /// Recover the encoded object from an entry payload of a pack of `version`. The caller still
 /// checks that the result hashes to the expected id.
 pub fn decode_payload(version: u8, payload: &[u8]) -> Result<std::borrow::Cow<'_, [u8]>, String> {
+    decode_payload_max(version, payload, MAX_DECODED)
+}
+
+/// [`decode_payload`] with a caller-chosen cap on the decoded size (for untrusted input).
+pub fn decode_payload_max(version: u8, payload: &[u8], max: u64) -> Result<std::borrow::Cow<'_, [u8]>, String> {
     use std::borrow::Cow;
     if version == 1 {
         return Ok(Cow::Borrowed(payload));
@@ -99,7 +104,7 @@ pub fn decode_payload(version: u8, payload: &[u8]) -> Result<std::borrow::Cow<'_
             let n = zstd::zstd_safe::get_frame_content_size(rest)
                 .map_err(|_| "bad zstd frame header".to_string())?
                 .ok_or_else(|| "zstd frame without content size".to_string())?;
-            if n > MAX_DECODED {
+            if n > max.min(MAX_DECODED) {
                 return Err("zstd frame claims an oversized object".into());
             }
             let out = zstd::bulk::decompress(rest, n as usize).map_err(|e| format!("zstd: {e}"))?;

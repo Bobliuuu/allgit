@@ -10,6 +10,7 @@ mod archive;
 mod auth;
 mod bisect;
 mod cmds;
+mod bundle_cmd;
 mod config;
 mod describe;
 mod generate;
@@ -371,7 +372,10 @@ enum Cmd {
     /// Credential helper protocol: key=value lines on stdin/stdout
     #[command(subcommand)]
     Credential(CredCmd),
-    /// Clone a remote into a new directory (sparse with --zone)
+    /// Create or verify an offline bundle of branches and zones
+    #[command(subcommand)]
+    Bundle(bundle_cmd::BundleCmd),
+    /// Clone a remote (or a bundle file) into a new directory (sparse with --zone)
     Clone {
         url: String,
         dir: PathBuf,
@@ -409,6 +413,8 @@ enum Cmd {
     Locks,
     /// Download remote objects and update remote-tracking refs (local branches untouched)
     Fetch {
+        /// Fetch from this bundle file instead of the remote
+        source: Option<PathBuf>,
         #[arg(long = "zone")]
         zones: Vec<String>,
         /// Print the number of remote requests and bytes transferred
@@ -1534,7 +1540,11 @@ fn run(cli: Cli) -> Result<(), Error> {
                 },
             }
         }
+        Cmd::Bundle(b) => bundle_cmd::run(b)?,
         Cmd::Clone { url, dir, zones, stats } => {
+            if bundle_cmd::try_clone(&url, &dir, &zones, author()?)? {
+                return Ok(());
+            }
             let cwd = std::env::current_dir().map_err(|source| Error::Io { path: ".".into(), source })?;
             let url = remote::normalize_url(&url, &cwd);
             let backend = remote::open_backend(&url)?;
@@ -1623,8 +1633,11 @@ fn run(cli: Cli) -> Result<(), Error> {
                 );
             }
         }
-        Cmd::Fetch { zones, stats } => {
+        Cmd::Fetch { source, zones, stats } => {
             let (repo, _) = open()?;
+            if let Some(f) = source {
+                return bundle_cmd::fetch(&repo, &f, author()?);
+            }
             let backend = remote::open_backend(&need_remote(&repo)?)?;
             let counting = vcs_remote::CountingBackend::new(backend.as_ref());
             let want = (!zones.is_empty()).then_some(zones.as_slice());
