@@ -101,7 +101,10 @@ fn load(repo: &Repo) -> Result<State, Error> {
     match fs::read_to_string(path(repo)) {
         Ok(t) => State::decode(&t),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => err("no bisection in progress; start with `vcs bisect start <bad> <good>`"),
-        Err(e) => Err(Error::Io { path: ".vcs/bisect".into(), source: e }),
+        Err(e) => Err(Error::Io {
+            path: ".vcs/bisect".into(),
+            source: e,
+        }),
     }
 }
 
@@ -146,7 +149,10 @@ fn plan(repo: &Repo, st: &State) -> Result<Next, Error> {
     }
     let mid = (ib + ig) / 2;
     let pick = *untested.iter().min_by_key(|i| i.abs_diff(mid)).unwrap();
-    Ok(Next::Test { commit: ch[pick], left: untested.len() })
+    Ok(Next::Test {
+        commit: ch[pick],
+        left: untested.len(),
+    })
 }
 
 fn steps(n: usize) -> u32 {
@@ -172,7 +178,11 @@ fn advance(repo: &Repo, st: &State) -> Result<Next, Error> {
         }
         Next::Found(id) => {
             let c = repo.commit_of(id)?;
-            println!("{} is the first bad commit\n    {}", id.to_hex(), c.message.lines().next().unwrap_or(""));
+            println!(
+                "{} is the first bad commit\n    {}",
+                id.to_hex(),
+                c.message.lines().next().unwrap_or("")
+            );
         }
         Next::OnlySkipped(v) => {
             println!("only skipped commits are left to test; the first bad commit is one of:");
@@ -219,7 +229,11 @@ pub fn run(cmd: &BisectCmd) -> Result<(), Error> {
             let Some(orig) = repo.current_branch(&zone)? else {
                 return err(format!("zone {zone:?} is not subscribed"));
             };
-            let mut st = State { zone, orig, ..State::default() };
+            let mut st = State {
+                zone,
+                orig,
+                ..State::default()
+            };
             if let Some((bad, good)) = r.split_first() {
                 st.bad.push(repo.resolve_rev(&st.zone, bad)?);
                 for g in good {
@@ -249,26 +263,24 @@ pub fn run(cmd: &BisectCmd) -> Result<(), Error> {
                 repo.checkout(&st.zone, &st.orig)?;
             }
             let _ = repo.branch_delete(&st.zone, BRANCH, true);
-            fs::remove_file(path(&repo)).map_err(|source| Error::Io { path: ".vcs/bisect".into(), source })?;
+            fs::remove_file(path(&repo)).map_err(|source| Error::Io {
+                path: ".vcs/bisect".into(),
+                source,
+            })?;
             println!("bisect ended; back on {}/{}", st.zone, st.orig);
         }
         BisectCmd::Run { cmd } => {
             let mut st = load(&repo)?;
-            loop {
-                match advance(&repo, &st)? {
-                    Next::Test { commit, .. } => {
-                        let code = run_cmd(&repo, cmd)?;
-                        let kind = match code {
-                            0 => "good",
-                            125 => "skip",
-                            1..=127 => "bad",
-                            c => return err(format!("bisect run: command exited with status {c}; bisection left in place")),
-                        };
-                        println!("  -> {} is {kind}", commit.short());
-                        mark(&repo, &mut st, kind, vec![commit])?;
-                    }
-                    _ => break,
-                }
+            while let Next::Test { commit, .. } = advance(&repo, &st)? {
+                let code = run_cmd(&repo, cmd)?;
+                let kind = match code {
+                    0 => "good",
+                    125 => "skip",
+                    1..=127 => "bad",
+                    c => return err(format!("bisect run: command exited with status {c}; bisection left in place")),
+                };
+                println!("  -> {} is {kind}", commit.short());
+                mark(&repo, &mut st, kind, vec![commit])?;
             }
         }
     }
@@ -285,10 +297,10 @@ fn run_cmd(repo: &Repo, cmd: &[String]) -> Result<i32, Error> {
         c.args(&cmd[1..]);
         c
     };
-    let status = c
-        .current_dir(repo.worktree())
-        .status()
-        .map_err(|source| Error::Io { path: cmd[0].clone().into(), source })?;
+    let status = c.current_dir(repo.worktree()).status().map_err(|source| Error::Io {
+        path: cmd[0].clone().into(),
+        source,
+    })?;
     Ok(status.code().unwrap_or(255))
 }
 
@@ -299,7 +311,13 @@ mod tests {
     #[test]
     fn state_roundtrip() {
         let id = ObjectId::from_bytes([7; 32]);
-        let st = State { zone: "root".into(), orig: "main".into(), good: vec![id], bad: vec![id], skip: vec![] };
+        let st = State {
+            zone: "root".into(),
+            orig: "main".into(),
+            good: vec![id],
+            bad: vec![id],
+            skip: vec![],
+        };
         assert_eq!(State::decode(&st.encode()).unwrap(), st);
         assert!(State::decode("junk").is_err());
     }
