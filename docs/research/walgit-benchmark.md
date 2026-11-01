@@ -169,6 +169,47 @@ Object-store requests / payload bytes (counting proxy, 1 run per op; up = to sto
 | fetch_1_cold_os | 4 (4/0/0) 0 KiB / 0 KiB | 60 (60/0/0) 0 KiB / 4.8 MiB |
 | fetch_1_cold_server | 21 (21/0/0) 0 KiB / 4.2 MiB | n/a |
 
+### flat 100000 files (57.2 MiB, g0 = 10000 files), reps 3, init reps 2, load1 at start 12.22, end 13.17
+
+Wall ms, median (min-max). srv = front-server CPU seconds (walgit-server incl. reaped git children / vcs-server), rf = RustFS CPU seconds.
+
+| op | variant | git (local bare) | walgit | vcs-server |
+|---|---|---|---|---|
+| initial push | 51 commits | 14597 (14455-14739) | 13845 (13562-14127) srv 2.10s rf 0.31s | 7387 (2057-12717) srv 0.18s rf 0.42s |
+| 1-file push |  | 155 (103-161) | 134 (119-450) srv 0.08s rf 0.01s | 35 (33-140) srv 0.00s rf 0.02s |
+| full clone | warm | 6434 (6009-6817) | 6063 (5637-6548) srv 0.22s rf 0.01s | 17868 (16684-22272) srv 0.23s rf 0.35s |
+| full clone | cold_os | 6042 (6029-6119) | 10096 (9297-10705) srv 0.28s rf 0.01s | 18547 (17336-18815) srv 0.23s rf 0.39s |
+| full clone | cold_server | n/a | 7544 (7047-9514) srv 0.72s rf 0.09s | n/a |
+| partial clone (10%) | warm | 1456 (1201-1810) | 1425 (1357-1431) srv 0.16s rf 0.00s | 1849 (1797-1881) srv 0.03s rf 0.05s |
+| partial clone (10%) | cold_os | 1308 (1298-1317) | 1586 (1453-1852) srv 0.18s rf 0.00s | 1905 (1840-2396) srv 0.03s rf 0.08s |
+| partial clone (10%) | cold_server | n/a | 1802 (1796-1991) srv 0.62s rf 0.10s | n/a |
+| fetch 1 commit | warm | 84 (77-163) | 102 (99-184) srv 0.01s rf 0.01s | 1463 (1301-1944) srv 0.12s rf 0.19s |
+| fetch 1 commit | cold_os | 175 (175-176) | 207 (205-213) srv 0.01s rf 0.00s | 1694 (860-2164) srv 0.12s rf 0.18s |
+| fetch 1 commit | cold_server | n/a | 667 (657-675) srv 0.51s rf 0.12s | n/a |
+
+| fact | git | walgit | vcs |
+|---|---|---|---|
+| remote store per repo after initial push (du; walgit/vcs bucket du / 2 identical repos) | 42.5 MiB | 42.1 MiB | 66.8 MiB |
+| full clone: files checked out / client store | 100000 / 51.0 MiB | 100000 / 51.0 MiB | 100000 / 419.8 MiB |
+| partial clone: files checked out / client store | 10000 / 15.8 MiB | 10000 / 15.8 MiB | 10000 / 43.0 MiB |
+
+Object-store requests / payload bytes (counting proxy, 1 run per op; up = to store, down = from store):
+
+| op | walgit req (GET/PUT/other) up / down | vcs-server req (GET/PUT/other) up / down |
+|---|---|---|
+| init_push | 40 (23/13/4) 42.1 MiB / 1 KiB | 8 (4/4/0) 66.8 MiB / 0 KiB |
+| idle_65s_after_push | 36 (22/8/6) 1 KiB / 2 KiB | 0 (0/0/0) 0 KiB / 0 KiB |
+| inc_push | 7 (3/4/0) 8 KiB / 0 KiB | 8 (3/4/1) 9 KiB / 1 KiB |
+| clone_full_warm | 4 (4/0/0) 0 KiB / 0 KiB | 87 (87/0/0) 0 KiB / 152.3 MiB |
+| clone_full_cold_os | 4 (4/0/0) 0 KiB / 0 KiB | 87 (87/0/0) 0 KiB / 152.3 MiB |
+| clone_full_cold_server | 13 (13/0/0) 0 KiB / 42.0 MiB | n/a |
+| clone_partial_warm | 7 (7/0/0) 0 KiB / 0 KiB | 19 (19/0/0) 0 KiB / 23.8 MiB |
+| clone_partial_cold_os | 7 (7/0/0) 0 KiB / 0 KiB | 19 (19/0/0) 0 KiB / 23.8 MiB |
+| clone_partial_cold_server | 16 (16/0/0) 0 KiB / 42.0 MiB | n/a |
+| fetch_1_warm | 4 (4/0/0) 0 KiB / 0 KiB | 49 (49/0/0) 0 KiB / 46.8 MiB |
+| fetch_1_cold_os | 4 (4/0/0) 0 KiB / 0 KiB | 60 (60/0/0) 0 KiB / 46.8 MiB |
+| fetch_1_cold_server | 22 (22/0/0) 0 KiB / 42.0 MiB | n/a |
+
 ## What each system does that the other does not (CONFIRMED from the runs above and from walgit-analysis.md; mechanism statements about walgit source are from that analysis)
 
 walgit does, vcs does not:
