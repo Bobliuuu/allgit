@@ -780,6 +780,17 @@ impl Pack {
         let Some((off, len)) = self.idx.lookup(id).map_err(corrupt)? else {
             return Ok(None);
         };
+        if self.idx.version == 3 {
+            // a block holds many objects: when the one read last is this block, do not read its
+            // (possibly megabytes of) compressed bytes again for every object in it
+            let hit = self.block.lock().unwrap().as_ref().filter(|c| c.0 == off).map(|c| c.1.clone());
+            if let Some(blk) = hit {
+                return blk.get(id).map(|b| Some(b.to_vec())).ok_or_else(|| StoreError::Corrupt {
+                    id: *id,
+                    reason: "not in its block".into(),
+                });
+            }
+        }
         let buf = self.read_range(off, len as u64)?.ok_or_else(|| corrupt("pack truncated".into()))?;
         if self.idx.version == 4 && buf.first() == Some(&CODEC_DELTA) {
             let limit = self.idx.pack_len.saturating_sub(32);

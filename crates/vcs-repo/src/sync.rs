@@ -445,6 +445,10 @@ impl Repo {
     }
 
     fn fetch_locked(&self, backend: &dyn Backend, zones: Option<&[String]>) -> Result<Vec<(String, String, ObjectId)>> {
+        // Remote pack indexes never change: keep them locally so a fetch reads only the new ones.
+        let idx_cache = vcs_remote::IdxCacheBackend::new(backend, self.common.join("remote-idx"));
+        idx_cache.prune();
+        let backend: &dyn Backend = &idx_cache;
         let ws = self.workspace()?;
         let zones = self.resolve_filter(zones)?;
         let want: Vec<String> = match zones.as_deref() {
@@ -723,6 +727,9 @@ impl Repo {
             return msg(format!("destination {} exists and is not empty", dest.display()));
         }
         let repo = Repo::init(dest)?;
+        // The indexes this clone reads are kept, so the first `fetch` after it does not read them again.
+        let idx_cache = vcs_remote::IdxCacheBackend::new(backend, repo.common.join("remote-idx"));
+        let backend: &dyn Backend = &idx_cache;
         let r = (|| -> Result<()> {
             repo.set_remote(url)?;
             let _l = repo.lock()?;
