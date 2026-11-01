@@ -554,21 +554,45 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             }
         }
         "rebase" => {
-            let mut p = parse(cmd, rest, &["--onto", "-s", "-X", "-x"]);
+            let mut p = parse(cmd, rest, &["--onto", "-s", "-X", "-x", "--exec"]);
             let cont = p.take(&["--continue"]);
             let abort = p.take(&["--abort"]);
+            let skip = p.take(&["--skip"]);
+            let interactive = p.take(&["-i", "--interactive"]);
+            let autosquash = p.take(&["--autosquash"]);
+            p.take(&["--no-autosquash", "--keep-empty", "--no-keep-empty"]);
+            let execs = p.vals(&["-x", "--exec"]);
             p.take(&["-q", "--quiet", "--no-verify", "-v", "--verbose", "--no-stat", "--stat"]);
-            p.finish("`vcs rebase <branch>` replays the checked-out branch onto a local branch; no -i/--onto/--skip/--autostash/--root")?;
+            p.finish("`vcs rebase [-i] [--autosquash] [-x CMD] <branch|rev>` replays the checked-out branch; no --onto/--autostash/--root/--rebase-merges")?;
             if cont {
                 vec![Step::Vcs(v(&["rebase", "--continue"]))]
             } else if abort {
                 vec![Step::Vcs(v(&["rebase", "--abort"]))]
+            } else if skip {
+                vec![Step::Vcs(v(&["rebase", "--skip"]))]
             } else {
                 match p.pos.as_slice() {
                     [b] if b.starts_with("origin/") => {
                         return Err(missing(cmd, "rebasing onto a remote-tracking branch", "`vcs sync` then `vcs rebase <local branch>`"))
                     }
-                    [b] => vec![Step::Vcs(v(&["rebase", b]))],
+                    [b] => {
+                        let mut a = v(&["rebase"]);
+                        if interactive {
+                            a.push("-i".into());
+                            if autosquash {
+                                a.push("--autosquash".into());
+                            }
+                        }
+                        for x in &execs {
+                            a.push("-x".into());
+                            a.push(x.clone());
+                        }
+                        a.push(b.clone());
+                        vec![Step::Vcs(a)]
+                    }
+                    [] if interactive || !execs.is_empty() => {
+                        return Err(missing(cmd, "no upstream given and branches have no configured upstream", "`vcs rebase -i <branch|rev>`, for example HEAD~3"))
+                    }
                     _ => return Err(missing(cmd, "upstream/branch pairs", "`vcs switch <branch>` then `vcs rebase <onto>`")),
                 }
             }
@@ -1079,11 +1103,14 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
         "verify-commit" | "verify-tag" => passthrough(cmd, rest),
         "mergetool" => return Err(missing(cmd, "no external merge tool launcher", "`vcs conflict show <path>`, edit, then `vcs resolve --mark <path>` (or --ours/--theirs/--base/--file)")),
         "credential" => passthrough("credential", rest),
-        "format-patch" | "am" | "apply" | "send-email" | "request-pull" => {
+        "format-patch" => translate_format_patch(rest)?,
+        "am" => translate_am(rest)?,
+        "apply" => translate_apply(rest)?,
+        "send-email" | "request-pull" => {
             return Err(missing(
                 cmd,
-                "vcs has no patch-file format",
-                "exchange commits with `vcs bundle create/verify` + `vcs fetch <file>`, or a shared remote with `vcs publish`/`vcs fetch`; plain diffs with `vcs diff` (cannot be applied back)",
+                "vcs has no mail transport or pull-request text",
+                "write patch files with `vcs format-patch` and send them yourself, or share commits with `vcs publish`/`vcs fetch` or `vcs bundle`",
             ))
         }
         "lfs" => return Err(missing(cmd, "large files are native", "files are chunked automatically; see docs/guide/06-large-files.md")),
@@ -1173,6 +1200,158 @@ fn diff_flags(p: &mut P) -> Result<Vec<String>, Error> {
         "--ext-diff",
     ]);
     Ok(f)
+}
+
+fn translate_format_patch(rest: &[String]) -> Result<Vec<Step>, Error> {
+    let mut p = parse(
+        "format-patch",
+        rest,
+        &["-o", "--output-directory", "--start-number", "--subject-prefix"],
+    );
+    // `-3` is "the last 3 commits"; a bare `-N` is "no numbering"
+    let ns = p.vals(&["-N"]);
+    let count = ns.iter().rev().find(|x| !x.is_empty()).cloned();
+    let no_numbered_flag = ns.iter().any(String::is_empty);
+    let stdout = p.take(&["--stdout"]);
+    let root = p.take(&["--root"]);
+    let out = p.val(&["-o", "--output-directory"]);
+    let start = p.val(&["--start-number"]);
+    let prefix = p.val(&["--subject-prefix"]);
+    let no_numbered = p.take(&["--no-numbered"]) || no_numbered_flag;
+    p.take(&[
+        "-n",
+        "--numbered",
+        "-k",
+        "--keep-subject",
+        "--no-stat",
+        "-p",
+        "--no-signature",
+        "--zero-commit",
+        "-q",
+        "--quiet",
+        "--no-binary-never",
+    ]);
+    p.finish("`vcs format-patch [-n N | <rev> | A..B] [-o DIR] [--stdout] [--root] [--start-number N] [--subject-prefix P]`; no --cover-letter/--attach/--inline/--to/--cc/-v<n>/--numbered-files")?;
+    let mut a = v(&["format-patch"]);
+    if let Some(n) = &count {
+        a.push("-n".into());
+        a.push(n.clone());
+    }
+    if root {
+        a.push("--root".into());
+    }
+    if no_numbered {
+        a.push("--no-numbered".into());
+    }
+    if let Some(n) = start {
+        a.push("--start-number".into());
+        a.push(n);
+    }
+    if let Some(x) = prefix {
+        a.push("--subject-prefix".into());
+        a.push(x);
+    }
+    if let Some(d) = out {
+        a.push("-o".into());
+        a.push(d);
+    }
+    if stdout {
+        a.push("--stdout".into());
+    }
+    match p.pos.as_slice() {
+        [] => {}
+        [r] => a.push(r.clone()),
+        _ => return Err(missing("format-patch", "several revisions or paths", "`vcs format-patch A..B`")),
+    }
+    if !p.dd.is_empty() {
+        return Err(missing(
+            "format-patch",
+            "path limits",
+            "`vcs format-patch A..B` formats whole commits",
+        ));
+    }
+    Ok(vec![Step::Vcs(a)])
+}
+
+fn translate_am(rest: &[String]) -> Result<Vec<Step>, Error> {
+    let mut p = parse("am", rest, &[]);
+    let cont = p.take(&["--continue", "-r", "--resolved"]);
+    let skip = p.take(&["--skip"]);
+    let abort = p.take(&["--abort"]);
+    if p.take(&["-3", "--3way"]) {
+        return Err(missing(
+            "am",
+            "three-way application",
+            "`vcs am` applies exactly; for a patch that drifted, edit it, or `vcs fetch` the commits and `vcs cherry-pick`",
+        ));
+    }
+    p.take(&["-q", "--quiet", "--no-3way"]);
+    p.finish("`vcs am [--continue|--skip|--abort] <mbox>...`; no -3/-s/-k/--whitespace/--directory")?;
+    let mut a = v(&["am"]);
+    if cont {
+        a.push("--continue".into());
+    } else if skip {
+        a.push("--skip".into());
+    } else if abort {
+        a.push("--abort".into());
+    }
+    a.extend(p.all_pos());
+    Ok(vec![Step::Vcs(a)])
+}
+
+fn translate_apply(rest: &[String]) -> Result<Vec<Step>, Error> {
+    let mut p = parse("apply", rest, &["-p", "--whitespace", "-C"]);
+    let check = p.take(&["--check"]);
+    let index = p.take(&["--index"]);
+    let rev = p.take(&["-R", "--reverse"]);
+    let verbose = p.take(&["-v", "--verbose"]);
+    let strip = p.val(&["-p"]);
+    if p.take(&["-3", "--3way"]) {
+        return Err(missing(
+            "apply",
+            "three-way application",
+            "`vcs apply` applies exactly (offsets are found); otherwise edit the patch",
+        ));
+    }
+    if p.take(&["--cached"]) {
+        return Err(missing(
+            "apply",
+            "applying to the index only",
+            "`vcs apply --index` (working tree and index), then `vcs restore` the file if unwanted",
+        ));
+    }
+    if let Some(w) = p.val(&["--whitespace"]) {
+        if w != "nowarn" && w != "warn" {
+            return Err(missing(
+                "apply",
+                "whitespace fixing",
+                "`vcs apply` applies the patch exactly as written",
+            ));
+        }
+    }
+    p.take(&["-q", "--quiet"]);
+    p.finish(
+        "`vcs apply [--check] [--index] [-R] [-p N] <patch>...`; no --stat/--numstat/--summary/--reject/--directory/-C/--unidiff-zero",
+    )?;
+    let mut a = v(&["apply"]);
+    if check {
+        a.push("--check".into());
+    }
+    if index {
+        a.push("--index".into());
+    }
+    if rev {
+        a.push("-R".into());
+    }
+    if verbose {
+        a.push("-v".into());
+    }
+    if let Some(n) = strip {
+        a.push("-p".into());
+        a.push(n);
+    }
+    a.extend(p.all_pos());
+    Ok(vec![Step::Vcs(a)])
 }
 
 fn translate_diff(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {

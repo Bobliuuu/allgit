@@ -84,6 +84,43 @@ History and refs (native commands first, `vcs git` only spells them the git way)
   while a merge or rebase is in progress; recorded in the op log); `vcs branch <name> <rev>` creates
   a branch anywhere.
 
+### Interactive rebase
+
+`vcs rebase -i <branch|rev>` (for example `HEAD~3`) builds a todo list, opens it in
+`VCS_SEQUENCE_EDITOR`, else `GIT_SEQUENCE_EDITOR`, else `GIT_EDITOR`/`core.editor`/`$VISUAL`/`$EDITOR`,
+and replays it with the same tree-merge engine as `vcs rebase`: `pick`, `reword`, `edit`, `squash`,
+`fixup`, `drop`, `exec`, in any order (a commit left out is dropped; an empty list aborts).
+`--autosquash` moves `fixup! X`/`squash! X` commits next to X, and `-x CMD` runs a command after
+each commit (without an editor unless `-i` is also given). Scripts and CI set the sequence editor
+to a non-interactive command, for example
+`GIT_SEQUENCE_EDITOR="sed -i.bak 's/^pick/reword/'" GIT_EDITOR=true vcs git rebase -i HEAD~3`.
+An unchanged pick reuses the original tree (no merge), so re-ordering or rewording in place is
+cheap and an unchanged list recreates identical commits. `edit` and a failed `exec` stop with the
+branch and working tree at the new tip (commit freely, then `--continue`); conflicts stop as in
+`vcs rebase`, with `--continue`, `--skip` and `--abort`. The whole rebase is ONE operation:
+`vcs op undo` restores the pre-rebase branch and working tree. Not supported: `label`, `reset`,
+`merge`, `break`, `--onto`, `--root`, `--rebase-merges`, `fixup -C`.
+
+### Patch files
+
+* `vcs format-patch [-n N | <rev> | A..B] [-o DIR] [--stdout] [--root]`: one mbox-style file per
+  commit (`From`, `Date`, `Subject: [PATCH i/n]`, message, diffstat, diff), oldest first. Merges are
+  skipped. A commit that changes a binary file is refused with the file name (patches never carry
+  binary content). Dates are written in UTC.
+* `vcs am <mbox>... [--continue|--skip|--abort]`: applies each mail and commits it with the mail's
+  author, date and message. Every patch is planned in memory first, so one that does not apply
+  changes nothing; the run stops there and keeps the rest queued in `.vcs/am`. Fix the files by hand,
+  `vcs add` them, `vcs am --continue`. `--abort` restores the branch heads from before the run.
+  Round trip: `format-patch` then `am` on a clone that has the parent gives identical trees.
+* `vcs apply <patch>... [--check] [--index] [-R] [-p N]`: applies a unified diff made by git,
+  `vcs format-patch`, `vcs diff` or `vcs show` (text before the first `diff` line is ignored).
+  Hunks must match exactly (the position may shift; no fuzz, no whitespace leniency). Paths
+  that leave the working tree, go through a symbolic link or touch `.vcs` are refused; binary
+  patches (`GIT binary patch`, `Binary files ... differ`) are refused with the file name. With
+  `--index` the touched files must match the index and are staged. `-3` is not supported.
+* Caveat: `apply --index` and `am` stage and commit without the lockable-file guard that
+  `vcs add` applies (the server's require-lock policy can still refuse the publish).
+
 ## Concepts that differ
 
 * Zones: each zone has its own branch heads, so `reset`, `switch`, `branch`, `log` act on the zone
@@ -91,9 +128,9 @@ History and refs (native commands first, `vcs git` only spells them the git way)
 * Submodules: there are none. A zone is a path prefix with its own branches inside the same
   repository: `vcs zone create <name> --path <dir>`, `vcs zone add|remove <name>` to subscribe,
   `vcs clone --zone <name>` to download only some zones (docs/zones.md).
-* One remote, no per-branch upstream, no patch files (`format-patch`, `am`,
-  `apply`): exchange commits with `vcs publish`/`vcs fetch` or `vcs bundle`. `git push --force`
-  is a lease (see above), never a blind overwrite.
+* One remote, no per-branch upstream. Patch files exist natively (`vcs format-patch`, `vcs am`,
+  `vcs apply`, see above); `vcs publish`/`vcs fetch`/`vcs bundle` remain the way to exchange
+  commits with full fidelity. `git push --force` is a lease (see above), never a blind overwrite.
 * `vcs log` shows 20 commits by default; `vcs git log` shows all, like git.
 
 ## The table
@@ -107,7 +144,7 @@ Status: exact (same command and flags), renamed (other spelling, same meaning), 
 semantics differ as the notes say), missing (no equivalent; the notes name the native route).
 
 <!-- BEGIN GENERATED TABLE -->
-235 rows: 125 exact, 36 renamed, 28 different, 46 missing.
+255 rows: 141 exact, 39 renamed, 28 different, 47 missing.
 
 | git | vcs | status | notes | test |
 |---|---|---|---|---|
@@ -240,7 +277,10 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git rebase main` | `vcs rebase main` | exact | keeps each change id | `merge` |
 | `git rebase --continue` | `vcs rebase --continue` | exact |  | translation |
 | `git rebase --abort` | `vcs rebase --abort` | exact |  | `merge` |
-| `git rebase -i HEAD~3` | none | missing | no interactive rebase | translation |
+| `git rebase -i HEAD~3` | `vcs rebase -i HEAD~3` | exact | todo list with pick/reword/edit/squash/fixup/drop/exec and reordering; editor from GIT_SEQUENCE_EDITOR, VCS_SEQUENCE_EDITOR, core.editor or EDITOR; no label/reset/merge/break lines; the upstream may be any revision | `rebase_i` |
+| `git rebase -i --autosquash HEAD~3` | `vcs rebase -i --autosquash HEAD~3` | exact | `fixup! X` and `squash! X` commits move next to X | `rebase_i` |
+| `git rebase -x "test -f f.txt" main` | `vcs rebase -x test -f f.txt main` | exact | runs the command after each replayed commit; a failure stops the rebase (fix, commit, `--continue`) | `rebase_i` |
+| `git rebase --skip` | `vcs rebase --skip` | exact | drops the commit that stopped with conflicts | `merge` |
 | `git rebase origin/main` | none | missing | `vcs sync`, then `vcs rebase <local branch>` | translation |
 | `git stash` | `vcs stash push` | exact | tracked changes only; untracked files stay | `stash` |
 | `git stash push -m wip` | `vcs stash push -m wip` | exact |  | `stash` |
@@ -339,9 +379,26 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git gc --auto` | `vcs repack --auto` | renamed |  | translation |
 | `git fsck` | `vcs fsck` | exact |  | translation |
 | `git repack -ad` | `vcs repack` | exact |  | translation |
-| `git format-patch -1` | none | missing | no patch files. Exchange commits with `vcs bundle create` + `vcs fetch <file>` or a shared remote | translation |
-| `git am x.patch` | none | missing | as format-patch | translation |
-| `git apply x.patch` | none | missing | as format-patch | translation |
+| `git format-patch -1` | `vcs format-patch -n 1` | renamed | writes 0001-subject.patch (mbox style: From, Date, Subject, message, diff) for the last commit of the zone; binary changes are refused, never mangled | translation |
+| `git format-patch -1 --stdout` | `vcs format-patch -n 1 --stdout` | renamed | one mailbox on standard output | `patch` |
+| `git format-patch -3 -o out` | `vcs format-patch -n 3 -o out` | renamed |  | translation |
+| `git format-patch main` | `vcs format-patch main` | exact | the commits of the branch that main lacks | translation |
+| `git format-patch HEAD~2..HEAD` | `vcs format-patch HEAD~2..HEAD` | exact |  | translation |
+| `git format-patch --root` | `vcs format-patch --root` | exact |  | translation |
+| `git format-patch --cover-letter -1` | none | missing | no cover letter; write it by hand | translation |
+| `git am x.patch` | `vcs am x.patch` | exact | commits with the mail's author, date and message; a patch that does not apply stops the run, nothing is half-applied | `patch` |
+| `git am --continue` | `vcs am --continue` | exact | commits what you staged for the stopped patch | translation |
+| `git am --skip` | `vcs am --skip` | exact |  | translation |
+| `git am --abort` | `vcs am --abort` | exact |  | translation |
+| `git am -3 x.patch` | none | missing | three-way application: a patch carries no blob ids to merge against; edit the patch or `vcs cherry-pick` after `vcs fetch` | translation |
+| `git apply x.patch` | `vcs apply x.patch` | exact | unified diffs from git, `vcs diff` and `vcs show`; all hunks must fit (offsets are searched, no fuzz) or nothing changes; binary patches are refused | `patch` |
+| `git apply --check x.patch` | `vcs apply --check x.patch` | exact |  | `patch` |
+| `git apply --index x.patch` | `vcs apply --index x.patch` | exact | the touched files must match the index first | `patch` |
+| `git apply -R x.patch` | `vcs apply -R x.patch` | exact |  | `patch` |
+| `git apply -p0 x.patch` | `vcs apply -p 0 x.patch` | exact |  | translation |
+| `git apply -3 x.patch` | none | missing | three-way application is not supported | translation |
+| `git apply --cached x.patch` | none | missing | index-only application: `vcs apply --index` then `vcs restore` the file | translation |
+| `git apply --stat x.patch` | none | missing | no summary modes; `vcs apply --check -v x.patch` lists the files | translation |
 | `git mergetool` | none | missing | `vcs conflict show <path>`, edit, `vcs resolve --mark <path>` | translation |
 | `git lfs track` | none | missing | large files are chunked natively | translation |
 | `git filter-branch` | none | missing | `vcs zone apply` splits history by path; otherwise none | translation |
