@@ -71,7 +71,10 @@ pub fn host_key(url: &str) -> Result<String, Error> {
 }
 
 fn check_host(h: &str) -> Result<String, Error> {
-    if h.is_empty() || h.chars().any(|c| c.is_whitespace() || c.is_control() || c == '=') {
+    if h.is_empty()
+        || h.chars()
+            .any(|c| c.is_whitespace() || c.is_control() || matches!(c, '=' | '"' | '\'' | '\\'))
+    {
         return msg("invalid remote host");
     }
     Ok(h.to_owned())
@@ -547,6 +550,18 @@ pub fn credential(op: Op) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn hosts_with_quotes_or_backslashes_are_refused() {
+        // the host is interpolated into a `security -i` command line by the keychain helper
+        for bad in ["http://a\"b/", "http://a'b:1/", "http://a\\b/", "http://x\" -w \"y/", "http://a=b/"] {
+            assert!(host_key(bad).is_err(), "{bad}");
+        }
+        let mut kv = Kv::new();
+        kv.insert("host".into(), "evil\"host".into());
+        assert!(kv_host(&kv).is_err());
+        assert_eq!(host_key("http://Good.Example:8480/x").unwrap(), "good.example:8480");
+    }
+
     use super::*;
 
     #[test]
