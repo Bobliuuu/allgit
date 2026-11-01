@@ -40,8 +40,8 @@ pub mod treeops;
 #[cfg(feature = "watcher")]
 pub mod watcher;
 pub mod worktree;
-mod zone_batch;
 pub mod worktree_fs;
+mod zone_batch;
 pub mod zonedetect;
 mod zonesplit;
 

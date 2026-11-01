@@ -302,8 +302,8 @@ impl CommitGraphFile {
             g.time.push(u64::from_le_bytes(head[32..40].try_into().unwrap()));
             g.gen.push(u32::from_le_bytes(head[40..44].try_into().unwrap()));
             let np = head[44] as usize;
-            for c in take(np * 4)?.chunks_exact(4) {
-                g.pflat.push(u32::from_le_bytes(c.try_into().unwrap()));
+            for c in take(np * 4)?.as_chunks::<4>().0 {
+                g.pflat.push(u32::from_le_bytes(*c));
             }
             g.pend.push(g.pflat.len() as u32);
         }

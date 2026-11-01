@@ -178,7 +178,11 @@ impl LogExtra {
         let a = self.diff_args();
         for (id, _) in shown {
             // contents matter only for rename / copy detection
-            let pairs = if a.detect() { repo.commit_pairs(zone, id)? } else { repo.commit_pairs_names(zone, id)? };
+            let pairs = if a.detect() {
+                repo.commit_pairs(zone, id)?
+            } else {
+                repo.commit_pairs_names(zone, id)?
+            };
             let es = difftool::entries(pairs, &a);
             let lines = if self.name_status {
                 difftool::name_status_lines(&es)

@@ -136,9 +136,12 @@ impl Policy {
     /// True when there is no write-side rule (`allow`, `deny`, `require-lock`). Read rules alone do
     /// not switch writes to deny-by-default.
     pub fn is_empty(&self) -> bool {
-        self.rules
-            .iter()
-            .all(|r| matches!(r.effect, Effect::AllowRead | Effect::DenyRead | Effect::ShelveRead | Effect::RequireSigned))
+        self.rules.iter().all(|r| {
+            matches!(
+                r.effect,
+                Effect::AllowRead | Effect::DenyRead | Effect::ShelveRead | Effect::RequireSigned
+            )
+        })
     }
 
     /// Must new commits published to `zone`/`branch` be signed?

@@ -325,13 +325,25 @@ impl PackIndex {
     pub fn open_lazy(path: &Path) -> Result<PackIndex, StoreError> {
         #[cfg(unix)]
         {
-            let f = fs::File::open(path).map_err(|source| StoreError::Io { path: path.to_owned(), source })?;
-            let len = f.metadata().map_err(|source| StoreError::Io { path: path.to_owned(), source })?.len();
+            let f = fs::File::open(path).map_err(|source| StoreError::Io {
+                path: path.to_owned(),
+                source,
+            })?;
+            let len = f
+                .metadata()
+                .map_err(|source| StoreError::Io {
+                    path: path.to_owned(),
+                    source,
+                })?
+                .len();
             let head_n = ((8 + 4 + 8 + 32 + FANOUT_BYTES) as u64).min(len);
             // v1 has no fanout and is always fully verified at open (see `from_vec_lazy`): read whole
             let v2_plus = head_n >= 8 && pread_exact(&f, 0, 8).is_ok_and(|m| m != IDX_MAGIC[..]);
             if v2_plus && head_n >= 8 + 4 + 8 + 32 {
-                let head = pread_exact(&f, 0, head_n as usize).map_err(|source| StoreError::Io { path: path.to_owned(), source })?;
+                let head = pread_exact(&f, 0, head_n as usize).map_err(|source| StoreError::Io {
+                    path: path.to_owned(),
+                    source,
+                })?;
                 let (version, count, pack_len, checksum, fanout, base) = Self::parse_header(&head, len, path)?;
                 return Ok(PackIndex {
                     src: Src::File {
@@ -348,7 +360,10 @@ impl PackIndex {
                 });
             }
         }
-        let b = fs::read(path).map_err(|source| StoreError::Io { path: path.to_owned(), source })?;
+        let b = fs::read(path).map_err(|source| StoreError::Io {
+            path: path.to_owned(),
+            source,
+        })?;
         Self::from_vec_lazy(b, path)
     }
 
@@ -393,7 +408,9 @@ impl PackIndex {
         match &self.src {
             Src::Mem(b) => Ok(std::borrow::Cow::Borrowed(b)),
             #[cfg(unix)]
-            Src::File { file, len, .. } => pread_exact(file, 0, *len as usize).map(std::borrow::Cow::Owned).map_err(|e| format!("index read: {e}")),
+            Src::File { file, len, .. } => pread_exact(file, 0, *len as usize)
+                .map(std::borrow::Cow::Owned)
+                .map_err(|e| format!("index read: {e}")),
             #[cfg(not(unix))]
             Src::File { .. } => unreachable!("file-backed indexes exist on unix only"),
         }
@@ -484,7 +501,8 @@ impl PackIndex {
                     Some(e) => e,
                     None => {
                         let e = std::sync::Arc::new(
-                            pread_exact(file, (self.base + lo * IDX_ENTRY) as u64, (hi - lo) * IDX_ENTRY).map_err(|e| format!("index read: {e}"))?,
+                            pread_exact(file, (self.base + lo * IDX_ENTRY) as u64, (hi - lo) * IDX_ENTRY)
+                                .map_err(|e| format!("index read: {e}"))?,
                         );
                         buckets.lock().unwrap()[first] = Some(e.clone());
                         e
@@ -1287,7 +1305,7 @@ pub fn write_pack_streaming<'a>(
             if w.len >= kicked + WRITEBACK_STEP + (1 << 20) {
                 use std::os::unix::io::AsRawFd;
                 let done = w.len - (1 << 20); // the BufWriter may still hold the last MiB
-                // SAFETY: valid fd; the call only schedules write-back and has no memory effects.
+                                              // SAFETY: valid fd; the call only schedules write-back and has no memory effects.
                 unsafe {
                     libc::sync_file_range(
                         w.inner.get_ref().as_raw_fd(),

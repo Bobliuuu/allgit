@@ -289,7 +289,7 @@ fn compacted_pack_has_commits_then_trees_then_files() {
     let b = fresh(&w);
     let mut o = opts();
     o.format = PackFormat::V2; // v2 entries have one offset each, so file order is observable
-    
+
     o.all = true;
     vcs_remote::compact::compact(&b, &o).unwrap();
     let stem = pack_stems(&b).remove(0);

@@ -178,7 +178,13 @@ fn diff_pair(store: &dyn ObjectStore, old: Option<ObjectId>, new: Option<ObjectI
             }
             std::cmp::Ordering::Greater => {
                 let b = &ne[j];
-                add_side(store, b, join(prefix, &b.name), &mut d.new, if lean { None } else { Some(&mut d.new_dir_names) })?;
+                add_side(
+                    store,
+                    b,
+                    join(prefix, &b.name),
+                    &mut d.new,
+                    if lean { None } else { Some(&mut d.new_dir_names) },
+                )?;
                 j += 1;
             }
             std::cmp::Ordering::Equal => {

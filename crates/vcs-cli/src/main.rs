@@ -906,7 +906,12 @@ fn run(cli: Cli) -> Result<(), Error> {
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
             signing_cmd::verify_tag(&repo, &zone, &name)?;
         }
-        Cmd::Commit { message, force_no_lock, sign, no_sign } => {
+        Cmd::Commit {
+            message,
+            force_no_lock,
+            sign,
+            no_sign,
+        } => {
             let (repo, cwd) = open()?;
             lockable_cmd::guard(&repo, lockable_cmd::Stage::Commit, &[], force_no_lock)?;
             let cfg = config::Config::load()?;
@@ -1716,7 +1721,9 @@ fn run(cli: Cli) -> Result<(), Error> {
         Cmd::Shelve(a) => shelve_cmd::shelve(&open()?.0, a, &principal(), author()?)?,
         Cmd::Shelves(a) => shelve_cmd::shelves(&open()?.0, a, &principal())?,
         Cmd::Unshelve(a) => shelve_cmd::unshelve(&open()?.0, a, &principal())?,
-        Cmd::Clone { url, dir, zones, stats, .. } => {
+        Cmd::Clone {
+            url, dir, zones, stats, ..
+        } => {
             if bundle_cmd::try_clone(&url, &dir, &zones, author()?)? {
                 return Ok(());
             }
@@ -2174,7 +2181,9 @@ fn compact_remote(
         None => vcs_store::pack::PackFormat::for_compaction(),
     };
     if format == vcs_store::pack::PackFormat::V4 {
-        return Err(Error::Msg("pack format v4 (delta entries) is local only; remote packs use v2 or v3".into()));
+        return Err(Error::Msg(
+            "pack format v4 (delta entries) is local only; remote packs use v2 or v3".into(),
+        ));
     }
     if !dry_run && !yes {
         return Err(Error::Msg(

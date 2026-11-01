@@ -208,7 +208,10 @@ enum Pend {
     /// Bytes `[off, off+len)` of the shared spill file (unix): one file for all objects past the
     /// memory budget instead of a create/write/read/unlink per object.
     #[cfg(unix)]
-    Spill { off: u64, len: u64 },
+    Spill {
+        off: u64,
+        len: u64,
+    },
 }
 
 /// One append-only scratch file in `tmp/` that holds every pending object past the memory budget.
@@ -919,7 +922,11 @@ impl ObjectStore for LocalStore {
             return Ok(());
         }
         // Small batch: spill the in-memory objects to tmp files, then publish them as loose files.
-        let mem: Vec<ObjectId> = pending.iter().filter(|(_, p)| !matches!(p, Pend::File(_))).map(|(i, _)| *i).collect();
+        let mem: Vec<ObjectId> = pending
+            .iter()
+            .filter(|(_, p)| !matches!(p, Pend::File(_)))
+            .map(|(i, _)| *i)
+            .collect();
         for id in mem {
             let t = match pending.get(&id) {
                 Some(Pend::Mem(v)) => self.write_tmp(&id, &[], v)?,
@@ -1075,14 +1082,20 @@ mod tests {
             let s = LocalStore::open(d.path()).unwrap();
             s.set_pending_mem_cap(0); // everything goes through the spill file
             let ids: Vec<_> = (0..n).map(|i| s.put_blob(format!("spilled {i}").as_bytes()).unwrap()).collect();
-            assert!(fs::read_dir(d.path().join("tmp")).unwrap().count() <= 1, "one spill file, not one per object");
+            assert!(
+                fs::read_dir(d.path().join("tmp")).unwrap().count() <= 1,
+                "one spill file, not one per object"
+            );
             for (i, id) in ids.iter().enumerate() {
                 assert_eq!(s.get_blob(id).unwrap(), format!("spilled {i}").as_bytes());
                 assert!(s.contains(id).unwrap());
             }
             s.put_blob(b"spilled 0").unwrap(); // dedup against a pending spilled object
             s.sync().unwrap();
-            assert!(fs::read_dir(d.path().join("tmp")).unwrap().next().is_none(), "spill file removed (n={n})");
+            assert!(
+                fs::read_dir(d.path().join("tmp")).unwrap().next().is_none(),
+                "spill file removed (n={n})"
+            );
             let s2 = LocalStore::open(d.path()).unwrap();
             for (i, id) in ids.iter().enumerate() {
                 assert_eq!(s2.get_blob(id).unwrap(), format!("spilled {i}").as_bytes());
@@ -1097,7 +1110,9 @@ mod tests {
         let ids: Vec<_> = {
             let s = LocalStore::open(d.path()).unwrap();
             s.set_pending_mem_cap(0);
-            (0..(PACK_MIN + 3)).map(|i| s.put_blob(format!("lost {i}").as_bytes()).unwrap()).collect()
+            (0..(PACK_MIN + 3))
+                .map(|i| s.put_blob(format!("lost {i}").as_bytes()).unwrap())
+                .collect()
             // "crash": dropped without sync()
         };
         let s = LocalStore::open(d.path()).unwrap();

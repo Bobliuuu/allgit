@@ -391,6 +391,9 @@ struct Segment<'a> {
     hits: Hits,
 }
 
+/// Segments to fetch, ids no pack has, and ids of packs found gone.
+type PlannedSegments<'a> = (Vec<Segment<'a>>, Vec<ObjectId>, Vec<ObjectId>);
+
 /// Plan the ranged reads for `want` (sorted, unique): assign each id to the first pack that
 /// indexes it, merge hits closer than [`COALESCE_GAP`], and cut merged ranges into segments of
 /// about `total / (2 * threads)` bytes (at least 256 KiB) so the pool has work to share.
@@ -400,7 +403,7 @@ fn plan_segments<'a>(
     cat: &PackCatalog,
     packs: &'a PackList,
     want: Vec<ObjectId>,
-) -> Result<(Vec<Segment<'a>>, Vec<ObjectId>, Vec<ObjectId>), BackendError> {
+) -> Result<PlannedSegments<'a>, BackendError> {
     let mut remaining = want;
     let mut gone = Vec::new();
     let mut per_pack: Vec<(usize, Hits)> = Vec::new();
