@@ -503,3 +503,88 @@ Not measured: deep and binary layouts, macOS/APFS, a cold cache, `add` of 100k s
 hashes every file), parallel chunking inside a single huge file. Caveat on the switch change: the case-fold collision
 check now looks at directories that differ between the two branches, so a collision that already exists inside
 unchanged directories of both branches is no longer reported by `switch` (it is still reported by `add`).
+
+## After: local fast paths for `add`, `commit` and `status` (#110, #111, #112), 2026-10-31
+
+Source of the problems: `docs/research/storage/architecture-audit.md` on `research/storage-engine` (F2, F4, F12, F20, F6).
+Method: Lambda box (30 vCPU, ext4, **shared and busy**, load 13 to 38), release build, warm page cache, `strace -c -f`
+for syscall counts (deterministic) and the median of 7 runs for wall time (noisy: read as order of magnitude). Baseline
+is `origin/main` at the same time, built the same way. Scripts: `bench.sh`/`benchc.sh` driving `vcs` and `datagen`
+(`flat` 1000/5000, `deep` 5000; seed 42).
+
+| Case | Layout | Before | After |
+|---|---|---|---|
+| `add .`, nothing changed, files settled: `read` calls / `openat` | flat 1000 | 2,017 / 1,040 | 17 / 39 |
+| same | flat 5000 | 10,017 / 5,120 | 17 / 119 |
+| same | deep 5000 | 10,017 / 35,940 | 17 / 30,939 (the rest is the directory walk) |
+| same, median wall | flat 1000 / flat 5000 / deep 5000 | 13.7 / 55.2 / 303.9 ms | 9.0 / 33.6 / 272.0 ms |
+| 1-file `commit`: `statx` (total syscalls) | flat 5000 | 91 (421) | 44 (387) |
+| same | deep 5000 | **15,508 (16,006)** | **65 (521)** |
+| same, median wall | flat 1000 / flat 5000 / deep 5000 | 12.9 / 61.7 / 130.6 ms | 13.3 / 52.2 / 30.3 ms |
+| 2nd `status` after a racy `add`+`commit` (all 5,000 files fresh): `read` / `openat` | flat 5000 | 10,025 / 5,070 | 25 / 70 |
+| same | flat 1000 | 2,025 / 1,030 | 25 / 30 |
+| same, median wall of later runs | flat 1000 / flat 5000 / deep 5000 | 16.9 / 67.8 / 166.2 ms | 8.0 / 23.5 / 89.2 ms |
+| index file size | flat 1000 / flat 5000 / deep 5000 | 61,991 / 309,873 / 399,873 B | 71,437 / 356,839 / 459,576 B |
+
+What changed:
+
+- **`add` uses the stat cache.** A file whose size, mtime, ctime and mode equal its index entry, and whose latest
+  timestamp is older than the racy window of the index, is not opened. A changed or racy file is read; if its content
+  hash equals the entry's id (same size), the object is known stored and is not written again. If nothing changed at
+  all, the index is not rewritten.
+- **The racy rule stays sound** while `written_ns` can now move independently: `Index::settled_written_ns` only moves
+  it past an entry's window if that entry was verified after the window closed (`add` verifies the files it processed,
+  `status` the racy files it read and found clean). Any other entry keeps its window open. Tests:
+  `tests/fastpath.rs` (model-based proptest of add/commit/status under random edits, same-size rewrites inside the
+  window, renames, touch and mtime tricks; plus `partial_add_does_not_hide_a_same_tick_edit`, which fails if the rule
+  is weakened).
+- **ctime is part of the cached stat** (new index entry field, magic `AGI2`; the old `AGIX` index still loads, with
+  ctime unknown = never trusted by `add`). Without it a rename-over of a same-size file with an equal mtime tick went
+  unnoticed (found by the property test; `status` has the same weakness on `origin/main`, now fixed for entries that
+  carry a ctime). Known limit that remains, as in git: a tool that rewrites a file's content and then restores size,
+  mtime *and* ctime cannot be detected without reading it.
+- **Cache-tree (#110).** The index keeps the tree id of every directory with at least 8 files beneath it, valid until
+  any entry beneath changes (all mutations go through `Entries`, which drops the cached ids of all ancestors) and only
+  under the zone layout it was computed for (fingerprint of the `zones` file). `commit` hashes only the dirty
+  directories and writes a tree only where its id differs from the parent commit's tree (the parent's trees are known
+  stored), reading a parent tree only on a changed path; `status` uses the same ids for its staged diff. Trees of
+  smaller directories are recomputed, which is cheap, and keeps the index small: caching every directory made the deep
+  index 1,212,504 B (3x) for no extra benefit. The cache is written by `commit` without touching `written_ns`.
+  Presence is assumed from the parent commit (its trees and their closure are stored) and, for a cached id that is not
+  the parent's, checked with one `contains`; a tree whose children were lost is not detected by `commit` (`fsck` does).
+- **Racy refresh (#111).** After a `status` that read racy files and found them clean, `written_ns` moves forward
+  under the repository lock (skipped when the lock is held or the index changed since it was read).
+- **Index load (#112).** Decoding built the map entry by entry with a conflict check that allocated twice per entry.
+  It now builds the sorted map in one pass and checks file/directory conflicts against ancestors afterwards.
+
+Index cost (`cargo test -p vcs-repo index_cost -- --ignored`, box, 3-level paths, median of 9):
+
+| Entries | Bytes | encode | decode before | decode after | write + fsync + rename |
+|---|---|---|---|---|---|
+| 5,000 | 384,639 | 0.5 ms | 5.5 ms | 2.6 ms | 2.1 ms |
+| 100,000 | 7,888,715 | 16.0 ms | 133.4 ms | 61.0 ms | 14.7 ms |
+
+Decision on #112: at 5,000 entries load plus rewrite is about 5 ms of a 30 ms `add`, so a lazy or incremental
+index format is not justified by this data; at 100,000 entries load is 61 ms per command and would be the next thing
+to look at (prefix compression, offset table, parallel parse). Not done, and no prototype was built. The unchanged-add
+case no longer rewrites the index at all, and an `add` of one file still rewrites it whole (about 357 KB at 5,000).
+
+Not improved, measured as such: a 1-file `commit` on flat 1000 (12.9 vs 13.3 ms, within noise: the bigger index
+rewrite offsets the saved tree statx), and the `add .` walk on `deep` (30,939 `openat`, mostly directory reads and
+ignore-file probes; unchanged by this work).
+
+### Loose objects take 4 KiB each (measured, format unchanged)
+
+`find .vcs/objects -type f` summed logical size against allocated blocks (ext4, 4 KiB blocks), after `add` + `commit`
+of the generated tree:
+
+| Dataset | Loose files | Logical bytes | Allocated bytes | Overhead |
+|---|---|---|---|---|
+| flat 5000 | 5,055 | 3,245,620 | 20,910,080 | 6.4x |
+| deep 5000 | 20,465 | 3,846,460 | 83,824,640 | 21.8x |
+
+Small objects (mean 188 B on `deep`, 640 B on `flat`) each occupy a whole block, so the overhead is the block size
+divided by the object size. The audit measured 11.3x for 300 B objects and 8.31 MB for the same objects in one pack.
+The object format and the loose layout are deliberately not changed here; `vcs repack` removes the overhead (see the
+loose-vs-packed section above), at the cost of the pack read path measured in the audit (F7). A future automatic repack
+policy is the real fix and belongs to the storage-engine work.

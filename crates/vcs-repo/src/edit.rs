@@ -17,7 +17,7 @@
 use crate::error::{io, msg, Error, Result};
 use crate::index::{Index, IndexEntry};
 use crate::meta::{Workspace, Zones};
-use crate::repo::{mtime_ns, Repo, Wt};
+use crate::repo::{ctime_ns, mtime_ns, Repo, Wt};
 use crate::treeops::Flat;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -188,6 +188,7 @@ impl Repo {
                     mode,
                     size: m.len(),
                     mtime_ns: mtime_ns(&m),
+                    ctime_ns: ctime_ns(&m),
                 },
             );
         }
@@ -253,6 +254,7 @@ impl Repo {
                     mode,
                     size,
                     mtime_ns: 0,
+                    ctime_ns: 0,
                 },
             )?;
         }

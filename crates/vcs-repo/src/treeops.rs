@@ -334,6 +334,270 @@ fn diff_dir(
     Ok(())
 }
 
+/// Smallest subtree (in files) whose tree id is kept in the index.
+const CACHE_MIN_FILES: u32 = 8;
+
+/// Tree construction straight from the index, reusing cached directory ids (cache-tree).
+///
+/// A directory's tree id is looked up in `cached` (ids stored in the index for directories that
+/// have not changed) or in `fresh` (computed during this walk), and is only derived from the
+/// entries beneath it on a miss. Everything the walk computes ends up in `fresh`, which the
+/// caller may merge back into the index.
+pub struct IndexTrees<'a> {
+    pub store: &'a dyn ObjectStore,
+    pub map: &'a BTreeMap<String, crate::index::IndexEntry>,
+    pub zones: &'a crate::meta::Zones,
+    pub zone: &'a str,
+    cached: Option<&'a BTreeMap<String, ObjectId>>,
+    fresh: BTreeMap<String, (ObjectId, u32)>,
+    /// Trees written with `put` by this walk.
+    pub puts: usize,
+    /// Directories skipped because their id is known and equals the base tree's.
+    pub reused: usize,
+}
+
+enum Child {
+    File(EntryMode, ObjectId),
+    Dir(String),
+}
+
+impl<'a> IndexTrees<'a> {
+    pub fn new(
+        store: &'a dyn ObjectStore,
+        map: &'a BTreeMap<String, crate::index::IndexEntry>,
+        zones: &'a crate::meta::Zones,
+        zone: &'a str,
+        cached: Option<&'a BTreeMap<String, ObjectId>>,
+    ) -> Self {
+        IndexTrees {
+            store,
+            map,
+            zones,
+            zone,
+            cached,
+            fresh: BTreeMap::new(),
+            puts: 0,
+            reused: 0,
+        }
+    }
+
+    /// Immediate children of directory `d` (full path, "" = root) in this zone's view, by name.
+    fn children(&self, d: &str) -> Vec<(String, Child)> {
+        use std::ops::Bound::{Included, Unbounded};
+        let lo = if d.is_empty() { String::new() } else { format!("{d}/") };
+        let mut out = Vec::new();
+        let mut it = self.map.range::<str, _>((Included(lo.as_str()), Unbounded));
+        while let Some((k, e)) = it.next() {
+            if !k.starts_with(&lo) {
+                break;
+            }
+            let rest = &k[lo.len()..];
+            match rest.find('/') {
+                None => out.push((rest.to_owned(), Child::File(e.mode, e.id))),
+                Some(p) => {
+                    let name = &rest[..p];
+                    let full = format!("{lo}{name}");
+                    // A directory that is itself another zone's root is not part of this tree.
+                    if self.zones.owner(&format!("{full}/_")) == self.zone {
+                        out.push((name.to_owned(), Child::Dir(full)));
+                    }
+                    let skip = format!("{lo}{name}0"); // '0' == '/' + 1: first key after "full/..."
+                    it = self.map.range::<str, _>((Included(skip.as_str()), Unbounded));
+                }
+            }
+        }
+        out
+    }
+
+    /// Id (and a lower bound on the number of files beneath) of the tree for directory `d`;
+    /// `None` when it has no entries. Nothing is stored.
+    fn id_of(&mut self, d: &str) -> Result<Option<(ObjectId, u32)>> {
+        if let Some(x) = self.fresh.get(d) {
+            return Ok(Some(*x));
+        }
+        if let Some(id) = self.cached.and_then(|c| c.get(d)) {
+            return Ok(Some((*id, CACHE_MIN_FILES)));
+        }
+        let mut entries = Vec::new();
+        let mut count = 0u32;
+        for (name, ch) in self.children(d) {
+            match ch {
+                Child::File(mode, id) => {
+                    count = count.saturating_add(1);
+                    entries.push(TreeEntry { name, mode, id });
+                }
+                Child::Dir(full) => {
+                    if let Some((id, n)) = self.id_of(&full)? {
+                        count = count.saturating_add(n);
+                        entries.push(TreeEntry {
+                            name,
+                            mode: EntryMode::Directory,
+                            id,
+                        });
+                    }
+                }
+            }
+        }
+        if entries.is_empty() {
+            return Ok(None);
+        }
+        let id = vcs_objects::id_of_encoded(&Object::Tree(Tree::new(entries)?).encode());
+        self.fresh.insert(d.to_owned(), (id, count));
+        Ok(Some((id, count)))
+    }
+
+    /// Store directory `d`, whose tree id is `id`, and every changed subtree. Where an id equals
+    /// the one in `base` (the same directory in a tree known to be stored) nothing is read or
+    /// written.
+    fn write(&mut self, d: &str, id: ObjectId, base: Option<ObjectId>) -> Result<()> {
+        if base == Some(id) {
+            self.reused += 1;
+            return Ok(());
+        }
+        if self.cached.is_some_and(|c| c.get(d) == Some(&id)) && self.store.contains(&id)? {
+            return Ok(()); // the index remembers this id from an earlier commit and it is stored
+        }
+        let base_kids: BTreeMap<String, TreeEntry> = match base {
+            Some(b) => match self.store.get(&b)? {
+                Object::Tree(t) => t.entries().iter().map(|e| (e.name.clone(), e.clone())).collect(),
+                _ => return Err(Error::Corrupt(format!("object {b} is not a tree"))),
+            },
+            None => BTreeMap::new(),
+        };
+        let mut entries = Vec::new();
+        for (name, ch) in self.children(d) {
+            match ch {
+                Child::File(mode, fid) => entries.push(TreeEntry { name, mode, id: fid }),
+                Child::Dir(full) => {
+                    if let Some((cid, _)) = self.id_of(&full)? {
+                        let cb = base_kids.get(&name).filter(|e| e.mode == EntryMode::Directory).map(|e| e.id);
+                        self.write(&full, cid, cb)?;
+                        entries.push(TreeEntry {
+                            name,
+                            mode: EntryMode::Directory,
+                            id: cid,
+                        });
+                    }
+                }
+            }
+        }
+        let obj = Object::Tree(Tree::new(entries)?);
+        debug_assert_eq!(vcs_objects::id_of_encoded(&obj.encode()), id);
+        self.store.put(&obj)?;
+        self.puts += 1;
+        Ok(())
+    }
+
+    /// Does the zone rooted at `root_path` have any entries?
+    pub fn is_empty(&mut self, root_path: &str) -> Result<bool> {
+        Ok(self.id_of(root_path)?.is_none())
+    }
+
+    /// Root tree of the zone rooted at `root_path`, stored; an empty zone gives the empty tree.
+    pub fn build_root(&mut self, root_path: &str, base: Option<ObjectId>) -> Result<ObjectId> {
+        match self.id_of(root_path)? {
+            Some((id, _)) => {
+                self.write(root_path, id, base)?;
+                Ok(id)
+            }
+            None => Ok(self.store.put(&Object::Tree(Tree::new(vec![])?))?),
+        }
+    }
+
+    /// Tree ids worth remembering in the index: directories with enough files beneath that
+    /// skipping them pays for the space the index spends on them.
+    pub fn cacheable(&self) -> BTreeMap<String, ObjectId> {
+        self.fresh
+            .iter()
+            .filter(|(_, (_, n))| *n >= CACHE_MIN_FILES)
+            .map(|(d, (id, _))| (d.clone(), *id))
+            .collect()
+    }
+
+    /// Staged changes of this zone against HEAD's root tree, like [`diff_index`], descending only
+    /// into directories whose ids differ.
+    pub fn diff(&mut self, root_path: &str, head: Option<ObjectId>) -> Result<Vec<(String, crate::ChangeKind)>> {
+        let mut out = Vec::new();
+        let root = self.id_of(root_path)?.map(|x| x.0);
+        if root != head {
+            self.diff_dir(root_path, head, &mut out)?;
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(out)
+    }
+
+    fn added_under(&self, d: &str, out: &mut Vec<(String, crate::ChangeKind)>) {
+        for (name, ch) in self.children(d) {
+            let p = join(d, &name);
+            match ch {
+                Child::File(..) => out.push((p, crate::ChangeKind::Added)),
+                Child::Dir(full) => self.added_under(&full, out),
+            }
+        }
+    }
+
+    fn diff_dir(&mut self, d: &str, head: Option<ObjectId>, out: &mut Vec<(String, crate::ChangeKind)>) -> Result<()> {
+        use crate::ChangeKind::{Added, Deleted, Modified};
+        let mut hm: BTreeMap<String, TreeEntry> = BTreeMap::new();
+        if let Some(h) = head {
+            let Object::Tree(t) = self.store.get(&h)? else {
+                return Err(Error::Corrupt(format!("object {h} is not a tree")));
+            };
+            for e in t.entries() {
+                hm.insert(e.name.clone(), e.clone());
+            }
+        }
+        let deleted_under = |store: &dyn ObjectStore, e: &TreeEntry, p: &str, out: &mut Vec<(String, crate::ChangeKind)>| -> Result<()> {
+            if e.mode == EntryMode::Directory {
+                let mut f = Flat::new();
+                walk(store, e.id, p, &mut f)?;
+                out.extend(f.into_keys().map(|k| (k, Deleted)));
+            } else {
+                out.push((p.to_owned(), Deleted));
+            }
+            Ok(())
+        };
+        for (name, ch) in self.children(d) {
+            let p = join(d, &name);
+            match ch {
+                Child::File(m, id) => match hm.remove(&name) {
+                    None => out.push((p, Added)),
+                    Some(h) if h.mode == EntryMode::Directory => {
+                        deleted_under(self.store, &h, &p, out)?;
+                        out.push((p, Added));
+                    }
+                    Some(h) => {
+                        if h.mode != m || h.id != id {
+                            out.push((p, Modified));
+                        }
+                    }
+                },
+                Child::Dir(full) => {
+                    let Some((id, _)) = self.id_of(&full)? else {
+                        continue; // empty in this view: HEAD's entry (if any) is reported deleted below
+                    };
+                    match hm.remove(&name) {
+                        None => self.added_under(&full, out),
+                        Some(h) if h.mode == EntryMode::Directory => {
+                            if h.id != id {
+                                self.diff_dir(&full, Some(h.id), out)?;
+                            }
+                        }
+                        Some(h) => {
+                            deleted_under(self.store, &h, &p, out)?;
+                            self.added_under(&full, out);
+                        }
+                    }
+                }
+            }
+        }
+        for (name, h) in hm {
+            deleted_under(self.store, &h, &join(d, &name), out)?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
