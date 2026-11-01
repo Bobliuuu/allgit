@@ -3,7 +3,7 @@
 //! Cost-guarded: aborts when the request or byte budget is exceeded. Credentials come from the
 //! standard AWS_* environment variables and are never printed.
 //!
-//! usage: s3bench <endpoint> <bucket> <region> <out.json> [--max-requests N] [--max-mb N]
+//! usage: s3bench <endpoint> <bucket> <region> <out.json> [--max-requests N] [--max-mb N] [--ca-pem FILE] [--create-bucket] [--no-probe]
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -31,7 +31,7 @@ fn stats(label: &str, mut ms: Vec<f64>) -> String {
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     if a.len() < 5 {
-        eprintln!("usage: s3bench <endpoint> <bucket> <region> <out.json> [--max-requests N] [--max-mb N]");
+        eprintln!("usage: s3bench <endpoint> <bucket> <region> <out.json> [--max-requests N] [--max-mb N] [--ca-pem FILE] [--create-bucket] [--no-probe]");
         std::process::exit(2);
     }
     let (endpoint, bucket, region, out) = (&a[1], &a[2], &a[3], &a[4]);
@@ -48,7 +48,21 @@ fn main() {
     cfg.region = region.clone();
     cfg.prefix = format!("bench-{}/", std::process::id());
     cfg.timeout = Duration::from_secs(60);
-    let b = Arc::new(S3Backend::connect(cfg).expect("connect (bucket must exist)"));
+    let strarg = |name: &str| a.iter().position(|x| x == name).and_then(|i| a.get(i + 1)).cloned();
+    if let Some(path) = strarg("--ca-pem") {
+        cfg.ca_pem = Some(std::fs::read(&path).expect("read --ca-pem file"));
+    }
+    if a.iter().any(|x| x == "--create-bucket") {
+        // Local emulators only: create the bucket first (real runs use a pre-created private bucket).
+        S3Backend::new_unchecked(cfg.clone()).expect("client").ensure_bucket().expect("create bucket");
+    }
+    // `--no-probe` skips the product's conditional-write probe so a provider that would be refused
+    // can still be characterised (research only; the product never does this).
+    let b = Arc::new(if a.iter().any(|x| x == "--no-probe") {
+        S3Backend::new_unchecked(cfg).expect("client")
+    } else {
+        S3Backend::connect(cfg).expect("connect (bucket must exist; provider must pass the conditional-write probe)")
+    });
     let uploaded = Arc::new(AtomicU64::new(0));
     let budget = |b: &S3Backend, up: &AtomicU64| {
         if b.requests() > max_req || b.bytes_read() + up.load(Ordering::Relaxed) > max_bytes {

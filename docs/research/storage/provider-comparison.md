@@ -61,6 +61,83 @@ Erasure-coding/durability numbers, SLAs, availability, per-provider latency, req
 RustFS/Ceph, signature versions beyond SigV4 (B2 accepts only SigV4 per its docs [V]), bucket-level object lock, S3
 Express One Zone. Absent from the fetched pages does not mean absent from the product.
 
+## LOCAL (not cloud): measured on one machine against self-hosted servers
+
+Issues #242 and #187. Run 2026-10-31/11-01 with `s3bench` (this branch adds `--ca-pem`, `--create-bucket`, `--no-probe`). **Nothing in this section is a cloud measurement and none of it is a statement about AWS S3, R2, GCS or B2.** Every server ran on the same 30-core AMD EPYC 7J13 Linux box as the client, over loopback, with data on local disk: the latencies measure each server's local code path (and the client), not a network, a replicated cluster or a real object-store backend. They must not be compared with, or substituted for, the cloud numbers still owed by #187. Raw JSON: `docs/research/storage/data/s3-local/s3bench-local-<server>-<http|tls>.json`.
+
+### What was tried, in order
+
+| Candidate | Result |
+| --- | --- |
+| RustFS 1.0.4 release binary (x86_64-gnu zip, github.com/rustfs/rustfs) | WORKED. Single node, one data dir. |
+| MinIO built from source: `go install github.com/minio/minio@latest` with Go 1.25.3 (no Go on the box; the official tarball was unpacked in `~/s3local`) | WORKED, version string `DEVELOPMENT.GOGET` (the archived 2026-04-25 upstream HEAD, not a tagged release). Single node, single drive. |
+| Garage 2.1.0 static binary | RUNS, but REFUSED by the product: it ignores conditional headers (below). |
+| SeaweedFS 4.51 `weed server -s3` | WORKED (needed `-volume.max=100` and a 64 MB volume size limit, or each new bucket failed with HTTP 500 "no writable volumes"). |
+| moto 5.2.5 `moto_server` (pip, Python 3.10 venv) | WORKED. A Python test double, not a storage engine. |
+| docker | not tried (permission denied on the box, per an earlier finding). |
+
+TLS: a CA plus a leaf certificate (SAN `localhost` and `127.0.0.1`, `CA:FALSE`, serverAuth) was generated with openssl and the CA passed with `--ca-pem`. A single self-signed certificate that is also the trust root is rejected by the client (`CaUsedAsEndEntity`), so a separate CA is required. TLS ran on RustFS, MinIO, SeaweedFS and moto; the client without `--ca-pem` is refused (checked for RustFS). Garage was not run with TLS.
+
+### Contract checks (`s3bench`, same 11 checks plus 8-writer CAS x5 rounds)
+
+| Check | RustFS | MinIO (src) | SeaweedFS | moto | Garage |
+| --- | --- | --- | --- | --- | --- |
+| create-only PUT (`If-None-Match: *`) first / second refused | pass / pass | pass / pass | pass / pass | pass / pass | pass / **FAIL** (overwrites; value no longer v1) |
+| CAS with current ETag | pass | pass | pass | pass | pass |
+| CAS with stale ETag refused | pass | pass | pass | pass | **FAIL** |
+| CAS on missing key refused | pass | pass | pass | pass | **FAIL** |
+| ETag A-B-A: rewriting old content reuses the old ETag | **yes** (hazard present) | yes | yes | yes | yes |
+| stale-tag CAS succeeds after A-B-A | yes | yes | yes | yes | yes |
+| exact range read; range past end | pass; empty/none | pass; empty/none | pass; empty/none | pass; empty/none | pass; empty/none |
+| list under prefix | pass | pass | pass | pass | pass |
+| 8 concurrent CAS writers, winners per round (5 rounds) | 1,1,1,1,1 | 1,1,1,1,1 | 1,1,1,1,1 | 1,1,1,1,1 | **8,8,8,8,8** |
+| passes `S3Backend::connect` probe | yes | yes | yes | yes | **no, refused** |
+
+Same results on http and TLS for each server that ran both. Garage numbers were taken with `--no-probe`, which bypasses the product's refusal so the behaviour can be characterised; the product itself will not use Garage as an authoritative backend, and its latency row is for a backend that accepts every conditional write unconditionally, so it is not a usable comparison point.
+
+The A-B-A result matches the documented hazard (ETag is the content MD5), so a manifest must still embed an epoch on every one of these servers. That is also what real S3 does for single-part PUTs, but this run does not test S3.
+
+### Latency, p50 ms (loopback, one box; n=40 for 1 KiB/64 KiB, 20 for 1 MiB, 30 for the CAS loop)
+
+| Server / transport | put_if_absent 1 KiB | get 64 KiB | head 64 KiB | get_range 512 B | put 1 MiB | manifest CAS 8 KiB | GET 64 KiB req/s, 1 thread / 32 threads |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| RustFS http | 45.8 (warm-up outlier, p95 77) | 0.68 | 0.36 | 0.42 | 21.9 | 9.6 | 2290 / 18067 |
+| RustFS tls | 11.5 | 1.04 | 0.68 | 0.75 | 22.2 | 9.0 | 1056 / 13811 |
+| MinIO http | 3.5 | 0.92 | 0.73 | 0.81 | 14.3 | 4.5 | 1192 / 13701 |
+| MinIO tls | 3.7 | 1.40 | 1.07 | 1.26 | 11.2 | 4.4 | 716 / 6258 |
+| SeaweedFS http | 1.5 | 0.87 | 0.57 | 0.77 | 12.2 | 1.6 | 815 / 12812 |
+| SeaweedFS tls | 2.2 | 1.59 | 1.07 | 1.36 | 13.7 | 2.4 | 582 / 7494 |
+| moto http | 3.2 | 3.07 | 3.02 | 3.14 | 8.2 | 3.2 | 306 / 317 |
+| moto tls | 14.3 | 14.09 | 13.92 | 13.97 | 9.7 | 14.2 | 71 / 299 |
+
+Each cell is a single run on a shared 30-core machine (other jobs may have been running); no repeats, so differences of tens of percent are not established. moto serialises requests in one Python process, which explains its flat concurrency scaling. The first run of the series (RustFS http) includes server warm-up.
+
+### Emulator caveat: what differs from real S3
+
+* **moto is an emulator written to mimic S3's API responses, not a storage system.** It keeps objects in process memory, has no durability, and its conditional-write handling is whatever moto implemented; passing here shows moto accepts the headers the client sends, not that S3 behaves the same under load or failure.
+* **MinIO here is a source build of the archived upstream at `@latest`, single node, single drive.** Its erasure-coded and distributed modes (where its consistency guarantees come from) were not exercised.
+* **RustFS 1.0.4 and SeaweedFS 4.51 are independent reimplementations of the S3 API**, single node. A third-party report cited in the Sources section says RustFS does not enforce `If-Match` on DELETE; `s3bench` does not test conditional DELETE, so that was not checked.
+* **Garage** is an independent implementation that, in this version and configuration, does not implement conditional PUT at all.
+* None of these servers has S3's multi-AZ replication, request throttling, 503 SlowDown behaviour, or network latency, so retry and tail-latency behaviour under those conditions is untested. "Exactly one CAS winner" here shows the servers serialise concurrent conditional PUTs on one node; a distributed deployment could behave differently.
+
+### Gated conformance tests (`VCS_TEST_S3_ENDPOINT`, http only)
+
+The gated tests have no CA-bundle option, so they were run over plain http only. `cargo test -p vcs-store-s3 --test s3`, `cargo test -p vcs-cli --test remote`, `cargo test -p vcs-cli --test server_e2e` (the S3-backed `vcs-server` end-to-end test):
+
+| Server | vcs-store-s3 (11 tests) | vcs-cli remote (9) | vcs-server S3 e2e (2) |
+| --- | --- | --- | --- |
+| RustFS | 10 pass, 1 fail | 9 pass | 2 pass |
+| MinIO (src) | 10 pass, 1 fail | 9 pass | 2 pass |
+| SeaweedFS | 10 pass, 1 fail | 9 pass | 2 pass |
+| moto | 10 pass, 1 fail | 9 pass | 2 pass |
+| Garage | 5 pass; the 6 server-backed tests fail at `connect` (provider refused, as designed) | 8 pass, 1 fail (same reason) | 1 pass, 1 fail (same reason) |
+
+The one failing test is the same on all four servers that work: `minio_publish_fetch_and_sparse_request_counts` fails the assertion `remote.requests() - r1 > sparse_reqs` (`crates/vcs-store-s3/tests/s3.rs:232`). Instrumented on each server the counts were identical: the sparse fetch issued 18 requests and the full fetch only 4 (bytes 3.6 KB vs 504 KB, so the byte assertions hold). Because it is identical across four independent servers this looks like a stale expectation in the test or a client behaviour change (the full fetch appears to reuse state from the sparse fetch), not a provider difference; it was not investigated or fixed here. Every other server-backed conformance test passed on RustFS, MinIO, SeaweedFS and moto, including the 1,040-key pagination test and 8-way concurrent publish.
+
+### What this does and does not establish
+
+Established (on loopback, single node): `s3bench` and the product's `S3Backend` work against four independent S3 implementations over http and (with a private CA) TLS; the probe correctly refuses a server that ignores conditional writes. Not established: any cloud provider's behaviour, WAN latency, cost, durability, multi-node consistency, or conditional DELETE. Issue #187's cloud run is still owed.
+
 ## Sources (accessed 2026-10-31; no revision identifier is exposed by these pages)
 
 S3

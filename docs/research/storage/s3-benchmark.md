@@ -1,6 +1,6 @@
 # S3-compatible provider benchmark (`s3bench`)
 
-Status: tool written and compiled; **no cloud run has been made yet** (the lab IAM user cannot create buckets, see issue #187).
+Status: **no cloud run has been made yet** (the lab IAM user cannot create buckets, see issue #187). Local runs against RustFS, MinIO (source build), SeaweedFS, Garage and moto are in `provider-comparison.md` under "LOCAL (not cloud)"; they are not cloud results.
 
 `crates/vcs-bench/src/bin/s3bench.rs` checks the contract allgit needs from an authoritative backend and measures latency, using the product's own `S3Backend` (so it exercises the real request signing, conditional headers and range reads):
 
@@ -19,3 +19,5 @@ aws s3 rm s3://<bucket> --recursive && aws s3api delete-bucket --bucket <bucket>
 ```
 
 Other providers: pass their endpoint and region (R2: `https://<account>.r2.cloudflarestorage.com`, region `auto`; MinIO: `http://host:9000`). Record the machine and its network location with the results; client-side latency depends on it.
+
+Local servers: add `--create-bucket` to create the bucket first, `--ca-pem FILE` to trust a private CA for `https://` endpoints, and `--no-probe` to characterise a provider the product would refuse (research only).
