@@ -1460,6 +1460,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "proptest",
+ "sha2",
  "tempfile",
  "thiserror",
  "unicode-normalization",
