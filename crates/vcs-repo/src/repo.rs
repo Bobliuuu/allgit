@@ -940,6 +940,8 @@ impl Repo {
             untracked: prev.untracked.clone(),
             unsupported: prev.unsupported.clone(),
         };
+        // Saved untracked/unsupported names, sorted, built on first use (see below).
+        let mut saved: Option<Vec<&str>> = None;
         for p in paths {
             // A tracked name that is now a directory can hide new untracked names beneath it.
             if p.rsplit('/').next() == Some(crate::ignore::IGNORE_FILE)
@@ -947,6 +949,19 @@ impl Repo {
                 || self.wfs.stat(p).is_ok_and(|m| m.kind == FileKind::Dir)
             {
                 inc.rewalk = true;
+            } else if !inc.rewalk {
+                // A tracked name that was a directory (holding saved untracked names) and is now a
+                // file or gone: those names vanished too, which only the walk can see.
+                let all = saved.get_or_insert_with(|| {
+                    let mut v: Vec<&str> = prev.untracked.iter().chain(&prev.unsupported).map(String::as_str).collect();
+                    v.sort_unstable();
+                    v
+                });
+                let pre = format!("{p}/");
+                let i = all.partition_point(|n| *n < pre.as_str());
+                if all.get(i).is_some_and(|n| n.starts_with(&pre)) {
+                    inc.rewalk = true;
+                }
             }
             for t in ix.under(p) {
                 let e = &ix.entries[t.as_str()];
