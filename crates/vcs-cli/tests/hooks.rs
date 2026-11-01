@@ -59,7 +59,10 @@ fn pre_commit_failure_aborts_and_shows_stderr() {
     hook(&r, "pre-commit", "echo 'lint failed: bad thing' >&2; exit 3");
     change(&r, "two");
     let e = fail(&r, &["commit", "-m", "two"]);
-    assert!(e.contains("pre-commit") && e.contains("status 3") && e.contains("lint failed: bad thing"), "{e}");
+    assert!(
+        e.contains("pre-commit") && e.contains("status 3") && e.contains("lint failed: bad thing"),
+        "{e}"
+    );
     assert_eq!(log_len(&r), 1);
     // skipped by flag and by env
     ok(&r, &["--no-hooks", "commit", "-m", "two"]);
@@ -88,11 +91,18 @@ fn environment_is_documented_and_scrubbed() {
     assert!(env.contains("VCS_ZONE=root"), "{env}");
     assert!(env.contains("VCS_BRANCH=main"), "{env}");
     assert!(env.contains("VCS_DIR="), "{env}");
-    assert!(!env.contains("secret-token") && !env.contains("sk-secret") && !env.contains("MY_PASSED"), "{env}");
+    assert!(
+        !env.contains("secret-token") && !env.contains("sk-secret") && !env.contains("MY_PASSED"),
+        "{env}"
+    );
     // opt in through hooks.env
     ok(&r, &["config", "set", "hooks.env", "MY_PASSED, VCS_TOKEN"]);
     change(&r, "three");
-    let o = cmd(&r, &["commit", "-m", "three"]).env("VCS_TOKEN", "secret-token").env("MY_PASSED", "yes").output().unwrap();
+    let o = cmd(&r, &["commit", "-m", "three"])
+        .env("VCS_TOKEN", "secret-token")
+        .env("MY_PASSED", "yes")
+        .output()
+        .unwrap();
     assert!(o.status.success());
     let env = std::fs::read_to_string(&out).unwrap();
     assert!(env.contains("MY_PASSED=yes") && env.contains("VCS_TOKEN=secret-token"), "{env}");
@@ -101,11 +111,19 @@ fn environment_is_documented_and_scrubbed() {
 #[test]
 fn commit_msg_can_rewrite_and_reject() {
     let (_t, r) = repo();
-    hook(&r, "commit-msg", "printf 'PREFIX: ' | cat - \"$1\" > \"$1.new\"; mv \"$1.new\" \"$1\"");
+    hook(
+        &r,
+        "commit-msg",
+        "printf 'PREFIX: ' | cat - \"$1\" > \"$1.new\"; mv \"$1.new\" \"$1\"",
+    );
     change(&r, "two");
     ok(&r, &["commit", "-m", "two"]);
     assert!(ok(&r, &["log", "--oneline"]).contains("PREFIX: two"));
-    hook(&r, "commit-msg", "grep -q WIP \"$1\" && { echo 'no WIP commits' >&2; exit 1; }; exit 0");
+    hook(
+        &r,
+        "commit-msg",
+        "grep -q WIP \"$1\" && { echo 'no WIP commits' >&2; exit 1; }; exit 0",
+    );
     change(&r, "three");
     let e = fail(&r, &["commit", "-m", "WIP stuff"]);
     assert!(e.contains("no WIP commits"), "{e}");
@@ -120,7 +138,11 @@ fn post_hooks_run_but_cannot_abort() {
     change(&r, "two");
     let o = vcs(&r, &["commit", "-m", "two"]);
     assert!(o.status.success());
-    assert!(String::from_utf8_lossy(&o.stderr).contains("post-commit"), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(
+        String::from_utf8_lossy(&o.stderr).contains("post-commit"),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
     assert_eq!(std::fs::read_to_string(&out).unwrap(), "ran\n");
     assert_eq!(log_len(&r), 2);
 }
@@ -289,7 +311,13 @@ fn linked_worktrees_use_the_main_repositorys_hooks() {
 #[test]
 fn hostile_trees_cannot_install_hooks() {
     use vcs_objects::names::{validate_component, validate_path};
-    for p in [".vcs/hooks/pre-commit", ".VCS/hooks/pre-commit", "a/.vcs/hooks/pre-commit", ".vcs", "x/.vcs/hooks"] {
+    for p in [
+        ".vcs/hooks/pre-commit",
+        ".VCS/hooks/pre-commit",
+        "a/.vcs/hooks/pre-commit",
+        ".vcs",
+        "x/.vcs/hooks",
+    ] {
         assert!(validate_path(p).is_err(), "{p} accepted");
     }
     assert!(validate_component(".vcs").is_err());
