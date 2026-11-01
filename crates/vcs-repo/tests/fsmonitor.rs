@@ -320,6 +320,27 @@ fn clean_tree_trusts_the_monitor_and_events_reveal_changes() {
     assert_same(&r, &m, "revert");
 }
 
+/// Regression for the flake seen under load (shrunk case `Swap(2,3)`, `Remove(2,3)`): a tracked
+/// name that was a directory holding untracked files is removed; the saved untracked list must not
+/// keep the names that vanished with it. Deterministic: no timing involved.
+#[test]
+fn removed_directory_over_tracked_name_drops_its_untracked_names() {
+    let (_d, r) = base();
+    let m = MockMonitor::new();
+    assert_same(&r, &m, "cold");
+    let p = r.worktree().join("a/b/y.txt");
+    fs::remove_file(&p).unwrap();
+    fs::create_dir(&p).unwrap();
+    fs::write(p.join("sub"), "s").unwrap();
+    m.event("a/b/y.txt");
+    assert_same(&r, &m, "file replaced by dir");
+    assert!(r.status_monitored(opts(), &m).unwrap().untracked.contains(&"a/b/y.txt/sub".to_string()));
+    fs::remove_dir_all(&p).unwrap();
+    m.event("a/b/y.txt");
+    assert_same(&r, &m, "dir removed");
+    assert!(!r.status_monitored(opts(), &m).unwrap().untracked.iter().any(|u| u.starts_with("a/b/y.txt/")));
+}
+
 #[test]
 fn state_for_another_index_is_not_trusted() {
     let (_d, r) = base();
