@@ -346,6 +346,37 @@ fn file_type(t: &str) -> (EntryMode, Option<String>) {
     (mode, warn.map(str::to_owned))
 }
 
+/// Real Perforce escapes `@`, `#`, `%` and `*` in depot paths as `%40`, `%23`, `%25`, `%2A` (found by comparing against
+/// a real p4d: `p4 sync` writes the decoded name). Only these four sequences are decoded.
+fn unescape_depot(p: &str) -> String {
+    if !p.contains('%') {
+        return p.to_owned();
+    }
+    let b = p.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let dec = (b[i] == b'%' && i + 2 < b.len()).then(|| &b[i + 1..i + 3]).and_then(|h| match h {
+            b"40" => Some(b'@'),
+            b"23" => Some(b'#'),
+            b"25" => Some(b'%'),
+            [b'2', b'A' | b'a'] => Some(b'*'),
+            _ => None,
+        });
+        match dec {
+            Some(c) => {
+                out.push(c);
+                i += 3;
+            }
+            None => {
+                out.push(b[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 fn p4_change_id(n: u64) -> ChangeId {
     let mut h = blake3::Hasher::new_derive_key("all-git 2026 p4 import change id v1");
     h.update(format!("p4:{n}:{ROOT_ZONE}").as_bytes());
@@ -430,7 +461,9 @@ impl Repo {
             }
             let mut ops = Vec::new();
             for f in &ch.files {
-                let Some(path) = view.map(&f.depot) else { continue };
+                let Some(path) = view.map(&unescape_depot(&f.depot)) else {
+                    continue;
+                };
                 if validate_path(&path).is_err() {
                     rep.paths_skipped.push(format!("{} (change {})", f.depot, ch.n));
                     continue;
