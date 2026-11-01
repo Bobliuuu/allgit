@@ -259,7 +259,7 @@ impl Repo {
         let mut out = Vec::with_capacity(c.parents.len());
         for p in &c.parents {
             let pr = self.commit_obj(p)?.root;
-            let d = treeops::diff_trees(&self.store, Some(pr), Some(c.root), "")?;
+            let d = treeops::diff_trees_files(&self.store, Some(pr), Some(c.root), "")?;
             let f = if d.old.len() + d.new.len() > 2 * MAX_PATHS {
                 None
             } else {

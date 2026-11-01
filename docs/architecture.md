@@ -87,10 +87,27 @@ never authoritative. It is written lazily (by `merge_bases` and by `is_ancestor`
 extended incrementally when branch heads moved past it, and ignored and rebuilt if it fails any check on load
 (blake3 checksum, sorted unique ids, parent indexes in range, every generation equal to 1 + max of parents). If some
 history is missing or malformed the graph is simply not used. `vcs fsck` compares every entry with the real commit
-and reports a corrupt file or a mismatch. Used by merge/rebase merge-base and `Repo::is_ancestor`; `log` does not
-use it (it must read every emitted commit anyway, and measured no faster). `Repo::set_commit_graph(false)` disables
-it. Tested: random branch/merge histories give identical `log`, `merge_bases` and `is_ancestor` with and without it
-(`crates/vcs-repo/tests/commit_graph.rs`, `vcs-merge` unit proptests). One file for the whole repo, not per zone.
+and reports a corrupt file or a mismatch. Used by merge/rebase merge-base, `Repo::is_ancestor`, `merge-base`, `describe`, `bisect`, `~N` revisions, a long `log`
+(commit order comes from the graph and the commits are then read on all cores) and the path walks below.
+`Repo::set_commit_graph(false)` disables it and the changed-path filters. Tested: random branch/merge histories give
+identical `log`, `merge_bases` and `is_ancestor` with and without it (`crates/vcs-repo/tests/commit_graph.rs`,
+`vcs-merge` unit proptests). One file per zone (`.vcs/commit-graphs/<hash of zone id>`).
+
+### History walks: subtree skipping, changed-path filters [impl]
+Path-limited `log`, `--follow`, `-S`, `blame`, `show`/`log --name-status` no longer flatten the whole tree of every
+commit (cost O(commits x files)); they compare the entries at the asked paths (`treeops::entry_at`) or diff two trees
+without entering directories whose id is equal (`treeops::diff_trees`), so the cost follows the depth of the path and the
+size of the change. `Repo::log_paths` stops at the `-n`-th match instead of reading all history.
+`.vcs/path-filters/<hash of zone id>` holds a Bloom filter per (commit, parent) of the file paths that differ from
+that parent plus every directory above them (12 bits and 7 hashes per path, none for root commits or diffs of more
+than 512 paths). A walk that has examined 256 commits builds the filters of the commits it passes and stores them;
+later walks pass a commit whose filters rule the paths out without reading it (`log`, `blame`, `--follow`). A filter hit
+is only a "maybe": the real entries are compared, so a false positive costs time, never a wrong answer. Like the
+commit-graph it is a pure cache: blake3-checked, discarded when anything is wrong, and `vcs fsck` recomputes every
+stored filter and reports a mismatch. `-S` tests commits on all cores and counts a blob once. Tests:
+`crates/vcs-repo/tests/history_walks.rs` (every result equals the whole-tree computation, with and without filters,
+corrupt and lying filter files), `crates/vcs-cli/tests/history_cmds.rs` (CLI output identical cold and warm).
+Measurements and the generator are in `docs/history-walks.md`.
 
 ### Index, status and the stat cache [impl]
 Status compares (head tree ↔ index) and (index ↔ worktree). The worktree comparison trusts `(size, mtime, mode)` only if

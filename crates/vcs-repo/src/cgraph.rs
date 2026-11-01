@@ -68,6 +68,9 @@ impl Repo {
             .map(|(_, id)| *id)
             .collect();
         tips.extend_from_slice(extra);
+        if !old.is_empty() && tips.iter().all(|t| old.contains(t)) {
+            return Some(old); // nothing new to add: no copy, no rewrite
+        }
         // A parent must live in its child's zone. Commits entering the graph are checked here
         // (against each other, and against parents already in the file) so that the graph never
         // hides the corruption error the object walk would raise.
@@ -107,7 +110,9 @@ impl Repo {
     /// commit-graph when available.
     pub fn merge_bases(&self, a: &ObjectId, b: &ObjectId) -> Result<Vec<ObjectId>> {
         let r = match self.commit_graph(&[*a, *b]) {
-            Some(g) => vcs_merge::merge_base(&g as &dyn CommitGraph, a, b),
+            Some(g) => g
+                .merge_bases_indexed(a, b)
+                .map_or_else(|| vcs_merge::merge_base(&g as &dyn CommitGraph, a, b), Ok),
             None => vcs_merge::merge_base(&vcs_merge::StoreGraph(&self.store), a, b),
         };
         r.map_err(|e| Error::Msg(format!("merge base: {e}")))

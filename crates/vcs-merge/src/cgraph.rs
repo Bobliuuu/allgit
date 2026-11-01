@@ -89,6 +89,75 @@ impl CommitGraphFile {
         Some(n)
     }
 
+    /// Best common ancestors of `a` and `b`, the same answer as [`crate::merge_base`] over this graph
+    /// but on table indexes (no id hashing or maps). `None` if either is not in the graph.
+    pub fn merge_bases_indexed(&self, a: &ObjectId, b: &ObjectId) -> Option<Vec<ObjectId>> {
+        use std::collections::BinaryHeap;
+        const P1: u8 = 1;
+        const P2: u8 = 2;
+        const STALE: u8 = 4;
+        let (ia, ib) = (self.index_of(a)?, self.index_of(b)?);
+        let mut flags = vec![0u8; self.ids.len()];
+        let mut done = vec![false; self.ids.len()];
+        // the table is sorted by id, so (generation, index) pops in the same order as (generation, id)
+        let mut heap: BinaryHeap<(u32, usize)> = BinaryHeap::new();
+        flags[ia] |= P1;
+        flags[ib] |= P2;
+        heap.push((self.gen[ia], ia));
+        if ia != ib {
+            heap.push((self.gen[ib], ib));
+        }
+        let mut results: Vec<usize> = Vec::new();
+        while heap.iter().any(|(_, n)| flags[*n] & STALE == 0) {
+            let (_, n) = heap.pop()?;
+            if done[n] {
+                continue;
+            }
+            done[n] = true;
+            let mut f = flags[n];
+            if f & (P1 | P2 | STALE) == (P1 | P2) {
+                results.push(n);
+                f |= STALE;
+                flags[n] = f;
+            }
+            for &p in &self.parents[n] {
+                let p = p as usize;
+                let new = flags[p] | (f & (P1 | P2 | STALE));
+                if new != flags[p] {
+                    flags[p] = new;
+                    if !done[p] {
+                        heap.push((self.gen[p], p));
+                    }
+                }
+            }
+        }
+        // drop candidates that are ancestors of other candidates
+        let reaches = |anc: usize, desc: usize| -> bool {
+            if self.gen[anc] > self.gen[desc] {
+                return false;
+            }
+            let mut seen_set = std::collections::HashSet::new();
+            let mut stack = vec![desc];
+            while let Some(c) = stack.pop() {
+                if c == anc {
+                    return true;
+                }
+                if !seen_set.insert(c) || self.gen[c] <= self.gen[anc] {
+                    continue;
+                }
+                stack.extend(self.parents[c].iter().map(|&p| p as usize));
+            }
+            false
+        };
+        let mut out: Vec<ObjectId> = results
+            .iter()
+            .filter(|&&r| !results.iter().any(|&s| s != r && reaches(r, s)))
+            .map(|&r| self.ids[r])
+            .collect();
+        out.sort();
+        Some(out)
+    }
+
     /// Add every commit reachable from `tips` that is not yet present. `load(id)` returns
     /// `(parents, commit time)` of the real commit. Fails if a commit cannot be loaded or has
     /// too many parents; the caller then just does not use a graph.
@@ -345,6 +414,14 @@ mod tests {
                         is_ancestor(&f, &id(a), &id(b)).unwrap(),
                         is_ancestor(&m, &id(a), &id(b)).unwrap()
                     );
+                    prop_assert_eq!(
+                        f.merge_bases_indexed(&id(a), &id(b)).unwrap(),
+                        crate::base::merge_base_plain(&m, &id(a), &id(b)).unwrap()
+                    );
+                    let n = f.count_reachable_not_from(&id(a), &id(b)).unwrap();
+                    let behind = crate::base::ancestors(&m, &id(b)).unwrap();
+                    let from = crate::base::ancestors(&m, &id(a)).unwrap();
+                    prop_assert_eq!(n, from.difference(&behind).count());
                 }
             }
         }
