@@ -32,7 +32,7 @@ Incremental export (implemented):
 2. `--onto-origin` additionally treats commits that came from `import-git` as already present in the target and refers to
    them by their original SHA (`from <sha>`), for exporting back into the repository they were imported from.
    Not tested against a real round trip of an imported repository.
-3. On import, a `Vcs-Change-Id` trailer overrides the derived `change_id` (the remote helper relies on it).
+3. On import, a `Vcs-Change-Id` trailer overrides the derived `change_id` (the remote helper relies on it) and is removed from the message, so export then import reproduces change ids, messages and (for root-zone history) commit ids.
 
 ## Git remote helper: `git-remote-allgit`
 

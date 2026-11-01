@@ -396,6 +396,16 @@ fn trailer_change_id(message: &str) -> Option<ChangeId> {
     ChangeId::from_hex(hex.trim()).ok()
 }
 
+/// The message without the exporter's trailer (the inverse of the export step): drop the last
+/// line and the blank line that separated it, so export -> import reproduces the message.
+fn strip_trailer(message: &str) -> String {
+    let t = message.trim_end();
+    match t.rfind('\n') {
+        Some(i) => t[..i].trim_end_matches('\n').to_owned(),
+        None => String::new(),
+    }
+}
+
 fn git_change_id(key: &str) -> ChangeId {
     let mut h = blake3::Hasher::new_derive_key("all-git 2026 git import change id v1");
     h.update(key.as_bytes());
@@ -578,8 +588,11 @@ impl Importer<'_> {
         let root = treeops::build(&self.repo.store, flat.iter().map(|(p, (m, id))| (p.as_str(), *m, *id)))?;
         let author = gc.signature.clone().expect("checked in parse");
         let message = String::from_utf8_lossy(&gc.message).into_owned();
+        let trailer = trailer_change_id(&message);
+        // the trailer carries the change id; once read it is not part of the message
+        let message = if trailer.is_some() { strip_trailer(&message) } else { message };
         let change_id = match &key {
-            _ if trailer_change_id(&message).is_some() => trailer_change_id(&message).expect("checked"),
+            _ if trailer.is_some() => trailer.expect("checked"),
             Some(k) => git_change_id(k),
             None => {
                 let mut h = blake3::Hasher::new();

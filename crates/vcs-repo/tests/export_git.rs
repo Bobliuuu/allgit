@@ -203,3 +203,27 @@ fn full_export_without_options_ignores_the_table() {
     assert_eq!(a, b);
     assert_eq!(rep.commits_known, 0);
 }
+
+/// export -> import must reproduce the commits: the `Vcs-Change-Id` trailer written by export
+/// restores each change id and is not left in the message, so with the same author, timestamps,
+/// trees and parents the commit ids are identical.
+#[test]
+fn export_then_import_round_trips_change_ids_and_commit_ids() {
+    let (_d, r) = build();
+    let (stream, _) = export(&r, "main");
+    let d2 = tempfile::tempdir().unwrap();
+    let r2 = Repo::init(&d2.path().join("r2")).unwrap();
+    r2.import_git(std::io::BufReader::new(&stream[..])).unwrap();
+    let a = r.log("root", Some("main"), 100).unwrap();
+    let b = r2.log("root", Some("main"), 100).unwrap();
+    assert_eq!(a.len(), b.len());
+    for ((ia, ca), (ib, cb)) in a.iter().zip(&b) {
+        assert_eq!(ca.change_id, cb.change_id, "change id survives the round trip");
+        assert_eq!(ca.message, cb.message, "trailer is not left in the message");
+        assert_eq!(ia, ib, "same commit id");
+    }
+    // a second export adds the trailer back byte-for-byte
+    let mut again = Vec::new();
+    r2.export_git("root", "main", &mut again).unwrap();
+    assert_eq!(again, stream, "re-export is identical");
+}
