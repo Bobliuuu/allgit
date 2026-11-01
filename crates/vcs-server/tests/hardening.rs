@@ -36,7 +36,12 @@ fn start_cfg(cfg: Config) -> (Server, Arc<MemBackend>, String) {
 fn raw(addr: &str, bytes: &[u8]) -> (Option<u16>, String) {
     let mut s = TcpStream::connect(addr).unwrap();
     s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
-    let _ = s.write_all(bytes);
+    // Ask for close so the read below ends at the response (the server keeps connections alive otherwise).
+    let mut sent = bytes.to_vec();
+    if let Some(p) = bytes.windows(2).position(|w| w == b"\r\n") {
+        sent.splice(p + 2..p + 2, b"Connection: close\r\n".iter().copied());
+    }
+    let _ = s.write_all(&sent);
     let mut out = Vec::new();
     let _ = s.read_to_end(&mut out);
     let t = String::from_utf8_lossy(&out).into_owned();

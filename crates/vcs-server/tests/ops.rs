@@ -117,7 +117,7 @@ fn http(addr: std::net::SocketAddr, method: &str, path: &str, tok: Option<&str>,
     let mut s = TcpStream::connect(addr).unwrap();
     s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
     let auth = tok.map(|t| format!("Authorization: Bearer {t}\r\n")).unwrap_or_default();
-    write!(s, "{method} {path} HTTP/1.1\r\nHost: x\r\n{auth}{extra}\r\n").unwrap();
+    write!(s, "{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n{auth}{extra}\r\n").unwrap();
     let mut out = Vec::new();
     let _ = s.read_to_end(&mut out);
     let t = String::from_utf8_lossy(&out).into_owned();
@@ -409,7 +409,7 @@ fn graceful_shutdown_waits_for_in_flight_requests_and_flushes_audit() {
     let mut s = TcpStream::connect(a).unwrap();
     write!(
         s,
-        "PUT /v1/o/misc/z HTTP/1.1\r\nAuthorization: Bearer {WRITER}\r\nIf-None-Match: *\r\nContent-Length: 4\r\n\r\nab"
+        "PUT /v1/o/misc/z HTTP/1.1\r\nConnection: close\r\nAuthorization: Bearer {WRITER}\r\nIf-None-Match: *\r\nContent-Length: 4\r\n\r\nab"
     )
     .unwrap();
     std::thread::sleep(Duration::from_millis(100));

@@ -93,20 +93,18 @@ impl S3Config {
     }
 }
 
-/// Idle connections kept for reads.
-const READ_POOL: usize = 8;
+/// Idle keep-alive connections kept per endpoint (reads, writes and listings share the pool; parallel
+/// range fetches and uploads use several at once).
+const POOL: usize = 16;
 
 pub struct S3Backend {
     cfg: S3Config,
     host: String,
-    /// Pooled agent: keeps connections alive across requests. Used only for requests that are
-    /// safe to repeat (GET, ranged GET, HEAD, LIST, DELETE), which are retried once on a fresh
-    /// connection if a pooled one turns out to be dead.
+    /// Pooled agent shared by every request, writes included. ureq re-sends a request on a fresh
+    /// connection only when a pooled one failed before the body went out, or when the request is
+    /// idempotent with no body (GET/HEAD/DELETE); a conditional PUT whose answer is lost
+    /// surfaces as `Unavailable` and is resolved by `RetryBackend`'s read-back, never replayed blind.
     agent: ureq::Agent,
-    /// Unpooled agent: every request opens a connection. Used for writes (conditional PUT), where
-    /// a dead pooled connection would surface as an ambiguous transport error on a CAS; a fresh
-    /// connection keeps "did it apply?" answerable only by the protocol's own idempotent retry.
-    write_agent: ureq::Agent,
     requests: AtomicU64,
     bytes_read: AtomicU64,
 }
@@ -146,8 +144,8 @@ impl S3Backend {
         }
         // The Host header omits the scheme's default port; sign exactly what is sent.
         let host = rest.strip_suffix(if https { ":443" } else { ":80" }).unwrap_or(rest).to_owned();
-        // Reads reuse pooled connections (a new TCP/TLS handshake per GET was the dominant fixed
-        // cost of every request); writes never do, see `S3Backend::write_agent`.
+        // Every request reuses pooled connections (a new TCP/TLS handshake per request was the
+        // dominant fixed cost).
         let mk = |idle: usize| -> Result<ureq::Agent, BackendError> {
             #[allow(unused_mut)]
             let mut builder = ureq::AgentBuilder::new()
@@ -165,13 +163,11 @@ impl S3Backend {
             }
             Ok(builder.build())
         };
-        let agent = mk(READ_POOL)?;
-        let write_agent = mk(0)?;
+        let agent = mk(POOL)?;
         Ok(S3Backend {
             cfg,
             host,
             agent,
-            write_agent,
             requests: AtomicU64::new(0),
             bytes_read: AtomicU64::new(0),
         })
@@ -267,10 +263,9 @@ impl S3Backend {
         );
 
         let url = format!("{}{}{}{}", self.cfg.endpoint, path, if qs.is_empty() { "" } else { "?" }, qs);
-        // Idempotent requests may use (and, if the pooled connection was dead, retry past) the
-        // keep-alive pool; writes always open a fresh connection.
+        // Idempotent requests are repeated once if a pooled connection turns out to be dead.
         let safe = matches!(method, "GET" | "HEAD" | "DELETE");
-        let agent = if safe { &self.agent } else { &self.write_agent };
+        let agent = &self.agent;
         #[allow(clippy::result_large_err)] // ureq's own error type
         let attempt = || {
             let mut req = agent

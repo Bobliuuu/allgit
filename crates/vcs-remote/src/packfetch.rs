@@ -278,14 +278,15 @@ pub fn fetch_many_retrying(b: &dyn Backend, ids: &[ObjectId], rounds: usize) -> 
             break;
         }
     }
-    for id in remaining {
+    let loose = crate::par::map_bounded(&remaining, crate::par::parallelism(), |id| {
         let h = id.to_hex();
         let key = format!("objects/{}/{}", &h[..2], &h[2..]);
         match b.get(&key)? {
-            Some(v) => out.push((id, v.data)),
-            None => return Err(BackendError::Other(format!("object {id} missing on remote"))),
+            Some(v) => Ok((*id, v.data)),
+            None => Err(BackendError::Other(format!("object {id} missing on remote"))),
         }
-    }
+    })?;
+    out.extend(loose);
     Ok(out)
 }
 
@@ -318,7 +319,9 @@ fn scan_packs(b: &dyn Backend, remaining: &mut Vec<ObjectId>, out: &mut Vec<(Obj
             continue;
         }
         let pack_key = format!("{stem}.pack");
-        let mut blocks = BlockCache::default();
+        // Plan the coalesced ranges, then fetch them with bounded concurrency (they are
+        // independent), then decode in order.
+        let mut groups: Vec<(usize, usize, u64, u64)> = Vec::new(); // hits[i..j], byte range start..end
         let mut i = 0;
         while i < hits.len() {
             let start = hits[i].0;
@@ -328,11 +331,18 @@ fn scan_packs(b: &dyn Backend, remaining: &mut Vec<ObjectId>, out: &mut Vec<(Obj
                 end = end.max(hits[j].0 + hits[j].1 as u64);
                 j += 1;
             }
-            let Some(buf) = b.get_range(&pack_key, start, end - start)? else {
-                raced = true;
-                remaining.extend(hits[i..].iter().map(|h| h.2));
-                break;
-            };
+            groups.push((i, j, start, end));
+            i = j;
+        }
+        let bufs = crate::par::map_bounded(&groups, crate::par::parallelism(), |g| b.get_range(&pack_key, g.2, g.3 - g.2))?;
+        if bufs.iter().any(Option::is_none) {
+            raced = true;
+            remaining.extend(hits.iter().map(|h| h.2));
+            continue;
+        }
+        let mut blocks = BlockCache::default();
+        for (&(i, j, start, _), buf) in groups.iter().zip(&bufs) {
+            let buf = buf.as_deref().unwrap_or_default();
             for (off, len, id) in &hits[i..j] {
                 let s = (off - start) as usize;
                 let e = s + *len as usize;
@@ -347,7 +357,6 @@ fn scan_packs(b: &dyn Backend, remaining: &mut Vec<ObjectId>, out: &mut Vec<(Obj
                 }
                 out.push((*id, enc.into_owned()));
             }
-            i = j;
         }
     }
     Ok(raced)
