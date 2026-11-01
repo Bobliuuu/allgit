@@ -4,6 +4,7 @@
 //! * `GET /v1/whoami`
 //! * `GET|HEAD /v1/o/<key>[?offset=N&len=M]` read (ETag header = version tag)
 //! * `PUT /v1/o/<key>` with `If-None-Match: *` (create-only) or `If-Match: "<tag>"` (CAS)
+//! * `DELETE /v1/o/<key>` admin only, never the manifest (garbage collection)
 //! * `GET /v1/list?prefix=`
 //!
 //! Writes to the manifest key are validated by [`crate::validate`] before the CAS.
@@ -441,6 +442,7 @@ fn dispatch(sh: &Shared, req: &Request, who: &Principal) -> Response {
             match m {
                 "GET" | "HEAD" => object_read(sh, req, &key, m == "HEAD"),
                 "PUT" => object_put(sh, req, who, &key),
+                "DELETE" => object_delete(sh, who, &key),
                 _ => text(405, "method not allowed"),
             }
         }
@@ -491,6 +493,20 @@ fn reject_response(r: Reject) -> Response {
         ),
         Reject::Invalid(m) => text(422, &format!("Invalid: {m}")),
         Reject::Unavailable(m) => text(503, &format!("backend unavailable: {m}")),
+    }
+}
+
+/// **DESTRUCTIVE.** Admin-only, idempotent. The manifest can never be deleted this way.
+fn object_delete(sh: &Shared, who: &Principal, key: &str) -> Response {
+    if who.role < Role::Admin {
+        return text(403, "Forbidden: delete needs an admin token");
+    }
+    if key == manifest::KEY {
+        return text(403, "Forbidden: the manifest cannot be deleted");
+    }
+    match sh.backend.delete(key) {
+        Ok(()) => Response::new(204, ""),
+        Err(e) => backend_err(e),
     }
 }
 

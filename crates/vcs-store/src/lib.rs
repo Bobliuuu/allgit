@@ -197,6 +197,44 @@ pub struct LocalStore {
     packs: RwLock<Vec<Pack>>,
     /// Dedup hits on objects older than this refresh their age; see [`DEFAULT_TOUCH_AFTER`].
     touch_after: std::time::Duration,
+    /// Test hook: simulate a crash at a point of [`LocalStore::sweep`].
+    sweep_crash: Mutex<Option<SweepCrash>>,
+}
+
+/// Where a simulated crash interrupts [`LocalStore::sweep`] (test support; see `gc` tests).
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SweepCrash {
+    /// New pack and index written, old index and pack still present.
+    AfterNewPack,
+    /// Old index removed, old pack file still present (an index-less pack is left behind).
+    AfterOldIndexRemoved,
+    /// All pack rewrites done, no loose object removed yet.
+    BeforeLooseRemoval,
+}
+
+/// What a sweep removed.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct SweepStats {
+    pub loose_removed: usize,
+    pub packs_rewritten: usize,
+    pub packs_removed: usize,
+    /// Objects dropped from packs (they are not counted in `loose_removed`).
+    pub packed_dropped: usize,
+}
+
+/// What orphan cleanup removed.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct OrphanStats {
+    pub tmp_files: usize,
+    pub packs_without_index: usize,
+}
+
+fn sweep_crashed(point: SweepCrash) -> StoreError {
+    StoreError::Io {
+        path: PathBuf::from("<sweep>"),
+        source: std::io::Error::other(format!("simulated crash {point:?}")),
+    }
 }
 
 /// Default for [`LocalStore::set_touch_after`]: a quarter of the default 14-day GC grace period.
@@ -275,6 +313,15 @@ fn par_try_each<T: Sync>(items: &[T], f: impl Fn(&T) -> Result<(), StoreError> +
 
 /// Refresh an object file's mtime to now. Errors propagate: a swallowed failure would leave an
 /// old object looking old, which is exactly the hole this closes.
+/// Unlink a file; `Ok(false)` if it was already gone.
+fn remove_if_present(p: &Path) -> std::io::Result<bool> {
+    match fs::remove_file(p) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
 fn touch(path: &Path) -> Result<(), StoreError> {
     let f = io(path, fs::File::options().write(true).open(path))?;
     io(path, f.set_modified(std::time::SystemTime::now()))
@@ -291,7 +338,27 @@ impl LocalStore {
             seq: AtomicU64::new(0),
             packs: RwLock::new(packs),
             touch_after: DEFAULT_TOUCH_AFTER,
+            sweep_crash: Mutex::new(None),
         })
+    }
+    /// The dedup-touch threshold; a destructive sweep's grace period must exceed it.
+    pub fn touch_after(&self) -> std::time::Duration {
+        self.touch_after
+    }
+    #[doc(hidden)]
+    pub fn set_sweep_crash(&self, c: Option<SweepCrash>) {
+        *self.sweep_crash.lock().unwrap() = c;
+    }
+    fn crash_if(&self, at: SweepCrash) -> Result<(), StoreError> {
+        if *self.sweep_crash.lock().unwrap() == Some(at) {
+            return Err(sweep_crashed(at));
+        }
+        Ok(())
+    }
+    fn reload_packs(&self) -> Result<(), StoreError> {
+        let fresh = Self::load_packs(&self.dir)?;
+        *self.packs.write().unwrap() = fresh;
+        Ok(())
     }
     /// Only refresh a deduplicated object's age if it is older than `d` (zero: always).
     pub fn set_touch_after(&mut self, d: std::time::Duration) {
@@ -320,12 +387,125 @@ impl LocalStore {
         Ok(out)
     }
     fn packed(&self, id: &ObjectId) -> Result<Option<Vec<u8>>, StoreError> {
-        for p in self.packs.read().unwrap().iter() {
-            if let Some(b) = p.read(id)? {
-                return Ok(Some(b));
+        let scan = || -> Result<Option<Vec<u8>>, StoreError> {
+            for p in self.packs.read().unwrap().iter() {
+                if let Some(b) = p.read(id)? {
+                    return Ok(Some(b));
+                }
+            }
+            Ok(None)
+        };
+        match scan() {
+            // Another process (GC) replaced a pack after this store opened: reload once.
+            Err(StoreError::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
+                self.reload_packs()?;
+                scan()
+            }
+            r => r,
+        }
+    }
+
+    /// **DESTRUCTIVE.** Permanently remove `doomed` objects: packs holding any of them are
+    /// rewritten without them, then loose copies are unlinked. The caller (GC) has already
+    /// decided they are unreachable and old, and holds the repository lock.
+    ///
+    /// Crash safety, in this order: (1) new pack (pack file first, index last), (2) old index
+    /// removed, (3) old pack removed, (4) loose files removed. A crash before (2) leaves only
+    /// duplicates; between (2) and (3) leaves an index-less `.pack`, which readers ignore and
+    /// [`LocalStore::clean_orphans`] removes; nothing live is ever missing. Pending (unsynced)
+    /// objects are never removed.
+    pub fn sweep(&self, doomed: &BTreeSet<ObjectId>) -> Result<SweepStats, StoreError> {
+        self.sync()?;
+        let mut st = SweepStats::default();
+        {
+            let mut guard = self.packs.write().unwrap();
+            let mut work: Vec<Pack> = std::mem::take(&mut *guard);
+            let mut done: Vec<Pack> = Vec::new();
+            let res = (|| -> Result<(), StoreError> {
+                let mut i = 0;
+                while i < work.len() {
+                    let old = &work[i];
+                    let hit = old.ids().filter(|x| doomed.contains(x)).count();
+                    if hit == 0 {
+                        i += 1;
+                        continue;
+                    }
+                    let mut keep = Vec::new();
+                    for id in old.ids().filter(|x| !doomed.contains(x)) {
+                        let b = old.read(&id)?.ok_or(StoreError::NotFound(id))?;
+                        decode_verified(&id, &b)?; // never carry over something that does not hash to its name
+                        keep.push((id, b));
+                    }
+                    let (idx_path, pack_path) = (old.pack_path.with_extension("idx"), old.pack_path.clone());
+                    if keep.is_empty() {
+                        st.packs_removed += 1;
+                    } else {
+                        done.push(pack::write_pack(&self.dir.join("pack"), &self.dir.join("tmp"), keep)?);
+                        st.packs_rewritten += 1;
+                    }
+                    st.packed_dropped += hit;
+                    self.crash_if(SweepCrash::AfterNewPack)?;
+                    // Index first, so no reader is pointed at a pack that is about to vanish.
+                    io(&idx_path, remove_if_present(&idx_path))?;
+                    self.crash_if(SweepCrash::AfterOldIndexRemoved)?;
+                    io(&pack_path, remove_if_present(&pack_path))?;
+                    work.swap_remove(i);
+                }
+                Ok(())
+            })();
+            done.extend(work);
+            *guard = done;
+            res?;
+        }
+        self.crash_if(SweepCrash::BeforeLooseRemoval)?;
+        let pending: BTreeSet<ObjectId> = self.pending.lock().unwrap().keys().copied().collect();
+        for id in doomed.iter().filter(|i| !pending.contains(i)) {
+            let p = self.path_of(id);
+            if io(&p, remove_if_present(&p))? {
+                st.loose_removed += 1;
+                if let Some(d) = p.parent() {
+                    let _ = fs::remove_dir(d); // only succeeds when empty
+                }
             }
         }
-        Ok(None)
+        Ok(st)
+    }
+
+    /// **DESTRUCTIVE.** Remove leftovers of crashed writers older than `older_than`: files in
+    /// `tmp/` and `.pack` files without a `.idx` (a pack is renamed into place before its
+    /// index, so a fresh index-less pack may be a write in progress; hence the age check).
+    pub fn clean_orphans(&self, now: std::time::SystemTime, older_than: std::time::Duration) -> Result<OrphanStats, StoreError> {
+        let mut st = OrphanStats::default();
+        let old_enough = |p: &Path| {
+            fs::metadata(p)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| now.duration_since(t).ok())
+                .is_some_and(|a| a >= older_than)
+        };
+        let pending: BTreeSet<PathBuf> = self.pending.lock().unwrap().values().cloned().collect();
+        let tmp = self.dir.join("tmp");
+        if let Ok(rd) = fs::read_dir(&tmp) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_file() && !pending.contains(&p) && old_enough(&p) && remove_if_present(&p).is_ok() {
+                    st.tmp_files += 1;
+                }
+            }
+        }
+        if let Ok(rd) = fs::read_dir(self.dir.join("pack")) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.extension().is_some_and(|x| x == "pack")
+                    && !p.with_extension("idx").exists()
+                    && old_enough(&p)
+                    && remove_if_present(&p).is_ok()
+                {
+                    st.packs_without_index += 1;
+                }
+            }
+        }
+        Ok(st)
     }
     fn in_pack(&self, id: &ObjectId) -> bool {
         self.packs.read().unwrap().iter().any(|p| p.contains(id))

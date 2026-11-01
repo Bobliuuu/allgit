@@ -5,6 +5,14 @@
 //! ```text
 //! Collect  walk local closure of new heads, stopping at objects the remote already has
 //!          (invariant: a remote object's whole closure is present – upload is post-order)
+//! Guard    (only on backends with `supports_gc`) the handshake that makes remote garbage
+//!          collection safe, protocol G1 in docs/gc.md. For every remote key this publish relies
+//!          on but did not just create (a legacy loose object Collect pruned at; a pack or
+//!          index that `put_if_absent` found already there): Touch it, then check no
+//!          `tomb/...` exists for it, then check it still exists. Loose objects are guarded
+//!          BEFORE anything is uploaded (nothing that depends on them is visible while they can
+//!          still be swept); a deduplicated pack right after PutIdx. A failed check, or the
+//!          hold-time fence in front of the CAS ([`Publisher::with_hold_ms`]), restarts at Collect.
 //! Upload   packed (default): PutPack `packs/<name>.pack`, then PutIdx `packs/<name>.idx`
 //!          (the index is the commit point of the pack: no index, no objects; an orphan
 //!          pack is ignored). Legacy/tiny: put_if_absent each loose object, dependencies first
@@ -69,11 +77,54 @@ fn fmt_id(i: &Option<ObjectId>) -> String {
     i.map(|i| i.short()).unwrap_or_else(|| "(none)".into())
 }
 
+/// Tombstone key a sweeper writes for a loose object it is about to delete (docs/gc.md, G1).
+pub fn tomb_key(id: &ObjectId) -> String {
+    format!("tomb/{}", id.to_hex())
+}
+/// Tombstone key for a remote pack, given its stem (`packs/pack-<hex>`).
+pub fn pack_tomb_key(stem: &str) -> String {
+    format!("tomb/{}", stem.rsplit('/').next().unwrap_or(stem))
+}
+
+/// Default for [`Publisher::with_hold_ms`]: the longest a publish may take from Collect to its
+/// CAS before it starts over. Remote GC's grace must exceed twice this (assumption A1).
+pub const DEFAULT_HOLD_MS: u64 = 60 * 60 * 1000;
+
+/// Switches that disable one rule of the GC protocol each. They exist only so tests can show,
+/// rule by rule, that removing it loses data (the mutation tests of `model_gc.rs`, run against
+/// the real code). Never set outside tests.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GcQuirks {
+    /// Publisher: do not touch what it only deduplicated against.
+    pub publisher_no_touch: bool,
+    /// Publisher: do not look for a tombstone.
+    pub publisher_no_check_tomb: bool,
+    /// Publisher: do not re-check existence after the tombstone check.
+    pub publisher_no_check_exists: bool,
+    /// Publisher: CAS without the hold-time fence.
+    pub publisher_no_fence: bool,
+    /// Sweeper: decide what to delete, then write tombstones (instead of tombstones first).
+    pub sweeper_tombs_after_deciding: bool,
+    /// Sweeper: young objects and their dependencies are not roots.
+    pub sweeper_young_not_roots: bool,
+    /// Sweeper: ignore the manifest (no branch / snapshot / transaction roots).
+    pub sweeper_ignores_manifest: bool,
+}
+
+/// What to do when the current guard list has been processed.
+#[derive(Clone, Copy)]
+enum Then {
+    PutPack,
+    Upload,
+    PutTx,
+}
+
 pub fn object_key(id: &ObjectId) -> String {
     let h = id.to_hex();
     format!("objects/{}/{}", &h[..2], &h[2..])
 }
-fn tx_key(id: &ObjectId) -> String {
+pub(crate) fn tx_key(id: &ObjectId) -> String {
     format!("tx/{}", id.to_hex())
 }
 
@@ -97,9 +148,17 @@ enum State {
     Upload(usize),
     PutPack,
     PutIdx,
+    /// GC handshake over `Publisher::guard`: phase 0 touch, 1 tombstone check, 2 existence check.
+    Guard {
+        phase: u8,
+        i: usize,
+    },
     PutTx,
     Load,
-    Cas { expected_tag: Option<String>, new: Box<Manifest> },
+    Cas {
+        expected_tag: Option<String>,
+        new: Box<Manifest>,
+    },
     Finished,
 }
 
@@ -121,10 +180,22 @@ pub struct Publisher<'a> {
     clock: Box<dyn Fn() -> u64 + 'a>,
     fault: Option<crate::locks::LockFault>,
     skew_eps: u64,
+    /// (remote key, tombstone key) pairs the GC handshake covers next.
+    guard: Vec<(String, String)>,
+    guard_then: Then,
+    /// Pack keys `put_if_absent` found already present in this attempt.
+    dedup: Vec<(String, String)>,
+    /// Objects uploaded by an earlier, abandoned attempt (loose layout only): not trusted to
+    /// prune at, because GC may have removed their dependencies since.
+    distrust: HashSet<ObjectId>,
+    /// Backend-clock time this attempt started, for the hold-time fence.
+    started_ms: u64,
+    hold_ms: u64,
+    quirks: GcQuirks,
 }
 
 /// Dependencies of an object (what must exist remotely before it may).
-fn deps(o: &Object) -> Vec<ObjectId> {
+pub(crate) fn deps(o: &Object) -> Vec<ObjectId> {
     deps_of(o, false)
 }
 
@@ -222,7 +293,27 @@ impl<'a> Publisher<'a> {
             }),
             fault: None,
             skew_eps: 0,
+            guard: vec![],
+            guard_then: Then::PutTx,
+            dedup: vec![],
+            distrust: HashSet::new(),
+            started_ms: 0,
+            hold_ms: DEFAULT_HOLD_MS,
+            quirks: GcQuirks::default(),
         }
+    }
+    /// Longest time (backend clock) from the start of an attempt to its CAS. A slower publish
+    /// starts over from Collect, re-touching what it relies on, so remote GC can bound how long
+    /// an unreferenced-but-needed object may look old (A1 in docs/gc.md). Only enforced against
+    /// backends with `supports_gc`.
+    pub fn with_hold_ms(mut self, ms: u64) -> Self {
+        self.hold_ms = ms;
+        self
+    }
+    #[doc(hidden)]
+    pub fn with_gc_quirks(mut self, q: GcQuirks) -> Self {
+        self.quirks = q;
+        self
     }
     /// Write every object as its own key (`objects/xx/...`, one HEAD per dependency) instead of
     /// one pack. The legacy layout; readers handle both, so this only exists for old-layout tests.
@@ -307,7 +398,10 @@ impl<'a> Publisher<'a> {
 
     /// Packed Collect: the new objects (id, encoded), dependencies first, found without asking
     /// the remote about individual objects. See the module docs for why pruning is sound.
-    fn collect_packed(&self) -> Result<Vec<(ObjectId, Vec<u8>)>, PublishError> {
+    #[allow(clippy::type_complexity)]
+    fn collect_packed(&self) -> Result<(Vec<(ObjectId, Vec<u8>)>, Vec<ObjectId>), PublishError> {
+        // Legacy loose objects this walk pruned at (they need the GC handshake).
+        let loose_pruned = std::cell::RefCell::new(Vec::<ObjectId>::new());
         // Objects whose whole closure is on the remote (or will be, see `Load`).
         let mut known: HashSet<ObjectId> = self.tx.updates.iter().filter_map(|u| u.old).collect();
         if self.tx.updates.iter().any(|u| u.old.is_none()) {
@@ -345,7 +439,11 @@ impl<'a> Publisher<'a> {
                 return Ok(true);
             }
             // Not derivable from the heads: maybe a legacy loose upload. One HEAD for a commit.
-            Ok(self.backend.exists(&object_key(id))?)
+            let here = self.backend.exists(&object_key(id))?;
+            if here {
+                loose_pruned.borrow_mut().push(*id);
+            }
+            Ok(here)
         };
 
         // Branch heads and tag targets (annotated tag objects are not reachable from any commit).
@@ -430,23 +528,103 @@ impl<'a> Publisher<'a> {
             Some(2) => 1,
             _ => 2,
         });
-        Ok(out)
+        let mut lp = loose_pruned.into_inner();
+        lp.sort();
+        lp.dedup();
+        Ok((out, lp))
+    }
+
+    /// Arm the GC handshake over `keys` and continue with `then`; no-op unless the backend
+    /// supports GC and there is something to guard.
+    fn guard_then(&mut self, keys: Vec<(String, String)>, then: Then) -> State {
+        if keys.is_empty() || !self.backend.supports_gc() {
+            return match then {
+                Then::PutPack => State::PutPack,
+                Then::Upload => State::Upload(0),
+                Then::PutTx => State::PutTx,
+            };
+        }
+        self.guard = keys;
+        self.guard_then = then;
+        State::Guard { phase: 0, i: 0 }
+    }
+
+    /// One step of the GC handshake (Touch < CheckTomb < CheckExists < CAS for each guarded
+    /// key). Any failed check abandons the attempt and redoes Collect.
+    fn guard_step(&mut self, mut phase: u8, mut i: usize) -> Result<Step, PublishError> {
+        // Normalise: skip finished or disabled phases without spending a step.
+        loop {
+            let skip = match phase {
+                0 => self.quirks.publisher_no_touch,
+                1 => self.quirks.publisher_no_check_tomb,
+                _ => self.quirks.publisher_no_check_exists,
+            };
+            if phase > 2 || (phase == 2 && (skip || i >= self.guard.len())) {
+                self.state = match self.guard_then {
+                    Then::PutPack => State::PutPack,
+                    Then::Upload => State::Upload(0),
+                    Then::PutTx => State::PutTx,
+                };
+                return Ok(Step::Continue);
+            }
+            if skip || i >= self.guard.len() {
+                phase += 1;
+                i = 0;
+                continue;
+            }
+            break;
+        }
+        let (key, tomb) = self.guard[i].clone();
+        let r: Result<bool, BackendError> = match phase {
+            0 => self.backend.touch(&key),               // false: gone
+            1 => self.backend.exists(&tomb).map(|t| !t), // false: tombstoned
+            _ => self.backend.exists(&key),              // false: gone
+        };
+        match r {
+            Ok(true) => {
+                self.state = State::Guard { phase, i: i + 1 };
+                Ok(Step::Continue)
+            }
+            Ok(false) => {
+                self.state = State::Collect;
+                self.retry(BackendError::Unavailable(match phase {
+                    1 => format!("{key} is tombstoned by a running gc"),
+                    _ => format!("{key} vanished (swept) before the CAS"),
+                }))
+            }
+            Err(e) => {
+                self.state = State::Guard { phase, i };
+                self.retry(e)
+            }
+        }
     }
 
     pub fn step(&mut self) -> Result<Step, PublishError> {
         match std::mem::replace(&mut self.state, State::Finished) {
             State::Finished => Ok(Step::Continue),
             State::Collect if self.packed => {
+                if self.backend.supports_gc() {
+                    match self.backend.now_ms() {
+                        Ok(t) => self.started_ms = t,
+                        Err(e) => {
+                            self.state = State::Collect;
+                            return self.retry(e);
+                        }
+                    }
+                }
+                self.dedup.clear();
                 match self.collect_packed() {
-                    Ok(staged) => {
-                        if staged.len() >= 2 {
+                    Ok((staged, loose_pruned)) => {
+                        let then = if staged.len() >= 2 {
                             self.built = Some(build_pack(staged));
-                            self.state = State::PutPack;
+                            Then::PutPack
                         } else {
                             // zero or one object: a pack would cost more than it saves
                             self.to_upload = staged.iter().map(|s| s.0).collect();
-                            self.state = State::Upload(0);
-                        }
+                            Then::Upload
+                        };
+                        let keys = loose_pruned.iter().map(|id| (object_key(id), tomb_key(id))).collect();
+                        self.state = self.guard_then(keys, then);
                         Ok(Step::Continue)
                     }
                     Err(PublishError::Backend(e)) => {
@@ -457,6 +635,18 @@ impl<'a> Publisher<'a> {
                 }
             }
             State::Collect => {
+                let gc = self.backend.supports_gc();
+                if gc {
+                    match self.backend.now_ms() {
+                        Ok(t) => self.started_ms = t,
+                        Err(e) => {
+                            self.state = State::Collect;
+                            return self.retry(e);
+                        }
+                    }
+                }
+                let pruned = std::cell::RefCell::new(Vec::new());
+                let distrust = std::mem::take(&mut self.distrust);
                 let mut list = Vec::new();
                 let mut seen = HashSet::new();
                 let heads: BTreeSet<ObjectId> = self.tx.updates.iter().map(|u| u.new).chain(self.tags.values().copied()).collect();
@@ -464,7 +654,16 @@ impl<'a> Publisher<'a> {
                     let (backend, local) = (self.backend, self.local);
                     let r = post_order(
                         h,
-                        &mut |id| backend.exists(&object_key(id)).map_err(Into::into),
+                        &mut |id| {
+                            if distrust.contains(id) {
+                                return Ok(false);
+                            }
+                            let here = backend.exists(&object_key(id))?;
+                            if here {
+                                pruned.borrow_mut().push(*id);
+                            }
+                            Ok(here)
+                        },
                         &mut |id| local.get(id).map_err(Into::into),
                         &mut |id, _| {
                             list.push(*id);
@@ -475,6 +674,7 @@ impl<'a> Publisher<'a> {
                     );
                     match r {
                         Err(PublishError::Backend(e)) => {
+                            self.distrust = distrust;
                             self.state = State::Collect;
                             return self.retry(e);
                         }
@@ -483,16 +683,26 @@ impl<'a> Publisher<'a> {
                     }
                 }
                 self.to_upload = list;
-                self.state = State::Upload(0);
+                self.distrust = distrust;
+                let mut p = pruned.into_inner();
+                p.sort();
+                p.dedup();
+                let keys = p.iter().map(|id| (object_key(id), tomb_key(id))).collect();
+                self.state = self.guard_then(keys, Then::Upload);
                 Ok(Step::Continue)
             }
+            State::Guard { phase, i } => self.guard_step(phase, i),
             State::PutPack => {
                 let b = self.built.as_ref().expect("built in Collect");
-                match self
-                    .backend
-                    .put_if_absent(&format!("{}{}.pack", packfetch::PACK_PREFIX, b.name), &b.pack)
-                {
-                    Ok(_) => self.state = State::PutIdx,
+                let (name, pack) = (b.name.clone(), &b.pack);
+                let key = format!("{}{name}.pack", packfetch::PACK_PREFIX);
+                match self.backend.put_if_absent(&key, pack) {
+                    Ok(created) => {
+                        if !created {
+                            self.dedup.push((key, pack_tomb_key(&name)));
+                        }
+                        self.state = State::PutIdx;
+                    }
                     Err(e) => {
                         self.state = State::PutPack;
                         return self.retry(e);
@@ -502,11 +712,16 @@ impl<'a> Publisher<'a> {
             }
             State::PutIdx => {
                 let b = self.built.as_ref().expect("built in Collect");
-                match self
-                    .backend
-                    .put_if_absent(&format!("{}{}.idx", packfetch::PACK_PREFIX, b.name), &b.idx)
-                {
-                    Ok(_) => self.state = State::PutTx,
+                let (name, idx) = (b.name.clone(), &b.idx);
+                let key = format!("{}{name}.idx", packfetch::PACK_PREFIX);
+                match self.backend.put_if_absent(&key, idx) {
+                    Ok(created) => {
+                        if !created {
+                            self.dedup.push((key, pack_tomb_key(&name)));
+                        }
+                        let keys = std::mem::take(&mut self.dedup);
+                        self.state = self.guard_then(keys, Then::PutTx);
+                    }
                     Err(e) => {
                         self.state = State::PutIdx;
                         return self.retry(e);
@@ -516,6 +731,7 @@ impl<'a> Publisher<'a> {
             }
             State::Upload(i) => {
                 if i >= self.to_upload.len() {
+                    self.distrust.extend(self.to_upload.iter().copied());
                     self.state = State::PutTx;
                     return Ok(Step::Continue);
                 }
@@ -652,6 +868,22 @@ impl<'a> Publisher<'a> {
                 Ok(Step::Continue)
             }
             State::Cas { expected_tag, new } => {
+                if self.backend.supports_gc() && !self.quirks.publisher_no_fence {
+                    let now = match self.backend.now_ms() {
+                        Ok(t) => t,
+                        Err(e) => {
+                            self.state = State::Cas { expected_tag, new };
+                            return self.retry(e);
+                        }
+                    };
+                    if now.saturating_sub(self.started_ms) > self.hold_ms {
+                        // Too slow: what this publish relies on may have aged past GC's grace.
+                        // Start over (re-touching everything it relies on); the retry counter
+                        // bounds how often.
+                        self.state = State::Collect;
+                        return self.retry(BackendError::Unavailable("hold time exceeded before CAS".into()));
+                    }
+                }
                 let bytes = new.encode();
                 let r = match &expected_tag {
                     None => self

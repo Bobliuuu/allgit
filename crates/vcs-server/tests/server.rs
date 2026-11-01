@@ -41,11 +41,30 @@ fn client(url: &str, tok: &str) -> HttpBackend {
 #[test]
 fn conformance_over_http_mem_and_fs() {
     let (_s, _m, url) = start(1);
-    conformance(&client(&url, "t-alice"));
+    // conformance includes delete, which needs an admin token
+    conformance(&client(&url, "t-admin"));
     let d = tempfile::tempdir().unwrap();
     let fs = Arc::new(FsBackend::open(d.path().join("r")).unwrap());
     let srv = Server::start(fs, Config::new(table()), "127.0.0.1:0").unwrap();
     conformance(&client(&format!("http://{}", srv.local_addr()), "t-admin"));
+}
+
+#[test]
+fn delete_needs_admin_and_never_deletes_the_manifest() {
+    let (_s, mem, url) = start(1);
+    mem.put_if_absent("objects/aa/bb", b"x").unwrap();
+    mem.put_if_absent(manifest::KEY, b"m").unwrap();
+    for tok in ["t-reader", "t-alice"] {
+        let e = client(&url, tok).delete("objects/aa/bb").unwrap_err().to_string();
+        assert!(e.contains("403"), "{tok}: {e}");
+    }
+    assert!(mem.exists("objects/aa/bb").unwrap());
+    let e = client(&url, "t-admin").delete(manifest::KEY).unwrap_err().to_string();
+    assert!(e.contains("403"), "{e}");
+    assert!(mem.exists(manifest::KEY).unwrap());
+    client(&url, "t-admin").delete("objects/aa/bb").unwrap();
+    assert!(!mem.exists("objects/aa/bb").unwrap());
+    assert!(!client(&url, "t-admin").supports_gc());
 }
 
 #[test]

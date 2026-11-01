@@ -1,7 +1,8 @@
 # Garbage collection
 
-Status: **design + local dry run + local touch-on-dedup.** `vcs gc --dry-run` (`Repo::gc_plan`) is implemented and tested. No command deletes
-anything, and no destructive sweep, local or remote, exists. Tracks issues #33 and #43.
+Status: **local sweep and remote sweep implemented.** `vcs gc` (`Repo::gc_sweep`) deletes for real under the repo lock;
+`vcs gc --remote --yes` runs protocol G1 against a directory remote; `--dry-run` reports for both. Details in "Implemented"
+below. Tracks issues #33, #43 and #50. The destructive paths are labelled DESTRUCTIVE in their docs and in the CLI output.
 
 ## Safety argument
 
@@ -16,6 +17,66 @@ refresh the object's timestamp on a dedup hit (or the remote equivalent), and a 
 the grace period.** With those two, deleting never removes an object a live writer is about to reference.
 If the grace period is wrong (a writer stalls longer than it), data can be lost; this is why the sweep stays unimplemented.
 
+## Implemented
+
+**Local sweep** (`vcs gc`, `Repo::gc_sweep_at`). Holds the repo lock. Refuses a grace period at or below the store's
+touch-on-dedup threshold (3.5 days; `GcOptions::allow_short_grace` overrides, unsafe). Order: clean crash leftovers (files in
+`objects/tmp` and `.pack` files without a `.idx`, both only if older than the grace, because a fresh index-less pack can be a
+write in progress); plan twice (object list, then roots, then ages, each time) and delete only the intersection; rewrite every
+pack that holds a doomed object (new pack and index first, then the old index, then the old pack, so a crash leaves duplicates
+or an index-less pack, never a missing live object); finally unlink doomed loose files. Pending (unsynced) objects are never
+removed. A reader process that opened before the rewrite reloads its pack list when a pack file has vanished. Tests:
+`crates/vcs-repo/tests/gc.rs` (including a crash at each of the three sweep points), the store unit tests, and the `gc` step of
+`crates/vcs-repo/tests/model.rs`, which runs the sweep (after a repack on every other step, with a fresh orphan) inside the random
+operation model and asserts that every model commit, tree, blob and logged operation survives, `fsck` is clean and the state
+still matches the model; mutation-checked by removing `op_head` from the roots (the test fails).
+
+Local roots added to the table below: a stopped rebase (original head, cursor, current, todo) and the cherry-pick / revert marker.
+In-flight transactions: every stored `Transaction` object is kept, which covers them conservatively.
+
+**Remote sweep** (`vcs gc --remote`, `vcs_remote::gc::remote_gc`). Protocol G1 of
+`docs/research/storage/concurrency-and-correctness.md`, on the backend's clock. Needs `--yes` unless `--dry-run`; grace must exceed
+twice `--hold-secs` (default 1 h); the backend must support `delete`, `now_ms`, `modified_ms` and `touch`
+(`Backend::supports_gc`). Supported: directory remotes (`FsBackend`) and `MemBackend::with_gc()` (tests). **Not supported, refused
+with an error:** S3 (touch would be a server-side copy-to-self with `x-amz-metadata-directive: REPLACE`, ages come from
+`Last-Modified`, the clock from the `Date` header; none implemented) and the HTTP server (no touch, age or clock endpoint).
+`delete` itself is implemented for all four (S3 `DeleteObject`; HTTP `DELETE /v1/o/<key>`, admin token only, never the manifest).
+**S3 has no conditional delete** (no `If-Match` on DELETE), so deletes are unconditional and the tombstone handshake is what makes
+them safe.
+
+Deletion units are a loose object (`objects/xx/...`) or a whole pack (`packs/<name>.idx` + `.pack`, index deleted first, so no
+reader is pointed at a vanishing pack). A pack is deleted only if none of its objects is needed; a pack holding any live
+object is kept whole (`packs_with_garbage_kept` in the report; **no remote pack rewriting**). A `.pack` with no index (a publisher
+that died between PutPack and PutIdx) is a unit with no objects and is deleted once old. Roots: branch heads, snapshots, tags, and the
+old/new heads of every transaction in the manifest's applied window (the retention window). Never deleted: the manifest and `tx/`.
+
+Publisher side (`Publisher`, only against GC-capable backends). What a publish relies on without having just created it is
+guarded: a legacy loose object Collect pruned at (`commit_on_remote`), and a pack or index that `put_if_absent` found already there
+(a retry of an aborted publish re-creates the identical, content-named pack: the dedup hole, for packs). Guard = touch, then check
+no `tomb/<unit>` exists, then check the key still exists; loose objects are guarded BEFORE anything is uploaded, a deduplicated
+pack right after PutIdx. The CAS is fenced to `hold_ms` (default 1 h) after Collect. A failed check or the fence restarts at
+Collect (the loose layout then also distrusts what this publish already uploaded). The packed Collect prunes only at heads the CAS
+re-verifies (`update.old`), which stay roots, so it needs nothing else; a *new* branch prunes at the manifest heads read at Collect,
+protected only while their transactions stay in the applied window (4096).
+**Deviation from the research text:** G1 puts the handshake after the uploads. For loose objects that lets a restarted publish prune
+at an object it uploaded earlier whose child the sweeper has since deleted (a visible parent with a missing child), found by the
+exhaustive search in `gc_real.rs`.
+Sweeper side: single instance via `gc/lock` (create-only, expiry on the backend clock, takeover by CAS), stale tombstones cleared
+under the lock, candidates tombed, remark, delete parents before children (dependency cycles between unreachable packs are broken
+arbitrarily), untomb. **Second deviation:** the remark's keep set is closure(roots) plus closure of *every object of a non-candidate
+unit* plus touched candidates, and the decision uses exactly the ages that keep set saw, so a stalled sweeper, a clock step or a
+touch landing between the two reads cannot delete a child while its parent survives. Both were found by the interleaving search.
+
+Tests (`crates/vcs-remote/tests/gc_real.rs`): the `model_gc.rs` world run against the real code with an exhaustive search over all
+interleavings of publisher steps and sweeper phases (four variants: packed publisher adopting a loose orphan, loose-object publisher,
+adopting the orphan as the head, and re-publishing an aborted pack; a few hundred thousand schedules), invariant G-REACH after every
+phase, and all seven model mutations ported as `GcQuirks` switches that must each produce a violation. Plus fault injection (lost
+delete, crashed sweeper's stale tombstones, held and expired lock, damaged remote left untouched, unsafe grace, unsupported
+backend) and pack tests (old orphan pack deleted, young one kept, pack with a live object kept whole, index-less pack).
+
+Still not covered: remote pack compaction/rewriting; sweeper that outlives its lock TTL; readers (fetch/clone) slower than the grace period
+can lose objects of a replaced head; clock-rate skew (A1 is assumed, not tested); real S3.
+
 ## Roots
 
 Local (`Repo::gc_plan`, all covered by tests unless noted):
@@ -28,6 +89,7 @@ Local (`Repo::gc_plan`, all covered by tests unless noted):
 | index entries (blob ids) | staged but uncommitted content (`vcs add` then GC must not lose it) |
 | merge state (`ours`, `theirs`, conflict base/left/right/placeholder) | a merge in progress |
 | every stored `Transaction` | not reachable from commits, and there is no local transaction log yet, so all are kept (conservative) |
+| stopped rebase (`rebase` file: orig, cursor, current, todo) and cherry-pick marker | a rebase / pick in progress |
 
 Traversal: Commit -> parents, root tree; Tree -> entries; Snapshot -> commits; Transaction -> old/new heads;
 Operation -> parents and view heads. Missing referenced objects are counted (`missing_referenced`), never fatal in a dry run.
@@ -51,7 +113,7 @@ while its parent survived.
   one batch, so a crash mid-sweep never leaves a parent whose child is gone.
 * Local and remote clocks differ: the remote must use its own object timestamps, never the client's.
 
-## What the remote needs (not built)
+## What the remote needs (built for directory remotes; see Implemented)
 
 The remote is S3-like: create-only PUT, CAS on `manifest`, no multi-key transactions. Needs:
 
@@ -87,8 +149,9 @@ The remote is S3-like: create-only PUT, CAS on `manifest`, no multi-key transact
    sweep; the dry run does not enforce this). An old object that lives in a pack is re-adopted by writing a fresh loose
    copy, because packs are shared and immutable. Tested by `readopted_old_orphan_is_kept_after_dedup_put` and the store
    unit tests; cost in `docs/benchmarks.md`. `MemoryStore` reports no age, so GC keeps its objects anyway.
-3. Local `vcs gc` sweep under the repo lock, with crash tests.
-4. Remote design items 1-7, model test first, then implementation.
+3. (done) Local `vcs gc` sweep under the repo lock, with crash tests.
+4. (done, directory remotes) Remote design items 1-7 as protocol G1, model test first, then implementation. Open: S3 / HTTP touch,
+   age and clock; remote pack compaction.
 
 ## Limits of the dry run
 

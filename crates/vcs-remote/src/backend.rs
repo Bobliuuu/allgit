@@ -31,6 +31,38 @@ pub trait Backend: Send + Sync {
     /// `Ok(None)` on precondition failure (including key missing).
     fn put_if_match(&self, key: &str, data: &[u8], tag: &str) -> Result<Option<String>, BackendError>;
     fn list(&self, prefix: &str) -> Result<Vec<String>, BackendError>;
+
+    /// **DESTRUCTIVE.** Remove `key`. Idempotent: deleting an absent key succeeds. Only garbage
+    /// collection (`gc` module) may call it, and only inside the tombstone handshake.
+    ///
+    /// The delete is *unconditional*: S3 (and the other backends here) cannot say "delete only
+    /// if unmodified since version V" (S3 has no conditional DeleteObject on ETag or
+    /// LastModified), so a concurrent touch cannot make the delete fail. That is why GC needs
+    /// the handshake of docs/gc.md (protocol G1) instead of check-then-delete.
+    fn delete(&self, _key: &str) -> Result<(), BackendError> {
+        Err(BackendError::Other("this backend does not support delete".into()))
+    }
+
+    /// True if this backend provides everything remote GC needs: [`Backend::delete`],
+    /// [`Backend::now_ms`], [`Backend::modified_ms`] and [`Backend::touch`]. Publishers perform
+    /// the GC handshake (touch, tombstone check, hold-time fence) only against such backends;
+    /// `vcs gc --remote` refuses any other.
+    fn supports_gc(&self) -> bool {
+        false
+    }
+    /// The backend's own clock in unix ms. Remote GC never uses the client's clock.
+    fn now_ms(&self) -> Result<u64, BackendError> {
+        Err(BackendError::Other("backend has no trusted clock".into()))
+    }
+    /// Last write or touch time of `key` on the backend's clock (unix ms); `None` if absent.
+    fn modified_ms(&self, _key: &str) -> Result<Option<u64>, BackendError> {
+        Err(BackendError::Other("backend cannot report object ages".into()))
+    }
+    /// Refresh `key`'s modification time to now (data and version tag unchanged). `Ok(false)`
+    /// if the key does not exist (the caller must then treat the object as gone).
+    fn touch(&self, _key: &str) -> Result<bool, BackendError> {
+        Err(BackendError::Other("backend cannot touch objects".into()))
+    }
 }
 
 /// Keys come from our own code, but backends also receive them from remote metadata;
@@ -80,4 +112,56 @@ pub fn conformance(b: &dyn Backend) {
     assert_eq!(b.list("k/").unwrap(), vec!["k/one", "k/two"]);
     assert!(b.get("../escape").is_err());
     assert!(b.put_if_absent("/abs", b"x").is_err());
+    conformance_delete(b);
+}
+
+/// Delete semantics every backend must share (part of [`conformance`]).
+pub fn conformance_delete(b: &dyn Backend) {
+    assert!(b.put_if_absent("del/a", b"1").unwrap());
+    assert!(b.put_if_absent("del/b", b"2").unwrap());
+    b.delete("del/a").unwrap();
+    assert!(!b.exists("del/a").unwrap());
+    assert_eq!(b.get("del/a").unwrap(), None);
+    assert_eq!(b.list("del/").unwrap(), vec!["del/b"], "only the deleted key disappears");
+    b.delete("del/a").unwrap(); // idempotent
+    b.delete("del/never").unwrap();
+    // a deleted key can be created again (create-only works on a fresh key)
+    assert!(b.put_if_absent("del/a", b"again").unwrap());
+    assert_eq!(b.get("del/a").unwrap().unwrap().data, b"again");
+    // CAS on a deleted key fails
+    let t = b.get("del/b").unwrap().unwrap().tag;
+    b.delete("del/b").unwrap();
+    assert_eq!(b.put_if_match("del/b", b"x", &t).unwrap(), None);
+    assert!(b.delete("../escape").is_err());
+    b.delete("del/a").unwrap();
+}
+
+/// Extra conformance for backends that claim [`Backend::supports_gc`]: a trusted clock,
+/// modification times, and touch.
+pub fn conformance_gc(b: &dyn Backend) {
+    assert!(b.supports_gc());
+    assert_eq!(b.modified_ms("gc/missing").unwrap(), None);
+    assert!(
+        !b.touch("gc/missing").unwrap(),
+        "touch of a missing key reports false and creates nothing"
+    );
+    assert!(!b.exists("gc/missing").unwrap());
+    assert!(b.put_if_absent("gc/k", b"data").unwrap());
+    let m0 = b.modified_ms("gc/k").unwrap().expect("present key has a time");
+    let now = b.now_ms().unwrap();
+    assert!(now + 5_000 >= m0, "modified time is on the backend clock");
+    let tag = b.get("gc/k").unwrap().unwrap().tag;
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    assert!(b.touch("gc/k").unwrap());
+    let m1 = b.modified_ms("gc/k").unwrap().unwrap();
+    assert!(m1 > m0, "touch must advance the modified time ({m0} -> {m1})");
+    let v = b.get("gc/k").unwrap().unwrap();
+    assert_eq!(
+        (v.data.as_slice(), v.tag.as_str()),
+        (&b"data"[..], tag.as_str()),
+        "touch changes neither data nor tag"
+    );
+    assert!(b.now_ms().unwrap() >= m1);
+    b.delete("gc/k").unwrap();
+    assert_eq!(b.modified_ms("gc/k").unwrap(), None);
 }
