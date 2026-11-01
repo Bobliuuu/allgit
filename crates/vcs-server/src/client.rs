@@ -7,6 +7,16 @@ use std::time::Duration;
 use vcs_remote::backend::validate_key;
 use vcs_remote::{Backend, BackendError, Versioned};
 
+/// Never prints the token.
+impl std::fmt::Debug for HttpBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HttpBackend")
+            .field("base", &self.base)
+            .field("token", &"<redacted>")
+            .finish()
+    }
+}
+
 pub struct HttpBackend {
     base: String,
     token: String,
@@ -33,6 +43,31 @@ impl HttpBackend {
         })
     }
 
+    /// Replace every occurrence of the token (and its header form) in `s`.
+    fn redact(&self, s: &str) -> String {
+        if self.token.is_empty() {
+            return s.to_owned();
+        }
+        s.replace(&self.token, "<redacted>")
+    }
+
+    /// Map a non-success client-error status to a message; 401/403 say what to do.
+    fn status_err(&self, code: u16, msg: &str) -> BackendError {
+        let detail = self.redact(msg.trim());
+        let text = match code {
+            401 => format!(
+                "authentication failed (401): the server rejected the token ({detail}); it may be missing, expired or revoked. Run `vcs login {}` to store a new one",
+                self.base
+            ),
+            403 => format!(
+                "permission denied (403): this token's role or zone scope does not allow the operation ({detail}). Ask the server admin for a token with the needed role/zones, then `vcs login {}`",
+                self.base
+            ),
+            _ => format!("server returned {code}: {detail}"),
+        };
+        BackendError::Other(text)
+    }
+
     fn req(&self, method: &str, path_q: &str) -> ureq::Request {
         self.agent
             .request(method, &format!("{}{path_q}", self.base))
@@ -49,7 +84,7 @@ impl HttpBackend {
     fn send(&self, r: ureq::Request, body: Option<&[u8]>) -> Result<(String, Vec<u8>, Option<String>), BackendError> {
         match self.send_raw(r, body)? {
             Ok(x) => Ok(x),
-            Err((code, msg)) => Err(BackendError::Other(format!("server returned {code}: {}", msg.trim()))),
+            Err((code, msg)) => Err(self.status_err(code, &msg)),
         }
     }
 
@@ -75,12 +110,14 @@ impl HttpBackend {
             Err(ureq::Error::Status(code, resp)) => {
                 let msg = resp.into_string().unwrap_or_default();
                 if code >= 500 {
-                    Err(BackendError::Unavailable(format!("server returned {code}: {}", msg.trim())))
+                    Err(BackendError::Unavailable(
+                        self.redact(&format!("server returned {code}: {}", msg.trim())),
+                    ))
                 } else {
                     Ok(Err((code, msg)))
                 }
             }
-            Err(ureq::Error::Transport(t)) => Err(BackendError::Unavailable(t.to_string())),
+            Err(ureq::Error::Transport(t)) => Err(BackendError::Unavailable(self.redact(&t.to_string()))),
         }
     }
 
@@ -98,7 +135,7 @@ impl Backend for HttpBackend {
                 tag: etag.ok_or_else(|| BackendError::Other("server sent no ETag".into()))?,
             })),
             Err((404, _)) => Ok(None),
-            Err((c, m)) => Err(BackendError::Other(format!("server returned {c}: {}", m.trim()))),
+            Err((c, m)) => Err(self.status_err(c, &m)),
         }
     }
 
@@ -107,7 +144,7 @@ impl Backend for HttpBackend {
         match self.send_raw(self.req("GET", &p), None)? {
             Ok((_, data, _)) => Ok(Some(data)),
             Err((404, _)) => Ok(None),
-            Err((c, m)) => Err(BackendError::Other(format!("server returned {c}: {}", m.trim()))),
+            Err((c, m)) => Err(self.status_err(c, &m)),
         }
     }
 
@@ -115,7 +152,7 @@ impl Backend for HttpBackend {
         match self.send_raw(self.req("HEAD", &Self::key_path(key)?), None)? {
             Ok(_) => Ok(true),
             Err((404, _)) => Ok(false),
-            Err((c, m)) => Err(BackendError::Other(format!("server returned {c}: {}", m.trim()))),
+            Err((c, m)) => Err(self.status_err(c, &m)),
         }
     }
 
@@ -124,7 +161,7 @@ impl Backend for HttpBackend {
         match self.send_raw(r, Some(data))? {
             Ok(_) => Ok(true),
             Err((412, _)) => Ok(false),
-            Err((c, m)) => Err(BackendError::Other(format!("server returned {c}: {}", m.trim()))),
+            Err((c, m)) => Err(self.status_err(c, &m)),
         }
     }
 
@@ -133,7 +170,7 @@ impl Backend for HttpBackend {
         match self.send_raw(r, Some(data))? {
             Ok((_, _, etag)) => Ok(Some(etag.ok_or_else(|| BackendError::Other("server sent no ETag".into()))?)),
             Err((412, _)) => Ok(None),
-            Err((c, m)) => Err(BackendError::Other(format!("server returned {c}: {}", m.trim()))),
+            Err((c, m)) => Err(self.status_err(c, &m)),
         }
     }
 

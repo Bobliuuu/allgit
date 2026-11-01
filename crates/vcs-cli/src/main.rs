@@ -6,6 +6,7 @@ use vcs_objects::{ObjectId, Signature};
 use vcs_remote::Outcome;
 use vcs_repo::{AssistResult, ChangeKind, Error, MergeOutcome, RebaseOutcome, Repo, Resolution, SyncAction, ROOT_ZONE};
 
+mod auth;
 mod config;
 mod generate;
 mod json;
@@ -312,6 +313,22 @@ enum Cmd {
     /// Manage the remote
     #[command(subcommand)]
     Remote(RemoteCmd),
+    /// Save a server token for an http:// remote (via the credential helper)
+    Login {
+        /// Remote URL (http://host:port)
+        remote_url: String,
+        /// Read the token from stdin instead of prompting
+        #[arg(long)]
+        token_stdin: bool,
+    },
+    /// Forget the saved token for a remote (default: the current remote)
+    Logout { remote_url: Option<String> },
+    /// Show authentication state
+    #[command(subcommand)]
+    Auth(AuthCmd),
+    /// Credential helper protocol: key=value lines on stdin/stdout
+    #[command(subcommand)]
+    Credential(CredCmd),
     /// Clone a remote into a new directory (sparse with --zone)
     Clone {
         url: String,
@@ -464,6 +481,32 @@ enum ConfigCmd {
     },
     /// List effective settings and where each comes from
     List,
+}
+
+#[derive(Subcommand, Clone)]
+enum AuthCmd {
+    /// Show whether a token is available for the remote and who the server says you are
+    Status { remote_url: Option<String> },
+}
+
+#[derive(Subcommand, Clone)]
+enum CredCmd {
+    /// Print host= and token= for the host read from stdin (nothing if unknown)
+    Get,
+    /// Save the host= and token= read from stdin
+    Store,
+    /// Forget the credential for the host read from stdin
+    Erase,
+}
+
+fn auth_url(arg: Option<String>) -> Result<String, Error> {
+    match arg {
+        Some(u) => Ok(u),
+        None => {
+            let (repo, _) = open()?;
+            need_remote(&repo)
+        }
+    }
 }
 
 #[derive(Subcommand, Clone)]
@@ -1334,6 +1377,14 @@ fn run(cli: Cli) -> Result<(), Error> {
                 }
             }
         }
+        Cmd::Login { remote_url, token_stdin } => auth::login(&remote_url, token_stdin)?,
+        Cmd::Logout { remote_url } => auth::logout(&auth_url(remote_url)?)?,
+        Cmd::Auth(AuthCmd::Status { remote_url }) => auth::status(&auth_url(remote_url)?)?,
+        Cmd::Credential(c) => auth::credential(match c {
+            CredCmd::Get => auth::Op::Get,
+            CredCmd::Store => auth::Op::Store,
+            CredCmd::Erase => auth::Op::Erase,
+        })?,
         Cmd::Remote(r) => {
             let (repo, cwd) = open()?;
             match r {
