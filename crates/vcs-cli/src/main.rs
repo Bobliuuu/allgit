@@ -10,6 +10,7 @@ mod auth;
 mod bisect;
 mod cmds;
 mod config;
+mod describe;
 mod generate;
 mod grep;
 mod json;
