@@ -30,6 +30,22 @@ pub struct ExportOptions {
     pub record: bool,
 }
 
+/// Extra knobs for callers that drive several exports into one stream (the Git remote helper).
+#[derive(Debug, Default, Clone)]
+pub struct ExportExt {
+    /// Commits the target already has, and how the stream refers to them (`:<mark>` or a Git sha).
+    pub known: BTreeMap<ObjectId, String>,
+    /// Marks continue after this number.
+    pub mark_base: usize,
+    /// Write to this ref instead of `refs/heads/<branch>`.
+    pub git_ref: Option<String>,
+    /// Do not write tags or the closing `done` (more exports follow in the same stream).
+    pub partial: bool,
+    /// Write every tag as a lightweight ref `<prefix>/<name>` (annotations are dropped) instead of
+    /// `refs/tags/<name>` / `tag` commands. For importers that map tags into a private namespace.
+    pub tag_ref_prefix: Option<String>,
+}
+
 /// Trailer added to exported messages so a future import can restore the stable change id.
 pub const CHANGE_ID_TRAILER: &str = "Vcs-Change-Id";
 
@@ -47,6 +63,10 @@ pub struct ExportReport {
     pub tags_skipped: Vec<String>,
     /// Symlink entries written (per modification).
     pub symlinks: usize,
+    /// Highest mark used by this run (or `mark_base` when nothing was written).
+    pub last_mark: usize,
+    /// `(content id, mark)` of the blobs written by this run.
+    pub blob_marks: Vec<(ObjectId, usize)>,
 }
 
 fn load_table(text: &str) -> BTreeMap<ObjectId, String> {
@@ -125,6 +145,18 @@ impl Repo {
 
     /// Like `export_git`, with incremental export and table recording (see `ExportOptions`).
     pub fn export_git_with(&self, zone: &str, branch: &str, out: &mut impl Write, opts: ExportOptions) -> Result<ExportReport> {
+        self.export_git_ext(zone, branch, out, opts, &ExportExt::default())
+    }
+
+    /// `export_git_with` plus `ExportExt`.
+    pub fn export_git_ext(
+        &self,
+        zone: &str,
+        branch: &str,
+        out: &mut impl Write,
+        opts: ExportOptions,
+        ext: &ExportExt,
+    ) -> Result<ExportReport> {
         if !ref_ok(branch) {
             return msg(format!("branch name {branch:?} is not a valid Git ref name"));
         }
@@ -147,12 +179,15 @@ impl Repo {
         };
         // known commit -> how a stream refers to it (`:<mark>` or a Git sha)
         let mut known: BTreeMap<ObjectId, String> = BTreeMap::new();
-        let mut next = 0usize;
+        let mut next = ext.mark_base;
         for (id, k) in &table {
             if let Some(n) = k.strip_prefix("mark:").and_then(|n| n.parse::<usize>().ok()) {
                 known.insert(*id, format!(":{n}"));
                 next = next.max(n);
             }
+        }
+        for (id, k) in &ext.known {
+            known.insert(*id, k.clone());
         }
         if opts.onto_origin {
             for (id, k) in load_table(&read(IMPORT_MAP)?) {
@@ -192,7 +227,7 @@ impl Repo {
             commits.insert(id, c);
         }
 
-        let git_ref = format!("refs/heads/{branch}");
+        let git_ref = ext.git_ref.clone().unwrap_or_else(|| format!("refs/heads/{branch}"));
         let mut rep = ExportReport {
             git_ref: git_ref.clone(),
             commits_known: rep_known,
@@ -225,6 +260,7 @@ impl Repo {
                         out.write_all(&data).map_err(io_err)?;
                         out.write_all(b"\n").map_err(io_err)?;
                         blob_mark.insert(*bid, next);
+                        rep.blob_marks.push((*bid, next));
                         rep.blobs += 1;
                         next
                     }
@@ -271,8 +307,11 @@ impl Repo {
             rep.commits += 1;
             flats.insert(id, flat);
         }
-        self.export_tags(zone, out, &commit_mark, &mut rep)?;
-        out.write_all(b"done\n").map_err(io_err)?;
+        rep.last_mark = next;
+        if !ext.partial {
+            self.export_tags(zone, out, &commit_mark, &mut rep, ext.tag_ref_prefix.as_deref())?;
+            out.write_all(b"done\n").map_err(io_err)?;
+        }
         out.flush().map_err(io_err)?;
         if opts.record {
             let mut t = String::new();
@@ -285,7 +324,14 @@ impl Repo {
     }
 
     /// Emit the zone's tags whose commit is part of the exported history (or known to the target).
-    fn export_tags(&self, zone: &str, out: &mut impl Write, refer: &BTreeMap<ObjectId, String>, rep: &mut ExportReport) -> Result<()> {
+    fn export_tags(
+        &self,
+        zone: &str,
+        out: &mut impl Write,
+        refer: &BTreeMap<ObjectId, String>,
+        rep: &mut ExportReport,
+        prefix: Option<&str>,
+    ) -> Result<()> {
         for ((z, name), val) in &self.refs()?.tags {
             if z != zone {
                 continue;
@@ -303,7 +349,13 @@ impl Repo {
                 continue;
             };
             match ann {
-                None => write!(out, "reset refs/tags/{name}\nfrom {target}\n\n").map_err(io_err)?,
+                None => {
+                    let r = prefix.map_or_else(|| format!("refs/tags/{name}"), |p| format!("{p}/{name}"));
+                    write!(out, "reset {r}\nfrom {target}\n\n").map_err(io_err)?
+                }
+                Some(_) if prefix.is_some() => {
+                    write!(out, "reset {}/{name}\nfrom {target}\n\n", prefix.unwrap_or_default()).map_err(io_err)?
+                }
                 Some(t) => {
                     let ident = format!(
                         "{} <{}> {} +0000",

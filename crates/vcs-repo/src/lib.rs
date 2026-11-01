@@ -30,9 +30,9 @@ pub mod treeops;
 
 pub use assist::{AssistResult, ProposalInfo};
 pub use error::{Error, Result};
-pub use export::{ExportOptions, ExportReport};
+pub use export::{ExportExt, ExportOptions, ExportReport};
 pub use gc::GcReport;
-pub use import::ImportReport;
+pub use import::{ImportOptions, ImportReport};
 pub use import_p4::{P4Report, P4View};
 pub use manage::SnapshotCheckoutReport;
 pub use merge::{ConflictRec, MergeOutcome, MergeState, Resolution, ResolveCheck};

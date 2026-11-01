@@ -50,6 +50,31 @@ pub struct ImportReport {
     pub tags_imported: usize,
     /// Tags not imported, with the reason (bad name, non-commit target, name taken by another target).
     pub tags_skipped: Vec<String>,
+    /// `(mark, commit id)` for every commit of the stream that had a mark (new or already known).
+    pub commit_marks: Vec<(String, ObjectId)>,
+    /// `(mark, content id)` for every blob of the stream that had a mark.
+    pub blob_marks: Vec<(String, ObjectId)>,
+    /// Every ref the stream wrote or reset, including tags (`refs/tags/<n>`), sorted.
+    pub refs_seen: Vec<String>,
+    /// Refs the stream deleted with a bare `reset` (not applied).
+    pub refs_deleted: Vec<String>,
+    /// `(ref, reason)` for refs refused when `per_ref_errors` is set.
+    pub refs_rejected: Vec<(String, String)>,
+}
+
+/// Knobs for callers that feed pushes from a live Git (the remote helper). `Default` is the
+/// behaviour of `vcs import-git`.
+#[derive(Debug, Default, Clone)]
+pub struct ImportOptions {
+    /// Do not record or look up `mark:<n>` keys in `.vcs/git-import` (marks are only valid within
+    /// one stream). Commits without `original-oid` then get a content-derived change id.
+    pub isolate_marks: bool,
+    /// Extra references the stream may use (`:<mark>` of an earlier run, or a Git sha), not persisted.
+    pub known: BTreeMap<String, ObjectId>,
+    /// Refuse a ref (record it in `refs_rejected`) instead of failing the whole import.
+    pub per_ref_errors: bool,
+    /// Fast-forward the checked-out branch of the root zone when the working tree is clean.
+    pub update_checked_out: bool,
 }
 
 enum Op {
@@ -364,6 +389,13 @@ fn parse_tag<R: BufRead>(p: &mut Parser<R>, name: String) -> Result<GitTag> {
     Ok(t)
 }
 
+/// The `Vcs-Change-Id: <32 hex>` trailer written by export, if the last paragraph has one.
+fn trailer_change_id(message: &str) -> Option<ChangeId> {
+    let line = message.trim_end().lines().last()?;
+    let hex = line.strip_prefix("Vcs-Change-Id: ")?;
+    ChangeId::from_hex(hex.trim()).ok()
+}
+
 fn git_change_id(key: &str) -> ChangeId {
     let mut h = blake3::Hasher::new_derive_key("all-git 2026 git import change id v1");
     h.update(key.as_bytes());
@@ -379,6 +411,7 @@ struct Importer<'a> {
     tips: HashMap<String, ObjectId>,  // refname -> commit
     tags: Vec<(String, ObjectId)>,    // tag name -> ref value (commit or annotated tag object)
     flat_cache: Option<(ObjectId, Flat)>,
+    opts: ImportOptions,
     report: ImportReport,
     new_keys: usize,
 }
@@ -415,6 +448,9 @@ impl Importer<'_> {
             }
         }
         if let Some(id) = self.tips.get(r) {
+            return Ok(*id);
+        }
+        if let Some(id) = self.opts.known.get(r) {
             return Ok(*id);
         }
         msg(format!("stream references unknown object {r:?}"))
@@ -487,7 +523,9 @@ impl Importer<'_> {
         let id = self.put_content(&data)?;
         self.report.blobs += 1;
         if let Some(m) = mark {
-            self.marks.insert(format!(":{}", m.trim_start_matches(':')), id);
+            let m = format!(":{}", m.trim_start_matches(':'));
+            self.report.blob_marks.push((m.clone(), id));
+            self.marks.insert(m, id);
         }
         if let Some(o) = oid {
             self.map.insert(o, id);
@@ -497,11 +535,18 @@ impl Importer<'_> {
 
     fn commit(&mut self, gc: GitCommit) -> Result<()> {
         let mark_key = gc.mark.as_ref().map(|m| format!(":{}", m.trim_start_matches(':')));
-        let key = gc.oid.clone().or_else(|| mark_key.as_ref().map(|m| format!("mark{m}")));
+        let key = gc.oid.clone().or_else(|| {
+            if self.opts.isolate_marks {
+                None
+            } else {
+                mark_key.as_ref().map(|m| format!("mark{m}"))
+            }
+        });
         if let Some(existing) = key.as_ref().and_then(|k| self.map.get(k)).copied() {
             if self.repo.store.contains(&existing)? {
                 if let Some(m) = &mark_key {
                     self.marks.insert(m.clone(), existing);
+                    self.report.commit_marks.push((m.clone(), existing));
                 }
                 self.tips.insert(gc.refname, existing);
                 self.report.commits_skipped += 1;
@@ -534,6 +579,7 @@ impl Importer<'_> {
         let author = gc.signature.clone().expect("checked in parse");
         let message = String::from_utf8_lossy(&gc.message).into_owned();
         let change_id = match &key {
+            _ if trailer_change_id(&message).is_some() => trailer_change_id(&message).expect("checked"),
             Some(k) => git_change_id(k),
             None => {
                 let mut h = blake3::Hasher::new();
@@ -562,6 +608,7 @@ impl Importer<'_> {
         }
         let id = self.put(&commit)?;
         if let Some(m) = mark_key {
+            self.report.commit_marks.push((m.clone(), id));
             self.marks.insert(m, id);
         }
         if let Some(k) = key {
@@ -658,6 +705,11 @@ fn load_map(text: &str) -> Result<BTreeMap<String, ObjectId>> {
 impl Repo {
     /// Import a fast-export stream. See the module docs.
     pub fn import_git(&self, input: impl BufRead) -> Result<ImportReport> {
+        self.import_git_with(input, ImportOptions::default())
+    }
+
+    /// `import_git` with `ImportOptions`.
+    pub fn import_git_with(&self, input: impl BufRead, opts: ImportOptions) -> Result<ImportReport> {
         let _l = self.lock()?;
         let mp = self.vcs.join(MAP_FILE);
         let map = match fs::read_to_string(&mp) {
@@ -672,6 +724,7 @@ impl Repo {
             tips: HashMap::new(),
             tags: Vec::new(),
             flat_cache: None,
+            opts,
             report: ImportReport::default(),
             new_keys: 0,
         };
@@ -697,6 +750,7 @@ impl Repo {
                     imp.tips.insert(r, id);
                 } else {
                     imp.tips.remove(&r);
+                    imp.report.refs_deleted.push(r);
                 }
             } else if let Some(n) = line.strip_prefix(b"tag ") {
                 let gt = parse_tag(&mut p, s(n)?.trim().to_owned())?;
@@ -719,6 +773,14 @@ impl Repo {
         let mut updates = Vec::new();
         let mut tips: Vec<(&String, &ObjectId)> = imp.tips.iter().collect();
         tips.sort();
+        let lenient = imp.opts.per_ref_errors;
+        let ff_checked_out = imp.opts.update_checked_out;
+        let mut seen: BTreeSet<String> = tips.iter().map(|(r, _)| (*r).clone()).collect();
+        seen.extend(imp.report.refs_deleted.iter().cloned());
+        seen.extend(imp.tags.iter().map(|(n, _)| format!("refs/tags/{n}")));
+        imp.report.refs_seen = seen.into_iter().collect();
+        let mut rejected: Vec<(String, String)> = Vec::new();
+        let mut dirty: Option<bool> = None;
         for (r, id) in tips {
             if let Some(name) = r.strip_prefix("refs/tags/") {
                 if validate_branch_name(name).is_ok() && imp.repo.commit_obj(id).is_ok() {
@@ -732,19 +794,45 @@ impl Repo {
                 ignored.insert(r.clone());
                 continue;
             };
-            validate_branch_name(branch)?;
+            if let Err(e) = validate_branch_name(branch) {
+                if lenient {
+                    rejected.push((r.clone(), e.to_string()));
+                    continue;
+                }
+                return Err(e.into());
+            }
             let old = refs.head(ROOT_ZONE, branch);
             if old == Some(*id) {
                 continue;
             }
             if let Some(o) = old {
-                if checked_out.as_deref() == Some(branch) {
-                    return msg(format!(
-                        "branch {branch:?} is checked out and already has history; check out another branch first"
-                    ));
-                }
+                let mut why = None;
                 if !is_ancestor(self, &o, id)? {
-                    return msg(format!("branch {branch:?} has local history that is not part of the import"));
+                    why = Some(if checked_out.as_deref() == Some(branch) && !ff_checked_out {
+                        format!("branch {branch:?} is checked out and already has history; check out another branch first")
+                    } else {
+                        format!("branch {branch:?} has local history that is not part of the import")
+                    });
+                } else if checked_out.as_deref() == Some(branch) {
+                    if !ff_checked_out {
+                        why = Some(format!(
+                            "branch {branch:?} is checked out and already has history; check out another branch first"
+                        ));
+                    } else {
+                        let d = *dirty.get_or_insert_with(|| self.status().and_then(|st| self.require_clean(ROOT_ZONE, &st)).is_err());
+                        if d {
+                            why = Some(format!(
+                                "branch {branch:?} is checked out and the working tree has uncommitted changes"
+                            ));
+                        }
+                    }
+                }
+                if let Some(w) = why {
+                    if lenient {
+                        rejected.push((r.clone(), w));
+                        continue;
+                    }
+                    return msg(w);
                 }
             }
             updates.push(RefUpdate {
@@ -760,7 +848,7 @@ impl Repo {
         let mut ix = None;
         if let Some(u) = updates
             .iter()
-            .find(|u| u.old.is_none() && checked_out.as_deref() == Some(u.branch.as_str()))
+            .find(|u| (u.old.is_none() || ff_checked_out) && checked_out.as_deref() == Some(u.branch.as_str()))
         {
             let st = self.status()?;
             self.require_clean(ROOT_ZONE, &st)?;
@@ -827,6 +915,7 @@ impl Repo {
             report.branches_updated = updates.iter().map(|u| (u.branch.clone(), u.new)).collect();
         }
         report.refs_ignored = ignored.into_iter().collect();
+        report.refs_rejected = rejected;
         Ok(report)
     }
 }

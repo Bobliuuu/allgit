@@ -32,7 +32,54 @@ Incremental export (implemented):
 2. `--onto-origin` additionally treats commits that came from `import-git` as already present in the target and refers to
    them by their original SHA (`from <sha>`), for exporting back into the repository they were imported from.
    Not tested against a real round trip of an imported repository.
-3. Not done: on import, a `Vcs-Change-Id` trailer should override the derived `change_id` (the importer does not read it).
+3. On import, a `Vcs-Change-Id` trailer overrides the derived `change_id` (the remote helper relies on it).
+
+## Git remote helper: `git-remote-allgit`
+
+Status: prototype, tested against a real `git` (`crates/vcs-cli/tests/git_remote.rs`, skipped when git is absent).
+
+`cargo build` produces a second binary, `git-remote-allgit`. Put it on `PATH` and Git can talk to an allgit repository:
+
+```
+git clone allgit::/path/to/allgit-repo work
+cd work && git commit ... && git push origin HEAD:refs/heads/main
+git pull
+```
+
+The helper is driven by Git and never runs `git` or links libgit2. Fetching uses the `import` capability: the helper writes a
+fast-import stream with `Repo::export_git_ext`, Git's own `fast-import` stores it. Pushing uses `export`: Git's `fast-export`
+stream is read by `Repo::import_git_with`. Remote branches are mapped to `refs/allgit/<remote>/heads/*` and tags to
+`refs/allgit/<remote>/tags/*` (the `refspec` capability); `list` reports `?` for every ref.
+
+State is kept per remote in `$GIT_DIR/allgit/<remote>/`: `marks` (shared fast-import/fast-export marks file, handled by Git
+through `*import-marks` / `*export-marks`), `pending` (objects whose Git sha is not yet known) and `map` (allgit id <-> Git sha
+for commits and blobs). The marks file is written by Git after the helper may have exited, so `pending` is resolved on the
+next run. `map` is what lets a pushed commit keep the sha Git gave it: later fetches refer to it by sha (`from <sha>`) instead
+of re-creating it with a `Vcs-Change-Id` trailer. The importer now also honours a `Vcs-Change-Id:` trailer (last line of the
+message) as the commit's change id.
+
+What works (tested): clone, fetch/pull, push of new commits (fast-forward only) to existing or new branches, including the
+checked-out branch of a non-bare allgit repository when its working tree is clean, executable bits, symlinks, pushed
+annotated and lightweight tags, a second incremental push, a fresh clone seeing pushed history, per-ref errors
+(`! [remote rejected]`) for non-fast-forward pushes, ref deletion and a non-repository URL.
+
+Limits:
+
+* **Zones**: only the root zone is mapped. Other zones are invisible to Git, and a push can only change the root zone.
+* **Remote kind**: local paths (or `file://`) only; no HTTP/S3/vcs-server remotes.
+* **History rewriting**: force pushes that rewrite allgit history are rejected (non-fast-forward is reported per ref); ref
+  deletion is refused. A branch whose Git history was rewritten locally must be pushed under a new name.
+* **Checked-out branch**: pushing to it works only when the allgit working tree is clean, otherwise the ref is rejected.
+* **Tags**: annotated allgit tags reach Git as lightweight tags (Git cannot write annotated tags into a private namespace
+  from a stream); annotated and lightweight Git tags can be pushed. A tag on a commit that is on no branch is not exported.
+* **Large files**: blobs are held in memory on both sides (data blocks up to 1 GiB in the importer); there is no chunking,
+  LFS or partial clone. Every fetch re-exports every branch (Git de-duplicates by content), so cost grows with history.
+* **Lossy mapping**: as in the round-trip table above (committer, timezones, signatures, submodules, file modes, empty
+  directories). Authors keep name, email and timestamp; the committer is dropped.
+* **Marks**: a push whose negative revisions are not in the marks file (for example after deleting `$GIT_DIR/allgit`) arrives
+  as a root commit instead of continuing the branch; keep the directory.
+* **Errors**: a malformed stream aborts the push with a message on stderr and a non-zero exit, not per-ref status lines.
+* Not tested: Windows, SHA-256 repositories, shallow clones, concurrent pushes from several clones.
 
 ## Prototype: what export does
 
