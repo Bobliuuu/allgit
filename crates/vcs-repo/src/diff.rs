@@ -18,7 +18,33 @@ fn split_lines(b: &[u8]) -> Vec<&[u8]> {
     b.split_inclusive(|&c| c == b'\n').collect()
 }
 
-fn intern<'a>(ids: &mut std::collections::HashMap<&'a [u8], u32>, ls: &[&'a [u8]]) -> Vec<u32> {
+/// FxHash-style hasher: lines are interned by the thousand per diff, SipHash dominated the cost.
+#[derive(Default, Clone, Copy)]
+struct Fx(u64);
+
+impl std::hash::Hasher for Fx {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        const K: u64 = 0x517c_c1b7_2722_0a95;
+        let mut h = self.0;
+        let mut rest = bytes;
+        while rest.len() >= 8 {
+            let (w, r) = rest.split_at(8);
+            h = (h.rotate_left(5) ^ u64::from_le_bytes(w.try_into().unwrap())).wrapping_mul(K);
+            rest = r;
+        }
+        for &b in rest {
+            h = (h.rotate_left(5) ^ u64::from(b)).wrapping_mul(K);
+        }
+        self.0 = h;
+    }
+}
+
+type FxMap<K, V> = std::collections::HashMap<K, V, std::hash::BuildHasherDefault<Fx>>;
+
+fn intern<'a>(ids: &mut FxMap<&'a [u8], u32>, ls: &[&'a [u8]]) -> Vec<u32> {
     ls.iter()
         .map(|l| {
             let next = ids.len() as u32;
@@ -59,6 +85,81 @@ where
     }
 }
 
+/// Same result as [`lcs_ops`], computing the LCS table only for diagonals `|j - i| <= k`.
+/// Returns `None` unless the result is provably identical to the full table's: cells outside the
+/// band read as 0 (a lower bound), and every cell the traceback consults has an optimal suffix
+/// alignment inside the band whenever `2 * D + 1 <= k`, `D` being the edit distance found.
+fn lcs_ops_banded(am: &[u32], bm: &[u32], p: usize, k: usize, ops: &mut Vec<(Tag, usize, usize)>) -> Option<()> {
+    let (n, m) = (am.len(), bm.len());
+    let w = 2 * k + 1;
+    let mut t = vec![0u32; (n + 1) * w];
+    let at = |t: &[u32], i: usize, j: usize| -> u32 {
+        // d = j - i + k, outside the band reads as 0
+        match (j + k).checked_sub(i) {
+            Some(d) if d < w => t[i * w + d],
+            _ => 0,
+        }
+    };
+    for i in (0..n).rev() {
+        if m == 0 {
+            break;
+        }
+        let lo = i.saturating_sub(k);
+        let hi = (i + k).min(m.saturating_sub(1));
+        if lo > hi {
+            continue;
+        }
+        for j in (lo..=hi).rev() {
+            let v = if am[i] == bm[j] {
+                at(&t, i + 1, j + 1) + 1
+            } else {
+                at(&t, i + 1, j).max(at(&t, i, j + 1))
+            };
+            t[i * w + j + k - i] = v;
+        }
+    }
+    let lcs = at(&t, 0, 0) as usize;
+    let dist = n + m - 2 * lcs;
+    if 2 * dist + 1 > k {
+        return None;
+    }
+    let (mut i, mut j) = (0, 0);
+    while i < n || j < m {
+        if i < n && j < m && am[i] == bm[j] {
+            ops.push((Tag::Eq, p + i, p + j));
+            i += 1;
+            j += 1;
+        } else if i < n && (j == m || at(&t, i + 1, j) >= at(&t, i, j + 1)) {
+            ops.push((Tag::Del, p + i, 0));
+            i += 1;
+        } else {
+            ops.push((Tag::Ins, 0, p + j));
+            j += 1;
+        }
+    }
+    Some(())
+}
+
+/// LCS script over interned lines; banded when the sequences are close (the common case: a few
+/// edited lines), the full table otherwise. Both give the same script.
+fn lcs_script(ai: &[u32], bi: &[u32], p: usize, ops: &mut Vec<(Tag, usize, usize)>) {
+    let (n, m) = (ai.len(), bi.len());
+    let mut k = 2 * n.abs_diff(m) + 17;
+    while k < n.max(m) / 2 {
+        let mark = ops.len();
+        if lcs_ops_banded(ai, bi, p, k, ops).is_some() {
+            return;
+        }
+        ops.truncate(mark);
+        k *= 4;
+    }
+    if n.min(m) < u16::MAX as usize {
+        lcs_ops::<u16>(ai, bi, p, ops);
+    } else {
+        lcs_ops::<u32>(ai, bi, p, ops);
+    }
+}
+
 fn script(a: &[&[u8]], b: &[&[u8]]) -> Vec<(Tag, usize, usize)> {
     // (tag, index into a, index into b); unused index is 0
     let p = a.iter().zip(b).take_while(|(x, y)| x == y).count();
@@ -79,13 +180,9 @@ fn script(a: &[&[u8]], b: &[&[u8]]) -> Vec<(Tag, usize, usize)> {
     } else {
         // the table holds LCS lengths, at most min(n, m): 16 bits halve the memory traffic when they fit
         // lines become small integers first: the inner loop compares n*m pairs
-        let mut ids: std::collections::HashMap<&[u8], u32> = std::collections::HashMap::new();
+        let mut ids: FxMap<&[u8], u32> = FxMap::default();
         let (ai, bi) = (intern(&mut ids, am), intern(&mut ids, bm));
-        if n.min(m) < u16::MAX as usize {
-            lcs_ops::<u16>(&ai, &bi, p, &mut ops);
-        } else {
-            lcs_ops::<u32>(&ai, &bi, p, &mut ops);
-        }
+        lcs_script(&ai, &bi, p, &mut ops);
     }
     for k in 0..s {
         ops.push((Tag::Eq, p + n + k, p + m + k));
@@ -330,5 +427,54 @@ mod tests {
         let new = old.replace("\n3\n", "\nthree\n").replace("\n28\n", "\ntwenty-eight\n");
         let d = unified("f", Some(old.as_bytes()), Some(new.as_bytes()));
         assert_eq!(d.matches("@@ ").count(), 2, "{d}");
+    }
+}
+
+#[cfg(test)]
+mod band_tests {
+    use super::*;
+
+    fn full(a: &[u32], b: &[u32]) -> Vec<(Tag, usize, usize)> {
+        let mut o = Vec::new();
+        lcs_ops::<u32>(a, b, 3, &mut o);
+        o
+    }
+
+    #[test]
+    fn banded_script_equals_full_table_script() {
+        let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut rnd = move |n: u64| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x % n
+        };
+        for case in 0..3000 {
+            let len = 1 + rnd(120) as usize;
+            let alpha = if case % 3 == 0 { 3 } else { 1000 }; // small alphabets: many ties
+            let a: Vec<u32> = (0..len).map(|_| rnd(alpha) as u32).collect();
+            let mut b = a.clone();
+            for _ in 0..rnd(if case % 5 == 0 { 40 } else { 6 }) {
+                let pos = rnd(b.len() as u64 + 1) as usize;
+                match rnd(3) {
+                    0 if pos < b.len() => {
+                        b.remove(pos);
+                    }
+                    1 => b.insert(pos, rnd(alpha) as u32),
+                    _ if pos < b.len() => b[pos] = rnd(alpha) as u32,
+                    _ => {}
+                }
+            }
+            let mut got = Vec::new();
+            lcs_script(&a, &b, 3, &mut got);
+            assert_eq!(got, full(&a, &b), "case {case}: {a:?} vs {b:?}");
+            // also force small bands directly: whenever they accept, they must agree
+            for k in [1, 2, 3, 5, 9] {
+                let mut g = Vec::new();
+                if lcs_ops_banded(&a, &b, 3, k, &mut g).is_some() {
+                    assert_eq!(g, full(&a, &b), "case {case} k {k}");
+                }
+            }
+        }
     }
 }

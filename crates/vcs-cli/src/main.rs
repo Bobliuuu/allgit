@@ -1308,13 +1308,17 @@ fn run(cli: Cli) -> Result<(), Error> {
             let lines = repo.blame_follow(&rel, rev.as_deref(), find_renames.then_some(rename_threshold * 10))?;
             let w = lines.len().to_string().len();
             let names = lines.iter().any(|l| l.path != rel);
+            // one write, not one per line (stdout is line buffered)
+            let mut out = String::new();
             for l in lines {
-                if names {
-                    println!("{} {} ({:>w$}) {}", l.commit.short(), l.path, l.line_no, l.text);
+                use std::fmt::Write as _;
+                let _ = if names {
+                    writeln!(out, "{} {} ({:>w$}) {}", l.commit.short(), l.path, l.line_no, l.text)
                 } else {
-                    println!("{} ({:>w$}) {}", l.commit.short(), l.line_no, l.text);
-                }
+                    writeln!(out, "{} ({:>w$}) {}", l.commit.short(), l.line_no, l.text)
+                };
             }
+            print!("{out}");
         }
         Cmd::Gen(g) => generate::run(g, <Cli as clap::CommandFactory>::command())?,
         Cmd::Branch {
