@@ -49,6 +49,7 @@ fn reason(s: u16) -> &'static str {
     match s {
         200 => "OK",
         201 => "Created",
+        304 => "Not Modified",
         400 => "Bad Request",
         401 => "Unauthorized",
         403 => "Forbidden",

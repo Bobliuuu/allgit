@@ -7,7 +7,7 @@
 use crate::http::pct_encode;
 use std::time::Duration;
 use vcs_remote::backend::validate_key;
-use vcs_remote::{Backend, BackendError, Versioned};
+use vcs_remote::{Backend, BackendError, Conditional, Versioned};
 
 /// Never prints the token.
 impl std::fmt::Debug for HttpBackend {
@@ -157,6 +157,40 @@ impl Backend for HttpBackend {
             })),
             Err((404, _)) => Ok(None),
             Err((c, m)) => Err(self.status_err(c, &m)),
+        }
+    }
+
+    /// `GET` with `If-None-Match: "<tag>"`; the server answers `304` with no body when equal.
+    fn get_conditional(&self, key: &str, have: &str) -> Result<Conditional, BackendError> {
+        let r = self
+            .req("GET", &Self::key_path(key)?)
+            .set("If-None-Match", &format!("\"{}\"", have.replace('"', "")));
+        let res = r.call();
+        match res {
+            Ok(resp) if resp.status() == 304 => Ok(Conditional::NotModified),
+            Ok(resp) => {
+                let etag = resp
+                    .header("ETag")
+                    .map(|e| e.strip_prefix('"').and_then(|e| e.strip_suffix('"')).unwrap_or(e).to_owned());
+                let mut data = Vec::new();
+                std::io::Read::read_to_end(&mut resp.into_reader(), &mut data).map_err(|e| BackendError::Unavailable(e.to_string()))?;
+                Ok(Conditional::Modified(Versioned {
+                    data,
+                    tag: etag.ok_or_else(|| BackendError::Other("server sent no ETag".into()))?,
+                }))
+            }
+            Err(ureq::Error::Status(404, _)) => Ok(Conditional::Missing),
+            Err(ureq::Error::Status(code, resp)) => {
+                let msg = resp.into_string().unwrap_or_default();
+                if code >= 500 || code == 429 {
+                    Err(BackendError::Unavailable(
+                        self.redact(&format!("server returned {code}: {}", msg.trim())),
+                    ))
+                } else {
+                    Err(self.status_err(code, &msg))
+                }
+            }
+            Err(ureq::Error::Transport(t)) => Err(BackendError::Unavailable(self.redact(&t.to_string()))),
         }
     }
 

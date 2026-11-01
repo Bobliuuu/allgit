@@ -469,6 +469,10 @@ fn object_read(sh: &Shared, req: &Request, key: &str, head: bool) -> Response {
         };
     }
     match sh.backend.get(key) {
+        // Conditional GET: the caller already holds this version, send no body.
+        Ok(Some(v)) if req.header("if-none-match").is_some_and(|t| unquote(t.trim()) == v.tag) => {
+            Response::new(304, "").with("ETag", etag(&v.tag))
+        }
         Ok(Some(v)) => Response::new(200, v.data).with("ETag", etag(&v.tag)),
         Ok(None) => text(404, "not found"),
         Err(e) => backend_err(e),

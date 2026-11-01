@@ -73,6 +73,11 @@ impl PackIndex {
     pub fn checksum(&self) -> &[u8; 32] {
         &self.checksum
     }
+    /// The largest end offset (`offset + len`) among those of `ids` that this pack holds;
+    /// `None` if it holds none of them.
+    pub fn known_end(&self, ids: &[ObjectId]) -> Option<u64> {
+        ids.iter().filter_map(|id| self.find(id)).map(|(o, l)| o + l as u64).max()
+    }
     /// `(offset, len)` of the object's encoded bytes within the pack file.
     pub fn find(&self, id: &ObjectId) -> Option<(u64, u32)> {
         self.entries

@@ -26,7 +26,7 @@ use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use vcs_remote::backend::validate_key;
-use vcs_remote::{Backend, BackendError, Versioned};
+use vcs_remote::{Backend, BackendError, Conditional, Versioned};
 
 #[derive(Debug, Clone)]
 pub struct S3Config {
@@ -76,10 +76,20 @@ impl S3Config {
     }
 }
 
+/// Idle connections kept for reads.
+const READ_POOL: usize = 8;
+
 pub struct S3Backend {
     cfg: S3Config,
     host: String,
+    /// Pooled agent: keeps connections alive across requests. Used only for requests that are
+    /// safe to repeat (GET, ranged GET, HEAD, LIST, DELETE), which are retried once on a fresh
+    /// connection if a pooled one turns out to be dead.
     agent: ureq::Agent,
+    /// Unpooled agent: every request opens a connection. Used for writes (conditional PUT), where
+    /// a dead pooled connection would surface as an ambiguous transport error on a CAS; a fresh
+    /// connection keeps "did it apply?" answerable only by the protocol's own idempotent retry.
+    write_agent: ureq::Agent,
     requests: AtomicU64,
     bytes_read: AtomicU64,
 }
@@ -88,6 +98,8 @@ enum Resp {
     Ok {
         body: Vec<u8>,
         etag: Option<String>,
+        /// HTTP status (200, 204, 206, 304 ...).
+        status: u16,
     },
     /// Non-2xx, non-transient status that the caller interprets.
     Status(u16, String),
@@ -117,21 +129,29 @@ impl S3Backend {
         }
         // The Host header omits the scheme's default port; sign exactly what is sent.
         let host = rest.strip_suffix(if https { ":443" } else { ":80" }).unwrap_or(rest).to_owned();
-        // No connection pooling: a stale pooled connection that dies mid-PUT would surface as
-        // an ambiguous transport error on a conditional write. Fresh connections keep it clean.
-        #[allow(unused_mut)]
-        let mut builder = ureq::AgentBuilder::new().timeout(cfg.timeout).max_idle_connections(0);
-        #[cfg(feature = "tls")]
-        if https {
-            if let Some(pem) = &cfg.ca_pem {
-                builder = builder.tls_config(std::sync::Arc::new(tls_config(pem)?));
+        // Reads reuse pooled connections (a new TCP/TLS handshake per GET was the dominant fixed
+        // cost of every request); writes never do, see `S3Backend::write_agent`.
+        let mk = |idle: usize| -> Result<ureq::Agent, BackendError> {
+            #[allow(unused_mut)]
+            let mut builder = ureq::AgentBuilder::new()
+                .timeout(cfg.timeout)
+                .max_idle_connections(idle)
+                .max_idle_connections_per_host(idle);
+            #[cfg(feature = "tls")]
+            if https {
+                if let Some(pem) = &cfg.ca_pem {
+                    builder = builder.tls_config(std::sync::Arc::new(tls_config(pem)?));
+                }
             }
-        }
-        let agent = builder.build();
+            Ok(builder.build())
+        };
+        let agent = mk(READ_POOL)?;
+        let write_agent = mk(0)?;
         Ok(S3Backend {
             cfg,
             host,
             agent,
+            write_agent,
             requests: AtomicU64::new(0),
             bytes_read: AtomicU64::new(0),
         })
@@ -227,28 +247,45 @@ impl S3Backend {
         );
 
         let url = format!("{}{}{}{}", self.cfg.endpoint, path, if qs.is_empty() { "" } else { "?" }, qs);
-        let mut req = self
-            .agent
-            .request(method, &url)
-            .set("x-amz-date", &amz_date)
-            .set("x-amz-content-sha256", &payload_hash)
-            .set("authorization", &auth);
-        if let Some(t) = &self.cfg.session_token {
-            req = req.set("x-amz-security-token", t);
+        // Idempotent requests may use (and, if the pooled connection was dead, retry past) the
+        // keep-alive pool; writes always open a fresh connection.
+        let safe = matches!(method, "GET" | "HEAD" | "DELETE");
+        let agent = if safe { &self.agent } else { &self.write_agent };
+        #[allow(clippy::result_large_err)] // ureq's own error type
+        let attempt = || {
+            let mut req = agent
+                .request(method, &url)
+                .set("x-amz-date", &amz_date)
+                .set("x-amz-content-sha256", &payload_hash)
+                .set("authorization", &auth);
+            if let Some(t) = &self.cfg.session_token {
+                req = req.set("x-amz-security-token", t);
+            }
+            for (k, v) in headers {
+                req = req.set(k, v);
+            }
+            self.requests.fetch_add(1, Ordering::Relaxed);
+            if method == "PUT" {
+                req.send_bytes(body)
+            } else {
+                req.call()
+            }
+        };
+        let mut res = attempt();
+        if safe && matches!(res, Err(ureq::Error::Transport(_))) {
+            // A pooled connection the server closed while idle fails like any transport error;
+            // the request is safe to repeat, and the signature is still valid (same date).
+            res = attempt();
         }
-        for (k, v) in headers {
-            req = req.set(k, v);
-        }
-        self.requests.fetch_add(1, Ordering::Relaxed);
-        let res = if method == "PUT" { req.send_bytes(body) } else { req.call() };
         match res {
             Ok(resp) => {
+                let status = resp.status();
                 let etag = resp.header("etag").map(str::to_owned);
                 let mut buf = Vec::new();
                 std::io::Read::read_to_end(&mut resp.into_reader(), &mut buf)
                     .map_err(|e| BackendError::Unavailable(format!("read body: {e}")))?;
                 self.bytes_read.fetch_add(buf.len() as u64, Ordering::Relaxed);
-                Ok(Resp::Ok { body: buf, etag })
+                Ok(Resp::Ok { body: buf, etag, status })
             }
             Err(ureq::Error::Status(code, resp)) => {
                 let text = resp.into_string().unwrap_or_default();
@@ -276,12 +313,33 @@ impl Backend for S3Backend {
     fn get(&self, key: &str) -> Result<Option<Versioned>, BackendError> {
         let k = self.full_key(key)?;
         match self.send("GET", &k, &[], &[], b"")? {
-            Resp::Ok { body, etag } => {
+            Resp::Ok { body, etag, .. } => {
                 let tag = etag.ok_or_else(|| BackendError::Other("GET without ETag".into()))?;
                 Ok(Some(Versioned { data: body, tag }))
             }
             Resp::Status(404, _) => Ok(None),
             Resp::Status(c, m) => Err(Self::unexpected("get", c, m)),
+        }
+    }
+
+    /// `GET` with `If-None-Match: <etag>`: `304 Not Modified` carries no body.
+    fn get_conditional(&self, key: &str, have: &str) -> Result<Conditional, BackendError> {
+        let k = self.full_key(key)?;
+        if have.contains(['\r', '\n']) {
+            return Err(BackendError::Other("invalid tag".into()));
+        }
+        match self.send("GET", &k, &[], &[("if-none-match", have)], b"")? {
+            Resp::Ok { status: 304, .. } => Ok(Conditional::NotModified),
+            Resp::Ok { body, etag, .. } => {
+                let tag = etag.ok_or_else(|| BackendError::Other("GET without ETag".into()))?;
+                if tag == have {
+                    // a server that ignores If-None-Match still sent the body; the tag says unchanged
+                    return Ok(Conditional::NotModified);
+                }
+                Ok(Conditional::Modified(Versioned { data: body, tag }))
+            }
+            Resp::Status(404, _) => Ok(Conditional::Missing),
+            Resp::Status(c, m) => Err(Self::unexpected("get_conditional", c, m)),
         }
     }
 

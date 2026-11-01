@@ -31,7 +31,7 @@
 //! `PublishError::Unknown`: the outcome is undetermined and re-running the same transaction
 //! is safe and converges.
 
-use crate::backend::{Backend, BackendError};
+use crate::backend::{Backend, BackendError, Conditional};
 use crate::manifest::{self, Manifest, MAX_APPLIED};
 use crate::packfetch;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -192,6 +192,8 @@ pub struct Publisher<'a> {
     /// Backend-clock time this attempt started, for the hold-time fence.
     started_ms: u64,
     hold_ms: u64,
+    /// Manifest the caller already read (see [`Publisher::with_manifest_hint`]); used at most once.
+    manifest_hint: Option<(Manifest, Option<String>)>,
     quirks: GcQuirks,
 }
 
@@ -401,6 +403,7 @@ impl<'a> Publisher<'a> {
             distrust: HashSet::new(),
             started_ms: 0,
             hold_ms: DEFAULT_HOLD_MS,
+            manifest_hint: None,
             quirks: GcQuirks::default(),
         }
     }
@@ -410,6 +413,15 @@ impl<'a> Publisher<'a> {
     /// backends with `supports_gc`.
     pub fn with_hold_ms(mut self, ms: u64) -> Self {
         self.hold_ms = ms;
+        self
+    }
+    /// Reuse a manifest the caller just read (with its version tag; `None` = no manifest yet)
+    /// instead of reading it again. The first Load step validates against it and the CAS is made
+    /// against its tag, so if the manifest changed in between the CAS fails and every retry reads
+    /// the manifest afresh: a stale hint can cost a retry but cannot let a stale validation
+    /// commit. It is consumed by the first use. Saves one manifest GET per publish.
+    pub fn with_manifest_hint(mut self, m: Manifest, tag: Option<String>) -> Self {
+        self.manifest_hint = Some((m, tag));
         self
     }
     #[doc(hidden)]
@@ -515,7 +527,10 @@ impl<'a> Publisher<'a> {
         let mut known: HashSet<ObjectId> = self.tx.updates.iter().filter_map(|u| u.old).collect();
         if self.tx.updates.iter().any(|u| u.old.is_none()) {
             // A new branch has no `old` to lean on: its parent may be any current head.
-            let (m, _) = load_manifest(self.backend)?;
+            let m = match &self.manifest_hint {
+                Some((m, _)) => m.clone(),
+                None => load_manifest(self.backend)?.0,
+            };
             known.extend(m.branches.values().copied());
         }
         let remote_has_history = !known.is_empty();
@@ -907,7 +922,11 @@ impl<'a> Publisher<'a> {
                 Ok(Step::Continue)
             }
             State::Load => {
-                let (cur, tag) = match load_manifest(self.backend) {
+                let loaded = match self.manifest_hint.take() {
+                    Some(h) => Ok(h),
+                    None => load_manifest(self.backend),
+                };
+                let (cur, tag) = match loaded {
                     Ok(x) => x,
                     Err(PublishError::Backend(e)) => {
                         self.state = State::Load;
@@ -1150,6 +1169,22 @@ pub fn load_manifest(backend: &dyn Backend) -> Result<(Manifest, Option<String>)
     }
 }
 
+/// Like [`load_manifest`], but when the caller holds a copy it read earlier (`cached` = manifest and
+/// its version tag) ask the backend only whether it changed: an unchanged manifest costs one
+/// request and no body bytes. The returned tag is the backend's current one. A backend without
+/// native conditional reads falls back to a full GET (see [`Backend::get_conditional`]).
+pub fn refresh_manifest(backend: &dyn Backend, cached: Option<(Manifest, String)>) -> Result<(Manifest, Option<String>), PublishError> {
+    let Some((m, tag)) = cached else { return load_manifest(backend) };
+    match backend.get_conditional(manifest::KEY, &tag)? {
+        Conditional::NotModified => Ok((m, Some(tag))),
+        Conditional::Missing => Ok((Manifest::default(), None)),
+        Conditional::Modified(v) => {
+            let m = Manifest::decode(&v.data).map_err(|e| PublishError::Remote(e.to_string()))?;
+            Ok((m, Some(v.tag)))
+        }
+    }
+}
+
 /// Fetch ONE object by id from the remote and verify its hash before returning it.
 /// Nothing is stored: the caller decides, so a corrupt remote object can never reach a store.
 pub fn fetch_object(backend: &dyn Backend, id: &ObjectId) -> Result<Object, PublishError> {
@@ -1192,7 +1227,8 @@ pub fn fetch_heads(
     local: &dyn ObjectStore,
     zones: Option<&[String]>,
 ) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
-    fetch_heads_impl(backend, local, zones, false)
+    let (m, _) = load_manifest(backend)?;
+    fetch_heads_impl(backend, local, zones, false, &m)
 }
 
 /// Fetch the closure (commits and trees only) of every remote tag of `zones` (None = all) into
@@ -1203,6 +1239,16 @@ pub fn fetch_tags_lazy(
     zones: Option<&[String]>,
 ) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
     let (m, _) = load_manifest(backend)?;
+    fetch_tags_lazy_with(backend, local, zones, &m)
+}
+
+/// [`fetch_tags_lazy`] against a manifest the caller already holds.
+pub fn fetch_tags_lazy_with(
+    backend: &dyn Backend,
+    local: &dyn ObjectStore,
+    zones: Option<&[String]>,
+    m: &Manifest,
+) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     for ((z, n), id) in &m.tags {
@@ -1233,7 +1279,19 @@ pub fn fetch_heads_lazy(
     local: &dyn ObjectStore,
     zones: Option<&[String]>,
 ) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
-    fetch_heads_impl(backend, local, zones, true)
+    let (m, _) = load_manifest(backend)?;
+    fetch_heads_impl(backend, local, zones, true, &m)
+}
+
+/// [`fetch_heads_lazy`] against a manifest the caller already holds, so one fetch reads the
+/// manifest once instead of once per step.
+pub fn fetch_heads_lazy_with(
+    backend: &dyn Backend,
+    local: &dyn ObjectStore,
+    zones: Option<&[String]>,
+    m: &Manifest,
+) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
+    fetch_heads_impl(backend, local, zones, true, m)
 }
 
 /// File objects (and the chunks of chunked files) probed per lazy fetch. A lazy fetch does not
@@ -1291,8 +1349,8 @@ fn fetch_heads_impl(
     local: &dyn ObjectStore,
     zones: Option<&[String]>,
     skip_files: bool,
+    m: &Manifest,
 ) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
-    let (m, _) = load_manifest(backend)?;
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     // Packs are listed and indexed once, on first need. A lazy walk (commits and trees) reads the
@@ -1305,7 +1363,14 @@ fn fetch_heads_impl(
     } else {
         packfetch::ReadAhead::None
     };
-    let mut src = packfetch::RemoteSource::new(backend, ahead);
+    // The commits this walk starts from bound the metadata it can need from each pack.
+    let roots: Vec<ObjectId> = m
+        .branches
+        .iter()
+        .filter(|((a, _), _)| !zones.is_some_and(|w| !w.iter().any(|x| x == a)))
+        .map(|(_, id)| *id)
+        .collect();
+    let mut src = packfetch::RemoteSource::new(backend, ahead).with_roots(roots);
     for ((a, b), id) in &m.branches {
         if zones.is_some_and(|w| !w.iter().any(|x| x == a)) {
             continue;

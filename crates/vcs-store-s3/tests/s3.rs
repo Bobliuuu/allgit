@@ -424,3 +424,166 @@ fn get_range_sends_range_header_and_returns_only_that_slice() {
     assert_eq!(b.get_range("p/x.pack", 500, 4).unwrap().unwrap(), Vec::<u8>::new(), "416 is empty");
     assert_eq!(*seen.lock().unwrap(), vec!["10-14", "98-107", "500-503"]);
 }
+
+// ---------- connection reuse and conditional GET (#243, #240), no docker needed ----------
+
+type Seen = Arc<std::sync::Mutex<Vec<(String, std::collections::HashMap<String, String>)>>>;
+
+/// A keep-alive HTTP/1.1 server holding one object `k` with ETag `"t1"`. Counts accepted TCP
+/// connections and records every request as (request line, lowercase headers). A GET with a
+/// matching `If-None-Match` is answered 304; PUTs answer 200 with a fresh ETag.
+fn keepalive_server() -> (String, Arc<std::sync::atomic::AtomicUsize>, Seen) {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    let conns = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen: Seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (c2, s2) = (conns.clone(), seen.clone());
+    std::thread::spawn(move || {
+        for s in l.incoming() {
+            let Ok(mut s) = s else { continue };
+            c2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let log = s2.clone();
+            std::thread::spawn(move || {
+                let mut data = Vec::new();
+                let mut buf = [0u8; 8192];
+                loop {
+                    // one request at a time on this connection
+                    let end = loop {
+                        if let Some(h) = String::from_utf8_lossy(&data).find("\r\n\r\n") {
+                            break h;
+                        }
+                        match s.read(&mut buf) {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => data.extend_from_slice(&buf[..n]),
+                        }
+                    };
+                    let head = String::from_utf8_lossy(&data[..end]).to_string();
+                    let mut lines = head.lines();
+                    let reqline = lines.next().unwrap_or("").to_owned();
+                    let hdrs: std::collections::HashMap<String, String> = lines
+                        .filter_map(|l| l.split_once(':'))
+                        .map(|(k, v)| (k.trim().to_lowercase(), v.trim().to_owned()))
+                        .collect();
+                    let len: usize = hdrs.get("content-length").and_then(|v| v.parse().ok()).unwrap_or(0);
+                    while data.len() < end + 4 + len {
+                        match s.read(&mut buf) {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => data.extend_from_slice(&buf[..n]),
+                        }
+                    }
+                    data.drain(..end + 4 + len);
+                    let method = reqline.split(' ').next().unwrap_or("").to_owned();
+                    let inm = hdrs.get("if-none-match").cloned();
+                    log.lock().unwrap().push((reqline, hdrs));
+                    let r = match method.as_str() {
+                        "GET" if inm.as_deref() == Some("\"t1\"") => "HTTP/1.1 304 Not Modified\r\nETag: \"t1\"\r\n\r\n".to_owned(),
+                        "GET" => "HTTP/1.1 200 OK\r\nETag: \"t1\"\r\nContent-Length: 5\r\n\r\nhello".to_owned(),
+                        "HEAD" => "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n".to_owned(),
+                        _ => "HTTP/1.1 200 OK\r\nETag: \"t2\"\r\nContent-Length: 0\r\n\r\n".to_owned(),
+                    };
+                    if s.write_all(r.as_bytes()).is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+    });
+    (format!("http://{addr}"), conns, seen)
+}
+
+#[test]
+fn sequential_reads_reuse_one_connection_and_each_request_is_signed() {
+    let (ep, conns, seen) = keepalive_server();
+    let b = S3Backend::new_unchecked(cfg(&ep)).unwrap();
+    // mix of safe request kinds, 300 requests in all
+    for i in 0..100 {
+        assert_eq!(b.get("k").unwrap().unwrap().data, b"hello");
+        assert_eq!(b.get_range("k", 0, 2).unwrap().unwrap(), b"hello"); // fake server ignores Range
+        assert!(b.exists(&format!("k{}", i % 3)).unwrap());
+    }
+    let n = conns.load(std::sync::atomic::Ordering::SeqCst);
+    println!("300 sequential safe requests used {n} TCP connection(s) (was 300 with max_idle_connections(0))");
+    assert_eq!(b.requests(), 300);
+    assert!(n <= 1, "reads must reuse the pooled connection, opened {n}");
+    // signing: every request carries its own date, content hash and a well-formed signature
+    let log = seen.lock().unwrap();
+    assert_eq!(log.len(), 300);
+    for (line, h) in log.iter() {
+        let auth = h.get("authorization").unwrap_or_else(|| panic!("{line}: unsigned"));
+        assert!(auth.starts_with("AWS4-HMAC-SHA256 Credential=k/"), "{auth}");
+        let sig = auth.rsplit("Signature=").next().unwrap();
+        assert_eq!(sig.len(), 64, "{auth}");
+        assert!(h.contains_key("x-amz-date") && h.contains_key("x-amz-content-sha256"), "{line}");
+        assert_eq!(h["host"], ep.trim_start_matches("http://"));
+    }
+    // different keys sign differently even on the same pooled connection
+    let sigs: std::collections::HashSet<_> = log
+        .iter()
+        .filter(|(l, _)| l.starts_with("HEAD"))
+        .map(|(l, h)| (l.clone(), h["authorization"].rsplit("Signature=").next().unwrap().to_owned()))
+        .collect();
+    assert!(sigs.len() >= 3);
+}
+
+#[test]
+fn writes_never_ride_a_pooled_connection() {
+    let (ep, conns, _) = keepalive_server();
+    let b = S3Backend::new_unchecked(cfg(&ep)).unwrap();
+    for _ in 0..5 {
+        b.get("k").unwrap();
+    }
+    assert_eq!(conns.load(std::sync::atomic::Ordering::SeqCst), 1);
+    for i in 0..5 {
+        b.put_if_match("k", b"x", "\"t1\"").unwrap();
+        // each write opened its own connection; the pooled read connection is still the one used for reads
+        assert_eq!(conns.load(std::sync::atomic::Ordering::SeqCst), 2 + i);
+    }
+    b.get("k").unwrap();
+    assert_eq!(
+        conns.load(std::sync::atomic::Ordering::SeqCst),
+        6,
+        "reads still reuse their pooled connection"
+    );
+}
+
+#[test]
+fn a_dead_pooled_connection_is_retried_for_reads() {
+    // server closes each connection after one response without saying so
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for s in l.incoming() {
+            let Ok(mut s) = s else { continue };
+            let mut buf = [0u8; 4096];
+            let mut data = Vec::new();
+            while !String::from_utf8_lossy(&data).contains("\r\n\r\n") {
+                match s.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => data.extend_from_slice(&buf[..n]),
+                }
+            }
+            let _ = s.write_all(b"HTTP/1.1 200 OK\r\nETag: \"t1\"\r\nContent-Length: 5\r\n\r\nhello");
+            // dropped: closed under the client's pooled connection
+        }
+    });
+    let b = S3Backend::new_unchecked(cfg(&format!("http://{addr}"))).unwrap();
+    for _ in 0..10 {
+        assert_eq!(b.get("k").unwrap().unwrap().data, b"hello");
+    }
+}
+
+#[test]
+fn conditional_get_sends_if_none_match_and_handles_304() {
+    let (ep, _, seen) = keepalive_server();
+    let b = S3Backend::new_unchecked(cfg(&ep)).unwrap();
+    let before = b.bytes_read();
+    assert_eq!(b.get_conditional("k", "\"t1\"").unwrap(), Conditional::NotModified);
+    assert_eq!(b.bytes_read(), before, "304 carries no body");
+    match b.get_conditional("k", "\"stale\"").unwrap() {
+        Conditional::Modified(v) => assert_eq!((v.data.as_slice(), v.tag.as_str()), (&b"hello"[..], "\"t1\"")),
+        other => panic!("{other:?}"),
+    }
+    let log = seen.lock().unwrap();
+    assert_eq!(log[0].1["if-none-match"], "\"t1\"");
+    assert_eq!(log[1].1["if-none-match"], "\"stale\"");
+}

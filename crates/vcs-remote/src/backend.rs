@@ -21,8 +21,30 @@ pub struct Versioned {
     pub tag: String,
 }
 
+/// Result of a conditional read ([`Backend::get_conditional`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Conditional {
+    /// The key still has the caller's version tag: no body was transferred (HTTP 304).
+    NotModified,
+    /// The key exists with a different tag: the new content.
+    Modified(Versioned),
+    /// The key does not exist.
+    Missing,
+}
+
 pub trait Backend: Send + Sync {
     fn get(&self, key: &str) -> Result<Option<Versioned>, BackendError>;
+    /// Read `key` only if its version tag differs from `have` (S3/HTTP: `If-None-Match`, answered
+    /// 304 with no body when equal). The default is a plain [`Backend::get`] compared locally, so
+    /// a backend without the primitive is still correct, just not cheaper. Used for freshness
+    /// probes of the manifest; never for compare-and-swap.
+    fn get_conditional(&self, key: &str, have: &str) -> Result<Conditional, BackendError> {
+        Ok(match self.get(key)? {
+            None => Conditional::Missing,
+            Some(v) if v.tag == have => Conditional::NotModified,
+            Some(v) => Conditional::Modified(v),
+        })
+    }
     fn get_range(&self, key: &str, offset: u64, len: u64) -> Result<Option<Vec<u8>>, BackendError>;
     fn exists(&self, key: &str) -> Result<bool, BackendError>;
     /// Create-only. `Ok(true)` created, `Ok(false)` key already existed (unchanged).
@@ -112,7 +134,28 @@ pub fn conformance(b: &dyn Backend) {
     assert_eq!(b.list("k/").unwrap(), vec!["k/one", "k/two"]);
     assert!(b.get("../escape").is_err());
     assert!(b.put_if_absent("/abs", b"x").is_err());
+    conformance_conditional(b);
     conformance_delete(b);
+}
+
+/// Conditional-GET semantics every backend must share (part of [`conformance`]).
+pub fn conformance_conditional(b: &dyn Backend) {
+    assert_eq!(b.get_conditional("cg/missing", "anything").unwrap(), Conditional::Missing);
+    assert!(b.put_if_absent("cg/k", b"one").unwrap());
+    let v1 = b.get("cg/k").unwrap().unwrap();
+    assert_eq!(b.get_conditional("cg/k", &v1.tag).unwrap(), Conditional::NotModified);
+    assert_eq!(
+        b.get_conditional("cg/k", "no-such-tag").unwrap(),
+        Conditional::Modified(v1.clone()),
+        "a different tag returns the current content and tag"
+    );
+    let t2 = b.put_if_match("cg/k", b"two", &v1.tag).unwrap().unwrap();
+    match b.get_conditional("cg/k", &v1.tag).unwrap() {
+        Conditional::Modified(v) => assert_eq!((v.data.as_slice(), v.tag.as_str()), (&b"two"[..], t2.as_str())),
+        other => panic!("stale tag must see the new version, got {other:?}"),
+    }
+    assert_eq!(b.get_conditional("cg/k", &t2).unwrap(), Conditional::NotModified);
+    assert!(b.get_conditional("../escape", "x").is_err());
 }
 
 /// Delete semantics every backend must share (part of [`conformance`]).

@@ -62,10 +62,9 @@ fn sparse_clone_downloads_and_materializes_only_requested_zones() {
     let b = Repo::clone_from(&remote, "mem", &d.path().join("b"), Some(&["engine".to_string()])).unwrap();
     let read_bytes = remote.bytes_read() - before;
     assert!(
-        // Metadata read-ahead starts at 4 KiB and grows 4x per request. When the encoded metadata is a few
-        // bytes over 4 KiB the second request is 16 KiB, so the total varies run to run (about 21.8 KB worst
-        // case seen). What must hold is that the 50 KB asset is not fetched.
-        read_bytes < 30_000,
+        // Metadata read-ahead is bounded by the pack index (the walk's commits, then the trees they name),
+        // so it never reads into the 50 KB asset; 8 KB is the original bound (#227).
+        read_bytes < 8_000,
         "sparse clone read {read_bytes} bytes; the 50KB asset must not be fetched"
     );
     assert_eq!(read(&b, "engine/core.rs"), "core v1");
