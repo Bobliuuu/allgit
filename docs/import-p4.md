@@ -1,9 +1,14 @@
 # Importing recorded Perforce output
 
-Status: **fixture-tested only.** `vcs import-p4` and `Repo::import_p4` were written without a Perforce server or a
-`p4` binary. They have **never been run against a real server or real `p4` output**. The formats are implemented from
-Perforce's documentation and the hand-written fixtures in `crates/vcs-repo/tests/fixtures/p4`; real output may differ
-(extra fields, other encodings, other actions). Treat any real use as an experiment and check the result.
+Status: **tested once against a real server** (Helix Core `p4d` 2026.1, `p4` 2025.2, one small history, see
+[docs/research/perforce-benchmark.md](research/perforce-benchmark.md)). The fixtures in
+`crates/vcs-repo/tests/fixtures/p4real` are real `p4 -G describe -s`, `p4 changes -l` and `p4 print -q` output, and
+the importer test compares the tree of every changelist with what `p4 sync //depot/...@N` wrote (paths, +x, symlinks,
+sha256 of contents). They agree for add, edit, delete, move, branch, integrate, `+x`, `symlink`, `binary`, `+k`,
+empty files, CRLF text, spaces and non-ASCII (UTF-8) in names. Two discrepancies were found: depot paths with
+`@ # % *` arrive percent-escaped (`%40` ...) and were kept escaped (fixed separately), and `utf16` files: `p4 print`
+returns UTF-8 text where `p4 sync` writes the UTF-16 bytes (still open, reported as a type warning). Everything
+else listed under Limits is still untested against a real server.
 
 The core never runs `p4`. You record the output wherever Perforce exists and hand the importer a directory:
 
@@ -48,7 +53,7 @@ One rule per line, `<depot> <zone path>`; later rules win; `#` comments. `//depo
 
 ## Limits
 
-* Fixture-tested only (see the top). Not tested: real `p4 -G` output, unicode servers, large files (content is read
+* Real output was tested only on one small history on a non-unicode server (see the top). Not tested: real `p4 -G` output, unicode servers, large files (content is read
   whole into memory), obliterated or renumbered history, streams, labels (no snapshots are created), shelved or pending
   changes, `+l`/exclusive-open locks, `p4 print` of files whose type needs `-o` handling.
 * Only the root zone and a single branch (`--branch`, default `main`) are written. If that branch already has history it

@@ -1,8 +1,9 @@
 //! Import recorded Perforce output into the root zone, one commit per submitted changelist.
 //!
-//! FIXTURE-TESTED ONLY. No Perforce server or `p4` binary was available when this was written;
-//! the importer has never been run against real `p4` output. The formats below are implemented
-//! from Perforce's published documentation and may differ from what a real server emits:
+//! Written from Perforce's documentation, then checked once against a real p4d 2026.1 (fixtures in
+//! tests/fixtures/p4real, test import_p4_real.rs): the tree at every changelist equals `p4 sync @N`. Known
+//! discrepancies: `utf16` content (p4 print returns UTF-8). Not covered by that check: unicode servers, large
+//! files, streams, obliterate, so the formats below may still differ from what a server emits:
 //!
 //! * `p4 changes -l` text: "Change N on YYYY/MM/DD by user@client [*pending*]" followed by a
 //!   tab-indented description (P4 Command Reference, `p4 changes`).

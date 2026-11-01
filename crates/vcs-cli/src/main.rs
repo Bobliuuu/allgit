@@ -126,7 +126,7 @@ enum Cmd {
     /// Import a `git fast-export` stream (file, or `-` for stdin) into the root zone
     ImportGit { stream: PathBuf },
     /// Import recorded Perforce output (fixture directory, see docs/import-p4.md) into the root zone.
-    /// Never run against a real server.
+    /// Checked once against real p4d output on a small history; see that document.
     ImportP4 {
         dir: PathBuf,
         /// View file mapping depot paths to zone paths
