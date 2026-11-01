@@ -176,7 +176,12 @@ pub fn plan(w: Workload, scale: usize) -> Plan {
         Workload::SmallSource => {
             for i in 0..1000 * f {
                 let s = sz(&mut r, 200, 4 * KB);
-                add(&mut files, format!("src/m{:03}/s{:02}/f{:06}.rs", i / 400, (i / 20) % 20, i), Kind::Source, s);
+                add(
+                    &mut files,
+                    format!("src/m{:03}/s{:02}/f{:06}.rs", i / 400, (i / 20) % 20, i),
+                    Kind::Source,
+                    s,
+                );
             }
         }
         Workload::MediumApp => {
@@ -197,7 +202,12 @@ pub fn plan(w: Workload, scale: usize) -> Plan {
             for s in 0..8 {
                 for i in 0..500 * f {
                     let z = sz(&mut r, 200, 2 * KB);
-                    add(&mut files, format!("svc{s}/pkg{:02}/mod{:02}/f{:06}.rs", i / 250, (i / 10) % 25, i), Kind::Source, z);
+                    add(
+                        &mut files,
+                        format!("svc{s}/pkg{:02}/mod{:02}/f{:06}.rs", i / 250, (i / 10) % 25, i),
+                        Kind::Source,
+                        z,
+                    );
                 }
                 zones.push((format!("svc{s}"), format!("svc{s}")));
             }
@@ -225,7 +235,11 @@ pub fn plan(w: Workload, scale: usize) -> Plan {
                 let s = sz(&mut r, KB, 8 * KB);
                 add(&mut files, format!("code/s{:04}.rs", i), Kind::Source, s);
             }
-            zones = vec![("assets".into(), "assets".into()), ("audio".into(), "audio".into()), ("code".into(), "code".into())];
+            zones = vec![
+                ("assets".into(), "assets".into()),
+                ("audio".into(), "audio".into()),
+                ("code".into(), "code".into()),
+            ];
             p.edit = Edit::Rewrite;
             p.revisions = 5;
             p.edits_per_rev = 2;
@@ -270,12 +284,22 @@ pub fn plan(w: Workload, scale: usize) -> Plan {
             for z in 0..4 {
                 for i in 0..200 * f {
                     // identical content across zones: cid depends only on i
-                    let mut s = FileSpec { path: format!("z{z}/shared/f{:05}.txt", i), kind: Kind::Text, size: 2 * KB, cid: 1_000_000 + i as u64 };
+                    let mut s = FileSpec {
+                        path: format!("z{z}/shared/f{:05}.txt", i),
+                        kind: Kind::Text,
+                        size: 2 * KB,
+                        cid: 1_000_000 + i as u64,
+                    };
                     s.size = 2 * KB;
                     files.push(s);
                 }
                 for i in 0..20 * f {
-                    files.push(FileSpec { path: format!("z{z}/own/u{:05}.txt", i), kind: Kind::Text, size: 2 * KB, cid: 2_000_000 + (z * 100_000 + i) as u64 });
+                    files.push(FileSpec {
+                        path: format!("z{z}/own/u{:05}.txt", i),
+                        kind: Kind::Text,
+                        size: 2 * KB,
+                        cid: 2_000_000 + (z * 100_000 + i) as u64,
+                    });
                 }
                 zones.push((format!("z{z}"), format!("z{z}")));
             }
@@ -351,7 +375,12 @@ impl Plan {
     /// Path prefix (with trailing '/') of the history zone, or "" for the whole repo.
     pub fn hist_prefix(&self) -> String {
         match &self.hist_zone {
-            Some(z) => self.zones.iter().find(|(n, _)| n == z).map(|(_, p)| format!("{p}/")).unwrap_or_default(),
+            Some(z) => self
+                .zones
+                .iter()
+                .find(|(n, _)| n == z)
+                .map(|(_, p)| format!("{p}/"))
+                .unwrap_or_default(),
             None => String::new(),
         }
     }
@@ -374,8 +403,9 @@ impl Plan {
 }
 
 const WORDS: [&str; 32] = [
-    "alpha", "buffer", "commit", "delta", "engine", "fetch", "graph", "hash", "index", "journal", "kernel", "layer", "merge", "node", "object",
-    "pack", "query", "ref", "store", "tree", "unit", "view", "write", "zone", "chunk", "blob", "cache", "diff", "fsck", "log", "sync", "tag",
+    "alpha", "buffer", "commit", "delta", "engine", "fetch", "graph", "hash", "index", "journal", "kernel", "layer", "merge", "node",
+    "object", "pack", "query", "ref", "store", "tree", "unit", "view", "write", "zone", "chunk", "blob", "cache", "diff", "fsck", "log",
+    "sync", "tag",
 ];
 
 fn gen_lines(r: &mut Rng, size: usize, source: bool) -> Vec<u8> {
@@ -388,7 +418,11 @@ fn gen_lines(r: &mut Rng, size: usize, source: bool) -> Vec<u8> {
         if source {
             s.push_str(&format!("    let {a}_{i} = {b}::get({n}, {});\n", r.next_u64() % 97));
         } else {
-            s.push_str(&format!("{a} {b} {n} {} {}\n", WORDS[(r.next_u64() % 32) as usize], WORDS[(r.next_u64() % 32) as usize]));
+            s.push_str(&format!(
+                "{a} {b} {n} {} {}\n",
+                WORDS[(r.next_u64() % 32) as usize],
+                WORDS[(r.next_u64() % 32) as usize]
+            ));
         }
         i += 1;
     }
@@ -407,8 +441,8 @@ fn gen_kind(kind: Kind, size: usize, seed: u64) -> Vec<u8> {
             let pat = r.bytes(64);
             let mut v = Vec::with_capacity(size);
             while v.len() < size {
-                if r.next_u64() % 8 == 0 {
-                    v.extend(std::iter::repeat(0u8).take(256));
+                if r.next_u64().is_multiple_of(8) {
+                    v.extend(std::iter::repeat_n(0u8, 256));
                 } else {
                     v.extend_from_slice(&pat);
                 }
@@ -488,7 +522,7 @@ fn edit_bytes(buf: &mut Vec<u8>, f: &FileSpec, e: Edit, seed: u64, tag: u64) {
         Edit::Perturb { denom } => {
             let mut i = 0;
             while i + 4 <= buf.len() {
-                if r.next_u64() % denom as u64 == 0 {
+                if r.next_u64().is_multiple_of(denom as u64) {
                     buf[i] = (r.next_u64() & 0xFF) as u8; // low mantissa byte
                 }
                 i += 4;
@@ -521,7 +555,7 @@ pub fn evolve(plan: &Plan, root: &Path, seed: u64, tag: u64, n: usize) -> io::Re
 /// Like [`evolve`] but restricted to files under `prefix` ("" = whole repo).
 pub fn evolve_in(plan: &Plan, root: &Path, seed: u64, tag: u64, n: usize, prefix: &str) -> io::Result<Vec<String>> {
     let hf = plan.files_in(prefix);
-    let mut r = Rng::new(seed ^ 0xE701_0E ^ tag.wrapping_mul(0xD6E8_FEB8_6659_FD93));
+    let mut r = Rng::new(seed ^ 0x00E7_010E ^ tag.wrapping_mul(0xD6E8_FEB8_6659_FD93));
     let mut out: Vec<String> = Vec::new();
     let mut guard = 0;
     while out.len() < n.min(hf.len()) && guard < n * 20 + 20 {
@@ -565,7 +599,11 @@ mod tests {
             assert_eq!(set.len(), a.files.len(), "{} duplicate paths", w.name());
             assert!(!a.hist_files().is_empty(), "{}", w.name());
             for (n, p) in &a.zones {
-                assert!(a.files.iter().any(|f| f.path.starts_with(&format!("{p}/"))), "{} zone {n} empty", w.name());
+                assert!(
+                    a.files.iter().any(|f| f.path.starts_with(&format!("{p}/"))),
+                    "{} zone {n} empty",
+                    w.name()
+                );
             }
             assert_eq!(Workload::parse(w.name()), Some(w));
         }
@@ -573,7 +611,12 @@ mod tests {
 
     #[test]
     fn generate_and_evolve_reproducible() {
-        for w in [Workload::SmallSource, Workload::MlCheckpoints, Workload::ManySimilar, Workload::GameAssets] {
+        for w in [
+            Workload::SmallSource,
+            Workload::MlCheckpoints,
+            Workload::ManySimilar,
+            Workload::GameAssets,
+        ] {
             let mut p = plan(w, 1);
             p.files.truncate(p.files.len().min(40));
             let (d1, d2) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
@@ -583,7 +626,12 @@ mod tests {
             let c2 = evolve(&p, d2.path(), 9, 1, 3).unwrap();
             assert_eq!(c1, c2);
             for f in &p.files {
-                assert_eq!(fs::read(d1.path().join(&f.path)).unwrap(), fs::read(d2.path().join(&f.path)).unwrap(), "{}", f.path);
+                assert_eq!(
+                    fs::read(d1.path().join(&f.path)).unwrap(),
+                    fs::read(d2.path().join(&f.path)).unwrap(),
+                    "{}",
+                    f.path
+                );
             }
             let base = content(9, &p.files[0].clone());
             assert_eq!(base.len(), p.files[0].size);

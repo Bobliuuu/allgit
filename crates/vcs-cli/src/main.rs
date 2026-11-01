@@ -1609,11 +1609,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             let pending = hooks::publish_lines(&repo, want);
             hooks::fire_with_stdin(&repo, "pre-publish", &pending)?;
             let rep = repo.publish_as(backend.as_ref(), want, author()?, &principal())?;
-            let done: String = rep
-                .updated
-                .iter()
-                .map(|(a, b, old, new)| hooks::line(a, b, *old, *new))
-                .collect();
+            let done: String = rep.updated.iter().map(|(a, b, old, new)| hooks::line(a, b, *old, *new)).collect();
             if !done.is_empty() {
                 hooks::fire_with_stdin(&repo, "post-publish", &done)?;
             }

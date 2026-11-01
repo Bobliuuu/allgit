@@ -36,7 +36,11 @@ pub fn summarize(xs: &[f64], seed: u64) -> Option<Summary> {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let n = v.len();
     let mean = v.iter().sum::<f64>() / n as f64;
-    let var = if n > 1 { v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1) as f64 } else { 0.0 };
+    let var = if n > 1 {
+        v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1) as f64
+    } else {
+        0.0
+    };
     let (mut lo, mut hi) = (v[0], v[n - 1]);
     if n >= 3 {
         let mut r = Rng::new(seed);
@@ -53,7 +57,17 @@ pub fn summarize(xs: &[f64], seed: u64) -> Option<Summary> {
         lo = meds[(meds.len() as f64 * 0.025) as usize];
         hi = meds[(meds.len() as f64 * 0.975) as usize - 1];
     }
-    Some(Summary { n, median: median_sorted(&v), mean, stdev: var.sqrt(), min: v[0], max: v[n - 1], ci95_lo: lo, ci95_hi: hi, ci_reliable: n >= 5 })
+    Some(Summary {
+        n,
+        median: median_sorted(&v),
+        mean,
+        stdev: var.sqrt(),
+        min: v[0],
+        max: v[n - 1],
+        ci95_lo: lo,
+        ci95_hi: hi,
+        ci_reliable: n >= 5,
+    })
 }
 
 #[cfg(test)]

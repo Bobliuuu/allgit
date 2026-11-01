@@ -120,7 +120,11 @@ mod tests {
     use super::*;
     #[test]
     fn escapes_and_nesting() {
-        let j = J::obj(vec![("a\"b", J::s("x\ny")), ("n", J::Arr(vec![J::n(1.0), J::n(2.5)])), ("z", J::Null)]);
+        let j = J::obj(vec![
+            ("a\"b", J::s("x\ny")),
+            ("n", J::Arr(vec![J::n(1.0), J::n(2.5)])),
+            ("z", J::Null),
+        ]);
         let s = j.pretty();
         assert!(s.contains("\"a\\\"b\": \"x\\ny\""));
         assert!(s.contains("[1, 2.500000]"));

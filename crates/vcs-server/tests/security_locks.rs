@@ -1,3 +1,4 @@
+#![allow(clippy::field_reassign_with_default)] // tests build a manifest and then set one field on purpose
 //! Security regression (docs/security-review.md): fails without the matching fix.
 
 use std::collections::BTreeSet;

@@ -33,8 +33,8 @@ pub mod tags;
 pub mod treeops;
 #[cfg(feature = "watcher")]
 pub mod watcher;
-pub mod worktree_fs;
 pub mod worktree;
+pub mod worktree_fs;
 
 pub use assist::{AssistResult, ProposalInfo};
 pub use error::{Error, Result};
