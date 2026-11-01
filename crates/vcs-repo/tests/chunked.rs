@@ -46,6 +46,11 @@ fn manifest_of(r: &Repo) -> (ObjectId, vcs_objects::ChunkedBlob) {
     (e.id, m)
 }
 fn repo_with_big(dir: &std::path::Path, data: &[u8]) -> Repo {
+    // These tests damage individual loose chunk files and expect `repack` to make the one pack they
+    // upload. A store barrier with >= 64 pending objects (a big file's chunks) is published as a pack
+    // straight away, so keep barriers loose here; the barrier-pack path has its own store tests.
+    static LOOSE: std::sync::Once = std::sync::Once::new();
+    LOOSE.call_once(|| std::env::set_var("VCS_PACK_MIN", "1000000"));
     let r = Repo::init(&dir.join("a")).unwrap();
     fs::write(r.worktree().join("big.bin"), data).unwrap();
     fs::write(r.worktree().join("small.txt"), "small").unwrap();
