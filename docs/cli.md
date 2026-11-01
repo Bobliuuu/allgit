@@ -194,3 +194,14 @@ vcs bisect reset
 - `run` exit codes follow git: 0 good, 125 skip, 1-127 (other than 125) bad, above 127 aborts
   and leaves the bisection in place. If only skipped commits remain, the candidates for the
   first bad commit are listed.
+
+## `vcs grep [-n -i -w -l -c -F] <pattern> [<rev>] [-- <paths>...]`
+
+Search tracked files with a regular expression (Rust `regex` syntax; `-F` for a literal).
+Without `<rev>` the tracked files of the working tree are read from disk (unstaged edits are
+searched, untracked and ignored files never are). With `<rev>` the files of that revision are
+read from the object store, in every subscribed zone where it resolves; chunked large files are
+reassembled. Binary files (a NUL in the first 8000 bytes) and symlinks are skipped. Paths are
+repository-relative and sorted; `--` limits the search to files or directories. Files are
+searched in parallel. Output is `path:text`, `path:line:text` with `-n`, file names with `-l`,
+`path:count` with `-c`. Exit status 1 when nothing matches.

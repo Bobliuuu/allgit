@@ -1387,6 +1387,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "clap_mangen",
+ "regex",
  "serde_json",
  "tempfile",
  "vcs-objects",
