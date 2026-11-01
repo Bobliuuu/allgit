@@ -110,10 +110,6 @@ impl RebaseState {
     }
 }
 
-fn me(e: vcs_merge::MergeError) -> Error {
-    Error::Msg(format!("rebase: {e}"))
-}
-
 impl Repo {
     /// The in-progress rebase, if any. Ignored (stale) unless the matching merge state is live.
     pub fn rebase_state(&self) -> Result<Option<RebaseState>> {
@@ -163,7 +159,6 @@ impl Repo {
     /// Replay the checked-out branch of `zone` onto local branch `onto`.
     pub fn rebase(&self, zone: &str, onto: &str, author: Signature) -> Result<RebaseOutcome> {
         let _l = self.lock()?;
-        let zones = self.zones()?;
         let ws = self.workspace()?;
         let refs = self.refs()?;
         let Some(branch) = ws.subs.get(zone).cloned() else {
@@ -223,9 +218,8 @@ impl Repo {
             c = cm.parents[0];
         }
         todo.reverse();
-        let prefix = zones.path_of(zone).unwrap_or("").to_owned();
-        let old = treeops::flatten(&self.store, Some(self.commit_obj(&head)?.root), &prefix)?;
-        let cursor_flat = treeops::flatten(&self.store, Some(self.commit_obj(&onto_id)?.root), &prefix)?;
+        let old = self.commit_obj(&head)?.root;
+        let cursor_root = self.commit_obj(&onto_id)?.root;
         let run = Run {
             zone: zone.to_owned(),
             branch,
@@ -236,7 +230,7 @@ impl Repo {
             replayed: 0,
             author,
         };
-        self.replay(run, onto_id, cursor_flat, todo)
+        self.replay(run, onto_id, cursor_root, todo)
     }
 
     /// Commit the resolved pick and carry on with the remaining commits.
@@ -294,13 +288,13 @@ impl Repo {
             orig: rs.orig,
             onto_label: rs.onto_label.clone(),
             ref_head: rs.cursor,
-            worktree: flat.clone(),
+            worktree: root,
             replayed: 1,
             author,
         };
         // The old state files stay until the replay finishes or writes a new stop state, so a
         // refused pick (file/directory) leaves the rebase resumable or abortable.
-        self.replay(run, cid, flat, rs.todo.clone())
+        self.replay(run, cid, root, rs.todo.clone())
     }
 
     /// Give up: restore the original head, index and working tree. No operation is recorded.
@@ -325,7 +319,7 @@ impl Repo {
         Ok(())
     }
 
-    fn replay(&self, mut run: Run, mut cursor: ObjectId, mut cursor_flat: Flat, todo: Vec<ObjectId>) -> Result<RebaseOutcome> {
+    fn replay(&self, mut run: Run, mut cursor: ObjectId, mut cursor_root: ObjectId, todo: Vec<ObjectId>) -> Result<RebaseOutcome> {
         let zones = self.zones()?;
         let prefix = zones.path_of(&run.zone).unwrap_or("").to_owned();
         let mut it = todo.iter().copied();
@@ -336,9 +330,8 @@ impl Repo {
                 .first()
                 .copied()
                 .ok_or_else(|| Error::Corrupt("rebase: root commit in range".into()))?;
-            let fb = treeops::flatten(&self.store, Some(self.commit_obj(&parent)?.root), &prefix)?;
-            let ft = treeops::flatten(&self.store, Some(pc.root), &prefix)?;
-            let tm = self.tree3(&fb, &cursor_flat, &ft).map_err(me)?;
+            let base_root = self.commit_obj(&parent)?.root;
+            let tm = self.merge3_trees(&prefix, Some(base_root), Some(cursor_root), Some(pc.root))?;
             if let Some(c) = tm.conflicts.iter().find(|c| c.kind == ConflictKind::FileDirectory) {
                 return msg(format!(
                     "{:?} is a file on one side and a directory on the other while replaying {}; file/directory conflicts are not supported yet (the working tree was not changed)",
@@ -346,19 +339,16 @@ impl Repo {
                     pick.short()
                 ));
             }
-            self.require_conflicts_materialized(&run.zone, tm.conflicts.iter().map(|c| c.path.as_str()), "rebase")?;
+            if !tm.conflicts.is_empty() {
+                self.require_conflicts_materialized(&run.zone, tm.conflicts.iter().map(|c| c.path.as_str()), "rebase")?;
+            }
             for (id, data) in &tm.new_blobs {
                 if self.store.put_content(data)? != *id {
                     return Err(Error::Corrupt("merged blob id mismatch".into()));
                 }
             }
             if tm.conflicts.is_empty() {
-                let entries: Vec<(&str, EntryMode, ObjectId)> = tm
-                    .entries
-                    .iter()
-                    .map(|(p, (m, i))| (zones.relative(&run.zone, p), *m, *i))
-                    .collect();
-                let root = treeops::build(&self.store, entries)?;
+                let (root, _) = tm.apply(&self.store, Some(cursor_root), true)?;
                 cursor = self.store.put(&Object::Commit(Commit {
                     zone: run.zone.clone(),
                     parents: vec![cursor],
@@ -367,16 +357,16 @@ impl Repo {
                     author: pc.author,
                     message: pc.message,
                 }))?;
-                cursor_flat = tm.entries;
+                cursor_root = root;
                 run.replayed += 1;
                 continue;
             }
             // Stop on conflicts: land the tip so far, materialize the conflicted state.
             let rest: Vec<ObjectId> = it.collect();
             let label = format!("{} ({})", pick.short(), pc.message.lines().next().unwrap_or(""));
-            return self.stop_on_conflicts(run, cursor, &cursor_flat, pick, rest, tm, &label);
+            return self.stop_on_conflicts(run, cursor, cursor_root, pick, rest, tm, &label);
         }
-        self.finish(run, cursor, cursor_flat)
+        self.finish(run, cursor, cursor_root)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -384,10 +374,10 @@ impl Repo {
         &self,
         run: Run,
         cursor: ObjectId,
-        cursor_flat: &Flat,
+        cursor_root: ObjectId,
         pick: ObjectId,
         rest: Vec<ObjectId>,
-        tm: vcs_merge::TreeMerge,
+        mut tm: crate::treemerge::Merge3,
         label: &str,
     ) -> Result<RebaseOutcome> {
         let zones = self.zones()?;
@@ -397,11 +387,11 @@ impl Repo {
             base: "base",
             right: label,
         };
-        let mut new = tm.entries.clone();
         let mut recs = Vec::new();
-        for c in &tm.conflicts {
+        let conflicts = std::mem::take(&mut tm.conflicts);
+        for c in &conflicts {
             let (mode, id, markers) = self.placeholder(c, &labels)?;
-            new.insert(c.path.clone(), (mode, id));
+            tm.set_placeholder(&c.path, (mode, id));
             recs.push(ConflictRec {
                 path: c.path.clone(),
                 kind: c.kind,
@@ -416,20 +406,22 @@ impl Repo {
                 resolved: false,
             });
         }
-        let touched: BTreeSet<String> = run
-            .worktree
+        let prefix = zones.path_of(&run.zone).unwrap_or("").to_owned();
+        // The conflicted tree is never committed, so it is not stored: the change from the working
+        // tree is the (stored) worktree -> cursor difference chained with the patch difference.
+        let (_, from_cursor) = tm.apply(&self.store, Some(cursor_root), false)?;
+        let touched: BTreeSet<String> = from_cursor
+            .old
             .keys()
-            .chain(new.keys())
-            .filter(|p| run.worktree.get(*p) != new.get(*p))
+            .chain(from_cursor.new.keys())
             .cloned()
-            .chain(
-                cursor_flat
-                    .keys()
-                    .chain(new.keys())
-                    .filter(|p| cursor_flat.get(*p) != new.get(*p))
-                    .cloned(),
-            )
             .chain(recs.iter().map(|r| r.path.clone()))
+            .collect();
+        let to_cursor = treeops::diff_trees(&self.store, Some(run.worktree), Some(cursor_root), &prefix)?;
+        let from_worktree = crate::treemerge::compose(to_cursor, from_cursor);
+        let touched: BTreeSet<String> = touched
+            .into_iter()
+            .chain(from_worktree.old.keys().chain(from_worktree.new.keys()).cloned())
             .collect();
         // The merge-state "ours" is the cursor, which is what the worktree must look like if aborted.
         let ms = MergeState {
@@ -455,7 +447,7 @@ impl Repo {
         let mut ix = self.index()?;
         let mut refs = self.refs()?;
         self.save_rebase_files(&ms, &rs)?;
-        if let Err(e) = self.transition(&run.zone, &zones, &run.worktree, &new, &mut ix) {
+        if let Err(e) = self.transition_diff(&run.zone, &zones, &from_worktree, &mut ix) {
             self.clear_merge_state()?;
             self.clear_rebase_state()?;
             return Err(e);
@@ -484,7 +476,7 @@ impl Repo {
         write_atomic(&self.vcs.join(FILE), &rs.encode())
     }
 
-    fn finish(&self, run: Run, cursor: ObjectId, cursor_flat: Flat) -> Result<RebaseOutcome> {
+    fn finish(&self, run: Run, cursor: ObjectId, cursor_root: ObjectId) -> Result<RebaseOutcome> {
         let zones = self.zones()?;
         let mut ix = self.index()?;
         let mut refs = self.refs()?;
@@ -501,7 +493,13 @@ impl Repo {
             message: message.clone(),
             lock_ops: vec![],
         }))?;
-        self.transition(&run.zone, &zones, &run.worktree, &cursor_flat, &mut ix)?;
+        let diff = treeops::diff_trees(
+            &self.store,
+            Some(run.worktree),
+            Some(cursor_root),
+            zones.path_of(&run.zone).unwrap_or(""),
+        )?;
+        self.transition_diff(&run.zone, &zones, &diff, &mut ix)?;
         self.save_index(&mut ix)?;
         refs.apply(&[update])?;
         self.store.sync()?; // rebuilt commits + transaction durable before refs name them
@@ -525,8 +523,8 @@ struct Run {
     onto_label: String,
     /// What the branch ref currently names (differs from `orig` after `--continue`).
     ref_head: ObjectId,
-    /// What the working tree currently materializes for the zone.
-    worktree: Flat,
+    /// Tree of what the working tree currently materializes for the zone.
+    worktree: ObjectId,
     replayed: usize,
     author: Signature,
 }

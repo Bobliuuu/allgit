@@ -9,14 +9,13 @@
 //! a merge commit. Merge commits cannot be picked or reverted (no mainline selection yet).
 
 use crate::error::{msg, Error, Result};
-use crate::merge::{me, ConflictRec, MergeOutcome, MergeState};
+use crate::merge::{ConflictRec, MergeOutcome, MergeState};
 use crate::meta::{frame, unframe, write_atomic};
 use crate::repo::{fresh_change_id, Repo};
-use crate::treeops::{self, Flat};
 use std::collections::BTreeSet;
 use std::fs;
 use vcs_merge::{ConflictKind, MarkerLabels};
-use vcs_objects::{Commit, EntryMode, Object, ObjectId, RefUpdate, Signature, Transaction};
+use vcs_objects::{Commit, Object, ObjectId, RefUpdate, Signature, Transaction};
 use vcs_store::ObjectStore;
 
 const FILE: &str = "pick";
@@ -152,26 +151,27 @@ impl Repo {
             return msg(format!("{zone}/{branch} has no commits to {verb} onto"));
         };
         let prefix = zones.path_of(zone).unwrap_or("").to_owned();
-        let root_flat = |id: &ObjectId| -> Result<Flat> { treeops::flatten(&self.store, Some(self.commit_obj(id)?.root), &prefix) };
-        let this = root_flat(&target)?;
+        let this = c.root;
         let parent = match c.parents.first() {
-            Some(p) => root_flat(p)?,
-            None => Flat::new(),
+            Some(p) => Some(self.commit_obj(p)?.root),
+            None => None,
         };
         let (base, theirs) = match kind {
-            PickKind::CherryPick => (parent, this),
-            PickKind::Revert => (this, parent),
+            PickKind::CherryPick => (parent, Some(this)),
+            PickKind::Revert => (Some(this), parent),
         };
-        let old = self.head_flat(zone, &zones, &ws, &refs)?;
+        let ours_root = self.commit_obj(&ours)?.root;
         let mut ix = self.index()?;
-        let tm = self.tree3(&base, &old, &theirs).map_err(me)?;
+        let mut tm = self.merge3_trees(&prefix, base, Some(ours_root), theirs)?;
         if let Some(x) = tm.conflicts.iter().find(|x| x.kind == ConflictKind::FileDirectory) {
             return msg(format!(
                 "{:?} is a file on one side and a directory on the other; file/directory conflicts are not supported yet (nothing was changed)",
                 x.path
             ));
         }
-        self.require_conflicts_materialized(zone, tm.conflicts.iter().map(|c| c.path.as_str()), verb)?;
+        if !tm.conflicts.is_empty() {
+            self.require_conflicts_materialized(zone, tm.conflicts.iter().map(|c| c.path.as_str()), verb)?;
+        }
         for (id, data) in &tm.new_blobs {
             if self.store.put_blob(data)? != *id {
                 return Err(Error::Corrupt("merged blob id mismatch".into()));
@@ -188,7 +188,6 @@ impl Repo {
                 format!("Revert \"{first}\"\n\nThis reverts commit {target}."),
             ),
         };
-        let mut new = tm.entries.clone();
         let mut recs = Vec::new();
         let left_label = format!("ours ({zone}/{branch})");
         let labels = MarkerLabels {
@@ -196,9 +195,10 @@ impl Repo {
             base: "base",
             right: &label,
         };
-        for x in &tm.conflicts {
+        let conflicts = std::mem::take(&mut tm.conflicts);
+        for x in &conflicts {
             let (mode, id, markers) = self.placeholder(x, &labels)?;
-            new.insert(x.path.clone(), (mode, id));
+            tm.set_placeholder(&x.path, (mode, id));
             recs.push(ConflictRec {
                 path: x.path.clone(),
                 kind: x.kind,
@@ -213,12 +213,12 @@ impl Repo {
                 resolved: false,
             });
         }
+        let (new_root, diff) = tm.apply(&self.store, Some(ours_root), recs.is_empty())?;
         if recs.is_empty() {
-            if new == old {
+            if new_root == ours_root {
                 return msg(format!("{verb} of {} changes nothing here (already applied?)", target.short()));
             }
-            let entries: Vec<(&str, EntryMode, ObjectId)> = new.iter().map(|(p, (m, i))| (zones.relative(zone, p), *m, *i)).collect();
-            let root = treeops::build(&self.store, entries)?;
+            let root = new_root;
             let commit = Commit {
                 zone: zone.to_owned(),
                 parents: vec![ours],
@@ -240,7 +240,7 @@ impl Repo {
                 message: message.clone(),
                 lock_ops: vec![],
             }))?;
-            self.transition(zone, &zones, &old, &new, &mut ix)?;
+            self.transition_diff(zone, &zones, &diff, &mut ix)?;
             self.save_index(&mut ix)?;
             refs.apply(&[update])?;
             self.store.sync()?;
@@ -248,10 +248,10 @@ impl Repo {
             self.record_op(&format!("{verb} {} onto {zone}/{branch}", target.short()), None)?;
             return Ok(MergeOutcome::Merged { commit: cid });
         }
-        let touched: BTreeSet<String> = old
+        let touched: BTreeSet<String> = diff
+            .old
             .keys()
-            .chain(new.keys())
-            .filter(|p| old.get(*p) != new.get(*p))
+            .chain(diff.new.keys())
             .cloned()
             .chain(recs.iter().map(|r| r.path.clone()))
             .collect();
@@ -269,7 +269,7 @@ impl Repo {
         body.extend_from_slice(target.to_string().as_bytes());
         let mark = frame(MAGIC, body);
         write_atomic(&self.vcs.join(FILE), &mark)?;
-        if let Err(e) = self.transition(zone, &zones, &old, &new, &mut ix) {
+        if let Err(e) = self.transition_diff(zone, &zones, &diff, &mut ix) {
             self.clear_merge_state()?;
             return Err(e);
         }

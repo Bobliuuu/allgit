@@ -33,6 +33,7 @@ pub mod sparse;
 pub mod stash;
 pub mod sync;
 pub mod tags;
+mod treemerge;
 pub mod treeops;
 #[cfg(feature = "watcher")]
 pub mod watcher;
