@@ -32,6 +32,8 @@ pub struct Opts {
     pub color: bool,
     pub paths: Vec<String>,
     pub x: crate::logopts::LogExtra,
+    /// Set by `--show-signature`: verify each commit against these trust settings.
+    pub trust: Option<vcs_objects::signing::Trust>,
 }
 
 /// The commits `vcs log` would show (filters applied, count applied). The flag is true when the
@@ -334,7 +336,13 @@ fn body_lines(id: &ObjectId, c: &Commit, label: &impl Fn(&str) -> String, o: &Op
         format!("Author: {} <{}>", c.author.name, c.author.email),
         format!("Date:   {}", c.author.timestamp),
     ];
-    for l in c.message.lines() {
+    if let Some(t) = &o.trust {
+        v.push(format!(
+            "Signature: {}",
+            crate::signing_cmd::describe(&vcs_objects::signing::verify_commit(c, t))
+        ));
+    }
+    for l in vcs_objects::signing::strip_commit_signature(&c.message).lines() {
         v.push(format!("    {l}"));
     }
     v.push(String::new());
