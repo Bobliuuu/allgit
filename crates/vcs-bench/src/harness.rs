@@ -84,7 +84,11 @@ pub struct Cmd {
 }
 
 fn cmd(argv: &[&str], cwd: &Path) -> Cmd {
-    Cmd { argv: argv.iter().map(|s| s.to_string()).collect(), cwd: cwd.to_path_buf(), env: vec![] }
+    Cmd {
+        argv: argv.iter().map(|s| s.to_string()).collect(),
+        cwd: cwd.to_path_buf(),
+        env: vec![],
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -92,7 +96,12 @@ pub enum Step {
     Run(Cmd),
     /// Run, then SIGKILL its process group after `ms` (if still running).
     RunKilled(Cmd, u64),
-    Edit { dir: PathBuf, pct: usize, tag: u64, prefix: Option<String> },
+    Edit {
+        dir: PathBuf,
+        pct: usize,
+        tag: u64,
+        prefix: Option<String>,
+    },
     Mkdir(PathBuf),
 }
 
@@ -143,13 +152,17 @@ impl OpCx<'_> {
     }
     /// Tool-specific command: `git` args for Git, `vcs` args for Vcs.
     fn tc(&self, git: &[&str], vcs: &[&str], cwd: &Path) -> Cmd {
-        let (args, ) = match self.tool {
-            Tool::Git => (git, ),
-            _ => (vcs, ),
+        let (args,) = match self.tool {
+            Tool::Git => (git,),
+            _ => (vcs,),
         };
         let mut argv = vec![self.bin()];
         argv.extend(args.iter().map(|s| s.to_string()));
-        Cmd { argv, cwd: cwd.to_path_buf(), env: vec![] }
+        Cmd {
+            argv,
+            cwd: cwd.to_path_buf(),
+            env: vec![],
+        }
     }
     fn init_cmds(&self, dir: &Path) -> Vec<Cmd> {
         match self.tool {
@@ -170,7 +183,12 @@ impl OpCx<'_> {
         self.tc(&["commit", "-q", "-m", m], &["commit", "-m", m], dir)
     }
     fn edit(&self, dir: &Path, pct: usize, tag: u64) -> Step {
-        Step::Edit { dir: dir.to_path_buf(), pct, tag, prefix: None }
+        Step::Edit {
+            dir: dir.to_path_buf(),
+            pct,
+            tag,
+            prefix: None,
+        }
     }
 }
 
@@ -187,11 +205,23 @@ pub struct OpDef {
 }
 
 fn tp(prep: Vec<Step>, timed: Vec<Cmd>) -> Result<TrialPlan, String> {
-    Ok(TrialPlan { prep, timed, parallel: false, cleanup: vec![], note: String::new() })
+    Ok(TrialPlan {
+        prep,
+        timed,
+        parallel: false,
+        cleanup: vec![],
+        note: String::new(),
+    })
 }
 
 fn od(name: &str, fixture: Fix, mutates: bool, f: OpFn) -> OpDef {
-    OpDef { name: name.into(), fixture, mutates, modes: vec![], f }
+    OpDef {
+        name: name.into(),
+        fixture,
+        mutates,
+        modes: vec![],
+        f,
+    }
 }
 
 fn rm_repo_dirs(cx: &OpCx) -> Vec<PathBuf> {
@@ -232,7 +262,13 @@ fn sparse_clone(cx: &OpCx, pct: usize) -> Result<TrialPlan, String> {
         }
     };
     let timed = std::mem::take(&mut t);
-    Ok(TrialPlan { prep: vec![], timed, parallel: false, cleanup: vec![dst], note: format!("{} of {} zones", sel.len(), cx.plan.zones.len()) })
+    Ok(TrialPlan {
+        prep: vec![],
+        timed,
+        parallel: false,
+        cleanup: vec![dst],
+        note: format!("{} of {} zones", sel.len(), cx.plan.zones.len()),
+    })
 }
 
 fn peer_publish_steps(cx: &OpCx, tag: u64) -> Vec<Step> {
@@ -251,20 +287,40 @@ pub fn ops() -> Vec<OpDef> {
         let d = cx.root.join("empty");
         let c = cx.init_cmds(&d);
         // timed: init only (zone creation is part of vcs setup, included in the sequence)
-        Ok(TrialPlan { prep: vec![Step::Mkdir(d.clone())], timed: c, parallel: false, cleanup: vec![d], note: "empty dir; vcs includes zone creation".into() })
+        Ok(TrialPlan {
+            prep: vec![Step::Mkdir(d.clone())],
+            timed: c,
+            parallel: false,
+            cleanup: vec![d],
+            note: "empty dir; vcs includes zone creation".into(),
+        })
     }));
     v.push(od("add_initial", Fix::Src, false, |cx| {
         let w = cx.work();
         let prep = cx.init_cmds(&w).into_iter().map(Step::Run).collect();
-        Ok(TrialPlan { prep, timed: vec![cx.add_all(&w)], parallel: false, cleanup: rm_repo_dirs(cx), note: String::new() })
+        Ok(TrialPlan {
+            prep,
+            timed: vec![cx.add_all(&w)],
+            parallel: false,
+            cleanup: rm_repo_dirs(cx),
+            note: String::new(),
+        })
     }));
     v.push(od("commit_initial", Fix::Src, false, |cx| {
         let w = cx.work();
         let mut prep: Vec<Step> = cx.init_cmds(&w).into_iter().map(Step::Run).collect();
         prep.push(Step::Run(cx.add_all(&w)));
-        Ok(TrialPlan { prep, timed: vec![cx.commit(&w, "initial")], parallel: false, cleanup: rm_repo_dirs(cx), note: String::new() })
+        Ok(TrialPlan {
+            prep,
+            timed: vec![cx.commit(&w, "initial")],
+            parallel: false,
+            cleanup: rm_repo_dirs(cx),
+            note: String::new(),
+        })
     }));
-    v.push(od("status", Fix::Repo, false, |cx| tp(vec![], vec![cx.tc(&["status", "--porcelain"], &["status"], &cx.work())])));
+    v.push(od("status", Fix::Repo, false, |cx| {
+        tp(vec![], vec![cx.tc(&["status", "--porcelain"], &["status"], &cx.work())])
+    }));
     v.push(od("status_dirty", Fix::Repo, true, |cx| {
         let w = cx.work();
         tp(vec![cx.edit(&w, 1, 1)], vec![cx.tc(&["status", "--porcelain"], &["status"], &w)])
@@ -320,7 +376,10 @@ pub fn ops() -> Vec<OpDef> {
     }));
     v.push(od("switch", Fix::Repo, true, |cx| {
         let z = cx.zone_arg();
-        tp(vec![], vec![cx.tc(&["switch", "-q", "alt"], &["switch", "alt", "--zone", &z], &cx.work())])
+        tp(
+            vec![],
+            vec![cx.tc(&["switch", "-q", "alt"], &["switch", "alt", "--zone", &z], &cx.work())],
+        )
     }));
     v.push(od("checkout_files", Fix::Repo, true, |cx| {
         let w = cx.work();
@@ -328,10 +387,20 @@ pub fn ops() -> Vec<OpDef> {
     }));
     v.push(od("clone", Fix::Repo, false, |cx| {
         let c = match cx.tool {
-            Tool::Git => cx.tc(&["clone", "-q", &format!("file://{}", cx.remote().display()), "clone_dst"], &[], cx.root),
+            Tool::Git => cx.tc(
+                &["clone", "-q", &format!("file://{}", cx.remote().display()), "clone_dst"],
+                &[],
+                cx.root,
+            ),
             _ => cx.tc(&[], &["clone", &cx.remote().display().to_string(), "clone_dst"], cx.root),
         };
-        Ok(TrialPlan { prep: vec![], timed: vec![c], parallel: false, cleanup: vec![cx.root.join("clone_dst")], note: String::new() })
+        Ok(TrialPlan {
+            prep: vec![],
+            timed: vec![c],
+            parallel: false,
+            cleanup: vec![cx.root.join("clone_dst")],
+            note: String::new(),
+        })
     }));
     for pct in [1usize, 5, 10, 50] {
         let f: OpFn = match pct {
@@ -368,18 +437,39 @@ pub fn ops() -> Vec<OpDef> {
             let d = cx.root.join(format!("cp{i}"));
             let (zn, zp) = cx.plan.zones[i].clone();
             match cx.tool {
-                Tool::Git => prep.push(Step::Run(cx.tc(&["clone", "-q", &format!("file://{}", cx.remote().display()), &format!("cp{i}")], &[], cx.root))),
-                _ => prep.push(Step::Run(cx.tc(&[], &["clone", &cx.remote().display().to_string(), &format!("cp{i}")], cx.root))),
+                Tool::Git => prep.push(Step::Run(cx.tc(
+                    &["clone", "-q", &format!("file://{}", cx.remote().display()), &format!("cp{i}")],
+                    &[],
+                    cx.root,
+                ))),
+                _ => prep.push(Step::Run(cx.tc(
+                    &[],
+                    &["clone", &cx.remote().display().to_string(), &format!("cp{i}")],
+                    cx.root,
+                ))),
             }
-            prep.push(Step::Edit { dir: d.clone(), pct: 1, tag: 100 + i as u64, prefix: Some(format!("{zp}/")) });
+            prep.push(Step::Edit {
+                dir: d.clone(),
+                pct: 1,
+                tag: 100 + i as u64,
+                prefix: Some(format!("{zp}/")),
+            });
             prep.push(Step::Run(cx.add_all(&d)));
             prep.push(Step::Run(cx.commit(&d, "cp")));
             let refspec = format!("HEAD:refs/heads/peer{i}");
             timed.push(cx.tc(&["push", "-q", "origin", &refspec], &["publish", "--zone", &zn], &d));
         }
-        Ok(TrialPlan { prep, timed, parallel: true, cleanup: vec![], note: "4 publishers at once; git pushes to per-peer branches, vcs publishes one zone each".into() })
+        Ok(TrialPlan {
+            prep,
+            timed,
+            parallel: true,
+            cleanup: vec![],
+            note: "4 publishers at once; git pushes to per-peer branches, vcs publishes one zone each".into(),
+        })
     }));
-    v.push(od("repack", Fix::Repo, true, |cx| tp(vec![], vec![cx.tc(&["repack", "-a", "-d", "-q"], &["repack"], &cx.work())])));
+    v.push(od("repack", Fix::Repo, true, |cx| {
+        tp(vec![], vec![cx.tc(&["repack", "-a", "-d", "-q"], &["repack"], &cx.work())])
+    }));
     v.push(od("gc", Fix::Repo, true, |cx| {
         let mut p = tp(vec![], vec![cx.tc(&["gc", "-q"], &["gc", "--dry-run"], &cx.work())])?;
         p.note = "vcs gc is --dry-run only (destructive gc not implemented)".into();
@@ -388,7 +478,13 @@ pub fn ops() -> Vec<OpDef> {
     let mut cold = od("cold_restart", Fix::Repo, false, |cx| {
         let w = cx.work();
         let z = cx.zone_arg();
-        tp(vec![], vec![cx.tc(&["log", "-1", "--oneline"], &["log", "-n", "1", "--oneline", "--zone", &z], &w), cx.tc(&["status", "--porcelain"], &["status"], &w)])
+        tp(
+            vec![],
+            vec![
+                cx.tc(&["log", "-1", "--oneline"], &["log", "-n", "1", "--oneline", "--zone", &z], &w),
+                cx.tc(&["status", "--porcelain"], &["status"], &w),
+            ],
+        )
     });
     cold.modes = vec![Mode::Cold];
     v.push(cold);
@@ -402,7 +498,10 @@ pub fn ops() -> Vec<OpDef> {
         };
         let kill = cmd(&["sh", "-c", &script], &w);
         let rec = match cx.tool {
-            Tool::Git => format!("rm -f .git/index.lock; {0} fsck --no-progress >/dev/null 2>&1; {0} status --porcelain >/dev/null", cx.bin()),
+            Tool::Git => format!(
+                "rm -f .git/index.lock; {0} fsck --no-progress >/dev/null 2>&1; {0} status --porcelain >/dev/null",
+                cx.bin()
+            ),
             _ => format!("{0} fsck >/dev/null && {0} status >/dev/null", cx.bin()),
         };
         Ok(TrialPlan {
@@ -423,11 +522,16 @@ fn base_env(c: &mut Command, cfg: &Config, tool: Tool) {
     let home = cfg.scratch.join("home");
     let _ = fs::create_dir_all(&home);
     c.env("HOME", &home).env("XDG_CONFIG_HOME", home.join("xdg"));
-    c.env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_SYSTEM", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1");
-    c.env("GIT_CONFIG_COUNT", "2").env("GIT_CONFIG_KEY_0", "gc.auto").env("GIT_CONFIG_VALUE_0", "0");
+    c.env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    c.env("GIT_CONFIG_COUNT", "2")
+        .env("GIT_CONFIG_KEY_0", "gc.auto")
+        .env("GIT_CONFIG_VALUE_0", "0");
     c.env("GIT_CONFIG_KEY_1", "maintenance.auto").env("GIT_CONFIG_VALUE_1", "false");
     c.env("GIT_AUTHOR_NAME", "bench").env("GIT_AUTHOR_EMAIL", "bench@example.invalid");
-    c.env("GIT_COMMITTER_NAME", "bench").env("GIT_COMMITTER_EMAIL", "bench@example.invalid");
+    c.env("GIT_COMMITTER_NAME", "bench")
+        .env("GIT_COMMITTER_EMAIL", "bench@example.invalid");
     c.env("GIT_TERMINAL_PROMPT", "0").env("GIT_PAGER", "cat").env("LC_ALL", "C");
     c.env("VCS_AUTHOR_NAME", "bench").env("VCS_AUTHOR_EMAIL", "bench@example.invalid");
     let _ = tool;
@@ -435,7 +539,11 @@ fn base_env(c: &mut Command, cfg: &Config, tool: Tool) {
 
 fn build(c: &Cmd, cfg: &Config, tool: Tool) -> Command {
     let mut p = Command::new(&c.argv[0]);
-    p.args(&c.argv[1..]).current_dir(&c.cwd).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped());
+    p.args(&c.argv[1..])
+        .current_dir(&c.cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
     base_env(&mut p, cfg, tool);
     for (k, v) in &c.env {
         p.env(k, v);
@@ -470,15 +578,24 @@ fn run_killed(c: &Cmd, cfg: &Config, tool: Tool, ms: u64) {
 
 fn child_cpu_ms() -> (f64, f64) {
     // /proc/self/stat fields 16,17 (cutime, cstime) in clock ticks (assume 100 Hz). Linux only.
-    let Ok(s) = fs::read_to_string("/proc/self/stat") else { return (f64::NAN, f64::NAN) };
-    let Some(rest) = s.rsplit_once(')').map(|x| x.1) else { return (f64::NAN, f64::NAN) };
+    let Ok(s) = fs::read_to_string("/proc/self/stat") else {
+        return (f64::NAN, f64::NAN);
+    };
+    let Some(rest) = s.rsplit_once(')').map(|x| x.1) else {
+        return (f64::NAN, f64::NAN);
+    };
     let t: Vec<&str> = rest.split_whitespace().collect();
     let g = |i: usize| t.get(i).and_then(|x| x.parse::<f64>().ok()).unwrap_or(f64::NAN) * 10.0;
     (g(13), g(14))
 }
 
 pub fn sh_out(argv: &[&str]) -> String {
-    Command::new(argv[0]).args(&argv[1..]).stdin(Stdio::null()).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
+    Command::new(argv[0])
+        .args(&argv[1..])
+        .stdin(Stdio::null())
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default()
 }
 
 fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
@@ -487,7 +604,11 @@ fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
         let _ = fs::create_dir_all(p);
     }
     let st = Command::new("cp").arg("-a").arg(src).arg(dst).status().map_err(|e| e.to_string())?;
-    if st.success() { Ok(()) } else { Err(format!("cp -a {} {} failed", src.display(), dst.display())) }
+    if st.success() {
+        Ok(())
+    } else {
+        Err(format!("cp -a {} {} failed", src.display(), dst.display()))
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -500,12 +621,21 @@ pub struct CacheCtl {
 
 pub fn probe_cache(cfg: &Config) -> CacheCtl {
     if cfg.drop_caches == "off" {
-        return CacheCtl { available: false, method: "disabled by --drop-caches off".into() };
+        return CacheCtl {
+            available: false,
+            method: "disabled by --drop-caches off".into(),
+        };
     }
     let r = drop_caches_raw();
     match r {
-        Ok(m) => CacheCtl { available: true, method: m },
-        Err(e) => CacheCtl { available: false, method: e },
+        Ok(m) => CacheCtl {
+            available: true,
+            method: m,
+        },
+        Err(e) => CacheCtl {
+            available: false,
+            method: e,
+        },
     }
 }
 
@@ -518,10 +648,17 @@ fn drop_caches_raw() -> Result<String, String> {
     let st = if root {
         Command::new("sh").args(["-c", "echo 3 > /proc/sys/vm/drop_caches"]).status()
     } else {
-        Command::new("sudo").args(["-n", "sh", "-c", "echo 3 > /proc/sys/vm/drop_caches"]).stderr(Stdio::null()).status()
+        Command::new("sudo")
+            .args(["-n", "sh", "-c", "echo 3 > /proc/sys/vm/drop_caches"])
+            .stderr(Stdio::null())
+            .status()
     };
     match st {
-        Ok(s) if s.success() => Ok(if root { "sync; echo 3 > /proc/sys/vm/drop_caches (root)".into() } else { "sync; sudo -n sh -c 'echo 3 > /proc/sys/vm/drop_caches'".into() }),
+        Ok(s) if s.success() => Ok(if root {
+            "sync; echo 3 > /proc/sys/vm/drop_caches (root)".into()
+        } else {
+            "sync; sudo -n sh -c 'echo 3 > /proc/sys/vm/drop_caches'".into()
+        }),
         _ => Err("drop_caches not permitted (sudo -n failed)".into()),
     }
 }
@@ -530,7 +667,11 @@ fn which(bin: &str) -> Option<PathBuf> {
     if bin.contains('/') {
         return Some(PathBuf::from(bin));
     }
-    std::env::var("PATH").ok()?.split(':').map(|d| Path::new(d).join(bin)).find(|p| p.is_file())
+    std::env::var("PATH")
+        .ok()?
+        .split(':')
+        .map(|d| Path::new(d).join(bin))
+        .find(|p| p.is_file())
 }
 
 fn read_discard(p: &Path) {
@@ -588,7 +729,15 @@ fn set_cache(mode: Mode, root: &Path, cfg: &Config, seed: u64) {
 
 fn must(c: &Cmd, cfg: &Config, tool: Tool) -> Result<(), String> {
     let (ok, code, err) = run_cmd(c, cfg, tool);
-    if ok { Ok(()) } else { Err(format!("fixture command failed (exit {code}): {:?} in {}: {err}", c.argv, c.cwd.display())) }
+    if ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "fixture command failed (exit {code}): {:?} in {}: {err}",
+            c.argv,
+            c.cwd.display()
+        ))
+    }
 }
 
 fn dated(mut c: Cmd, step: u64) -> Cmd {
@@ -613,7 +762,14 @@ pub fn build_repo_fixture(cfg: &Config, tool: Tool, plan: &Plan, src_root: &Path
     let work = root.join("work");
     copy_tree(&src_root.join("work"), &work)?;
     let info0 = FixtureInfo::default();
-    let cx = OpCx { tool, root, plan, cfg, info: &info0, trial_seed: 0 };
+    let cx = OpCx {
+        tool,
+        root,
+        plan,
+        cfg,
+        info: &info0,
+        trial_seed: 0,
+    };
     let remote = root.join("remote");
     let mut step = 0u64;
     let run = |c: Cmd, step: u64| must(&dated(c, step), cfg, tool);
@@ -635,7 +791,10 @@ pub fn build_repo_fixture(cfg: &Config, tool: Tool, plan: &Plan, src_root: &Path
             run(cx.tc(&["init", "-q", "--bare", "-b", "main", "remote"], &[], root), step)?;
             run(cx.tc(&["config", "uploadpack.allowFilter", "true"], &[], &remote), step)?;
             run(cx.tc(&["config", "uploadpack.allowAnySHA1InWant", "true"], &[], &remote), step)?;
-            run(cx.tc(&["remote", "add", "origin", &format!("file://{}", remote.display())], &[], &work), step)?;
+            run(
+                cx.tc(&["remote", "add", "origin", &format!("file://{}", remote.display())], &[], &work),
+                step,
+            )?;
             run(cx.tc(&["push", "-q", "origin", "main"], &[], &work), step)?;
             run(cx.tc(&["branch", "-q", "--set-upstream-to=origin/main", "main"], &[], &work), step)?;
         }
@@ -666,7 +825,10 @@ pub fn build_repo_fixture(cfg: &Config, tool: Tool, plan: &Plan, src_root: &Path
     run(on("main"), step)?;
     // peer clone
     match tool {
-        Tool::Git => run(cx.tc(&["clone", "-q", &format!("file://{}", remote.display()), "peer"], &[], root), step)?,
+        Tool::Git => run(
+            cx.tc(&["clone", "-q", &format!("file://{}", remote.display()), "peer"], &[], root),
+            step,
+        )?,
         _ => run(cx.tc(&[], &["clone", &remote.display().to_string(), "peer"], root), step)?,
     }
     // history ids (newest first) for random lookups
@@ -674,7 +836,11 @@ pub fn build_repo_fixture(cfg: &Config, tool: Tool, plan: &Plan, src_root: &Path
         Tool::Git => sh_cmd(&[&cfg.git_bin, "log", "--format=%H"], &work, cfg, tool),
         _ => sh_cmd(&[&cfg.vcs_bin, "log", "--oneline", "-n", "1000000", "--zone", &z], &work, cfg, tool),
     };
-    let hist_ids: Vec<String> = out.lines().filter_map(|l| l.split_whitespace().next()).map(|s| s.to_string()).collect();
+    let hist_ids: Vec<String> = out
+        .lines()
+        .filter_map(|l| l.split_whitespace().next())
+        .map(|s| s.to_string())
+        .collect();
     if hist_ids.is_empty() {
         return Err("fixture produced no history ids".into());
     }
@@ -682,10 +848,16 @@ pub fn build_repo_fixture(cfg: &Config, tool: Tool, plan: &Plan, src_root: &Path
 }
 
 fn sh_cmd(argv: &[&str], cwd: &Path, cfg: &Config, tool: Tool) -> String {
-    let c = Cmd { argv: argv.iter().map(|s| s.to_string()).collect(), cwd: cwd.to_path_buf(), env: vec![] };
+    let c = Cmd {
+        argv: argv.iter().map(|s| s.to_string()).collect(),
+        cwd: cwd.to_path_buf(),
+        env: vec![],
+    };
     let mut p = build(&c, cfg, tool);
     p.stdout(Stdio::piped());
-    p.output().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default()
+    p.output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default()
 }
 
 pub fn dir_size(p: &Path) -> u64 {
@@ -760,18 +932,32 @@ pub fn run(cfg: &Config, spec: &RunSpec, log: &mut dyn FnMut(&str)) -> Result<Ru
     let cache = probe_cache(cfg);
     log(&format!("cache control: available={} ({})", cache.available, cache.method));
     let all_ops = ops();
-    let sel: Vec<&OpDef> = all_ops.iter().filter(|o| spec.ops.is_empty() || spec.ops.iter().any(|n| n == &o.name)).collect();
+    let sel: Vec<&OpDef> = all_ops
+        .iter()
+        .filter(|o| spec.ops.is_empty() || spec.ops.iter().any(|n| n == &o.name))
+        .collect();
     if sel.is_empty() {
         return Err("no operations selected".into());
     }
-    let mut out = RunOutput { recs: vec![], skips: vec![], datasets: vec![], cache };
+    let mut out = RunOutput {
+        recs: vec![],
+        skips: vec![],
+        datasets: vec![],
+        cache,
+    };
     let (walgit_ready, walgit_msg) = walgit_probe(cfg);
     let mut order = 0usize;
     for w in &spec.workloads {
         let plan = workloads::plan(*w, cfg.scale);
         let wdir = cfg.scratch.join(w.name());
         let src_root = wdir.join("src");
-        log(&format!("== {} (scale {}): {} files, {} bytes", w.name(), cfg.scale, plan.files.len(), plan.total_bytes()));
+        log(&format!(
+            "== {} (scale {}): {} files, {} bytes",
+            w.name(),
+            cfg.scale,
+            plan.files.len(),
+            plan.total_bytes()
+        ));
         build_src_fixture(&plan, &src_root, cfg.seed)?;
         out.datasets.push(J::obj(vec![
             ("workload", J::s(w.name())),
@@ -791,7 +977,11 @@ pub fn run(cfg: &Config, spec: &RunSpec, log: &mut dyn FnMut(&str)) -> Result<Ru
                     tool,
                     op: "*".into(),
                     mode: None,
-                    reason: if walgit_ready { format!("walgit found ({walgit_msg}) but the runner is a stub: see docs/research/storage/benchmark-methodology.md") } else { format!("walgit runner stub, binary unavailable: {walgit_msg}") },
+                    reason: if walgit_ready {
+                        format!("walgit found ({walgit_msg}) but the runner is a stub: see docs/research/storage/benchmark-methodology.md")
+                    } else {
+                        format!("walgit runner stub, binary unavailable: {walgit_msg}")
+                    },
                 });
                 continue;
             }
@@ -802,12 +992,23 @@ pub fn run(cfg: &Config, spec: &RunSpec, log: &mut dyn FnMut(&str)) -> Result<Ru
                 let t0 = Instant::now();
                 match build_repo_fixture(cfg, tool, &plan, &src_root, &root) {
                     Ok(info) => {
-                        log(&format!("  built in {:.1}s, {} history ids, {} bytes on disk", t0.elapsed().as_secs_f64(), info.hist_ids.len(), dir_size(&root)));
+                        log(&format!(
+                            "  built in {:.1}s, {} history ids, {} bytes on disk",
+                            t0.elapsed().as_secs_f64(),
+                            info.hist_ids.len(),
+                            dir_size(&root)
+                        ));
                         fixtures.insert(tool, (root, info));
                     }
                     Err(e) => {
                         log(&format!("  FIXTURE FAILED: {e}"));
-                        out.skips.push(Skip { workload: w.name().into(), tool, op: "*".into(), mode: None, reason: format!("fixture build failed: {e}") });
+                        out.skips.push(Skip {
+                            workload: w.name().into(),
+                            tool,
+                            op: "*".into(),
+                            mode: None,
+                            reason: format!("fixture build failed: {e}"),
+                        });
                         continue;
                     }
                 }
@@ -820,15 +1021,38 @@ pub fn run(cfg: &Config, spec: &RunSpec, log: &mut dyn FnMut(&str)) -> Result<Ru
                         None => continue,
                     },
                 };
-                let cx = OpCx { tool, root: &base, plan: &plan, cfg, info: &info, trial_seed: 0 };
+                let cx = OpCx {
+                    tool,
+                    root: &base,
+                    plan: &plan,
+                    cfg,
+                    info: &info,
+                    trial_seed: 0,
+                };
                 if let Err(reason) = (op.f)(&cx) {
-                    out.skips.push(Skip { workload: w.name().into(), tool, op: op.name.clone(), mode: None, reason });
+                    out.skips.push(Skip {
+                        workload: w.name().into(),
+                        tool,
+                        op: op.name.clone(),
+                        mode: None,
+                        reason,
+                    });
                     continue;
                 }
-                let modes: Vec<Mode> = if op.modes.is_empty() { spec.modes.clone() } else { op.modes.iter().copied().filter(|m| spec.modes.contains(m)).collect() };
+                let modes: Vec<Mode> = if op.modes.is_empty() {
+                    spec.modes.clone()
+                } else {
+                    op.modes.iter().copied().filter(|m| spec.modes.contains(m)).collect()
+                };
                 for m in modes {
                     if m != Mode::Warm && !out.cache.available {
-                        out.skips.push(Skip { workload: w.name().into(), tool, op: op.name.clone(), mode: Some(m), reason: format!("cache drop unavailable: {}", out.cache.method) });
+                        out.skips.push(Skip {
+                            workload: w.name().into(),
+                            tool,
+                            op: op.name.clone(),
+                            mode: Some(m),
+                            reason: format!("cache drop unavailable: {}", out.cache.method),
+                        });
                         continue;
                     }
                     for t in 0..cfg.trials {
@@ -861,9 +1085,30 @@ pub fn run(cfg: &Config, spec: &RunSpec, log: &mut dyn FnMut(&str)) -> Result<Ru
             } else {
                 (base.clone(), false)
             };
-            let cx = OpCx { tool, root: &root, plan: &plan, cfg, info: &info, trial_seed };
+            let cx = OpCx {
+                tool,
+                root: &root,
+                plan: &plan,
+                cfg,
+                info: &info,
+                trial_seed,
+            };
             let tpn = (op.f)(&cx).map_err(|e| format!("op {} plan failed on trial: {e}", op.name))?;
-            let mut rec = Rec { workload: w.name().into(), tool, op: op.name.clone(), mode, trial: t, order, wall_ms: f64::NAN, cpu_user_ms: f64::NAN, cpu_sys_ms: f64::NAN, ok: false, exit_codes: vec![], note: tpn.note.clone(), stderr_tail: String::new() };
+            let mut rec = Rec {
+                workload: w.name().into(),
+                tool,
+                op: op.name.clone(),
+                mode,
+                trial: t,
+                order,
+                wall_ms: f64::NAN,
+                cpu_user_ms: f64::NAN,
+                cpu_sys_ms: f64::NAN,
+                ok: false,
+                exit_codes: vec![],
+                note: tpn.note.clone(),
+                stderr_tail: String::new(),
+            };
             let mut prep_ok = true;
             // a copied fixture still points at the base fixture's remote: re-point work and peer at the copy
             let mut steps: Vec<Step> = vec![];
@@ -962,7 +1207,14 @@ pub fn run(cfg: &Config, spec: &RunSpec, log: &mut dyn FnMut(&str)) -> Result<Ru
                 let _ = fs::remove_dir_all(&root);
             }
             if !rec.ok {
-                log(&format!("  FAIL {} {} {} {}: {}", w.name(), tool.name(), op.name, mode.name(), rec.stderr_tail.replace('\n', " ")));
+                log(&format!(
+                    "  FAIL {} {} {} {}: {}",
+                    w.name(),
+                    tool.name(),
+                    op.name,
+                    mode.name(),
+                    rec.stderr_tail.replace('\n', " ")
+                ));
             }
             out.recs.push(rec);
         }
@@ -995,7 +1247,13 @@ pub fn summarize_all(recs: &[Rec], seed: u64) -> Vec<SummaryRow> {
             let ok: Vec<&&Rec> = rs.iter().filter(|r| r.ok).collect();
             let wall: Vec<f64> = ok.iter().map(|r| r.wall_ms).collect();
             let cpu: Vec<f64> = ok.iter().map(|r| r.cpu_user_ms + r.cpu_sys_ms).filter(|x| x.is_finite()).collect();
-            SummaryRow { trials: rs.len(), failed: rs.len() - ok.len(), wall: summarize(&wall, seed), cpu: summarize(&cpu, seed ^ 1), key }
+            SummaryRow {
+                trials: rs.len(),
+                failed: rs.len() - ok.len(),
+                wall: summarize(&wall, seed),
+                cpu: summarize(&cpu, seed ^ 1),
+                key,
+            }
         })
         .collect()
 }
@@ -1088,7 +1346,11 @@ pub fn results_json(meta: J, out: &RunOutput, seed: u64) -> J {
 }
 
 fn csv_esc(s: &str) -> String {
-    if s.contains([',', '"', '\n']) { format!("\"{}\"", s.replace('"', "\"\"").replace('\n', " ")) } else { s.to_string() }
+    if s.contains([',', '"', '\n']) {
+        format!("\"{}\"", s.replace('"', "\"\"").replace('\n', " "))
+    } else {
+        s.to_string()
+    }
 }
 
 pub fn trials_csv(out: &RunOutput) -> String {
@@ -1097,23 +1359,59 @@ pub fn trials_csv(out: &RunOutput) -> String {
         let codes: Vec<String> = r.exit_codes.iter().map(|c| c.to_string()).collect();
         s.push_str(&format!(
             "{},{},{},{},{},{},{:.3},{:.1},{:.1},{},{},{}\n",
-            r.order, r.workload, r.tool.name(), r.op, r.mode.name(), r.trial, r.wall_ms, r.cpu_user_ms, r.cpu_sys_ms, r.ok, codes.join(" "), csv_esc(&r.note)
+            r.order,
+            r.workload,
+            r.tool.name(),
+            r.op,
+            r.mode.name(),
+            r.trial,
+            r.wall_ms,
+            r.cpu_user_ms,
+            r.cpu_sys_ms,
+            r.ok,
+            codes.join(" "),
+            csv_esc(&r.note)
         ));
     }
     s
 }
 
 pub fn summary_csv(out: &RunOutput, seed: u64) -> String {
-    let mut s = String::from("workload,tool,op,mode,trials,failed,median_ms,ci95_lo_ms,ci95_hi_ms,ci_reliable,mean_ms,stdev_ms,min_ms,max_ms,median_cpu_ms\n");
+    let mut s = String::from(
+        "workload,tool,op,mode,trials,failed,median_ms,ci95_lo_ms,ci95_hi_ms,ci_reliable,mean_ms,stdev_ms,min_ms,max_ms,median_cpu_ms\n",
+    );
     for r in summarize_all(&out.recs, seed) {
         let (a, b, c, d, e, f, g, h) = match &r.wall {
-            Some(w) => (w.median, w.ci95_lo, w.ci95_hi, w.ci_reliable.to_string(), w.mean, w.stdev, w.min, w.max),
+            Some(w) => (
+                w.median,
+                w.ci95_lo,
+                w.ci95_hi,
+                w.ci_reliable.to_string(),
+                w.mean,
+                w.stdev,
+                w.min,
+                w.max,
+            ),
             None => (f64::NAN, f64::NAN, f64::NAN, "false".into(), f64::NAN, f64::NAN, f64::NAN, f64::NAN),
         };
         let cpu = r.cpu.as_ref().map(|c| c.median).unwrap_or(f64::NAN);
         s.push_str(&format!(
             "{},{},{},{},{},{},{:.3},{:.3},{:.3},{},{:.3},{:.3},{:.3},{:.3},{:.1}\n",
-            r.key.0, r.key.1.name(), r.key.2, r.key.3.name(), r.trials, r.failed, a, b, c, d, e, f, g, h, cpu
+            r.key.0,
+            r.key.1.name(),
+            r.key.2,
+            r.key.3.name(),
+            r.trials,
+            r.failed,
+            a,
+            b,
+            c,
+            d,
+            e,
+            f,
+            g,
+            h,
+            cpu
         ));
     }
     s
@@ -1123,9 +1421,16 @@ pub fn summary_csv(out: &RunOutput, seed: u64) -> String {
 pub fn metadata(cfg: &Config, cmdline: &str, cache: &CacheCtl, load_start: &str) -> J {
     let cpu = fs::read_to_string("/proc/cpuinfo")
         .ok()
-        .and_then(|s| s.lines().find(|l| l.starts_with("model name")).map(|l| l.split(':').nth(1).unwrap_or("").trim().to_string()))
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("model name"))
+                .map(|l| l.split(':').nth(1).unwrap_or("").trim().to_string())
+        })
         .unwrap_or_else(|| sh_out(&["sysctl", "-n", "machdep.cpu.brand_string"]));
-    let mem = fs::read_to_string("/proc/meminfo").ok().and_then(|s| s.lines().find(|l| l.starts_with("MemTotal")).map(|l| l.to_string())).unwrap_or_default();
+    let mem = fs::read_to_string("/proc/meminfo")
+        .ok()
+        .and_then(|s| s.lines().find(|l| l.starts_with("MemTotal")).map(|l| l.to_string()))
+        .unwrap_or_default();
     let (walgit_ready, walgit_msg) = walgit_probe(cfg);
     let rev = std::env::var("ALLGIT_REV").unwrap_or_else(|_| sh_out(&["git", "rev-parse", "HEAD"]));
     let scratch = cfg.scratch.display().to_string();

@@ -1,3 +1,4 @@
+#![allow(clippy::field_reassign_with_default)] // tests build a manifest and then set one field on purpose
 //! Security regression (docs/security-review.md): the lock fencing counter `next_token` may only
 //! move by what a write can plausibly have granted, and lock tokens must come from below it.
 //! Without bounds one write principal can set `next_token = u64::MAX`; it can never decrease, so

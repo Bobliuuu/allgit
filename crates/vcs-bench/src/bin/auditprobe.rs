@@ -12,7 +12,11 @@ use vcs_repo::Repo;
 use vcs_store::{pack::write_pack, LocalStore, ObjectStore};
 
 fn sig(ts: u64) -> Signature {
-    Signature { name: "B".into(), email: "b@example.invalid".into(), timestamp: ts }
+    Signature {
+        name: "B".into(),
+        email: "b@example.invalid".into(),
+        timestamp: ts,
+    }
 }
 
 /// Per-method request and byte counters (CountingBackend only has a total).
@@ -30,7 +34,17 @@ struct Typed<'a> {
 impl<'a> Typed<'a> {
     fn new(inner: &'a dyn Backend) -> Self {
         let z = || AtomicU64::new(0);
-        Typed { inner, get: z(), range: z(), head: z(), put_abs: z(), put_cas: z(), list: z(), down: z(), up: z() }
+        Typed {
+            inner,
+            get: z(),
+            range: z(),
+            head: z(),
+            put_abs: z(),
+            put_cas: z(),
+            list: z(),
+            down: z(),
+            up: z(),
+        }
     }
     fn json(&self) -> String {
         let g = |a: &AtomicU64| a.load(Relaxed);
@@ -81,7 +95,7 @@ impl Backend for Typed<'_> {
 fn layout(s: &str) -> Layout {
     Layout::parse(s).expect("layout flat|deep|bigdir")
 }
-fn median(v: &mut Vec<f64>) -> f64 {
+fn median(v: &mut [f64]) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
     v[v.len() / 2]
 }
@@ -212,7 +226,10 @@ fn main() {
             let d = tempfile::tempdir().unwrap();
             let ty = Typed::new(&mem);
             Repo::clone_from(&ty, "mem", &d.path().join("c"), None).unwrap();
-            println!("{{\"exp\":\"history\",\"commits\":{commits},\"files\":{files},\"clone\":{}}}", ty.json());
+            println!(
+                "{{\"exp\":\"history\",\"commits\":{commits},\"files\":{files},\"clone\":{}}}",
+                ty.json()
+            );
         }
         // manifest-size <zones> <branches-per-zone> <applied>: bytes of the single manifest object.
         "manifest-size" => {
@@ -221,7 +238,10 @@ fn main() {
             let mut m = Manifest::default();
             for i in 0..z {
                 for j in 0..b {
-                    m.branches.insert((format!("zone{i:05}"), format!("branch{j:03}")), ObjectId::from_bytes([(i + j) as u8; 32]));
+                    m.branches.insert(
+                        (format!("zone{i:05}"), format!("branch{j:03}")),
+                        ObjectId::from_bytes([(i + j) as u8; 32]),
+                    );
                 }
                 m.zones.insert(format!("zone{i:05}"), format!("path/to/zone{i:05}"));
             }
@@ -230,7 +250,10 @@ fn main() {
                 x[..8].copy_from_slice(&(i as u64).to_le_bytes());
                 m.applied.push(ObjectId::from_bytes(x));
             }
-            println!("{{\"exp\":\"manifest-size\",\"zones\":{z},\"branches_per_zone\":{b},\"applied\":{ap},\"bytes\":{}}}", m.encode().len());
+            println!(
+                "{{\"exp\":\"manifest-size\",\"zones\":{z},\"branches_per_zone\":{b},\"applied\":{ap},\"bytes\":{}}}",
+                m.encode().len()
+            );
         }
         // mkpacks <dir> <objects> <packs>: write `packs` packs holding `objects` 200-byte blobs in total.
         "mkpacks" => {
@@ -239,17 +262,24 @@ fn main() {
             let mut rng = Rng::new(5);
             std::fs::create_dir_all(dir.join("tmp")).unwrap();
             for _ in 0..packs {
-                let objs: Vec<_> = (0..per).map(|_| {
-                    let e = Object::Blob(rng.bytes(200)).encode();
-                    (id_of_encoded(&e), e)
-                }).collect();
+                let objs: Vec<_> = (0..per)
+                    .map(|_| {
+                        let e = Object::Blob(rng.bytes(200)).encode();
+                        (id_of_encoded(&e), e)
+                    })
+                    .collect();
                 write_pack(&dir.join("pack"), &dir.join("tmp"), objs).unwrap();
             }
         }
         // openpacks <dir>: LocalStore::open time (parses + blake3-verifies every .idx) and miss-lookup cost.
         "openpacks" => {
             let dir = Path::new(&a[1]);
-            let idx_bytes: u64 = std::fs::read_dir(dir.join("pack")).unwrap().filter_map(|e| e.ok()).filter(|e| e.path().extension().is_some_and(|x| x == "idx")).map(|e| e.metadata().unwrap().len()).sum();
+            let idx_bytes: u64 = std::fs::read_dir(dir.join("pack"))
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().is_some_and(|x| x == "idx"))
+                .map(|e| e.metadata().unwrap().len())
+                .sum();
             let mut open = Vec::new();
             for _ in 0..7 {
                 let t0 = Instant::now();
@@ -294,17 +324,29 @@ fn main() {
         // getall <dir> <k>: get() the first k ids of ids.txt (for strace -c).
         "getall" => {
             let s = LocalStore::open(Path::new(&a[1])).unwrap();
-            let ids: Vec<ObjectId> = std::fs::read_to_string(Path::new(&a[1]).join("ids.txt")).unwrap().lines().map(|l| ObjectId::from_hex(l).unwrap()).collect();
+            let ids: Vec<ObjectId> = std::fs::read_to_string(Path::new(&a[1]).join("ids.txt"))
+                .unwrap()
+                .lines()
+                .map(|l| ObjectId::from_hex(l).unwrap())
+                .collect();
             let t0 = Instant::now();
             for id in ids.iter().take(n(2)) {
                 s.get(id).unwrap();
             }
-            println!("{{\"exp\":\"getall\",\"gets\":{},\"us_per_get\":{:.1}}}", n(2).min(ids.len()), t0.elapsed().as_secs_f64() * 1e6 / n(2).min(ids.len()) as f64);
+            println!(
+                "{{\"exp\":\"getall\",\"gets\":{},\"us_per_get\":{:.1}}}",
+                n(2).min(ids.len()),
+                t0.elapsed().as_secs_f64() * 1e6 / n(2).min(ids.len()) as f64
+            );
         }
         // putdup <dir> <k>: put the same k existing objects again (dedup path), for strace -c.
         "putdup" => {
             let s = LocalStore::open(Path::new(&a[1])).unwrap();
-            let ids: Vec<ObjectId> = std::fs::read_to_string(Path::new(&a[1]).join("ids.txt")).unwrap().lines().map(|l| ObjectId::from_hex(l).unwrap()).collect();
+            let ids: Vec<ObjectId> = std::fs::read_to_string(Path::new(&a[1]).join("ids.txt"))
+                .unwrap()
+                .lines()
+                .map(|l| ObjectId::from_hex(l).unwrap())
+                .collect();
             let mut rng = Rng::new(11);
             for _ in ids.iter().take(n(2)) {
                 s.put_blob(&rng.bytes(300)).unwrap();
@@ -351,7 +393,11 @@ fn main() {
             s2.sync().unwrap();
             let tmp_after_next_sync = std::fs::read_dir(dir.join("tmp")).unwrap().count();
             s2.repack().unwrap();
-            let pack = std::fs::read_dir(dir.join("pack")).unwrap().map(|e| e.unwrap().path()).find(|p| p.extension().is_some_and(|x| x == "idx")).unwrap();
+            let pack = std::fs::read_dir(dir.join("pack"))
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .find(|p| p.extension().is_some_and(|x| x == "idx"))
+                .unwrap();
             std::fs::remove_file(&pack).unwrap(); // crash between the .pack rename and the .idx rename
             let s3 = LocalStore::open(&dir).unwrap();
             s3.put_blob(b"y").unwrap();
@@ -395,14 +441,22 @@ fn main() {
             }
             repo.add(&[String::new()]).unwrap();
             repo.commit("dup", sig(1)).unwrap();
-            let blobs = repo.store().list().unwrap().into_iter().filter(|i| matches!(repo.store().get(i), Ok(Object::Blob(b)) if b == body)).count();
+            let blobs = repo
+                .store()
+                .list()
+                .unwrap()
+                .into_iter()
+                .filter(|i| matches!(repo.store().get(i), Ok(Object::Blob(b)) if b == body))
+                .count();
             let big = Rng::new(2).bytes(3 << 20);
             std::fs::write(t.path().join("big.bin"), &big).unwrap();
             let before = repo.store().list().unwrap().len();
             repo.add(&["big.bin".into()]).unwrap();
             let after = repo.store().list().unwrap();
             let chunk_objs = after.len() - before;
-            let whole_stored = after.iter().any(|i| matches!(repo.store().get(i), Ok(Object::Blob(b)) if b.len() == big.len()));
+            let whole_stored = after
+                .iter()
+                .any(|i| matches!(repo.store().get(i), Ok(Object::Blob(b)) if b.len() == big.len()));
             // identical bytes under a different file name / second add: no new objects
             std::fs::write(t.path().join("big2.bin"), &big).unwrap();
             repo.add(&["big2.bin".into()]).unwrap();
@@ -424,7 +478,11 @@ fn main() {
                 ts.push(t0.elapsed().as_secs_f64() * 1e3);
             }
             let (lo, hi) = spread(&ts);
-            println!("{{\"exp\":\"fslist\",\"keys\":{},\"list_packs_prefix_ms_median\":{:.2},\"min\":{lo:.2},\"max\":{hi:.2}}}", n(1), median(&mut ts));
+            println!(
+                "{{\"exp\":\"fslist\",\"keys\":{},\"list_packs_prefix_ms_median\":{:.2},\"min\":{lo:.2},\"max\":{hi:.2}}}",
+                n(1),
+                median(&mut ts)
+            );
         }
         // hashbytes <MiB>: time for content_id (chunk+hash) versus put_content into a memory store (copies+hash).
         "putcontent" => {
