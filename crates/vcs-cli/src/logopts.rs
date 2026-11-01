@@ -177,7 +177,9 @@ impl LogExtra {
         }
         let a = self.diff_args();
         for (id, _) in shown {
-            let es = difftool::entries(repo.commit_pairs(zone, id)?, &a);
+            // contents matter only for rename / copy detection
+            let pairs = if a.detect() { repo.commit_pairs(zone, id)? } else { repo.commit_pairs_names(zone, id)? };
+            let es = difftool::entries(pairs, &a);
             let lines = if self.name_status {
                 difftool::name_status_lines(&es)
             } else {
@@ -268,7 +270,7 @@ fn follow_set(repo: &Repo, prefix: &str, all: &[(ObjectId, Commit)], path: &str,
             keep.insert(id);
             if h.is_some() && before.is_none() {
                 // only the changed paths matter for renames: a path in both trees is neither gone nor new
-                let d = treeops::diff_trees(repo.store(), Some(pc.root), Some(c.root), prefix)?;
+                let d = treeops::diff_trees_files(repo.store(), Some(pc.root), Some(c.root), prefix)?;
                 let rs = detect_renames(&StoreBlobs(repo.store()), &d.old, &d.new, th).map_err(|e| Error::Msg(e.to_string()))?;
                 if let Some(r) = rs.iter().find(|r| r.to == cur) {
                     cur = r.from.clone();
@@ -314,7 +316,7 @@ fn pickaxe_hit(
         None => return Ok(false), // parent outside the listed history
     };
     // only the paths that differ (equal subtrees are not read)
-    let d = treeops::diff_trees(repo.store(), old_root, Some(c.root), prefix)?;
+    let d = treeops::diff_trees_files(repo.store(), old_root, Some(c.root), prefix)?;
     let paths: BTreeSet<&String> = d.new.keys().chain(d.old.keys()).collect();
     let occurrences = |e: Option<&(vcs_objects::EntryMode, ObjectId)>| -> Result<usize, Error> {
         let Some((_, id)) = e else { return Ok(0) };

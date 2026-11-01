@@ -21,7 +21,9 @@
 
 use crate::{io, StoreError};
 use std::fs;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::Write;
+#[cfg(not(unix))]
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use vcs_objects::ObjectId;
 
@@ -119,6 +121,22 @@ impl PackFormat {
     }
 }
 
+thread_local! {
+    static DECOMPRESSOR: std::cell::RefCell<Option<zstd::bulk::Decompressor<'static>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// `zstd::bulk::decompress` with one decompression context per thread: creating a context for every
+/// object costs more than decoding a small object does.
+fn zstd_decompress(data: &[u8], capacity: usize) -> Result<Vec<u8>, String> {
+    DECOMPRESSOR.with(|d| {
+        let mut d = d.borrow_mut();
+        if d.is_none() {
+            *d = Some(zstd::bulk::Decompressor::new().map_err(|e| format!("zstd: {e}"))?);
+        }
+        d.as_mut().expect("just set").decompress(data, capacity).map_err(|e| format!("zstd: {e}"))
+    })
+}
+
 /// Turn an encoded object into a pack entry payload. v1: the bytes as they are. v2: a codec byte
 /// then zstd level 3 output, or the raw bytes when compression does not make them smaller (so an
 /// entry never grows by more than the one codec byte).
@@ -168,7 +186,7 @@ pub fn decode_payload_max(version: u8, payload: &[u8], max: u64) -> Result<std::
             if n > max.min(MAX_DECODED) {
                 return Err("zstd frame claims an oversized object".into());
             }
-            let out = zstd::bulk::decompress(rest, n as usize).map_err(|e| format!("zstd: {e}"))?;
+            let out = zstd_decompress(rest, n as usize)?;
             if out.len() as u64 != n {
                 return Err("zstd frame length mismatch".into());
             }
@@ -204,7 +222,7 @@ fn parse_delta(payload: &[u8], max_delta: u64) -> Result<(u64, Vec<u8>), String>
     if n > max_delta {
         return Err("delta claims an oversized body".into());
     }
-    let d = zstd::bulk::decompress(z, n as usize).map_err(|e| format!("zstd: {e}"))?;
+    let d = zstd_decompress(z, n as usize)?;
     Ok((dist, d))
 }
 
@@ -451,7 +469,7 @@ pub fn decode_block(payload: &[u8]) -> Result<Block, String> {
             if n > MAX_BLOCK {
                 return Err("zstd frame claims an oversized block".into());
             }
-            let out = zstd::bulk::decompress(body, n as usize).map_err(|e| format!("zstd: {e}"))?;
+            let out = zstd_decompress(body, n as usize)?;
             if out.len() as u64 != n {
                 return Err("zstd frame length mismatch".into());
             }
@@ -588,6 +606,8 @@ pub struct Pack {
     idx: PackIndex,
     /// v3: the block read last, so reading neighbours of one file does not decompress it again.
     block: std::sync::Mutex<Option<(u64, std::sync::Arc<Block>)>>,
+    /// The pack file, opened on the first read and kept: reads are positional, so `&self` suffices.
+    file: std::sync::OnceLock<fs::File>,
 }
 
 impl Pack {
@@ -608,6 +628,7 @@ impl Pack {
             pack_path,
             idx,
             block: std::sync::Mutex::new(None),
+            file: std::sync::OnceLock::new(),
         })
     }
 
@@ -626,32 +647,32 @@ impl Pack {
         let Some((off, len)) = self.idx.lookup(id).map_err(corrupt)? else {
             return Ok(None);
         };
-        let mut f = io(&self.pack_path, fs::File::open(&self.pack_path))?;
-        io(&self.pack_path, f.seek(SeekFrom::Start(off)))?;
-        // `len` comes from the index; never allocate it up front, so a lying index on a short
-        // pack cannot demand gigabytes (the buffer only grows with bytes actually read).
-        let mut buf = Vec::new();
-        match (&mut f).take(len as u64).read_to_end(&mut buf) {
-            Ok(n) if n == len as usize => {}
-            _ => return Err(corrupt("pack truncated".into())),
-        }
+        // `len` comes from the index; `read_range` never allocates it up front, so a lying index on a
+        // short pack cannot demand gigabytes (the buffer only grows with bytes actually read).
+        let buf = match self.read_range(off, len as u64) {
+            Ok(b) if b.len() == len as usize => b,
+            Ok(_) => return Err(corrupt("pack truncated".into())),
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Err(corrupt("pack truncated".into())),
+            Err(source) => {
+                return Err(StoreError::Io {
+                    path: self.pack_path.clone(),
+                    source,
+                })
+            }
+        };
         if self.idx.version == 4 && buf.first() == Some(&CODEC_DELTA) {
             let limit = self.idx.pack_len.saturating_sub(32);
             let mut fetch = |o: u64| -> Result<Vec<u8>, String> {
-                let mut len4 = [0u8; 4];
-                f.seek(SeekFrom::Start(o - 4))
-                    .and_then(|_| f.read_exact(&mut len4))
-                    .map_err(|e| format!("base frame: {e}"))?;
-                let l = u32::from_le_bytes(len4) as u64;
+                let len4 = self.read_range(o.checked_sub(4).ok_or("base entry outside pack")?, 4).map_err(|e| format!("base frame: {e}"))?;
+                let l = u32::from_le_bytes(len4.as_slice().try_into().map_err(|_| "base frame: short read".to_string())?) as u64;
                 let Some(end) = o.checked_add(l) else {
                     return Err("base entry outside pack".into());
                 };
                 if l == 0 || end > limit {
                     return Err("base entry outside pack".into());
                 }
-                let mut b = Vec::new();
-                match (&mut f).take(l).read_to_end(&mut b) {
-                    Ok(n) if n as u64 == l => Ok(b),
+                match self.read_range(o, l) {
+                    Ok(b) if b.len() as u64 == l => Ok(b),
                     _ => Err("pack truncated".into()),
                 }
             };
@@ -672,6 +693,48 @@ impl Pack {
             .map(|c| Some(c.into_owned()))
             .map_err(corrupt)
     }
+    /// Up to `len` bytes of the pack starting at `off` (fewer only at the end of the file).
+    #[cfg(unix)]
+    fn read_range(&self, off: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        use std::os::unix::fs::FileExt;
+        let f = match self.file.get() {
+            Some(f) => f,
+            None => {
+                let f = fs::File::open(&self.pack_path)?;
+                self.file.get_or_init(|| f)
+            }
+        };
+        let mut buf = Vec::new();
+        let (mut pos, mut left) = (off, len);
+        while left > 0 {
+            let start = buf.len();
+            buf.resize(start + left.min(1 << 16) as usize, 0);
+            match f.read_at(&mut buf[start..], pos) {
+                Ok(0) => {
+                    buf.truncate(start);
+                    break;
+                }
+                Ok(n) => {
+                    buf.truncate(start + n);
+                    pos += n as u64;
+                    left -= n as u64;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => buf.truncate(start),
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(buf)
+    }
+
+    #[cfg(not(unix))]
+    fn read_range(&self, off: u64, len: u64) -> std::io::Result<Vec<u8>> {
+        let mut f = fs::File::open(&self.pack_path)?;
+        f.seek(SeekFrom::Start(off))?;
+        let mut buf = Vec::new();
+        f.take(len).read_to_end(&mut buf)?;
+        Ok(buf)
+    }
+
     pub fn modified(&self) -> Option<std::time::SystemTime> {
         fs::metadata(&self.pack_path).ok()?.modified().ok()
     }

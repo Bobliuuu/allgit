@@ -68,7 +68,7 @@ pub fn diff_tree(a: &DiffTreeArgs, json: bool) -> Result<(), Error> {
     let zone = repo.resolve_zone(&zone_of_cwd(&repo, &cwd, a.zone.clone())?)?;
     let prefix = repo.zones()?.path_of(&zone).unwrap_or("").to_owned();
     let root = |rev: &str| -> Result<_, Error> { Ok(repo.commit_of(&repo.resolve_rev(&zone, rev)?)?.root) };
-    let d = treeops::diff_trees(repo.store(), Some(root(&a.a)?), Some(root(&a.b)?), &prefix)?;
+    let d = treeops::diff_trees_files(repo.store(), Some(root(&a.a)?), Some(root(&a.b)?), &prefix)?;
     let mut rows: Vec<(&String, char)> = Vec::new();
     for p in d.old.keys().chain(d.new.keys()) {
         let k = match (d.old.contains_key(p), d.new.contains_key(p)) {

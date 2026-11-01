@@ -86,6 +86,16 @@ impl Repo {
     /// Changed files of commit `id` against its first parent (the empty tree for a root commit),
     /// sorted by path. Paths are repository-relative.
     pub fn commit_pairs(&self, zone: &str, id: &ObjectId) -> Result<Vec<FilePair>> {
+        self.commit_pairs_inner(zone, id, true)
+    }
+
+    /// Like [`Repo::commit_pairs`] but file contents are not read: `old`/`new` are `Some(empty)` where the
+    /// file exists on that side. Enough for listings of names and add/delete/modify status.
+    pub fn commit_pairs_names(&self, zone: &str, id: &ObjectId) -> Result<Vec<FilePair>> {
+        self.commit_pairs_inner(zone, id, false)
+    }
+
+    fn commit_pairs_inner(&self, zone: &str, id: &ObjectId, content: bool) -> Result<Vec<FilePair>> {
         let zone = self.resolve_zone(zone)?;
         let prefix = self.zones()?.path_of(&zone).unwrap_or("").to_owned();
         let commit = self.commit_obj(id)?;
@@ -94,7 +104,7 @@ impl Repo {
             None => None,
         };
         // only the parts of the two trees that differ (equal subtrees are not read)
-        let d = treeops::diff_trees(&self.store, parent.map(|c| c.root), Some(commit.root), &prefix)?;
+        let d = treeops::diff_trees_files(&self.store, parent.map(|c| c.root), Some(commit.root), &prefix)?;
         let (old, new) = (d.old, d.new);
         let mut paths: BTreeSet<&String> = old.keys().collect();
         paths.extend(new.keys());
@@ -106,8 +116,8 @@ impl Repo {
             }
             out.push(FilePair {
                 path: p.clone(),
-                old: o.map(|(_, i)| self.store.get_content(i)).transpose()?,
-                new: n.map(|(_, i)| self.store.get_content(i)).transpose()?,
+                old: o.map(|(_, i)| if content { self.store.get_content(i) } else { Ok(Vec::new()) }).transpose()?,
+                new: n.map(|(_, i)| if content { self.store.get_content(i) } else { Ok(Vec::new()) }).transpose()?,
                 old_mode: o.map(|x| x.0),
                 new_mode: n.map(|x| x.0),
             });

@@ -100,7 +100,7 @@ impl DiffArgs {
             || self.find_copies)
             && !colour_auto()
     }
-    fn detect(&self) -> bool {
+    pub(crate) fn detect(&self) -> bool {
         self.find_renames || self.find_copies
     }
     /// Colour on or off for this invocation.
