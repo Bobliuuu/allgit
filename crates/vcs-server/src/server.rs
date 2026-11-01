@@ -76,7 +76,7 @@ impl Config {
     pub fn new(tokens: TokenTable) -> Self {
         Self {
             tokens,
-            max_body: 256 * 1024 * 1024,
+            max_body: 1024 * 1024 * 1024,
             max_manifest_body: 32 * 1024 * 1024,
             max_header_bytes: 32 * 1024,
             validator: ValidatorConfig::default(),

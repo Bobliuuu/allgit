@@ -178,7 +178,7 @@ No separate class for lock operations yet, and failed authentication is not limi
 `HttpBackend` reports 429 as `Unavailable`.
 
 **Limits.** `max_connections` (default 256; extra connections get 503 with `Retry-After` on plain HTTP, are dropped
-on TLS), `max_body` (256 MiB, non-manifest), `max_manifest_body` (32 MiB), `max_header_bytes` (32 KiB total request
+on TLS), `max_body` (1 GiB, non-manifest), `max_manifest_body` (32 MiB), `max_header_bytes` (32 KiB total request
 line and headers, at most 100 headers; 431), `header_timeout` (10 s overall to receive the headers, including the TLS
 handshake), `body_timeout` (600 s overall for the body and again for the response), `io_timeout` (30 s per read/write).
 The overall deadlines are what stop slowloris-style trickling; per-read timeouts alone would not. Bodies are read
