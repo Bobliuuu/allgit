@@ -113,9 +113,39 @@ fn read(p: PathBuf) -> String {
 #[test]
 fn shelve_and_unshelve_over_a_file_remote() {
     let t = tempfile::tempdir().unwrap();
-    let root = t.path();
-    let remote = root.join("remote");
-    let url = remote.to_str().unwrap();
+    let remote = t.path().join("remote");
+    shelve_scenario(t.path(), remote.to_str().unwrap());
+}
+
+/// Gated on `VCS_TEST_S3_ENDPOINT` (docs/deploy.md): the same scenario with the shelves stored in
+/// an S3 bucket (RustFS / MinIO / moto), directly from the CLI.
+#[test]
+fn shelve_and_unshelve_over_s3() {
+    let Some((url, ak, sk, _)) = s3_env("shelve-direct") else { return };
+    std::env::set_var("AWS_ACCESS_KEY_ID", ak);
+    std::env::set_var("AWS_SECRET_ACCESS_KEY", sk);
+    let t = tempfile::tempdir().unwrap();
+    shelve_scenario(t.path(), &url);
+}
+
+/// `(s3 url, access key, secret key, bucket)` for a fresh prefix, or None when no S3 server is configured.
+fn s3_env(tag: &str) -> Option<(String, String, String, String)> {
+    let Ok(ep) = std::env::var("VCS_TEST_S3_ENDPOINT") else {
+        eprintln!("skipping: VCS_TEST_S3_ENDPOINT not set (see docs/deploy.md)");
+        return None;
+    };
+    let var = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_owned());
+    let (ak, sk) = (var("VCS_TEST_S3_ACCESS_KEY", "minioadmin"), var("VCS_TEST_S3_SECRET_KEY", "minioadmin"));
+    let bucket = var("VCS_TEST_S3_BUCKET", "vcs-test");
+    vcs_store_s3::S3Backend::new_unchecked(vcs_store_s3::S3Config::new(&ep, &bucket, &ak, &sk))
+        .unwrap()
+        .ensure_bucket()
+        .unwrap();
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    Some((format!("s3://{bucket}/{tag}-{nanos}?endpoint={ep}"), ak, sk, bucket))
+}
+
+fn shelve_scenario(root: &Path, url: &str) {
     let (a, b) = (root.join("a"), root.join("b"));
     file_ok(root, "alice", &["init", "a"]);
     write(&a, "src/lib.rs", "line1\nline2\nline3\n");
@@ -200,11 +230,22 @@ fn a_corrupted_shelf_is_refused_before_anything_is_applied() {
 #[test]
 fn shelves_on_vcs_server_are_private_until_a_shelve_read_rule() {
     let t = tempfile::tempdir().unwrap();
-    let root = t.path();
-    let data = root.join("data");
+    let data = t.path().join("data");
+    private_shelves(t.path(), &["--root", data.to_str().unwrap()], &[]);
+}
+
+/// Gated on `VCS_TEST_S3_ENDPOINT`: the same privacy rules with `vcs-server --backend s3://...`.
+#[test]
+fn shelves_on_vcs_server_over_s3_are_private_until_a_shelve_read_rule() {
+    let Some((url, ak, sk, _)) = s3_env("shelve-srv") else { return };
+    let t = tempfile::tempdir().unwrap();
+    private_shelves(t.path(), &["--backend", &url], &[("AWS_ACCESS_KEY_ID", ak), ("AWS_SECRET_ACCESS_KEY", sk)]);
+}
+
+fn private_shelves(root: &Path, backend: &[&str], envs: &[(&str, String)]) {
     let pol = root.join("policy");
     std::fs::write(&pol, "shelve-read bob alice **\n").unwrap();
-    let srv = start_server(root, &["--root", data.to_str().unwrap()], &["--policy", pol.to_str().unwrap()], &[]);
+    let srv = start_server(root, backend, &["--policy", pol.to_str().unwrap()], envs);
     let url = srv.url.as_str();
     let (a, b, c) = (root.join("a"), root.join("b"), root.join("c"));
     ok_tok(root, "alice", "tok-alice", &["init", "a"]);
