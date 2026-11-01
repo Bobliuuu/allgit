@@ -157,17 +157,9 @@ impl Repo {
         Ok(rep)
     }
 
-    /// Everything that pins objects locally. See docs/gc.md for why each one is a root.
-    fn gc_roots(&self) -> Result<Vec<ObjectId>> {
+    /// The roots that live in one worktree's own state directory.
+    fn worktree_roots(&self) -> Result<Vec<ObjectId>> {
         let mut roots = Vec::new();
-        let refs = self.refs()?;
-        roots.extend(refs.branches.values().copied());
-        roots.extend(refs.snapshots.values().copied());
-        roots.extend(refs.tags.values().copied());
-        let rrefs = self.remote_refs()?;
-        roots.extend(rrefs.branches.values().copied());
-        roots.extend(rrefs.snapshots.values().copied());
-        roots.extend(self.op_head()?); // the operation chain (and every view in it) hangs off this
         for e in self.index()?.entries.values() {
             roots.push(e.id);
         }
@@ -188,6 +180,24 @@ impl Repo {
                 roots.extend([c.base, c.left, c.right].into_iter().flatten());
                 roots.push(c.placeholder);
             }
+        }
+        Ok(roots)
+    }
+
+    /// Everything that pins objects locally. See docs/gc.md for why each one is a root.
+    fn gc_roots(&self) -> Result<Vec<ObjectId>> {
+        let mut roots = Vec::new();
+        let refs = self.refs()?;
+        roots.extend(refs.branches.values().copied());
+        roots.extend(refs.snapshots.values().copied());
+        roots.extend(refs.tags.values().copied());
+        let rrefs = self.remote_refs()?;
+        roots.extend(rrefs.branches.values().copied());
+        roots.extend(rrefs.snapshots.values().copied());
+        roots.extend(self.op_head()?); // the operation chain (and every view in it) hangs off this
+                                       // Every worktree's own state pins objects: its index, stash and unfinished merge / rebase.
+        for wt in self.worktree_views()? {
+            roots.extend(wt.worktree_roots()?);
         }
         // Transactions are not reachable from commits and there is no local transaction log yet,
         // so every stored Transaction is a root until the remote/tx-log design lands.
