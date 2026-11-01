@@ -165,6 +165,71 @@ impl CommitGraphFile {
         Some(out)
     }
 
+    /// The commits reachable from any of `include` but from none of `exclude` (`include ^exclude`
+    /// in git terms), unordered. Walks commits by decreasing generation number and stops as soon
+    /// as no commit that could still be a result is waiting, so the cost follows the size of the
+    /// answer plus the commits between it and the excluded history, not the whole history.
+    /// `None` if some id is not in the graph.
+    pub fn range_ids(&self, include: &[ObjectId], exclude: &[ObjectId]) -> Option<Vec<ObjectId>> {
+        use std::collections::BinaryHeap;
+        const INT: u8 = 1;
+        const UN: u8 = 2;
+        const QUEUED: u8 = 4;
+        const LIVE: u8 = 8; // queued and not (yet) known uninteresting: counted in `live`
+        let n = self.ids.len();
+        let mut flags = vec![0u8; n];
+        let mut heap: BinaryHeap<(u32, usize)> = BinaryHeap::new();
+        let mut live = 0usize;
+        let mut seed = |flags: &mut Vec<u8>, i: usize, f: u8| {
+            flags[i] |= f;
+            if flags[i] & QUEUED == 0 {
+                flags[i] |= QUEUED;
+                heap.push((self.gen[i], i));
+                if flags[i] & UN == 0 {
+                    flags[i] |= LIVE;
+                    live += 1;
+                }
+            } else if flags[i] & UN != 0 && flags[i] & LIVE != 0 {
+                flags[i] &= !LIVE;
+                live -= 1;
+            }
+        };
+        for id in exclude {
+            seed(&mut flags, self.index_of(id)?, UN);
+        }
+        for id in include {
+            seed(&mut flags, self.index_of(id)?, INT);
+        }
+        let mut out = Vec::new();
+        while live > 0 {
+            let (_, i) = heap.pop()?;
+            let f = flags[i];
+            if f & LIVE != 0 {
+                live -= 1;
+            }
+            if f & UN == 0 {
+                out.push(self.ids[i]);
+            }
+            let pass = f & (INT | UN);
+            for &p in self.par(i) {
+                let p = p as usize;
+                flags[p] |= pass;
+                if flags[p] & QUEUED == 0 {
+                    flags[p] |= QUEUED;
+                    heap.push((self.gen[p], p));
+                    if flags[p] & UN == 0 {
+                        flags[p] |= LIVE;
+                        live += 1;
+                    }
+                } else if flags[p] & UN != 0 && flags[p] & LIVE != 0 {
+                    flags[p] &= !LIVE;
+                    live -= 1;
+                }
+            }
+        }
+        Some(out)
+    }
+
     /// Add every commit reachable from `tips` that is not yet present. `load(id)` returns
     /// `(parents, commit time)` of the real commit. Fails if a commit cannot be loaded or has
     /// too many parents; the caller then just does not use a graph.
@@ -435,6 +500,30 @@ mod tests {
                     prop_assert_eq!(n, from.difference(&behind).count());
                 }
             }
+        }
+
+        #[test]
+        fn range_ids_match_set_difference(
+            d in dag(),
+            inc in proptest::collection::vec(0u32..40, 1..4),
+            exc in proptest::collection::vec(0u32..40, 0..4),
+        ) {
+            let (m, f) = build(&d);
+            let n = d.len() as u32;
+            let inc: Vec<ObjectId> = inc.into_iter().map(|x| id(x % n)).collect();
+            let exc: Vec<ObjectId> = exc.into_iter().map(|x| id(x % n)).collect();
+            let mut want = std::collections::BTreeSet::new();
+            for i in &inc {
+                want.extend(crate::base::ancestors(&m, i).unwrap());
+            }
+            for e in &exc {
+                for a in crate::base::ancestors(&m, e).unwrap() {
+                    want.remove(&a);
+                }
+            }
+            let mut got = f.range_ids(&inc, &exc).unwrap();
+            got.sort();
+            prop_assert_eq!(got, want.into_iter().collect::<Vec<_>>());
         }
 
         #[test]

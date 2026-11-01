@@ -7,7 +7,9 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use vcs_objects::codec::{Reader, Writer};
-use vcs_objects::names::{paths_overlap, validate_branch_name, validate_path, validate_zone_name};
+use vcs_objects::names::{
+    paths_overlap, validate_branch_name, validate_path, validate_stored_branch_name, validate_zone_name, DETACHED_BRANCH,
+};
 use vcs_objects::{ObjectId, RefUpdate};
 
 pub const ROOT_ZONE: &str = "root";
@@ -283,12 +285,17 @@ impl Refs {
     pub fn head(&self, zone: &str, branch: &str) -> Option<ObjectId> {
         self.branches.get(&(zone.to_owned(), branch.to_owned())).copied()
     }
+    /// Named branches of `zone` (the internal detached-HEAD ref is not a branch; see [`Refs::detached`]).
     pub fn branches_of(&self, zone: &str) -> Vec<(String, ObjectId)> {
         self.branches
             .iter()
-            .filter(|((a, _), _)| a == zone)
+            .filter(|((a, b), _)| a == zone && b != DETACHED_BRANCH)
             .map(|((_, b), id)| (b.clone(), *id))
             .collect()
+    }
+    /// The commit `zone`'s detached HEAD points at, if the zone has one.
+    pub fn detached(&self, zone: &str) -> Option<ObjectId> {
+        self.head(zone, DETACHED_BRANCH)
     }
     /// Compare-and-set a batch of updates, all-or-nothing.
     pub fn apply(&mut self, updates: &[RefUpdate]) -> Result<()> {
@@ -337,7 +344,7 @@ impl Refs {
             let a = r.str(64).map_err(e)?;
             let b = r.str(200).map_err(e)?;
             validate_zone_name(&a)?;
-            validate_branch_name(&b)?;
+            validate_stored_branch_name(&b)?;
             refs.branches.insert((a, b), r.id().map_err(e)?);
         }
         for _ in 0..r.count(33).map_err(e)? {
@@ -410,7 +417,7 @@ impl Workspace {
             let a = r.str(64).map_err(e)?;
             let b = r.str(200).map_err(e)?;
             validate_zone_name(&a)?;
-            validate_branch_name(&b)?;
+            validate_stored_branch_name(&b)?;
             ws.subs.insert(a, b);
         }
         if v2 {

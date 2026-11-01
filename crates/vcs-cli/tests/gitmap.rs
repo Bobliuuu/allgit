@@ -13,6 +13,10 @@ use std::process::{Command, Output};
 
 const TABLE: &str = include_str!("../src/gitmap_table.rs");
 
+/// Commit clock shared by both sides (0 = real time). `Op::T` sets it so that vcs and git give
+/// every commit the same time and histories can be compared in order.
+static CLOCK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn words(line: &str) -> Vec<String> {
     let mut out = vec![];
     let (mut cur, mut quote, mut any) = (String::new(), None::<char>, false);
@@ -77,6 +81,14 @@ impl Side {
             }
             Kind::Git => Command::new("git"),
         };
+        let clock = CLOCK.load(std::sync::atomic::Ordering::SeqCst);
+        if clock != 0 {
+            let clock = 1_700_000_000 + clock;
+            let d = format!("@{clock} +0000");
+            c.env("VCS_TIMESTAMP", clock.to_string())
+                .env("GIT_AUTHOR_DATE", &d)
+                .env("GIT_COMMITTER_DATE", &d);
+        }
         c.args(&args)
             .current_dir(cwd)
             .env("VCS_AUTHOR_NAME", "Dev")
@@ -136,7 +148,14 @@ impl Side {
                 self.raw(&["ls-files"]),
                 self.raw(&["log", "--format=%s"]),
                 self.raw(&["status", "--porcelain", "--no-renames"]),
-                self.raw(&["symbolic-ref", "--short", "HEAD"]),
+                {
+                    let b = self.raw(&["symbolic-ref", "--short", "HEAD"]);
+                    if b.trim().is_empty() {
+                        "HEAD".to_owned()
+                    } else {
+                        b
+                    }
+                },
                 self.raw(&["tag"]),
             ),
         };
@@ -237,6 +256,10 @@ enum Op {
     X(&'static str, &'static str),
     /// Run the line in both; BOTH must fail.
     BF(&'static str),
+    /// Set the commit time of the following commands (both sides).
+    T(u64),
+    /// Run in both; the output lines must be equal in the same order (merge subjects normalised).
+    O(&'static str),
 }
 
 struct Run {
@@ -244,6 +267,7 @@ struct Run {
 }
 
 fn run_scenario(name: &str, ops: &[Op], git_on: bool, fails: &mut Vec<String>) -> Vec<&'static str> {
+    CLOCK.store(0, std::sync::atomic::Ordering::SeqCst);
     let t = tempfile::tempdir().unwrap();
     let mk = |kind: Kind, n: &str| {
         let dir = t.path().join(n);
@@ -309,6 +333,7 @@ fn run_scenario(name: &str, ops: &[Op], git_on: bool, fails: &mut Vec<String>) -
                     ));
                 }
             }
+            Op::T(t) => CLOCK.store(*t, std::sync::atomic::Ordering::SeqCst),
             Op::BF(line) => {
                 run.done.push(line);
                 for s in [&v, &g].into_iter().filter(|s| s.kind == Kind::Vcs || git_on) {
@@ -320,7 +345,7 @@ fn run_scenario(name: &str, ops: &[Op], git_on: bool, fails: &mut Vec<String>) -
                     }
                 }
             }
-            Op::G(line) | Op::GS(line) | Op::GC(line, _) | Op::D(line) | Op::L(line) => {
+            Op::G(line) | Op::GS(line) | Op::GC(line, _) | Op::D(line) | Op::L(line) | Op::O(line) => {
                 run.done.push(line);
                 let ov = v.cmd(&v.dir, line);
                 let og = if git_on { Some(g.cmd(&g.dir, line)) } else { None };
@@ -343,6 +368,24 @@ fn run_scenario(name: &str, ops: &[Op], git_on: bool, fails: &mut Vec<String>) -
                             let (a, b) = (diff_lines(&String::from_utf8_lossy(&ov.stdout)), diff_lines(&to));
                             if a != b {
                                 fail(format!("`{line}`: changed lines differ\n vcs: {a:?}\n git: {b:?}"));
+                            }
+                        }
+                        Op::O(_) => {
+                            let norm = |s: &str| -> Vec<String> {
+                                s.lines()
+                                    .map(|l| {
+                                        let l = l.trim();
+                                        if l.starts_with("Merge ") {
+                                            "Merge".to_owned()
+                                        } else {
+                                            l.to_owned()
+                                        }
+                                    })
+                                    .collect()
+                            };
+                            let (a, b) = (norm(&String::from_utf8_lossy(&ov.stdout)), norm(&to));
+                            if a != b {
+                                fail(format!("`{line}`: output or order differs\n vcs: {a:?}\n git: {b:?}"));
                             }
                         }
                         Op::L(_) => {
@@ -465,6 +508,150 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
             ],
         ),
         (
+            "ranges",
+            vec![
+                T(100),
+                W("a.txt", "m1\n"),
+                G("git add ."),
+                G(r#"git commit -m "m1""#),
+                G("git branch topic"),
+                T(200),
+                W("b.txt", "m2\n"),
+                G("git add ."),
+                G(r#"git commit -m "m2""#),
+                G("git branch feature"),
+                G("git switch feature"),
+                T(300),
+                W("f.txt", "f1\n"),
+                G("git add ."),
+                G(r#"git commit -m "f1""#),
+                T(500),
+                W("g.txt", "f2\n"),
+                G("git add ."),
+                G(r#"git commit -m "f2""#),
+                G("git switch main"),
+                T(400),
+                W("c.txt", "m3\n"),
+                G("git add ."),
+                G(r#"git commit -m "m3""#),
+                T(600),
+                G("git merge feature"),
+                T(700),
+                W("d.txt", "m4\n"),
+                G("git add ."),
+                G(r#"git commit -m "m4""#),
+                G("git switch topic"),
+                T(800),
+                W("t.txt", "p1\n"),
+                G("git add ."),
+                G(r#"git commit -m "p1""#),
+                G("git switch main"),
+                // ranges: same commits, same order as git
+                O("git log --format=%s main..feature"),
+                O("git log --format=%s main..topic"),
+                O("git log --format=%s main..feature"),
+                O("git log --format=%s main...feature"),
+                O("git log ^main feature --format=%s"),
+                O("git log --format=%s feature..main"),
+                O("git log --format=%s main...feature"),
+                O("git log --format=%s topic...main"),
+                O("git log --format=%s main...topic"),
+                O("git log --format=%s ^feature main"),
+                O("git log --format=%s feature --not main"),
+                O("git log --format=%s main --not feature topic"),
+                O("git log --format=%s --reverse main..topic"),
+                O("git log --format=%s -n 2 topic...main"),
+                O("git log --format=%s main~1..main"),
+                O("git log --format=%s --first-parent topic...main"),
+                O("git log --format=%s --all"),
+                O("git log --format=%s --author=Dev topic..main"),
+                O("git log --format=%s topic..main -- c.txt"),
+                O("git log --format=%s main..main"),
+                O("git rev-list --count topic...main"),
+                O("git rev-list --count main..feature"),
+                O("git rev-list --count --all"),
+                O("git rev-list --count -n 3 --all"),
+                O("git rev-list --count feature..main"),
+                L("git shortlog -sn main..feature"),
+                L("git shortlog -sn topic..main"),
+                D("git diff topic...main"),
+                D("git diff main...topic"),
+                D("git diff feature...main"),
+                GC("git log --all", "p1"),
+                // the exact table rows
+                G("git log --all"),
+                G("git log main..feature"),
+                G("git log main...feature"),
+                G("git log ^main feature"),
+                G("git log feature --not main"),
+                G("git log --reverse main..feature"),
+                G("git log -n 2 main...feature"),
+                G("git rev-list --count main..feature"),
+                G("git rev-list --all"),
+                G("git shortlog -sn main..feature"),
+                G("git diff main...feature"),
+            ],
+        ),
+        (
+            "detach",
+            vec![
+                T(100),
+                W("a.txt", "c1\n"),
+                G("git add ."),
+                G(r#"git commit -m "c1""#),
+                G("git tag v1.0"),
+                T(200),
+                W("b.txt", "c2\n"),
+                G("git add ."),
+                G(r#"git commit -m "c2""#),
+                T(300),
+                W("c.txt", "c3\n"),
+                G("git add ."),
+                G(r#"git commit -m "c3""#),
+                G("git branch side main~1"),
+                G("git checkout --detach v1.0"),
+                GC("git status", "detached"),
+                O("git log --format=%s"),
+                // commits on a detached HEAD
+                T(400),
+                W("x.txt", "d1\n"),
+                G("git add ."),
+                G(r#"git commit -m "d1""#),
+                O("git log --format=%s"),
+                O("git log --format=%s --all"),
+                O("git log --format=%s main..HEAD"),
+                O("git log --format=%s HEAD..main"),
+                G("git switch -c rescue"),
+                O("git log --format=%s"),
+                G("git switch main"),
+                G("git switch --detach HEAD~1"),
+                O("git log --format=%s"),
+                G("git checkout main"),
+                G("git checkout v1.0"),
+                O("git log --format=%s"),
+                G("git checkout main"),
+                G("git checkout --detach"),
+                G("git switch --detach side"),
+                G("git switch main"),
+                // rename and branch-at
+                G("git branch -m main trunk"),
+                GC("git branch --show-current", "trunk"),
+                G("git branch -m trunk main"),
+                G("git branch -M rescue side"),
+                G("git branch topic3 main~1"),
+                G("git switch -c topic2 main"),
+                G("git switch main"),
+                G("git checkout -b feature2 main"),
+                G("git switch -c b3 v1.0"),
+                G("git switch main"),
+                G("git branch -D feature2"),
+                G("git branch -D b3"),
+                BF("git switch v1.0"),
+                BF("git branch -m nope other"),
+                BF("git branch -m topic3 topic2"),
+            ],
+        ),
+        (
             "history",
             vec![
                 W("f.txt", "v1\n"),
@@ -505,7 +692,6 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
                 G("git checkout HEAD~1 -- f.txt"),
                 W("f.txt", "v4\n"),
                 G("git restore --source=HEAD~1 f.txt"),
-                X("git log --all", "no vcs equivalent"),
             ],
         ),
         (

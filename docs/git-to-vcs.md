@@ -34,6 +34,30 @@ None of these detects whether the directory is a vcs or a git repository; they a
 `vcs reset [--soft|--mixed|--hard] [rev] [-- paths]`, `vcs clean -n|-f [-d]`,
 `vcs stash apply`, `vcs switch -c`, and `~N`/`^` revisions for `cherry-pick` and `revert`.
 
+History and refs (native commands first, `vcs git` only spells them the git way):
+
+* Ranges: `vcs log` and `vcs shortlog` take `A..B`, `A...B`, `^A B`, `--not A` (also `--not REV`),
+  and `vcs rev-list [--count] [-n N] [--reverse] [--all]` lists commit ids. A range is a set found
+  on the commit-graph by generation number (the walk stops when no commit that could still belong
+  to the answer is waiting), listed in `log` order (author time, newest first). Without the cache
+  the same set is computed from the commit objects (`.vcs/commit-graphs` is only a cache). A range
+  lives inside one zone: every revision in it is resolved in that zone. An empty range prints
+  nothing. `^A` alone is empty, as in git. `vcs git diff A...B` diffs the merge base against B.
+* `vcs log --all`: every branch head, every tag (peeled) and a detached HEAD of the zone you are in.
+  Remote-tracking branches are not included. `vcs log --all-zones` does the same for every zone and
+  interleaves the commits newest first (each commit line carries its zone).
+* Detached HEAD: `vcs switch --detach <rev>` (`<rev>`: tag, commit-id prefix, `HEAD~2`, branch) acts
+  on the zone you are in; other zones stay on their branches. The commit lives in a hidden per-zone
+  ref, so `commit`, `merge`, `reset`, `status`, `diff` and `gc` treat it like the checked-out branch,
+  `vcs status` prints `HEAD detached at <id>`, the ref is never published, bundled or listed as a
+  branch, and `vcs op log`/`op undo` record and restore it. `vcs switch <branch>` leaves it; commits
+  that no branch or tag reaches are listed first with the rescue (`vcs branch <name> <id>` before
+  leaving, or `vcs op undo` after). `vcs switch -c <name>` and `vcs branch <name>` keep them. Only one
+  worktree can be detached in a given zone at a time.
+* `vcs branch -m [<old>] <new>` / `-M` renames (refs and workspace move, no file is touched; refused
+  while a merge or rebase is in progress; recorded in the op log); `vcs branch <name> <rev>` creates
+  a branch anywhere.
+
 ## Concepts that differ
 
 * Zones: each zone has its own branch heads, so `reset`, `switch`, `branch`, `log` act on the zone
@@ -41,7 +65,7 @@ None of these detects whether the directory is a vcs or a git repository; they a
 * Submodules: there are none. A zone is a path prefix with its own branches inside the same
   repository: `vcs zone create <name> --path <dir>`, `vcs zone add|remove <name>` to subscribe,
   `vcs clone --zone <name>` to download only some zones (docs/zones.md).
-* One remote, no detached HEAD, no per-branch upstream, no patch files (`format-patch`, `am`,
+* One remote, no per-branch upstream, no patch files (`format-patch`, `am`,
   `apply`): exchange commits with `vcs publish`/`vcs fetch` or `vcs bundle`.
 * `vcs log` shows 20 commits by default; `vcs git log` shows all, like git.
 
@@ -56,7 +80,7 @@ Status: exact (same command and flags), renamed (other spelling, same meaning), 
 semantics differ as the notes say), missing (no equivalent; the notes name the native route).
 
 <!-- BEGIN GENERATED TABLE -->
-214 rows: 105 exact, 31 renamed, 22 different, 56 missing.
+227 rows: 119 exact, 36 renamed, 23 different, 49 missing.
 
 | git | vcs | status | notes | test |
 |---|---|---|---|---|
@@ -101,7 +125,7 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git diff -- f.txt` | `vcs git diff -- f.txt` | renamed | native `vcs diff` has no path filter; `vcs git diff` does | `history` |
 | `git diff --exit-code` | none | missing | use `vcs diff --name-only` and test for output | `basics` |
 | `git diff --numstat` | none | missing | use `vcs diff --stat` | translation |
-| `git diff main...feature` | none | missing | `vcs merge-base main feature`, then `vcs git diff <base> feature` | translation |
+| `git diff main...feature` | `vcs git diff main...feature` | renamed | merge base of the two against the second; resolved by `vcs git diff` (native `vcs diff` has no revisions) | `ranges` |
 | `git commit -m "msg"` | `vcs commit -m msg` | exact | commits every zone that has staged changes, atomically | `basics` |
 | `git commit -a -m "msg"` | `vcs add <every modified or deleted tracked file> ; vcs commit -m msg` | exact |  | `basics` |
 | `git commit --amend -m "msg"` | `vcs reset --soft HEAD^ && vcs commit -m msg` | different | replaces the zone's tip commit with a new one (new commit id, same parents); the old one is reachable only via `vcs op log`; without -m the old message is reused (no editor) | `amend` |
@@ -123,8 +147,16 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git log main -- f.txt` | `vcs log -n 1000000000 main -- f.txt` | exact |  | `history` |
 | `git log -p` | `vcs log + vcs show <each>` | different | each commit is printed with `vcs show` layout; zone line instead of git headers | `history` |
 | `git log --stat` | `vcs log + vcs show --stat <each>` | different | as above | `history` |
-| `git log --all` | none | missing | logs are per zone branch: `vcs log <branch>` | `history` |
-| `git log main..feature` | none | missing | compare with `vcs merge-base` and `vcs diff-tree` | translation |
+| `git log --all` | `vcs log -n 1000000000 --all` | different | the branches, tags and detached HEAD of the zone you are in (history is per zone); `vcs log --all-zones` interleaves every zone; remote-tracking branches are not included | `ranges` |
+| `git log main..feature` | `vcs log -n 1000000000 main..feature` | exact | commit-graph walk by generation number; same commits and order as git (commit time ties may order differently) | `ranges` |
+| `git log main...feature` | `vcs log -n 1000000000 main...feature` | exact | symmetric difference | `ranges` |
+| `git log ^main feature` | `vcs log -n 1000000000 ^main feature` | exact |  | `ranges` |
+| `git log feature --not main` | `vcs log -n 1000000000 feature ^main` | exact | `--not` is folded into `^rev` | `ranges` |
+| `git log --reverse main..feature` | `vcs log -n 1000000000 --reverse main..feature` | exact |  | `ranges` |
+| `git log -n 2 main...feature` | `vcs log -n 2 main...feature` | exact |  | `ranges` |
+| `git rev-list --count main..feature` | `vcs rev-list --count main..feature` | exact |  | `ranges` |
+| `git rev-list --all` | `vcs rev-list --all` | exact | vcs commit ids, not git ids; same set and order | `ranges` |
+| `git shortlog -sn main..feature` | `vcs shortlog -s -n main..feature` | exact |  | `ranges` |
 | `git log -G regex` | none | missing | `vcs log -S string` or `vcs grep regex <rev>` | translation |
 | `git show` | `vcs show` | exact |  | `history` |
 | `git show HEAD~1` | `vcs show HEAD~1` | exact |  | `history` |
@@ -135,19 +167,24 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git branch -d feature` | `vcs branch -d feature` | exact |  | `basics` |
 | `git branch -D feature` | `vcs branch -d --force feature` | renamed |  | translation |
 | `git branch --show-current` | `vcs branch (the * line)` | renamed |  | `basics` |
-| `git branch -m old new` | none | missing | `vcs switch -c new`, then `vcs branch -d old` from another branch | translation |
+| `git branch -m main trunk` | `vcs branch -m main trunk` | exact | refs and workspace move, no file is touched; an op-log entry makes it undoable (`vcs op undo`); refused while a merge or rebase is in progress | `detach` |
+| `git branch -M rescue side` | `vcs branch -M rescue side` | exact | replaces an existing branch, never the checked-out one | `detach` |
 | `git branch -r` | none | missing | `vcs remote show` lists remote-tracking refs | translation |
-| `git branch new start` | none | missing | `vcs switch start` then `vcs branch new` | translation |
+| `git branch topic3 main~1` | `vcs branch topic3 main~1` | exact | start is any revision: branch, tag, commit-id prefix, `HEAD~2` | `detach` |
 | `git switch main` | `vcs switch main` | exact | a dirty zone is refused instead of carrying changes along | `basics` |
 | `git switch -c feature` | `vcs switch -c feature` | exact |  | `merge` |
-| `git switch --detach HEAD~1` | none | missing | no detached HEAD | translation |
-| `git checkout main` | `vcs switch main  (or vcs restore when it names a file)` | renamed | a dirty zone is refused instead of carrying changes along | `basics` |
+| `git switch --detach HEAD~1` | `vcs switch --detach HEAD~1` | exact | detached HEAD is per zone: the zone you are in is detached, other zones keep their branch; commits made there go to a hidden per-zone ref (kept by gc, never published); `vcs status` says `HEAD detached`; leaving lists commits no branch reaches and how to keep them; `vcs op undo` brings the detached state back | `detach` |
+| `git switch -c rescue` | `vcs switch -c rescue` | exact | from a detached HEAD this keeps the commits made there | `detach` |
+| `git switch -c topic2 main` | `vcs branch topic2 main ; vcs switch topic2` | renamed |  | `detach` |
+| `git checkout main` | `vcs switch main  (or vcs switch --detach for a tag or commit, vcs restore for a file)` | renamed | a dirty zone is refused instead of carrying changes along | `basics` |
+| `git checkout v1.0` | `vcs switch v1.0  (or vcs switch --detach for a tag or commit, vcs restore for a file)` | renamed | a tag or commit id checks out as a detached HEAD (see `git switch --detach`) | `detach` |
 | `git checkout -b feature` | `vcs switch -c feature` | renamed |  | translation |
 | `git checkout -- f.txt` | `vcs restore f.txt` | renamed |  | `basics` |
 | `git checkout HEAD -- f.txt` | `vcs restore f.txt` | renamed |  | translation |
 | `git checkout HEAD~1 -- f.txt` | `vcs cat-file -p HEAD~1:<path> into the file + vcs add for f.txt` | renamed | writes the file from the revision and stages it, as git | `history` |
 | `git checkout --ours f.txt` | `vcs resolve --ours f.txt` | renamed |  | translation |
-| `git checkout --detach v1.0` | none | missing | detached HEAD: `vcs show v1.0` to look; `git checkout v1.0` fails the same way at run time | translation |
+| `git checkout --detach v1.0` | `vcs switch --detach v1.0` | renamed | see `git switch --detach` | `detach` |
+| `git checkout -b feature2 main` | `vcs branch feature2 main ; vcs switch feature2` | renamed |  | `detach` |
 | `git restore f.txt` | `vcs restore f.txt` | exact |  | `basics` |
 | `git restore --staged f.txt` | `vcs restore --staged f.txt` | exact |  | `basics` |
 | `git restore -S -W f.txt` | `vcs restore --staged f.txt ; vcs restore f.txt` | exact |  | translation |

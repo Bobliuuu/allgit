@@ -25,6 +25,8 @@ pub enum More {
     LsFiles(crate::plumb::LsFilesArgs),
     /// Show the type, size or content of an object
     CatFile(crate::plumb::CatFileArgs),
+    /// List commit ids of a revision range (A..B, A...B, ^A B, --all), newest first
+    RevList(crate::histcli::RevListArgs),
     /// Summarize history by author
     Shortlog(crate::plumb::ShortlogArgs),
     /// Best common ancestor of two revisions
@@ -50,6 +52,7 @@ pub fn dispatch(cmd: &More, json: bool) -> Result<(), Error> {
         More::RevParse(a) => crate::plumb::rev_parse(a, json),
         More::LsFiles(a) => crate::plumb::ls_files(a, json),
         More::CatFile(a) => crate::plumb::cat_file(a, json),
+        More::RevList(a) => crate::histcli::rev_list(a, json),
         More::Shortlog(a) => crate::plumb::shortlog(a, json),
         More::MergeBase(a) => crate::histcmds::merge_base(a, json),
         More::DiffTree(a) => crate::histcmds::diff_tree(a, json),

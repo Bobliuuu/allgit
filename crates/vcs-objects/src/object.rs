@@ -608,7 +608,7 @@ impl Object {
                     let zone = r.str(64)?;
                     names::validate_zone_name(&zone).map_err(|_| DecodeError::Invalid("zone name"))?;
                     let branch = r.str(200)?;
-                    names::validate_branch_name(&branch).map_err(|_| DecodeError::Invalid("branch name"))?;
+                    names::validate_stored_branch_name(&branch).map_err(|_| DecodeError::Invalid("branch name"))?;
                     let old = match r.u8()? {
                         0 => None,
                         1 => Some(r.id()?),
@@ -657,7 +657,7 @@ impl Object {
                     let a = r.str(64)?;
                     names::validate_zone_name(&a).map_err(|_| DecodeError::Invalid("zone name"))?;
                     let b = r.str(200)?;
-                    names::validate_branch_name(&b).map_err(|_| DecodeError::Invalid("branch name"))?;
+                    names::validate_stored_branch_name(&b).map_err(|_| DecodeError::Invalid("branch name"))?;
                     let key = (a, b);
                     if prev.as_ref().is_some_and(|p| *p >= key) {
                         return Err(DecodeError::Invalid("operation branches not strictly sorted"));
@@ -672,7 +672,7 @@ impl Object {
                     let a = r.str(64)?;
                     names::validate_zone_name(&a).map_err(|_| DecodeError::Invalid("zone name"))?;
                     let b = r.str(200)?;
-                    names::validate_branch_name(&b).map_err(|_| DecodeError::Invalid("branch name"))?;
+                    names::validate_stored_branch_name(&b).map_err(|_| DecodeError::Invalid("branch name"))?;
                     if prev.as_ref().is_some_and(|p| *p >= a) {
                         return Err(DecodeError::Invalid("operation workspace not strictly sorted"));
                     }

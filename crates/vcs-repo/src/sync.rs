@@ -225,8 +225,8 @@ impl Repo {
         let mut zone_defs = BTreeMap::new();
         let mut label_defs = BTreeMap::new();
         for (zone, branch) in &ws.subs {
-            if zones.is_some_and(|w| !w.contains(zone)) {
-                continue;
+            if zones.is_some_and(|w| !w.contains(zone)) || branch == vcs_objects::names::DETACHED_BRANCH {
+                continue; // a detached HEAD is never published
             }
             let Some(local) = refs.head(zone, branch) else { continue };
             let remote = manifest.head(zone, branch);
@@ -674,6 +674,9 @@ impl Repo {
         let mut rep = SyncReport::default();
         let subs: Vec<(String, String)> = ws.subs.iter().map(|(a, b)| (a.clone(), b.clone())).collect();
         for (zone, branch) in subs {
+            if branch == vcs_objects::names::DETACHED_BRANCH {
+                continue;
+            }
             let local = refs.head(&zone, &branch);
             let act = match (local, rr.head(&zone, &branch)) {
                 (_, None) => SyncAction::NoRemote,
