@@ -1,8 +1,11 @@
 //! Pack files: many encoded objects in one file plus a sorted index. Format in docs/object-model.md.
 //!
-//! Two on-disk versions exist. v1 (`VCSPACK1`/`VCSPIDX1`) stores encoded objects as they are; v2
+//! Three on-disk versions exist (v4 is opt-in, see below). v1 (`VCSPACK1`/`VCSPIDX1`) stores encoded objects as they are; v2
 //! (`VCSPACK2`/`VCSPIDX2`) prefixes every entry with a codec byte (raw or zstd level 3) and adds a
-//! 256-entry fanout table to the index. Readers accept both forever; writers emit v2 unless told otherwise.
+//! 256-entry fanout table to the index. v4 (`VCSPACK4`/`VCSPIDX4`) is v2 plus codec 2: a delta
+//! against an earlier entry of the same pack (see `delta.rs` and docs/research/storage/delta-gate.md).
+//! Readers accept all three forever; writers emit v2 unless told otherwise (`VCS_PACK_FORMAT=v4`,
+//! `vcs repack --format v4`); `vcs repack --format v2` rewrites a v4 pack back, which is the rollback.
 
 use crate::{io, StoreError};
 use std::fs;
@@ -14,9 +17,18 @@ pub const PACK_MAGIC: &[u8; 8] = b"VCSPACK1";
 pub const IDX_MAGIC: &[u8; 8] = b"VCSPIDX1";
 pub const PACK_MAGIC_V2: &[u8; 8] = b"VCSPACK2";
 pub const IDX_MAGIC_V2: &[u8; 8] = b"VCSPIDX2";
+pub const PACK_MAGIC_V4: &[u8; 8] = b"VCSPACK4";
+pub const IDX_MAGIC_V4: &[u8; 8] = b"VCSPIDX4";
 /// v2 entry codecs (first byte of every entry payload).
 pub const CODEC_RAW: u8 = 0;
 pub const CODEC_ZSTD: u8 = 1;
+/// v4 only: `[2][varint distance][zstd(delta)]`; the base entry starts `distance` bytes before this one.
+pub const CODEC_DELTA: u8 = 2;
+/// Longest delta chain a reader follows (a hostile pack cannot make reads arbitrarily slow).
+pub const MAX_READ_DEPTH: usize = 50;
+/// Longest chain the writer builds (the gate in docs/research/storage/delta-gate.md allows <= 8).
+pub const MAX_WRITE_DEPTH: u32 = 8;
+const DELTA_WINDOW: usize = 8;
 pub const ZSTD_LEVEL: i32 = 3;
 /// Upper bound on one decoded object, so a lying zstd frame header cannot demand more.
 const MAX_DECODED: u64 = u32::MAX as u64;
@@ -37,6 +49,7 @@ pub enum PackFormat {
     V1,
     #[default]
     V2,
+    V4,
 }
 
 impl PackFormat {
@@ -44,6 +57,7 @@ impl PackFormat {
     pub fn from_env() -> PackFormat {
         match std::env::var("VCS_PACK_FORMAT").as_deref() {
             Ok("v1") | Ok("1") => PackFormat::V1,
+            Ok("v4") | Ok("3") => PackFormat::V4,
             _ => PackFormat::V2,
         }
     }
@@ -51,12 +65,14 @@ impl PackFormat {
         match self {
             PackFormat::V1 => 1,
             PackFormat::V2 => 2,
+            PackFormat::V4 => 4,
         }
     }
     pub fn parse(s: &str) -> Option<PackFormat> {
         match s {
             "v1" | "1" => Some(PackFormat::V1),
             "v2" | "2" => Some(PackFormat::V2),
+            "v4" | "3" => Some(PackFormat::V4),
             _ => None,
         }
     }
@@ -68,7 +84,7 @@ impl PackFormat {
 pub fn encode_payload(fmt: PackFormat, enc: &[u8]) -> Vec<u8> {
     match fmt {
         PackFormat::V1 => enc.to_vec(),
-        PackFormat::V2 => {
+        PackFormat::V2 | PackFormat::V4 => {
             if let Ok(c) = zstd::bulk::compress(enc, ZSTD_LEVEL) {
                 if c.len() < enc.len() {
                     let mut out = Vec::with_capacity(c.len() + 1);
@@ -113,8 +129,64 @@ pub fn decode_payload_max(version: u8, payload: &[u8], max: u64) -> Result<std::
             }
             Ok(Cow::Owned(out))
         }
+        Some((&CODEC_DELTA, _)) if version == 4 => Err("delta entry needs its pack to resolve".into()),
         Some((c, _)) => Err(format!("unknown codec {c}")),
     }
+}
+
+/// Parse a delta entry payload into `(distance to base entry, delta bytes)`.
+fn parse_delta(payload: &[u8], max_delta: u64) -> Result<(u64, Vec<u8>), String> {
+    let rest = payload.strip_prefix(&[CODEC_DELTA]).ok_or("not a delta entry")?;
+    let (mut dist, mut sh, mut i) = (0u64, 0u32, 0usize);
+    loop {
+        let b = *rest.get(i).ok_or("truncated delta entry")?;
+        i += 1;
+        if sh > 56 {
+            return Err("delta distance too long".into());
+        }
+        dist |= ((b & 0x7f) as u64) << sh;
+        if b & 0x80 == 0 {
+            break;
+        }
+        sh += 7;
+    }
+    if dist == 0 {
+        return Err("delta entry names itself as base".into());
+    }
+    let z = &rest[i..];
+    let n = zstd::zstd_safe::get_frame_content_size(z)
+        .map_err(|_| "bad zstd frame header".to_string())?
+        .ok_or_else(|| "zstd frame without content size".to_string())?;
+    if n > max_delta {
+        return Err("delta claims an oversized body".into());
+    }
+    let d = zstd::bulk::decompress(z, n as usize).map_err(|e| format!("zstd: {e}"))?;
+    Ok((dist, d))
+}
+
+/// Resolve the entry at `off` (payload `first`) of a v4 pack. `fetch(off)` returns the payload of
+/// the entry that starts at `off`. Bases always precede their delta (distance > 0), so a chain
+/// cannot loop; its length is capped by [`MAX_READ_DEPTH`] and every intermediate size by `max`.
+fn resolve_v4(mut off: u64, first: Vec<u8>, max: u64, fetch: &mut dyn FnMut(u64) -> Result<Vec<u8>, String>) -> Result<Vec<u8>, String> {
+    let mut deltas: Vec<Vec<u8>> = Vec::new();
+    let mut payload = first;
+    while payload.first() == Some(&CODEC_DELTA) {
+        if deltas.len() >= MAX_READ_DEPTH {
+            return Err("delta chain too deep".into());
+        }
+        let (dist, d) = parse_delta(&payload, max.saturating_mul(2).saturating_add(1 << 16))?;
+        off = off
+            .checked_sub(dist)
+            .filter(|o| *o >= HEADER + 4)
+            .ok_or("delta base outside pack")?;
+        deltas.push(d);
+        payload = fetch(off)?;
+    }
+    let mut cur = decode_payload_max(4, &payload, max)?.into_owned();
+    for d in deltas.iter().rev() {
+        cur = crate::delta::apply(&cur, d, max as usize).map_err(|e| format!("delta: {e}"))?;
+    }
+    Ok(cur)
 }
 
 /// A parsed pack index (also usable for a pack that lives on a remote). The raw bytes are kept
@@ -154,9 +226,10 @@ impl PackIndex {
         let version = match b.get(..8) {
             Some(m) if m == IDX_MAGIC => 1u8,
             Some(m) if m == IDX_MAGIC_V2 => 2u8,
+            Some(m) if m == IDX_MAGIC_V4 => 4u8,
             _ => return Err(bad(label, "bad index header")),
         };
-        let fan = if version == 2 { FANOUT_BYTES } else { 0 };
+        let fan = if version >= 2 { FANOUT_BYTES } else { 0 };
         let base = 8 + 4 + 8 + 32 + fan;
         if b.len() < base + 32 {
             return Err(bad(label, "bad index header"));
@@ -167,7 +240,7 @@ impl PackIndex {
         if count.checked_mul(IDX_ENTRY) != Some(b.len() - base - 32) {
             return Err(bad(label, "index length does not match entry count"));
         }
-        let fanout = if version == 2 {
+        let fanout = if version >= 2 {
             let mut f = Box::new([0u32; 256]);
             for (i, v) in f.iter_mut().enumerate() {
                 *v = u32::from_le_bytes(b[52 + i * 4..56 + i * 4].try_into().unwrap());
@@ -227,12 +300,12 @@ impl PackIndex {
         let end_ok = off
             .checked_add(len as u64)
             .is_some_and(|end| end <= self.pack_len.saturating_sub(32));
-        if off < HEADER + 4 || !end_ok || (self.version == 2 && len == 0) {
+        if off < HEADER + 4 || !end_ok || (self.version >= 2 && len == 0) {
             return Err(());
         }
         Ok(())
     }
-    /// 1 or 2: which pack format this index belongs to.
+    /// 1, 2 or 3: which pack format this index belongs to.
     pub fn version(&self) -> u8 {
         self.version
     }
@@ -330,9 +403,31 @@ impl Pack {
         // `len` comes from the index; never allocate it up front, so a lying index on a short
         // pack cannot demand gigabytes (the buffer only grows with bytes actually read).
         let mut buf = Vec::new();
-        match f.take(len as u64).read_to_end(&mut buf) {
+        match (&mut f).take(len as u64).read_to_end(&mut buf) {
             Ok(n) if n == len as usize => {}
             _ => return Err(corrupt("pack truncated".into())),
+        }
+        if self.idx.version == 4 && buf.first() == Some(&CODEC_DELTA) {
+            let limit = self.idx.pack_len.saturating_sub(32);
+            let mut fetch = |o: u64| -> Result<Vec<u8>, String> {
+                let mut len4 = [0u8; 4];
+                f.seek(SeekFrom::Start(o - 4))
+                    .and_then(|_| f.read_exact(&mut len4))
+                    .map_err(|e| format!("base frame: {e}"))?;
+                let l = u32::from_le_bytes(len4) as u64;
+                let Some(end) = o.checked_add(l) else {
+                    return Err("base entry outside pack".into());
+                };
+                if l == 0 || end > limit {
+                    return Err("base entry outside pack".into());
+                }
+                let mut b = Vec::new();
+                match (&mut f).take(l).read_to_end(&mut b) {
+                    Ok(n) if n as u64 == l => Ok(b),
+                    _ => Err("pack truncated".into()),
+                }
+            };
+            return resolve_v4(off, buf, MAX_DECODED, &mut fetch).map(Some).map_err(corrupt);
         }
         decode_payload(self.idx.version, &buf)
             .map(|c| Some(c.into_owned()))
@@ -358,7 +453,11 @@ impl Pack {
                 return out;
             }
         };
-        let magic = if self.idx.version == 2 { PACK_MAGIC_V2 } else { PACK_MAGIC };
+        let magic = match self.idx.version {
+            4 => PACK_MAGIC_V4,
+            2 => PACK_MAGIC_V2,
+            _ => PACK_MAGIC,
+        };
         if bytes.len() as u64 != self.idx.pack_len || bytes.len() < 44 || &bytes[..8] != magic {
             out.push(format!("{name}: bad length or header"));
             return out;
@@ -382,7 +481,22 @@ impl Pack {
                                 out.push(format!("{name}: bad framing for {id}"));
                                 continue;
                             }
-                            match decode_payload(version, &body[o..o + l]) {
+                            let decoded = if version == 4 && body[o..o + l].first() == Some(&CODEC_DELTA) {
+                                let mut fetch = |bo: u64| -> Result<Vec<u8>, String> {
+                                    let bo = bo as usize;
+                                    if bo < 4 || bo > body.len() {
+                                        return Err("base entry outside pack".into());
+                                    }
+                                    let bl = u32::from_le_bytes(body[bo - 4..bo].try_into().unwrap()) as usize;
+                                    body.get(bo..bo.saturating_add(bl))
+                                        .map(|s| s.to_vec())
+                                        .ok_or_else(|| "base entry outside pack".to_string())
+                                };
+                                resolve_v4(o as u64, body[o..o + l].to_vec(), MAX_DECODED, &mut fetch).map(std::borrow::Cow::Owned)
+                            } else {
+                                decode_payload(version, &body[o..o + l])
+                            };
+                            match decoded {
                                 Err(e) => out.push(format!("{name}: object {id} undecodable: {e}")),
                                 Ok(enc) if vcs_objects::id_of_encoded(&enc) != *id => {
                                     out.push(format!("{name}: object {id} hash mismatch"))
@@ -415,9 +529,14 @@ pub struct BuiltPack {
 }
 
 /// Build pack and index bytes for `objects` (id, encoded bytes) in the default write format
-/// ([`PackFormat::from_env`]: v2). See [`build_pack_fmt`].
+/// ([`PackFormat::from_env`]: v2, never v4). See [`build_pack_fmt`].
 pub fn build_pack(objects: Vec<(ObjectId, Vec<u8>)>) -> BuiltPack {
-    build_pack_fmt(objects, PackFormat::from_env())
+    // Packs built here go to the network, where entries are fetched by range and delta bases cannot be resolved: never v4.
+    let fmt = match PackFormat::from_env() {
+        PackFormat::V4 => PackFormat::V2,
+        f => f,
+    };
+    build_pack_fmt(objects, fmt)
 }
 
 /// Build pack and index bytes in an explicit format. Entries are laid out in the order given
@@ -426,25 +545,57 @@ pub fn build_pack(objects: Vec<(ObjectId, Vec<u8>)>) -> BuiltPack {
 pub fn build_pack_fmt(objects: Vec<(ObjectId, Vec<u8>)>, fmt: PackFormat) -> BuiltPack {
     let mut seen = std::collections::HashSet::new();
     let objects: Vec<_> = objects.into_iter().filter(|o| seen.insert(o.0)).collect();
-    let payloads = encode_all(&objects, fmt);
+    let (order, planned): (Vec<usize>, Vec<Planned>) = if fmt == PackFormat::V4 {
+        plan_v4(&objects)
+    } else {
+        let pl = encode_all(&objects, fmt);
+        ((0..objects.len()).collect(), pl.into_iter().map(Planned::Whole).collect())
+    };
+    let (pmagic, imagic) = match fmt {
+        PackFormat::V1 => (PACK_MAGIC, IDX_MAGIC),
+        PackFormat::V2 => (PACK_MAGIC_V2, IDX_MAGIC_V2),
+        PackFormat::V4 => (PACK_MAGIC_V4, IDX_MAGIC_V4),
+    };
     let mut pack = Vec::new();
-    pack.extend_from_slice(if fmt == PackFormat::V2 { PACK_MAGIC_V2 } else { PACK_MAGIC });
+    pack.extend_from_slice(pmagic);
     pack.extend_from_slice(&(objects.len() as u32).to_le_bytes());
     let mut ents = Vec::new();
-    for ((id, _), pl) in objects.iter().zip(&payloads) {
+    let mut starts: Vec<u64> = Vec::with_capacity(order.len());
+    for (k, &oi) in order.iter().enumerate() {
+        let id = objects[oi].0;
+        let pl: std::borrow::Cow<[u8]> = match &planned[k] {
+            Planned::Whole(w) => std::borrow::Cow::Borrowed(w),
+            Planned::Delta { base, z } => {
+                let here = pack.len() as u64 + 4;
+                let mut v = vec![CODEC_DELTA];
+                let mut dist = here - starts[*base];
+                loop {
+                    let b = (dist & 0x7f) as u8;
+                    dist >>= 7;
+                    if dist == 0 {
+                        v.push(b);
+                        break;
+                    }
+                    v.push(b | 0x80);
+                }
+                v.extend_from_slice(z);
+                std::borrow::Cow::Owned(v)
+            }
+        };
         pack.extend_from_slice(&(pl.len() as u32).to_le_bytes());
-        ents.push((*id, pack.len() as u64, pl.len() as u32));
-        pack.extend_from_slice(pl);
+        starts.push(pack.len() as u64);
+        ents.push((id, pack.len() as u64, pl.len() as u32));
+        pack.extend_from_slice(&pl);
     }
     let sum = *blake3::hash(&pack).as_bytes();
     pack.extend_from_slice(&sum);
     ents.sort_by_key(|e| e.0);
     let mut idx = Vec::new();
-    idx.extend_from_slice(if fmt == PackFormat::V2 { IDX_MAGIC_V2 } else { IDX_MAGIC });
+    idx.extend_from_slice(imagic);
     idx.extend_from_slice(&(ents.len() as u32).to_le_bytes());
     idx.extend_from_slice(&(pack.len() as u64).to_le_bytes());
     idx.extend_from_slice(&sum);
-    if fmt == PackFormat::V2 {
+    if fmt != PackFormat::V1 {
         let mut counts = [0u32; 256];
         for e in &ents {
             counts[e.0.as_bytes()[0] as usize] += 1;
@@ -466,6 +617,102 @@ pub fn build_pack_fmt(objects: Vec<(ObjectId, Vec<u8>)>, fmt: PackFormat) -> Bui
         pack,
         idx,
     }
+}
+
+/// One planned pack entry: stored whole (finished payload) or as a delta against the entry at
+/// layout position `base` (always earlier than itself).
+enum Planned {
+    Whole(Vec<u8>),
+    Delta { base: usize, z: Vec<u8> },
+}
+
+/// Kinds worth deltifying (the gate measured blobs and trees; commits and the rest gain < 1.15x).
+fn deltable(enc: &[u8]) -> bool {
+    enc.len() >= 64 && enc.len() <= crate::delta::MAX_BASE && matches!(enc[0], 1 | 2)
+}
+
+/// Choose layout order and delta bases. Eligible objects are sorted by (kind, content sketch,
+/// size desc) so versions of one file or directory are adjacent without knowing any path; each
+/// is then tried as a delta against up to `DELTA_WINDOW` predecessors whose chain is shorter than
+/// [`MAX_WRITE_DEPTH`], and kept only if it beats the whole v2 payload. Deterministic.
+fn plan_v4(objects: &[(ObjectId, Vec<u8>)]) -> (Vec<usize>, Vec<Planned>) {
+    const CHUNK: usize = 4096;
+    let eligible: Vec<usize> = (0..objects.len()).filter(|&i| deltable(&objects[i].1)).collect();
+    let keys = par_map_idx(&eligible, |&i| crate::delta::sketch(&objects[i].1));
+    let mut sorted: Vec<(u8, u64, u64, usize, ObjectId, usize)> = eligible
+        .iter()
+        .zip(keys)
+        .map(|(&i, (mn, mx))| (objects[i].1[0], mn, mx, usize::MAX - objects[i].1.len(), objects[i].0, i))
+        .collect();
+    sorted.sort();
+    let mut order: Vec<usize> = sorted.iter().map(|s| s.5).collect();
+    let ne = order.len();
+    let rest: Vec<usize> = (0..objects.len()).filter(|&i| !deltable(&objects[i].1)).collect();
+    order.extend(rest.iter().copied());
+    let starts: Vec<usize> = (0..ne).step_by(CHUNK).collect();
+    let chunks: Vec<Vec<Planned>> = par_map_idx(&starts, |&s| {
+        let e = (s + CHUNK).min(ne);
+        let mut out: Vec<Planned> = Vec::with_capacity(e - s);
+        let mut win: Vec<(usize, u32, crate::delta::Index)> = Vec::new();
+        for pos in s..e {
+            let target = &objects[order[pos]].1;
+            let whole = encode_payload(PackFormat::V2, target);
+            let mut best: Option<(usize, u32, Vec<u8>)> = None;
+            let mut best_len = whole.len();
+            for (bpos, bd, idx) in win.iter().rev().take(DELTA_WINDOW) {
+                if *bd >= MAX_WRITE_DEPTH || objects[order[*bpos]].1[0] != target[0] {
+                    continue;
+                }
+                if let Some(d) = crate::delta::create(idx, target, target.len()) {
+                    if let Ok(z) = zstd::bulk::compress(&d, ZSTD_LEVEL) {
+                        let l = 1 + 3 + z.len();
+                        if l < best_len {
+                            best_len = l;
+                            best = Some((*bpos, *bd + 1, z));
+                        }
+                    }
+                }
+            }
+            let depth = match best {
+                Some((base, d, z)) => {
+                    out.push(Planned::Delta { base, z });
+                    d
+                }
+                None => {
+                    out.push(Planned::Whole(whole));
+                    0
+                }
+            };
+            win.push((pos, depth, crate::delta::Index::new(target)));
+            if win.len() > DELTA_WINDOW * 2 {
+                win.drain(..DELTA_WINDOW);
+            }
+        }
+        out
+    });
+    let mut planned: Vec<Planned> = chunks.into_iter().flatten().collect();
+    planned.extend(rest.iter().map(|&i| Planned::Whole(encode_payload(PackFormat::V2, &objects[i].1))));
+    (order, planned)
+}
+
+/// Run `f` over `items` on several threads (inline when small); results keep the input order.
+fn par_map_idx<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(16);
+    if threads <= 1 || items.len() < 2 {
+        return items.iter().map(f).collect();
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let slots: Vec<std::sync::Mutex<Option<R>>> = items.iter().map(|_| std::sync::Mutex::new(None)).collect();
+    std::thread::scope(|sc| {
+        for _ in 0..threads.min(items.len()) {
+            sc.spawn(|| loop {
+                let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let Some(it) = items.get(i) else { break };
+                *slots[i].lock().unwrap() = Some(f(it));
+            });
+        }
+    });
+    slots.into_iter().map(|m| m.into_inner().unwrap().unwrap()).collect()
 }
 
 /// Entry payloads for all objects; v2 compression runs on several threads for large inputs.

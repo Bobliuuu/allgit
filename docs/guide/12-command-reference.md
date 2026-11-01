@@ -2102,7 +2102,7 @@ Usage: vcs repack [OPTIONS]
 Options:
       --auto             Only if loose objects exceed gc.autoPackLimit, and only those older than the grace period
   -C <DIR>               Run as if vcs was started in <DIR> (applied before repository discovery)
-      --format <FORMAT>  Pack format: v2 (zstd, fanout index; the default for new packs) or v1 (rollback for older binaries)
+      --format <FORMAT>  Pack format: v2 (zstd, fanout index; the default for new packs), v1 (rollback for older binaries) or v3 (v2 plus delta entries; local only, opt-in)
       --json             Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>    PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks         Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md

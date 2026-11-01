@@ -451,8 +451,8 @@ enum Cmd {
         /// Only if loose objects exceed gc.autoPackLimit, and only those older than the grace period
         #[arg(long)]
         auto: bool,
-        /// Pack format: v2 (zstd, fanout index; the default for new packs) or v1 (rollback for
-        /// older binaries)
+        /// Pack format: v2 (zstd, fanout index; the default for new packs), v1 (rollback for
+        /// older binaries) v3 (compaction blocks) or v4 (v2 plus delta entries; local only, opt-in)
         #[arg(long)]
         format: Option<String>,
     },
@@ -1898,7 +1898,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                     return Err(Error::Msg("--format cannot be combined with --auto".into()));
                 }
                 let Some(fmt) = vcs_store::pack::PackFormat::parse(&f) else {
-                    return Err(Error::Msg(format!("unknown pack format {f:?} (use v1 or v2)")));
+                    return Err(Error::Msg(format!("unknown pack format {f:?} (use v1, v2, v3 or v4)")));
                 };
                 let (n, c) = repo.repack_as(fmt)?;
                 println!("packed {n} object(s); rewrote {c} existing pack(s) as v{}", fmt.version());
