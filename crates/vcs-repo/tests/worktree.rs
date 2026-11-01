@@ -254,3 +254,23 @@ fn nested_and_non_empty_paths_are_refused() {
     fs::create_dir_all(&empty).unwrap();
     a.worktree_add(&empty, Some("z")).unwrap();
 }
+
+#[test]
+fn sparse_sets_belong_to_their_worktree() {
+    let d = tempfile::tempdir().unwrap();
+    let a = main_repo(d.path());
+    write(&a, "docs/a.md", "doc");
+    commit_all(&a, "docs");
+    let p = d.path().join("w");
+    a.worktree_add(&p, Some("w")).unwrap();
+    let w = Repo::discover(&p).unwrap();
+    assert!(p.join("docs/a.md").exists());
+    w.sparse_set(None, "root", &["README".to_string()]).unwrap();
+    assert!(!p.join("docs/a.md").exists());
+    // the main worktree is still fully materialized and has no sparse set
+    assert!(a.worktree().join("docs/a.md").exists());
+    assert!(a.sparse_list().unwrap().is_empty());
+    assert_eq!(w.sparse_list().unwrap().len(), 1);
+    assert!(a.fsck().unwrap().problems.is_empty());
+    a.gc_plan_at(later(), 14 * DAY).unwrap();
+}
