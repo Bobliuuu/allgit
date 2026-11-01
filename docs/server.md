@@ -110,6 +110,10 @@ Besides roles, `--policy` accepts `allow-read <principal|*> <zone|*> **` and `de
 read exactly the zones some `allow-read` matches; otherwise it can read every zone except those a `deny-read` names;
 `deny-read` wins. Admins are exempt. Read rules never grant writes.
 
+**Shelves** (`shelves/<principal>/...`, docs/shelves.md) are private to their owner and admins. Only the owner (or an admin) can create or
+delete them; `shelve-read <reader|*> <owner|*> **` lets another principal read (not write) the owner's shelves. That grant covers
+the whole shelf and is not narrowed by `allow-read` / `deny-read`.
+
 **How it is enforced.** Objects are content-addressed and shared, so an id carries no zone. The server walks, per zone,
 everything reachable from that zone's branch heads and tags (commits, trees, chunk manifests; plain blobs are leaves,
 checked with a 1-byte ranged read) and keeps the id sets in memory, extending them when the manifest changes. For a

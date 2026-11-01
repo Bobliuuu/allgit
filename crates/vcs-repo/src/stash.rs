@@ -131,7 +131,7 @@ impl Repo {
     }
 
     /// Working-tree content of every tracked path of `zone` (deleted files are absent).
-    fn work_flat(&self, zone: &str, zones: &crate::meta::Zones, ix: &crate::index::Index) -> Result<Flat> {
+    pub(crate) fn work_flat(&self, zone: &str, zones: &crate::meta::Zones, ix: &crate::index::Index) -> Result<Flat> {
         let mut flat = Flat::new();
         let ws = self.workspace()?;
         for (p, e) in ix.entries.iter().filter(|(p, _)| zones.owner(p) == zone) {
@@ -287,6 +287,23 @@ impl Repo {
             return msg(format!("no such stash entry {n} ({} saved)", list.len()));
         }
         let entry = list[n].clone();
+        let out = self.apply_entry(&entry, "stash pop", "Stashed changes")?;
+        if out == StashPopOutcome::Applied {
+            list.remove(n);
+            self.save_stash(&list)?;
+            self.record_op(&format!("stash pop: {}", entry.message), None)?;
+        } else {
+            self.record_op(&format!("stash pop (conflicts, kept): {}", entry.message), None)?;
+        }
+        Ok(out)
+    }
+
+    /// Three-way apply `entry` (base = recorded parent, ours = current head, theirs = its work)
+    /// to the working tree and index, staging the result; conflicts become marker files that
+    /// show as unstaged changes. The caller holds the repository lock and decides what happens
+    /// to the entry. Shared by `stash pop` and `unshelve`. `what` names the command in errors,
+    /// `right` labels the entry's side in conflict markers.
+    pub(crate) fn apply_entry(&self, entry: &StashEntry, what: &str, right: &'static str) -> Result<StashPopOutcome> {
         let zones = self.zones()?;
         let ws = self.workspace()?;
         let refs = self.refs()?;
@@ -301,7 +318,7 @@ impl Repo {
         let mut plans = Vec::new();
         for z in &entry.zones {
             if !ws.subs.contains_key(&z.zone) {
-                return msg(format!("zone {:?} of this stash is not subscribed in this workspace", z.zone));
+                return msg(format!("zone {:?} of this {what} is not subscribed in this workspace", z.zone));
             }
             self.require_clean(&z.zone, &status)?;
             let prefix = zones.path_of(&z.zone).unwrap_or("").to_owned();
@@ -325,12 +342,12 @@ impl Repo {
                     return Err(Error::Corrupt("merged blob id mismatch".into()));
                 }
             }
-            self.require_changes_materialized(&z.zone, &ours, &theirs, "stash pop")?;
+            self.require_changes_materialized(&z.zone, &ours, &theirs, what)?;
             let mut new = tm.entries.clone();
             let labels = MarkerLabels {
                 left: "Updated upstream",
                 base: "base",
-                right: "Stashed changes",
+                right,
             };
             for c in &tm.conflicts {
                 let (mode, id, _) = self.placeholder(c, &labels)?;
@@ -367,12 +384,8 @@ impl Repo {
         }
         self.save_index(&mut ix)?;
         if conflicted.is_empty() {
-            list.remove(n);
-            self.save_stash(&list)?;
-            self.record_op(&format!("stash pop: {}", entry.message), None)?;
             Ok(StashPopOutcome::Applied)
         } else {
-            self.record_op(&format!("stash pop (conflicts, kept): {}", entry.message), None)?;
             conflicted.sort();
             Ok(StashPopOutcome::Conflicted { paths: conflicted })
         }

@@ -285,4 +285,39 @@ Certificate and hostname checks are always on. *Not run for this guide: no `tls`
 
 `vcs publish --repair` is shown in [chapter 11](11-troubleshooting.md#a-remote-that-lost-data-publish---repair).
 
+### Shelving work on the remote
+
+`vcs shelve` parks your uncommitted changes on the remote as a private, named shelf, without publishing a commit
+and without touching the manifest. A teammate (or you, on another machine) applies it with `vcs unshelve`.
+Untracked files are not shelved: `vcs add` them first. The working tree is left as it is.
+
+```text
+$ vcs shelve -m "half-done parser" --expires 30d parser
+shelved 1 zone(s) as alice/parser (4 object(s), 311 byte(s)), expires in 30d
+pick it up with `vcs unshelve alice/parser`
+$ vcs shelves
+alice/parser  0s ago  zones: root (expires in 2591999s)  half-done parser
+```
+
+Bob, in his clone (the remote here is a directory, so he can see it with `--all`):
+
+```text
+$ vcs shelves --all
+alice/parser  0s ago  zones: root (expires in 2591999s)  half-done parser
+$ vcs unshelve alice/parser
+applied shelf alice/parser (1 zone(s)); changes are staged
+$ vcs status
+zone root: branch main @ 7ab3d9a594fd
+  staged:
+    modified:  src/main.rs
+```
+
+`unshelve` merges like `stash pop` (conflicts leave markers, and the shelf stays on the remote), refuses to run over
+uncommitted changes in the zone, and hash-verifies every object it receives. `vcs shelve --delete NAME` removes a
+shelf; `--expires 30d` lets `vcs gc --remote` delete it later. On a `vcs-server`, only the owner (or an admin) can
+create or delete a shelf and nobody else can read it unless the server's policy has a `shelve-read` rule. Shelves
+also keep the commits they were built on alive through `vcs gc --remote` for as long as they exist. Details:
+[docs/shelves.md](../shelves.md). *Not run for this guide: the server privacy rules (tested in
+`crates/vcs-cli/tests/shelve.rs`) and an S3 remote.*
+
 Next: [chapter 6, large files](06-large-files.md).

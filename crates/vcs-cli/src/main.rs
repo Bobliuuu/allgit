@@ -21,6 +21,7 @@ mod lockable_cmd;
 mod logfmt;
 mod plumb;
 mod remote;
+mod shelve_cmd;
 mod worktree_cmd;
 
 /// The assist command: `--assist`, else the opt-in `merge.assist` setting (announced, because file
@@ -216,6 +217,12 @@ enum Cmd {
     /// Set tracked changes aside (push, pop, list, drop); untracked files are left alone
     #[command(subcommand)]
     Stash(StashCmd),
+    /// Park your changes on the remote as a private shelf (the working tree is left alone); `--delete` removes one
+    Shelve(shelve_cmd::ShelveArgs),
+    /// List your shelves on the remote (`--all`: also other people's that you may read)
+    Shelves(shelve_cmd::ShelvesArgs),
+    /// Apply a shelf from the remote to the working tree (staged, like `stash pop`)
+    Unshelve(shelve_cmd::UnshelveArgs),
     /// Materialize only some paths of a zone (set, add, remove, list, disable); the rest stays tracked, not deleted
     #[command(subcommand)]
     Sparse(SparseCmd),
@@ -1588,6 +1595,9 @@ fn run(cli: Cli) -> Result<(), Error> {
             }
         }
         Cmd::Bundle(b) => bundle_cmd::run(b)?,
+        Cmd::Shelve(a) => shelve_cmd::shelve(&open()?.0, a, &principal(), author()?)?,
+        Cmd::Shelves(a) => shelve_cmd::shelves(&open()?.0, a, &principal())?,
+        Cmd::Unshelve(a) => shelve_cmd::unshelve(&open()?.0, a, &principal())?,
         Cmd::Clone { url, dir, zones, stats } => {
             if bundle_cmd::try_clone(&url, &dir, &zones, author()?)? {
                 return Ok(());

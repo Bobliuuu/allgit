@@ -12,6 +12,7 @@ pub mod manifest;
 pub mod membackend;
 pub mod packfetch;
 pub mod protocol;
+pub mod shelf;
 pub mod stats;
 
 pub use backend::{Backend, BackendError, Conditional, Versioned};

@@ -671,7 +671,7 @@ fn dispatch(sh: &Shared, req: &Request, who: &Principal) -> Response {
         }
         ("GET", "/v1/list") => {
             let prefix = req.query_param("prefix").unwrap_or_default();
-            if restricted(sh, who) {
+            if restricted(sh, who) && !prefix.starts_with(vcs_remote::shelf::SHELF_PREFIX) {
                 // Listing would enumerate object ids of every zone. Packs are hidden (they mix zones);
                 // tx/, tomb/ and the rest name ids too.
                 if prefix.starts_with("packs/") {
@@ -680,7 +680,14 @@ fn dispatch(sh: &Shared, req: &Request, who: &Principal) -> Response {
                 return text(403, "Forbidden: listing is not available to a read-restricted token");
             }
             match sh.backend.list(&prefix) {
-                Ok(keys) => Response::new(200, keys.join("\n")),
+                // other principals' shelves are invisible unless a `shelve-read` rule grants them
+                Ok(keys) => Response::new(
+                    200,
+                    keys.into_iter()
+                        .filter(|k| shelf_read_ok(sh, who, k))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                ),
                 Err(e) => backend_err(e),
             }
         }
@@ -715,6 +722,38 @@ fn shadows_manifest(key: &str) -> bool {
     base.eq_ignore_ascii_case(manifest::KEY)
 }
 
+/// Shelves are private (docs/shelves.md): for a key under `shelves/`, only its owner, an admin, or a
+/// principal granted by a `shelve-read` rule may read it. Every other key is not a shelf key: true.
+fn shelf_read_ok(sh: &Shared, who: &Principal, key: &str) -> bool {
+    let Some(owner) = key
+        .strip_prefix(vcs_remote::shelf::SHELF_PREFIX)
+        .map(|r| r.split('/').next().unwrap_or(""))
+    else {
+        return true;
+    };
+    who.role >= Role::Admin
+        || owner == who.name
+        || sh
+            .validator
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .policy
+            .shelve_read_allowed(&who.name, owner)
+}
+
+/// May `who` create or delete this shelf key? Owner (with a write token) or admin; the key must be
+/// exactly `shelves/<principal>/<name>/{meta,pack,idx}`.
+fn shelf_write_ok(who: &Principal, key: &str) -> Result<(), &'static str> {
+    let Some((owner, _, _)) = vcs_remote::shelf::parse_key(key) else {
+        return Err("a shelf key must be shelves/<principal>/<name>/{meta,pack,idx}");
+    };
+    if who.role >= Role::Admin || (who.role >= Role::Write && owner == who.name) {
+        Ok(())
+    } else {
+        Err("only the owner of a shelf (or an admin) may change it")
+    }
+}
+
 /// Does the read policy limit this principal? (Admins never.)
 fn restricted(sh: &Shared, who: &Principal) -> bool {
     who.role < Role::Admin
@@ -743,7 +782,11 @@ fn read_allowed(sh: &Shared, who: &Principal, key: &str) -> Result<bool, Backend
 }
 
 fn object_read(sh: &Shared, req: &Request, who: &Principal, key: &str, head: bool) -> Response {
-    if restricted(sh, who) {
+    let is_shelf = key.starts_with(vcs_remote::shelf::SHELF_PREFIX);
+    if is_shelf && !shelf_read_ok(sh, who, key) {
+        return if head { Response::new(404, "") } else { text(404, "not found") };
+    }
+    if !is_shelf && restricted(sh, who) {
         match read_allowed(sh, who, key) {
             Ok(true) => {}
             Ok(false) => return if head { Response::new(404, "") } else { text(404, "not found") },
@@ -801,6 +844,15 @@ fn reject_response(r: Reject) -> Response {
 
 /// **DESTRUCTIVE.** Admin-only, idempotent. The manifest can never be deleted this way.
 fn object_delete(sh: &Shared, who: &Principal, key: &str) -> Response {
+    if key.starts_with(vcs_remote::shelf::SHELF_PREFIX) {
+        return match shelf_write_ok(who, key) {
+            Ok(()) => match sh.backend.delete(key) {
+                Ok(()) => Response::new(204, ""),
+                Err(e) => backend_err(e),
+            },
+            Err(m) => text(403, &format!("Forbidden: {m}")),
+        };
+    }
     if who.role < Role::Admin {
         return text(403, "Forbidden: delete needs an admin token");
     }
@@ -821,6 +873,21 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str) -> Respons
     let if_match = req.header("if-match").map(|s| unquote(s.trim()).to_owned());
     if !if_none && if_match.is_none() {
         return text(428, "unconditional PUT is not allowed; send If-None-Match: * or If-Match");
+    }
+    if key.starts_with(vcs_remote::shelf::SHELF_PREFIX) {
+        if let Err(m) = shelf_write_ok(who, key) {
+            return text(403, &format!("Forbidden: {m}"));
+        }
+        if if_match.is_some() {
+            return text(428, "shelf keys are create-only: send If-None-Match: *");
+        }
+        if let Some((p, n, "meta")) = vcs_remote::shelf::parse_key(key) {
+            match vcs_remote::shelf::ShelfMeta::parse(&req.body) {
+                Ok(m) if m.principal == p && m.name == n => {}
+                Ok(_) => return text(422, "Invalid: meta names a different principal or shelf than its key"),
+                Err(e) => return text(422, &format!("Invalid: {e}")),
+            }
+        }
     }
     if key.starts_with("objects/") {
         if let Err(m) = verify_object_body(key, &req.body) {
