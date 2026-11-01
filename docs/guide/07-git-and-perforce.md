@@ -17,26 +17,26 @@ Make the stream with Git, then import it. Pass `--show-original-ids` so the orig
 
 ```text
 $ cd oldproject && git log --oneline && cd ..
-a64cae8 second
-32ee4d3 first
+e1099ae second
+b11b9da first
 $ git -C oldproject fast-export --all --show-original-ids > old.stream
 $ vcs init imported && cd imported
 Initialized empty vcs repository in /home/ubuntu/guide-run/ch07/imported/.vcs
 $ vcs import-git ../old.stream
 imported 2 commit(s), 0 already present; 3 blob(s); 5 new object(s)
-  branch main -> 0c3ea688807b
+  branch main -> 3fb83c0ad3d4
 0 symlink entr(ies), 1 tag(s) imported
 $ vcs log --oneline
-0c3ea688807b second
-103c4dffecbf first
+3fb83c0ad3d4 second
+ecf0867a1a77 first
 $ ls; cat app.txt
 app.txt
 lib
 v2
 $ head -3 .vcs/git-import | cut -c1-60
-103c4dffecbfae32b2917a49be9203053fb87e714cae265a07cbd1a6e39e
 5f4910ef193314d61f35c75f5301719d5850fadd23e05aa164df1036df7e
 c45a23cdca2810453aafa3fbe3e9ac6668535f6df9b956cf4b98a96d9580
+2bc981afc3fd5c949a1ed0ed62e274203527927838ad74b4ba1dcf5c1515
 $ vcs fsck
 checked 11 objects
 ok
@@ -54,7 +54,7 @@ one standalone Git repository.
 ```text
 $ echo "v3" > app.txt && vcs add . && vcs commit -m "third, made in allgit"
 staged 2 file(s), 0 removal(s)
-[root/main da67dd155839] third, made in allgit
+[root/main c1f52e6cd631] third, made in allgit
 $ vcs export-git main -o ../out.stream
 exported 3 commit(s) (0 already exported), 4 blob(s), 1 tag(s) to refs/heads/main
 $ head -12 ../out.stream
@@ -65,15 +65,15 @@ v1
 
 commit refs/heads/main
 mark :2
-author Gitty <gitty@example.com> 1793500349 +0000
-committer Gitty <gitty@example.com> 1793500349 +0000
+author Gitty <gitty@example.com> 1793502279 +0000
+committer Gitty <gitty@example.com> 1793502279 +0000
 data 55
 first
 
 $ cd .. && git init -q -b main roundtrip && cd roundtrip && git fast-import --quiet < ../out.stream && git log --oneline && git show HEAD:app.txt
-7964b5b third, made in allgit
-7b23447 second
-f7ed064 first
+81a6f5d third, made in allgit
+13f560f second
+709f2b5 first
 v3
 $ cd ../imported
 ```
@@ -85,7 +85,7 @@ Give the same Git repository `--export-marks` and `--import-marks-if-exists` on 
 ```text
 $ echo "v4" > app.txt && vcs add . && vcs commit -m "fourth"
 staged 2 file(s), 0 removal(s)
-[root/main b4e6b31eac39] fourth
+[root/main 339423be47da] fourth
 $ vcs export-git main -o ../out2.stream
 exported 1 commit(s) (1 already exported), 1 blob(s), 1 tag(s) to refs/heads/main
 $ grep -c "^commit " ../out2.stream
@@ -102,17 +102,17 @@ Git then understands URLs that start with `allgit::`.
 
 ```text
 $ cd .. && git clone -q allgit::$PWD/imported git-view && cd git-view && git log --oneline
-1595118 fourth
-7964b5b third, made in allgit
-7b23447 second
-f7ed064 first
+302118d fourth
+81a6f5d third, made in allgit
+13f560f second
+709f2b5 first
 $ echo "from git" > git-note.txt && git add . && git commit -q -m "commit made with git" && git push origin HEAD:refs/heads/main
 To allgit::/home/ubuntu/guide-run/ch07/imported
-   1595118..c3e1785  HEAD -> main
+   302118d..1c88a28  HEAD -> main
 $ vcs -C ../imported log --oneline -n 3
-3123125b5edc commit made with git
-b4e6b31eac39 fourth
-da67dd155839 third, made in allgit
+19ec004f3951 commit made with git
+339423be47da fourth
+c1f52e6cd631 third, made in allgit
 $ git remote -v
 origin	allgit::/home/ubuntu/guide-run/ch07/imported (fetch)
 origin	allgit::/home/ubuntu/guide-run/ch07/imported (push)

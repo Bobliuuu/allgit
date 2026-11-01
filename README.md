@@ -248,6 +248,7 @@ flowchart LR
 
 ## 📚 Learn more
 
+- Documentation: **[User guide](docs/guide/README.md)** (install, daily workflow, zones, remotes, Git interop, locks, troubleshooting, full command reference)
 - Start here: [CLI reference](docs/cli.md) · [Architecture](docs/architecture.md) · [Object model](docs/object-model.md) · [Roadmap](docs/roadmap.md) · [Install](docs/install.md)
 - Features: [Zones](docs/zones.md) · [Merge](docs/merge.md) · [Assisted merge](docs/assist.md) · [Rebase](docs/rebase.md) · [Operations](docs/operations.md) · [Locks](docs/locks.md) · [Git import](docs/import-git.md) · [Perforce import](docs/import-p4.md) · [Interop](docs/interop.md) · [GC](docs/gc.md) · [Cache](docs/cache.md) · [Remote packs](docs/remote-packs.md) · [S3 backend](docs/s3.md)
 - Server: [vcs-server](docs/server.md) · [Deploying](docs/deploy.md) · [Security](docs/security.md)

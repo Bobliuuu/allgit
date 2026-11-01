@@ -75,17 +75,17 @@ untracked:
 $ vcs add .
 staged 4 file(s), 0 removal(s)
 $ vcs commit -m "first playable"
-[assets/main a2cba3a7dff5] first playable
-[engine/main 4266ff8fbdbb] first playable
-[root/main 38f9381dc661] first playable
-[tools/main 2cea13ae2d54] first playable
-atomic transaction f445c832840d covering 4 zones
+[assets/main 84825b00926a] first playable
+[engine/main 1efc9815c984] first playable
+[root/main 44e32cf0e1c5] first playable
+[tools/main a34df4eb1326] first playable
+atomic transaction 73cdb57f05d9 covering 4 zones
 $ vcs log --zone engine --oneline
-4266ff8fbdbb first playable
+1efc9815c984 first playable
 $ vcs log --zone assets --oneline
-a2cba3a7dff5 first playable
+84825b00926a first playable
 $ vcs log --oneline
-38f9381dc661 first playable
+44e32cf0e1c5 first playable
 ```
 
 The same files, a second time. This change touches `engine` and `assets` only, so only two commits are made
@@ -96,17 +96,17 @@ $ echo "fn render() { draw(); }" > engine/render/mod.rs && echo "PNGDATA-v2" > a
 $ vcs add .
 staged 4 file(s), 0 removal(s)
 $ vcs commit -m "hero gets a new look and a new draw call"
-[assets/main e787b60393f7] hero gets a new look and a new draw call
-[engine/main 8455b6481cb5] hero gets a new look and a new draw call
-atomic transaction 465078b9066e covering 2 zones
+[assets/main ef1103e58356] hero gets a new look and a new draw call
+[engine/main 9f16ce2cda63] hero gets a new look and a new draw call
+atomic transaction 8c078fff1864 covering 2 zones
 $ vcs log --zone engine --oneline
-8455b6481cb5 hero gets a new look and a new draw call
-4266ff8fbdbb first playable
+9f16ce2cda63 hero gets a new look and a new draw call
+1efc9815c984 first playable
 $ vcs log --zone assets --oneline
-e787b60393f7 hero gets a new look and a new draw call
-a2cba3a7dff5 first playable
+ef1103e58356 hero gets a new look and a new draw call
+84825b00926a first playable
 $ vcs zone branches engine
-* engine/main                     8455b6481cb5
+* engine/main                     9f16ce2cda63
 ```
 
 Each zone has its own log. `vcs log` without `--zone` shows the zone that contains your current directory
@@ -118,17 +118,17 @@ Branches belong to a zone. The artists make theirs without touching anyone else.
 
 ```text
 $ vcs zone branch assets art-wip
-created assets/art-wip at e787b60393f7
+created assets/art-wip at ef1103e58356
 $ vcs zone checkout assets art-wip
 zone assets: switched to art-wip
 $ echo "PNGDATA-v3-wip" > assets/textures/hero.png && vcs add assets && vcs commit -m "wip hero"
 staged 1 file(s), 0 removal(s)
-[assets/art-wip 0aad00eec57c] wip hero
+[assets/art-wip 609d11e98098] wip hero
 $ vcs status
-zone assets (assets/): branch art-wip @ 0aad00eec57c
-zone engine (engine/): branch main @ 8455b6481cb5
-zone root: branch main @ 38f9381dc661
-zone tools (tools/): branch main @ 2cea13ae2d54
+zone assets (assets/): branch art-wip @ 609d11e98098
+zone engine (engine/): branch main @ 9f16ce2cda63
+zone root: branch main @ 44e32cf0e1c5
+zone tools (tools/): branch main @ a34df4eb1326
 clean
 $ vcs zone checkout assets main
 zone assets: switched to main
@@ -146,30 +146,30 @@ so your own branch keeps its commits. It refuses if a zone has uncommitted work.
 
 ```text
 $ vcs snapshot create milestone-1 -m "alpha build"
-snapshot milestone-1 = e987d2997cfb
+snapshot milestone-1 = 5182afa52316
 $ vcs snapshot list
-milestone-1          e987d2997cfb
+milestone-1          5182afa52316
 $ vcs snapshot show milestone-1
-snapshot milestone-1 (e987d2997cfb1c55894ca7f02c775e8f299d38a6f82145e421da5bbd9b7112c2)
-  assets         e787b60393f739a0e439c16807f349ed150e3cb75a5805b65cc9bc3061794f51
-  engine         8455b6481cb5b645968cc383db44d3905b1c2ad0d0836cde3031316a35d36149
-  root           38f9381dc661252168afebdb38030e1c733a9e2c066aa481745d8131e6177ead
-  tools          2cea13ae2d542b7445861cbfaf82580a124ed1a7887cd601db739a628383d61b
+snapshot milestone-1 (5182afa52316ba08ce8cf07094cce448cf0ac3e4042f84dc2f045b355621afcd)
+  assets         ef1103e583561b81123096ddc3dd8f549d0c704fff71c8f26923b43480dc3c86
+  engine         9f16ce2cda634696ba81cd41438296960717935122a2cd2dc4967d72899e2817
+  root           44e32cf0e1c5f77d0775e7373925b01b45630a31f525d3b1a9c8790837f16597
+  tools          a34df4eb1326a22f9868760132950b3f9fc4015b7943ef4f147748f954454154
 $ echo "fn render() { draw(); post(); }" > engine/render/mod.rs && vcs add . && vcs commit -m "post-processing"
 staged 4 file(s), 0 removal(s)
-[engine/main 5f5466f5c9d5] post-processing
+[engine/main a9eb9bb9ae3a] post-processing
 $ vcs snapshot checkout milestone-1
-zone engine: now on snapshot/milestone-1 at 8455b6481cb5
+zone engine: now on snapshot/milestone-1 at 9f16ce2cda63
 zone assets: already at the snapshot
 zone root: already at the snapshot
 zone tools: already at the snapshot
 $ cat engine/render/mod.rs
 fn render() { draw(); }
 $ vcs branch --zone engine
-  engine/main                     5f5466f5c9d5
-* engine/snapshot/milestone-1     8455b6481cb5
+  engine/main                     a9eb9bb9ae3a
+* engine/snapshot/milestone-1     9f16ce2cda63
 $ vcs op undo
-undone; recorded operation b57269e3c9f2
+undone; recorded operation 401ed0a81001
 $ cat engine/render/mod.rs
 fn render() { draw(); post(); }
 ```
@@ -187,9 +187,9 @@ README.md
 engine
 tools
 $ vcs status
-zone engine (engine/): branch main @ 5f5466f5c9d5
-zone root: branch main @ 38f9381dc661
-zone tools (tools/): branch main @ 2cea13ae2d54
+zone engine (engine/): branch main @ a9eb9bb9ae3a
+zone root: branch main @ 44e32cf0e1c5
+zone tools (tools/): branch main @ a34df4eb1326
 not subscribed (not downloaded/materialized, NOT deleted): assets
 clean
 $ vcs zone add assets
@@ -199,6 +199,31 @@ hero.png
 ```
 
 When you clone from a remote you can choose zones up front. See [chapter 5](05-remotes.md#sparse-clones).
+
+## Sparse checkout inside a zone
+
+`vcs sparse set ZONE PATHS...` materializes only some paths of a zone. The other files stay tracked, not deleted.
+`add`, `remove`, `list` and `disable ZONE` adjust it. This is different from unsubscribing: you keep the zone,
+but only part of its files are on disk.
+
+```text
+$ vcs sparse set root src
+0 file(s) written, 2 removed from the working tree
+$ ls; vcs status
+src
+zone root: branch main @ 67faedb41176
+sparse zone root (other paths not materialized, NOT deleted): src
+clean
+$ vcs sparse add root docs
+1 file(s) written, 0 removed from the working tree
+$ vcs sparse list
+root: docs src
+$ vcs sparse disable root && ls
+1 file(s) written, 0 removed from the working tree
+bug
+docs
+src
+```
 
 ## Rename
 
