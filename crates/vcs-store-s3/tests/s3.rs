@@ -537,7 +537,11 @@ fn writes_reuse_the_pooled_connection() {
         b.put_if_absent("n", b"y").unwrap();
     }
     b.get("k").unwrap();
-    assert_eq!(conns.load(std::sync::atomic::Ordering::SeqCst), 1, "reads and writes share one connection");
+    assert_eq!(
+        conns.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "reads and writes share one connection"
+    );
 }
 
 /// A stateful S3-like server (one connection per request is fine for it) that can lose the answer
@@ -554,7 +558,8 @@ fn flaky_server(lose_ack_on: Vec<usize>, fail_on: Vec<usize>) -> Flaky {
     let addr = l.local_addr().unwrap();
     let puts = Arc::new(AtomicUsize::new(0));
     let p2 = puts.clone();
-    let store: Arc<std::sync::Mutex<std::collections::HashMap<String, (Vec<u8>, u64)>>> = Default::default();
+    type Store = std::sync::Mutex<std::collections::HashMap<String, (Vec<u8>, u64)>>;
+    let store: Arc<Store> = Default::default();
     let ver = Arc::new(AtomicUsize::new(1));
     std::thread::spawn(move || {
         for s in l.incoming() {
@@ -598,7 +603,10 @@ fn flaky_server(lose_ack_on: Vec<usize>, fail_on: Vec<usize>) -> Flaky {
                 "PUT" => {
                     let n = p2.fetch_add(1, SeqCst) + 1;
                     if fail_on.contains(&n) {
-                        reply(&mut s, "HTTP/1.1 503 Slow Down\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into());
+                        reply(
+                            &mut s,
+                            "HTTP/1.1 503 Slow Down\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into(),
+                        );
                         continue;
                     }
                     let cur = st.get(&path).map(|(_, v)| format!("\"{v}\""));
@@ -608,7 +616,10 @@ fn flaky_server(lose_ack_on: Vec<usize>, fail_on: Vec<usize>) -> Flaky {
                         _ => true,
                     };
                     if !ok {
-                        reply(&mut s, "HTTP/1.1 412 Precondition Failed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into());
+                        reply(
+                            &mut s,
+                            "HTTP/1.1 412 Precondition Failed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into(),
+                        );
                         continue;
                     }
                     let v = ver.fetch_add(1, SeqCst) as u64;
@@ -616,19 +627,32 @@ fn flaky_server(lose_ack_on: Vec<usize>, fail_on: Vec<usize>) -> Flaky {
                     if lose_ack_on.contains(&n) {
                         continue; // applied; connection dropped without an answer
                     }
-                    reply(&mut s, format!("HTTP/1.1 200 OK\r\nETag: \"{v}\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"));
+                    reply(
+                        &mut s,
+                        format!("HTTP/1.1 200 OK\r\nETag: \"{v}\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+                    );
                 }
                 _ => match st.get(&path) {
                     Some((d, v)) => reply(
                         &mut s,
-                        format!("HTTP/1.1 200 OK\r\nETag: \"{v}\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", d.len(), String::from_utf8_lossy(d)),
+                        format!(
+                            "HTTP/1.1 200 OK\r\nETag: \"{v}\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            d.len(),
+                            String::from_utf8_lossy(d)
+                        ),
                     ),
-                    None => reply(&mut s, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into()),
+                    None => reply(
+                        &mut s,
+                        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into(),
+                    ),
                 },
             }
         }
     });
-    Flaky { url: format!("http://{addr}"), puts }
+    Flaky {
+        url: format!("http://{addr}"),
+        puts,
+    }
 }
 
 fn fast_retry(b: S3Backend) -> RetryBackend {

@@ -5,6 +5,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use vcs_remote::{Backend, BackendError, Conditional, MemBackend, RetryBackend, RetryPolicy, Versioned};
 
+type Hook = Box<dyn Fn(&MemBackend) + Send>;
+
 /// What happens to the Nth call (1-based, counted over writes and reads alike).
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Fault {
@@ -19,7 +21,7 @@ struct Faulty {
     plan: Mutex<Vec<(usize, Fault)>>,
     calls: AtomicUsize,
     /// Run right after a lost-ack write is applied: lets a test play a concurrent writer.
-    intervene: Mutex<Option<Box<dyn Fn(&MemBackend) + Send>>>,
+    intervene: Mutex<Option<Hook>>,
 }
 
 impl Faulty {
@@ -232,7 +234,10 @@ fn cas_never_double_applies_under_repeated_lost_acks() {
     let b = retrying(&f, 3);
     let mut tag = mem.get("ctr").unwrap().unwrap().tag;
     for i in 1..=20u32 {
-        tag = b.put_if_match("ctr", i.to_string().as_bytes(), &tag).unwrap().unwrap_or_else(|| panic!("round {i} lost"));
+        tag = b
+            .put_if_match("ctr", i.to_string().as_bytes(), &tag)
+            .unwrap()
+            .unwrap_or_else(|| panic!("round {i} lost"));
     }
     assert_eq!(mem.get("ctr").unwrap().unwrap().data, b"20");
 }
@@ -315,8 +320,12 @@ mod parallel {
         let ids = objs.iter().step_by(4).map(|o| o.0).collect();
         let dir = tempfile::tempdir().unwrap();
         let pk = write_pack(&dir.path().join("pack"), dir.path(), objs).unwrap();
-        p.inner.put_if_absent("packs/p1.pack", &std::fs::read(&pk.pack_path).unwrap()).unwrap();
-        p.inner.put_if_absent("packs/p1.idx", &std::fs::read(pk.pack_path.with_extension("idx")).unwrap()).unwrap();
+        p.inner
+            .put_if_absent("packs/p1.pack", &std::fs::read(&pk.pack_path).unwrap())
+            .unwrap();
+        p.inner
+            .put_if_absent("packs/p1.idx", &std::fs::read(pk.pack_path.with_extension("idx")).unwrap())
+            .unwrap();
         (p, ids)
     }
 

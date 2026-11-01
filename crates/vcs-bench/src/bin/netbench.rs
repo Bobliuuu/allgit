@@ -37,16 +37,32 @@ fn main() {
         eprintln!("usage: netbench s3 <endpoint> <bucket> | http <url> <token>  [--objs N] [--rounds R] [--create-bucket]");
         std::process::exit(2);
     }
-    let flag = |n: &str, d: usize| a.iter().position(|x| x == n).and_then(|i| a.get(i + 1)).and_then(|v| v.parse().ok()).unwrap_or(d);
+    let flag = |n: &str, d: usize| {
+        a.iter()
+            .position(|x| x == n)
+            .and_then(|i| a.get(i + 1))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(d)
+    };
     let (objs_n, rounds) = (flag("--objs", 64), flag("--rounds", 5));
-    let uniq = format!("nb{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
+    let uniq = format!(
+        "nb{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    );
     let b: Box<dyn Backend> = match a[1].as_str() {
         "s3" => {
             let mut cfg = vcs_store_s3::S3Config::from_env(&a[2], &a[3]).expect("AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY not set");
             cfg.prefix = format!("{uniq}/");
             cfg.timeout = Duration::from_secs(60);
             if a.iter().any(|x| x == "--create-bucket") {
-                vcs_store_s3::S3Backend::new_unchecked(cfg.clone()).unwrap().ensure_bucket().unwrap();
+                vcs_store_s3::S3Backend::new_unchecked(cfg.clone())
+                    .unwrap()
+                    .ensure_bucket()
+                    .unwrap();
             }
             Box::new(vcs_store_s3::S3Backend::connect(cfg).expect("connect"))
         }
@@ -54,7 +70,7 @@ fn main() {
         _ => panic!("s3 or http"),
     };
     let cb = CountingBackend::new(b.as_ref());
-    let mut report = |name: &str, f: &dyn Fn(usize)| {
+    let report = |name: &str, f: &dyn Fn(usize)| {
         let (mut ms, mut reqs) = (vec![], vec![]);
         for r in 0..rounds {
             let r0 = cb.stats().requests;
@@ -63,7 +79,11 @@ fn main() {
             ms.push(t.elapsed().as_secs_f64() * 1000.0);
             reqs.push((cb.stats().requests - r0) as f64);
         }
-        println!("{name:<12} median_ms={:9.1} requests/round={:6.0} rounds={rounds}", median(&mut ms), median(&mut reqs));
+        println!(
+            "{name:<12} median_ms={:9.1} requests/round={:6.0} rounds={rounds}",
+            median(&mut ms),
+            median(&mut reqs)
+        );
     };
     report("small_rw", &|r| {
         for i in 0..200 {
@@ -90,8 +110,13 @@ fn main() {
     let ids: Vec<_> = objs.iter().step_by(4).map(|o| o.0).collect();
     let dir = tempfile::tempdir().unwrap();
     let pk = write_pack(&dir.path().join("pack"), dir.path(), objs).unwrap();
-    cb.put_if_absent(&format!("packs/{uniq}.pack"), &std::fs::read(&pk.pack_path).unwrap()).unwrap();
-    cb.put_if_absent(&format!("packs/{uniq}.idx"), &std::fs::read(pk.pack_path.with_extension("idx")).unwrap()).unwrap();
+    cb.put_if_absent(&format!("packs/{uniq}.pack"), &std::fs::read(&pk.pack_path).unwrap())
+        .unwrap();
+    cb.put_if_absent(
+        &format!("packs/{uniq}.idx"),
+        &std::fs::read(pk.pack_path.with_extension("idx")).unwrap(),
+    )
+    .unwrap();
     report("fetch_many", &|_| {
         let got = fetch_many(&cb, &ids).unwrap();
         assert_eq!(got.len(), ids.len());

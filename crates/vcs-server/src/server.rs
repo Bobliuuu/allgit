@@ -516,7 +516,6 @@ fn handle_conn(sh: &Shared, conn: TcpStream) {
             return;
         }
         *deadline.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now() + sh.cfg.header_timeout;
-
     }
 }
 
