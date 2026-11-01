@@ -212,7 +212,7 @@ Numbers come from [docs/benchmarks.md](docs/benchmarks.md) and [docs/research/st
 
 So: vcs wins `commit`, `log` and `checkout` here, git still wins `add` on text and `status` on flat and binary. An earlier run on the same box had vcs 2x to 4x slower in several of these cells ([before and after](docs/benchmarks.md#100k-files-again-on-current-main-git-vs-vcs-2026-11-01-before-and-after)); that run was at different machine load, so treat the size of the gain as approximate.
 
-### vs Perforce and walgit
+### vs other version control
 
 **Perforce (Helix Core)**, real `p4d` 2026.1 server on loopback, same 100k-file datasets, median of 5 runs, ms. Perforce is client/server, so every command is a round trip to a server process; git and vcs are local programs. **This is not apples to apples**, and the Perforce run was on a different day and at much higher machine load (load1 18 to 87) than the git/vcs table above. Do not read differences below about 2x as real.
 
@@ -241,6 +241,19 @@ What this says: Perforce's "add and submit everything" costs 64 to 105 s because
 Reading it: for pushes and clones walgit is within noise of plain git or somewhat slower (flat 10k initial push 2.9 s vs 2.0 s, 1-file push 102 ms vs 30 ms); it serves reads from a local copy on the server (a warm full clone is 4 conditional GETs and 0 payload bytes at the object store, but a cold server fetches the whole 42 MiB pack set once). `vcs` publishes faster (loose objects uploaded in 4 PUTs; git must pack first) but its full clone is 2.5x to 4.3x slower than git and its fetch of one commit is 4x to 17x slower and reads tens of MiB from the store on 100k files: a measured weakness, cause not yet diagnosed. The `vcs` 10% column is a zone subscription (only that zone's history); the git/walgit one is `--filter=blob:none` plus a sparse cone (full history, lazy blobs), so they are not the same operation. The binary-100k `vcs` column needed `vcs-server --max-body` raised: the default 256 MiB limit made the 390 MiB publish fail with a connection reset. Not measured: real networks or clouds, TLS, concurrent clients. With git 2.34.1, 9 of walgit's 57 server tests failed; with 2.56.0, 56 pass and 1 fails (needs the web UI build). Details, request counts, CPU and caveats: [docs/research/walgit-benchmark.md](docs/research/walgit-benchmark.md). Design comparison: [walgit-analysis.md](docs/research/storage/walgit-analysis.md).
 
 **Real S3** (client on a Mac over home internet to us-east-1, one run, 20 to 40 requests per cell): every request costs about 150 ms regardless of kind or size (p50: HEAD 153, 1 KiB GET 156, manifest compare-and-swap 176 ms). That is why remote packs matter: a one-file publish into a 5,000-entry directory went from 5,009 to 6 requests in the counting harness (an in-memory count, not a timed publish). The same run found that S3's ETag repeats for identical bytes, which is safe only because the manifest embeds an ever-growing generation number.
+
+**Sapling** (Meta `sl` 0.2.20261028, official prebuilt Linux x64 binary, SHA-256 checked against GitHub's published digest; **Git-backed store** via `sl init --git`), same 100k-file datasets, 5 runs interleaved with git 2.43.0 and vcs, 8-vCPU AWS box. Median ms, **git / vcs / Sapling**. The **binary** run was on a quiet box (load1 1.8 to 3); the flat and deep runs shared the machine and its disk with other jobs (load1 13 to 29), so only CPU is quoted for those:
+
+| workflow | binary wall | binary CPU | flat CPU | deep CPU |
+|---|---|---|---|---|
+| add . | 18,156 / 6,769 / 8,489 | 18,060 / 11,568 / 9,084 | 13,326 / 2,876 / 13,697 | 12,614 / 4,029 / 15,057 |
+| commit (all staged) | 558 / 441 / 31,014 | 724 / 606 / 31,724 | 930 / 648 / 30,550 | 15,260 / 1,886 / 47,016 |
+| status, clean | 112 / 141 / 268 | 280 / 620 / 864 | 303 / 631 / 887 | 1,392 / 2,351 / 3,371 |
+| log (50 commits) | 5 / 11 / 298 | 5 / 11 / 298 | 6 / 11 / 339 | 6 / 16 / 299 |
+| checkout (1% differ) | 360 / 503 / 984 | 521 / 1,032 / 1,627 | 548 / 1,100 / 1,631 | 906 / 1,507 / 4,088 |
+| clone, 50 commits | 9,856 / 9,138 / 10,412 | 10,077 / 17,244 / 14,547 | 6,016 / 12,551 / 10,557 | 8,401 / 17,241 / 17,865 |
+
+What this says: Sapling's Git store has the cheapest `add` of the three on random binary data, but `commit` of 100k files takes about 31 s because it writes every Git object loose (git and vcs: under 1 s), its local store stays unpacked (818 MB vs 415 / 421 MB on binary, `du`), and every Sapling command pays about 0.3 s of start-up (`log` 298 ms vs 5 and 11 ms). Not measured: Sapling's native store, EdenFS, Watchman, remotes, cold cache, merges; one machine, one build of each. Wall times on flat and deep are disk-contended and noisy (single runs vary up to 10x). Method, raw runs, verification and caveats: [sapling-benchmark.md](docs/research/sapling-benchmark.md).
 
 ## 🛡️ Why you can trust it
 
