@@ -54,7 +54,10 @@ fn main() {
     }
     if a.iter().any(|x| x == "--create-bucket") {
         // Local emulators only: create the bucket first (real runs use a pre-created private bucket).
-        S3Backend::new_unchecked(cfg.clone()).expect("client").ensure_bucket().expect("create bucket");
+        S3Backend::new_unchecked(cfg.clone())
+            .expect("client")
+            .ensure_bucket()
+            .expect("create bucket");
     }
     // `--no-probe` skips the product's conditional-write probe so a provider that would be refused
     // can still be characterised (research only; the product never does this).
