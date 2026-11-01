@@ -18,7 +18,7 @@ use vcs_server::log::{Format, Level, Logger, V};
 use vcs_server::{auth, backend_url, AuditLog, Config, Policy, RateLimit, Server, TokenTable};
 
 const USAGE: &str = "usage: vcs-server (--root <dir> | --backend <s3://...|dir>) --tokens <file> [--listen host:port] [--audit-log <file> [--audit-key <file>]] \
-[--rate-limit <burst>,<per-sec>] [--max-connections <n>] [--max-body <bytes>] [--policy <file>] [--allowed-signers <file>] [--revoked-signers <file>] [--max-lease-secs N] [--skew-epsilon-ms N] [--tls-cert <pem> --tls-key <pem> [--tls-client-ca <pem>]] \
+[--rate-limit <burst>,<per-sec>] [--max-connections <n>] [--max-conns-per-ip <n>] [--auth-fail-limit <burst>,<per-sec>] [--max-body <bytes>] [--policy <file>] [--allowed-signers <file>] [--revoked-signers <file>] [--max-lease-secs N] [--skew-epsilon-ms N] [--tls-cert <pem> --tls-key <pem> [--tls-client-ca <pem>]] \
 [--config <file>] [--log-format json|text] [--log-level error|warn|info|debug] [--shutdown-grace <secs>] [--metrics-token <token|@file>] \
 [--backend-retries N] [--backend-timeout <secs>] [--breaker-threshold N] [--breaker-cooldown <secs>]\n       \
 vcs-server hash-token <token>\n       vcs-server audit verify <file> [--key <file>]";
@@ -84,6 +84,7 @@ fn main() {
     }
     let (mut root, mut tokens, mut listen) = (None, None, "127.0.0.1:8480".to_owned());
     let (mut audit_log, mut audit_key, mut rate, mut maxc, mut maxb) = (None, None, None, None, None);
+    let (mut maxc_ip, mut auth_fail): (Option<String>, Option<String>) = (None, None);
     let (mut tls_cert, mut tls_key, mut tls_client_ca) = (None, None, None);
     let (mut backend_arg, mut policy_path, mut max_lease, mut eps) = (None, None, None, None);
     let (mut log_format, mut log_level, mut grace, mut metrics_tok) = (None, None, None, None);
@@ -100,6 +101,8 @@ fn main() {
             "--audit-key" => audit_key = Some(val("--audit-key")),
             "--rate-limit" => rate = Some(val("--rate-limit")),
             "--max-connections" => maxc = Some(val("--max-connections")),
+            "--max-conns-per-ip" => maxc_ip = Some(val("--max-conns-per-ip")),
+            "--auth-fail-limit" => auth_fail = Some(val("--auth-fail-limit")),
             "--max-body" => maxb = Some(val("--max-body")),
             "--tls-cert" => tls_cert = Some(val("--tls-cert")),
             "--tls-key" => tls_key = Some(val("--tls-key")),
@@ -208,6 +211,20 @@ fn main() {
             })
         });
         cfg.rate_limit = Some(parsed.unwrap_or_else(|| die("--rate-limit expects <burst>,<per-sec> (e.g. 20,5)")));
+    }
+    if let Some(n) = maxc_ip {
+        cfg.max_conns_per_ip = n
+            .parse()
+            .unwrap_or_else(|_| die("--max-conns-per-ip expects a number (0 = unlimited)"));
+    }
+    if let Some(r) = auth_fail {
+        let parsed = r.split_once(',').and_then(|(b, p)| {
+            Some(RateLimit {
+                burst: b.parse().ok()?,
+                per_sec: p.parse().ok()?,
+            })
+        });
+        cfg.auth_fail_limit = Some(parsed.unwrap_or_else(|| die("--auth-fail-limit expects <burst>,<per-sec> (e.g. 20,0.5)")));
     }
     if let Some(n) = maxc {
         cfg.max_connections = n.parse().unwrap_or_else(|_| die("--max-connections expects a number"));
