@@ -320,7 +320,7 @@ impl Repo {
             old: Some(rs.cursor),
             new: rs.orig,
         }])?;
-        write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+        write_atomic(&self.common.join("refs"), &refs.encode())?;
         self.clear_rebase_state()?;
         Ok(())
     }
@@ -469,7 +469,7 @@ impl Repo {
                 new: cursor,
             }])?;
             self.store.sync()?;
-            write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+            write_atomic(&self.common.join("refs"), &refs.encode())?;
         }
         Ok(RebaseOutcome::Conflicted {
             commit: pick,
@@ -505,7 +505,7 @@ impl Repo {
         self.save_index(&mut ix)?;
         refs.apply(&[update])?;
         self.store.sync()?; // rebuilt commits + transaction durable before refs name them
-        write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+        write_atomic(&self.common.join("refs"), &refs.encode())?;
         self.clear_merge_state()?;
         self.clear_rebase_state()?;
         self.record_op(&message, Some(run.author))?;

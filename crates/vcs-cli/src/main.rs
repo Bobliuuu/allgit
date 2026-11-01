@@ -19,6 +19,7 @@ mod json;
 mod logfmt;
 mod plumb;
 mod remote;
+mod worktree_cmd;
 
 /// The assist command: `--assist`, else the opt-in `merge.assist` setting (announced, because file
 /// contents are then handed to that command), unless `--no-assist`.
@@ -350,6 +351,9 @@ enum Cmd {
     /// Manage zones
     #[command(subcommand)]
     Zone(ZoneCmd),
+    /// Linked worktrees over one object store (add, list, remove)
+    #[command(subcommand)]
+    Worktree(worktree_cmd::WorktreeCmd),
     /// Manage snapshots (pinned sets of zone versions)
     #[command(subcommand)]
     Snapshot(SnapCmd),
@@ -1390,6 +1394,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                 }
             }
         }
+        Cmd::Worktree(w) => worktree_cmd::run(&open()?.0, w)?,
         Cmd::Zone(a) => {
             let (repo, _) = open()?;
             match a {

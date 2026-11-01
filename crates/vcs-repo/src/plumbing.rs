@@ -98,7 +98,7 @@ impl Repo {
         }
         ws.subs.insert(zone.into(), branch.into());
         self.save_index(&mut ix)?;
-        write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+        write_atomic(&self.common.join("refs"), &refs.encode())?;
         self.save_ws(&ws)?;
         self.record_op(&format!("checkout {zone}/{branch} at {}", target.short()), None)?;
         Ok(())

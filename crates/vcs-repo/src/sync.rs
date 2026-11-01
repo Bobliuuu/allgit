@@ -91,11 +91,11 @@ pub type LockRow = (String, String, vcs_remote::Lock);
 
 impl Repo {
     pub fn remote_url(&self) -> Result<Option<String>> {
-        match fs::read_to_string(self.vcs.join("remote")) {
+        match fs::read_to_string(self.common.join("remote")) {
             Ok(s) => Ok(Some(s.trim().to_owned())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(source) => Err(Error::Io {
-                path: self.vcs.join("remote"),
+                path: self.common.join("remote"),
                 source,
             }),
         }
@@ -105,11 +105,11 @@ impl Repo {
         if url.is_empty() || url.contains('\n') || url.contains('\0') {
             return msg("invalid remote url");
         }
-        write_atomic(&self.vcs.join("remote"), url.as_bytes())
+        write_atomic(&self.common.join("remote"), url.as_bytes())
     }
 
     pub fn remote_refs(&self) -> Result<Refs> {
-        let p = self.vcs.join("remote-refs");
+        let p = self.common.join("remote-refs");
         match fs::read(&p) {
             Ok(b) => Refs::decode(&b),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Refs::default()),
@@ -124,7 +124,7 @@ impl Repo {
     /// full manifest is read. Returns the manifest and its current version tag.
     fn remote_manifest(&self, backend: &dyn Backend) -> Result<(Manifest, Option<String>)> {
         let url = self.remote_url()?.unwrap_or_default();
-        let cached = fs::read(self.vcs.join("remote-manifest")).ok().and_then(|b| {
+        let cached = fs::read(self.common.join("remote-manifest")).ok().and_then(|b| {
             let mut parts = b.splitn(3, |c| *c == b'\n');
             let (u, t, body) = (parts.next()?, parts.next()?, parts.next()?);
             if u != url.as_bytes() || t.is_empty() {
@@ -137,14 +137,14 @@ impl Repo {
             if !t.contains('\n') && !url.contains('\n') {
                 let mut out = format!("{url}\n{t}\n").into_bytes();
                 out.extend_from_slice(&m.encode());
-                let _ = write_atomic(&self.vcs.join("remote-manifest"), &out); // a cache: failure is fine
+                let _ = write_atomic(&self.common.join("remote-manifest"), &out); // a cache: failure is fine
             }
         }
         Ok((m, tag))
     }
 
     fn save_remote_refs(&self, r: &Refs) -> Result<()> {
-        write_atomic(&self.vcs.join("remote-refs"), &r.encode())
+        write_atomic(&self.common.join("remote-refs"), &r.encode())
     }
 
     /// If `zone/branch` has no local ref but is known from the remote, create the local
@@ -162,7 +162,7 @@ impl Repo {
             old: None,
             new: r,
         }])?;
-        write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+        write_atomic(&self.common.join("refs"), &refs.encode())?;
         Ok(true)
     }
 
@@ -469,7 +469,7 @@ impl Repo {
             }
         }
         if changed {
-            write_atomic(&self.vcs.join("zones"), &defs.encode())?;
+            write_atomic(&self.common.join("zones"), &defs.encode())?;
         }
         let got = fetch_heads_lazy_with(backend, &self.store, Some(&want), &m).map_err(publish_err)?;
         let mut rr = self.remote_refs()?;
@@ -499,7 +499,7 @@ impl Repo {
             changed = true;
         }
         if changed {
-            write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+            write_atomic(&self.common.join("refs"), &refs.encode())?;
         }
         Ok(())
     }
@@ -661,7 +661,7 @@ impl Repo {
                             old: l,
                             new: r,
                         }])?;
-                        write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+                        write_atomic(&self.common.join("refs"), &refs.encode())?;
                         SyncAction::FastForwarded { from: l, to: r }
                     }
                 }
@@ -702,7 +702,7 @@ impl Repo {
                     let _ = defs.set_label(id, l);
                 }
             }
-            write_atomic(&repo.vcs.join("zones"), &defs.encode())?;
+            write_atomic(&repo.common.join("zones"), &defs.encode())?;
             let want: Vec<String> = match zones {
                 Some(a) => {
                     let mut ids = Vec::new();
@@ -725,7 +725,7 @@ impl Repo {
                 local.branches.insert((a.clone(), b.clone()), *id);
             }
             repo.save_remote_refs(&rr)?;
-            write_atomic(&repo.vcs.join("refs"), &local.encode())?;
+            write_atomic(&repo.common.join("refs"), &local.encode())?;
             repo.adopt_remote_tags(backend, Some(&want), &m)?;
             drop(_l);
             // Checkout needs the default branch's files: fetch them in one batch, not one by one.

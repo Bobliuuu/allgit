@@ -426,7 +426,7 @@ impl Repo {
         validate_branch_name(branch)?;
         let changes = load_changes(dir)?;
         let _l = self.lock()?;
-        let mp = self.vcs.join(MAP_FILE);
+        let mp = self.common.join(MAP_FILE);
         let mut map: BTreeMap<String, ObjectId> = BTreeMap::new();
         match fs::read_to_string(&mp) {
             Ok(t) => {
@@ -612,7 +612,7 @@ impl Repo {
             if let Some(mut i) = ix {
                 self.save_index(&mut i)?;
             }
-            write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+            write_atomic(&self.common.join("refs"), &refs.encode())?;
             self.record_op(&message, Some(author))?;
         }
         Ok(rep)

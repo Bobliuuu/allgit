@@ -622,12 +622,12 @@ impl Repo {
             self.store.sync()?;
         }
         if let Some(d) = &p.defs {
-            write_atomic(&self.vcs.join("zones"), &d.encode())?;
+            write_atomic(&self.common.join("zones"), &d.encode())?;
         }
         if !p.updates.is_empty() {
             let mut rr = p.rr.clone();
             rr.apply(&p.updates)?;
-            write_atomic(&self.vcs.join("remote-refs"), &rr.encode())?;
+            write_atomic(&self.common.join("remote-refs"), &rr.encode())?;
         }
         Ok(())
     }
@@ -678,7 +678,7 @@ impl Repo {
                 repo.bundle_commit(file, &p, author)?;
                 let mut local = Refs::default();
                 local.apply(&p.updates)?;
-                write_atomic(&repo.vcs.join("refs"), &local.encode())?;
+                write_atomic(&repo.common.join("refs"), &local.encode())?;
                 repo.save_ws(&Workspace::default())?;
             }
             let mut pick: BTreeMap<&str, &str> = BTreeMap::new();

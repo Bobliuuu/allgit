@@ -30,7 +30,7 @@ fn env_signature() -> Signature {
 impl Repo {
     /// The current operation id, or `None` for a repository that predates the log.
     pub fn op_head(&self) -> Result<Option<ObjectId>> {
-        let p = self.vcs.join(OP_HEAD);
+        let p = self.common.join(OP_HEAD);
         let bytes = match fs::read(&p) {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -81,7 +81,7 @@ impl Repo {
 
     pub(crate) fn write_op_head(&self, id: &ObjectId) -> Result<()> {
         self.store.sync()?; // the Operation object must be durable before op_head names it
-        write_atomic(&self.vcs.join(OP_HEAD), &frame(b"AGOH", id.as_bytes().to_vec()))
+        write_atomic(&self.common.join(OP_HEAD), &frame(b"AGOH", id.as_bytes().to_vec()))
     }
 
     /// Operations newest first, following all parents from `op_head`.
@@ -156,6 +156,8 @@ impl Repo {
     /// Move local branch refs, subscriptions, index and worktree to `target`.
     /// Never touches remote-tracking refs, the remote, or any object.
     fn restore_view(&self, target: &OpView) -> Result<()> {
+        // It rewrites every branch ref at once; another worktree's checked-out branch would move under it.
+        self.require_no_linked_worktrees("op undo / op restore")?;
         let zones = self.zones()?;
         let ws = self.workspace()?;
         let mut refs = self.refs()?;
@@ -248,7 +250,7 @@ impl Repo {
         if let Some(tags) = &target.tags {
             refs.tags = tags.clone();
         }
-        write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+        write_atomic(&self.common.join("refs"), &refs.encode())?;
         // A zone that stays subscribed keeps its sparse set.
         let mut sparse = ws.sparse.clone();
         sparse.retain(|z, _| target.workspace.contains_key(z));

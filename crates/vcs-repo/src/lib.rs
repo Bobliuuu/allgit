@@ -31,6 +31,7 @@ pub mod sync;
 pub mod tags;
 pub mod treeops;
 pub mod worktree_fs;
+pub mod worktree;
 
 pub use assist::{AssistResult, ProposalInfo};
 pub use error::{Error, Result};
@@ -47,3 +48,4 @@ pub use sparse::SparseReport;
 pub use stash::{StashEntry, StashPopOutcome, StashZone};
 pub use sync::{PublishReport, SyncAction, SyncReport};
 pub use tags::{BlameLine, ShowReport, TagInfo};
+pub use worktree::WorktreeInfo;
