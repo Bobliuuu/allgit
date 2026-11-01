@@ -90,19 +90,6 @@ fn publish(b: &dyn Backend, s: &MemoryStore, t: Transaction, principal: &str, no
     Publisher::new(b, s, t).with_principal(principal).with_clock(move || now).run()
 }
 
-fn put_closure(b: &dyn Backend, s: &MemoryStore, id: ObjectId) {
-    let o = s.get(&id).unwrap();
-    let deps: Vec<ObjectId> = match &o {
-        Object::Tree(t) => t.entries().iter().map(|e| e.id).collect(),
-        Object::Commit(c) => c.parents.iter().copied().chain([c.root]).collect(),
-        _ => vec![],
-    };
-    for d in deps {
-        put_closure(b, s, d);
-    }
-    b.put_if_absent(&object_key(&id), &o.encode()).unwrap();
-}
-
 fn acquire(path: &str, lease: u64) -> LockOp {
     LockOp::Acquire {
         zone: "z".into(),
