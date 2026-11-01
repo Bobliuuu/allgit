@@ -14,6 +14,9 @@ pub struct Opts {
 /// Deterministic sample of a class: stride-selected files up to cap_bytes; files above the window are
 /// represented by a contiguous window from their middle.
 fn sample<'a>(c: &'a Corpus, class: Class, o: &Opts) -> Vec<(&'a [u8], bool)> {
+    // If big files alone would exceed half of the cap, shrink the per-file window (floor 1 MiB) so that every big file is represented.
+    let nbig = c.blobs.iter().filter(|b| b.class == class && b.data.len() > o.max_file_window).count();
+    let window = if nbig * o.max_file_window > o.cap_bytes / 2 && nbig > 0 { (o.cap_bytes / 2 / nbig).max(1 << 20) } else { o.max_file_window };
     let files: Vec<(&[u8], bool)> = c
         .blobs
         .iter()
@@ -22,9 +25,9 @@ fn sample<'a>(c: &'a Corpus, class: Class, o: &Opts) -> Vec<(&'a [u8], bool)> {
             let d = &b.data[..];
             // split by PATH hash so that versions of one file never land on both sides of the dictionary train/test split
             let side = blake3::hash(b.path.as_bytes()).as_bytes()[0] & 1 == 0;
-            if d.len() > o.max_file_window {
-                let s = (d.len() - o.max_file_window) / 2;
-                (&d[s..s + o.max_file_window], side)
+            if d.len() > window {
+                let s = (d.len() - window) / 2;
+                (&d[s..s + window], side)
             } else {
                 (d, side)
             }
