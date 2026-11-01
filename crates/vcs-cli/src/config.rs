@@ -14,7 +14,11 @@ pub const KEYS: &[(&str, &str, &str)] = &[
     ("user.email", "VCS_AUTHOR_EMAIL", "author email for commits, tags and stashes"),
     ("core.editor", "VCS_EDITOR", "editor for `vcs commit` without -m"),
     ("merge.structural", "VCS_MERGE_STRUCTURAL", "on/off: structural merge (default on)"),
-    ("merge.renames", "VCS_MERGE_RENAMES", "on/off: detect renames in merge/rebase (default off)"),
+    (
+        "merge.renames",
+        "VCS_MERGE_RENAMES",
+        "on/off: detect renames in merge/rebase (default off)",
+    ),
     ("log.default-format", "VCS_LOG_FORMAT", "full or oneline (default full)"),
     (
         "remote.default",
