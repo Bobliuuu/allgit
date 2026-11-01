@@ -32,6 +32,12 @@ Total 56 passed, 1 failed (the SPA test). The earlier 9 failures were the old gi
 
 How git was obtained: `sudo add-apt-repository ppa:git-core/ppa` and `sudo apt-get install git` on the box. **This upgraded the system git (2.34.1 to 2.56.0) rather than installing into a private prefix**, because the apt route replaces the package; building from source was not attempted (an earlier agent reported it blocked). Other jobs on the box now see git 2.56.0. To revert: `sudo apt-get install git=1:2.34.1-1ubuntu1.16 git-man=...` after removing the PPA (not done).
 
+## Findings from the 100k runs worth stating
+
+* **vcs-server refused the 390 MiB binary-100k publish with its default settings.** The single pack upload exceeds the default `max_body` of 256 MiB; the client sees `Connection reset by peer` and reports `outcome unknown after 8 retries` (a 413-style refusal surfaced as a reset). The vcs rows for binary 100k come from a rerun with `vcs-server --max-body 2147483648` (separate JSON run, recorded in `meta.note`). walgit accepted the same data (git protocol, multipart store uploads) with default settings.
+* **walgit's server CPU on large pushes**: 9.1 s of walgit-server CPU for the binary 100k initial push against 1.3 s for vcs-server (it indexes and verifies the pack: `index-pack`, connectivity), plus background maintenance. In the counting pass of that dataset the warm full clone window also contained 17 PUTs and about 398 MiB of reads from the store; we attribute this to the maintainer compacting after the push (not verified by log inspection).
+* **vcs fetch of one commit** reads tens of MiB from the store at 100k files (47 MiB on flat/binary 100k), cause not diagnosed.
+
 ## Caveats
 
 * Shared, loaded machine (load1 17 to 65 across runs). A first pass over the 10k datasets ran with git's default `gc.auto`; it let git auto-pack the source repository after the initial commit, which made git/walgit initial pushes look faster (a packed source) than a freshly committed tree. That pass is kept as `data/walgit-bench/gc-default-10k/` and is NOT used in the tables; the tables use `gc.auto=0` (loose-object source, as after a normal commit of a big tree).
