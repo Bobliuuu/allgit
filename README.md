@@ -226,3 +226,7 @@ VCS_TEST_S3_ENDPOINT=http://127.0.0.1:9000 cargo test -p vcs-store-s3   # MinIO,
 ```
 
 Work is tracked in [issues](https://github.com/Bobliuuu/allgit/issues); PRs use Conventional Commits and the template in `.github/`.
+
+## 📄 License
+
+Licensed under either of [Apache License 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT) at your option. Copyright (c) 2026 Jerry Zhu.
