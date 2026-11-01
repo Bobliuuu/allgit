@@ -8,7 +8,7 @@ use crate::treeops::{self, Flat};
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use vcs_objects::names::{validate_branch_name, validate_component, validate_path, validate_zone_name, META_DIR};
 use vcs_objects::{ChangeId, Commit, EntryMode, Object, ObjectId, RefUpdate, Signature, Snapshot, Transaction};
@@ -64,6 +64,26 @@ pub struct Repo {
     pub(crate) structural: bool,
     pub(crate) renames: bool,
     pub(crate) use_commit_graph: bool,
+    /// Width of the index "racy" window (ns); only tests shorten it.
+    pub(crate) index_racy_ns: u64,
+    pub(crate) counters: Counters,
+}
+
+/// Work counters for tests and benchmarks (see [`Repo::counters`]).
+#[derive(Default)]
+pub(crate) struct Counters {
+    content_reads: AtomicU64,
+    tree_puts: AtomicU64,
+}
+
+/// A snapshot of [`Repo`]'s work counters.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WorkCounts {
+    /// Worktree files read and hashed by add or status.
+    pub content_reads: u64,
+    /// Tree objects written by commit.
+    pub tree_puts: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,6 +151,22 @@ pub(crate) fn now_ns() -> u64 {
         .unwrap_or(0)
 }
 
+/// Inode change time in ns (0 where the platform does not provide one).
+pub(crate) fn ctime_ns(m: &fs::Metadata) -> u64 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        (m.ctime().max(0) as u64)
+            .saturating_mul(1_000_000_000)
+            .saturating_add(m.ctime_nsec().max(0) as u64)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = m;
+        0
+    }
+}
+
 pub(crate) fn mtime_ns(m: &fs::Metadata) -> u64 {
     m.modified()
         .ok()
@@ -188,6 +224,10 @@ fn is_not_a_directory(e: &std::io::Error) -> bool {
     cfg!(unix) && e.raw_os_error() == Some(20)
 }
 
+fn zones_fp(zones: &Zones) -> ObjectId {
+    vcs_objects::blob_id(&zones.encode())
+}
+
 pub(crate) enum Wt {
     Clean,
     Modified,
@@ -225,6 +265,8 @@ impl Repo {
             structural: true,
             renames: false,
             use_commit_graph: true,
+            index_racy_ns: RACY_NS,
+            counters: Counters::default(),
         };
         write_atomic(&r.vcs.join("zones"), &Zones::new().encode())?;
         write_atomic(&r.vcs.join("refs"), &Refs::default().encode())?;
@@ -255,6 +297,8 @@ impl Repo {
                     structural: true,
                     renames: false,
                     use_commit_graph: true,
+                    index_racy_ns: RACY_NS,
+                    counters: Counters::default(),
                 });
             }
             if !cur.pop() {
@@ -334,10 +378,28 @@ impl Repo {
     pub(crate) fn index(&self) -> Result<Index> {
         Index::decode(&self.rd("index")?)
     }
+    /// Shorten the index racy window (tests only; production uses 2 s).
+    #[doc(hidden)]
+    pub fn set_index_racy_ns(&mut self, ns: u64) {
+        self.index_racy_ns = ns;
+    }
+    /// Work done by this handle so far (tests and benchmarks).
+    #[doc(hidden)]
+    pub fn counters(&self) -> WorkCounts {
+        WorkCounts {
+            content_reads: self.counters.content_reads.load(Ordering::Relaxed),
+            tree_puts: self.counters.tree_puts.load(Ordering::Relaxed),
+        }
+    }
     pub(crate) fn save_index(&self, ix: &mut Index) -> Result<()> {
+        self.save_index_verified(ix, |_| false)
+    }
+    /// Save the index. `verified(path)` says the entry's content was checked against the file
+    /// after its racy window had closed, which lets `written_ns` move past that window.
+    pub(crate) fn save_index_verified(&self, ix: &mut Index, verified: impl Fn(&str) -> bool) -> Result<()> {
         // Durability barrier (no-op if nothing pending): blobs the index names must be durable.
         self.store.sync()?;
-        ix.written_ns = now_ns();
+        ix.written_ns = ix.settled_written_ns(now_ns(), self.index_racy_ns, verified);
         write_atomic(&self.vcs.join("index"), &ix.encode())
     }
     pub(crate) fn save_ws(&self, ws: &Workspace) -> Result<()> {
@@ -374,16 +436,21 @@ impl Repo {
         let mut ix = self.index()?;
         let mut rep = AddReport::default();
         let mut todo = Vec::new();
+        let rev0 = ix.entries.revision();
         for p in rel_paths {
             self.add_one(p, &zones, &ws, &mut ix, &mut rep, &mut todo)?;
         }
         crate::portable::require_no_collision(ix.entries.keys().map(String::as_str).chain(todo.iter().map(String::as_str)), "add")?;
         // Read + hash + write the blobs on several threads; the index is updated afterwards.
-        self.stage_files(&todo, &mut ix)?;
+        let verified = self.stage_files(&todo, &mut ix)?;
         self.note_resolved(rel_paths, &ix)?;
         // Durability barrier: every blob the index is about to name must be durable first.
         self.store.sync()?;
-        self.save_index(&mut ix)?;
+        let next = ix.settled_written_ns(now_ns(), self.index_racy_ns, |p| verified.contains(p));
+        if ix.entries.revision() == rev0 && !ix.unlocks(next, self.index_racy_ns) {
+            return Ok(rep); // nothing changed: do not rewrite the index
+        }
+        self.save_index_verified(&mut ix, |p| verified.contains(p))?;
         Ok(rep)
     }
 
@@ -574,40 +641,77 @@ impl Repo {
 
     /// Stat, read, hash and store each file (in parallel when there are many), then record
     /// them in the index. Blob writes only touch `store`, which is safe to share across threads.
-    fn stage_files(&self, files: &[String], ix: &mut Index) -> Result<()> {
-        let one = |rel: &String| -> Result<IndexEntry> {
+    ///
+    /// A file whose size, mtime and mode equal its index entry, and whose mtime is older than
+    /// the index's racy window, is not read at all. Otherwise it is read; if the content hash
+    /// equals the entry's id the object is already stored and is not written again. Returns the
+    /// paths whose content is known to match the entry recorded after their racy window closed.
+    fn stage_files(&self, files: &[String], ix: &mut Index) -> Result<BTreeSet<String>> {
+        let racy = self.index_racy_ns;
+        let old_w = ix.written_ns;
+        let prev = &ix.entries;
+        // (entry to record if it changed, verified)
+        let one = |rel: &String| -> Result<(Option<IndexEntry>, bool)> {
             let abs = self.worktree.join(rel);
+            let t_stat = now_ns();
             let m = io(&abs, fs::symlink_metadata(&abs))?; // stat BEFORE read: later edits change mtime/size
             if m.file_type().is_symlink() {
                 let target = io(&abs, read_link_bytes(&abs))?;
                 let id = self.store.put_blob(&target)?;
-                return Ok(IndexEntry {
-                    id,
-                    mode: EntryMode::Symlink,
-                    size: target.len() as u64,
-                    mtime_ns: mtime_ns(&m),
-                });
+                return Ok((
+                    Some(IndexEntry {
+                        id,
+                        mode: EntryMode::Symlink,
+                        size: target.len() as u64,
+                        mtime_ns: mtime_ns(&m),
+                        ctime_ns: ctime_ns(&m),
+                    }),
+                    true,
+                ));
+            }
+            let (mt, ct, mode) = (mtime_ns(&m), ctime_ns(&m), mode_of(&m));
+            let old = prev.get(rel.as_str());
+            if let Some(e) = old {
+                if e.mode == mode
+                    && e.size == m.len()
+                    && e.mtime_ns == mt
+                    && e.ctime_ns == ct
+                    && ct != 0
+                    && mt.max(ct).saturating_add(racy) <= old_w
+                {
+                    return Ok((None, true)); // stat cache hit
+                }
             }
             let data = io(&abs, fs::read(&abs))?;
-            let id = self.store.put_content(&data)?;
-            Ok(IndexEntry {
+            self.counters.content_reads.fetch_add(1, Ordering::Relaxed);
+            let verified = mt.max(ct).saturating_add(racy) <= t_stat;
+            let id = match old {
+                // same size: likely the same content, and then the object is known stored
+                Some(e) if e.size == m.len() && vcs_objects::content_id(&data) == e.id => e.id,
+                _ => self.store.put_content(&data)?,
+            };
+            let ne = IndexEntry {
                 id,
-                mode: mode_of(&m),
+                mode,
                 size: m.len(),
-                mtime_ns: mtime_ns(&m),
-            })
+                mtime_ns: mt,
+                ctime_ns: ct,
+            };
+            Ok((if old == Some(&ne) { None } else { Some(ne) }, verified))
         };
         // Few files can still be a lot of work (chunking multi-MiB files), so only a handful of
         // small ones stay on the calling thread. The pool is bounded at 8 threads.
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8).min(files.len());
-        let mut entries: Vec<Option<Result<IndexEntry>>> = (0..files.len()).map(|_| None).collect();
+        type Staged = Result<(Option<IndexEntry>, bool)>;
+        type Out = Option<Staged>;
+        let mut entries: Vec<Out> = (0..files.len()).map(|_| None).collect();
         if threads <= 1 || (files.len() < 64 && !self.has_big_file(files)) {
             for (i, f) in files.iter().enumerate() {
                 entries[i] = Some(one(f));
             }
         } else {
             let next = std::sync::atomic::AtomicUsize::new(0);
-            let parts: Vec<Vec<(usize, Result<IndexEntry>)>> = std::thread::scope(|sc| {
+            let parts: Vec<Vec<(usize, Staged)>> = std::thread::scope(|sc| {
                 let hs: Vec<_> = (0..threads)
                     .map(|_| {
                         sc.spawn(|| {
@@ -627,46 +731,67 @@ impl Repo {
                 entries[i] = Some(r);
             }
         }
+        let mut verified = BTreeSet::new();
         for (f, e) in files.iter().zip(entries) {
-            ix.insert(f, e.expect("every file processed")?)?;
+            let (ne, ok) = e.expect("every file processed")?;
+            if let Some(ne) = ne {
+                ix.insert(f, ne)?;
+            }
+            if ok {
+                verified.insert(f.clone());
+            }
         }
-        Ok(())
+        Ok(verified)
     }
 
     // ---------- status ----------
 
     pub(crate) fn wt_state(&self, path: &str, e: &IndexEntry, written_ns: u64) -> Result<Wt> {
+        Ok(self.wt_state_read(path, e, written_ns)?.0)
+    }
+
+    /// [`Self::wt_state`] plus whether the verdict came from reading the file's content.
+    pub(crate) fn wt_state_read(&self, path: &str, e: &IndexEntry, written_ns: u64) -> Result<(Wt, bool)> {
         let abs = self.worktree.join(path);
         let m = match fs::symlink_metadata(&abs) {
             Ok(m) => m,
             // A path whose parent became a file (`a/b` tracked, `a` replaced by a file) is ENOTDIR.
-            Err(x) if x.kind() == std::io::ErrorKind::NotFound || is_not_a_directory(&x) => return Ok(Wt::Deleted),
+            Err(x) if x.kind() == std::io::ErrorKind::NotFound || is_not_a_directory(&x) => return Ok((Wt::Deleted, false)),
             Err(source) => return Err(Error::Io { path: abs, source }),
         };
         if e.mode == EntryMode::Symlink {
             if !m.file_type().is_symlink() {
-                return Ok(Wt::Modified);
+                return Ok((Wt::Modified, false));
             }
             let t = io(&abs, read_link_bytes(&abs))?;
-            return Ok(if vcs_objects::blob_id(&t) == e.id {
+            return Ok((
+                if vcs_objects::blob_id(&t) == e.id {
+                    Wt::Clean
+                } else {
+                    Wt::Modified
+                },
+                false,
+            ));
+        }
+        if !m.is_file() {
+            return Ok((Wt::Modified, false));
+        }
+        let mt = mtime_ns(&m);
+        let ct = ctime_ns(&m);
+        let ct_ok = e.ctime_ns == 0 || e.ctime_ns == ct;
+        if m.len() == e.size && mt == e.mtime_ns && ct_ok && mode_of(&m) == e.mode && e.stat_edge(self.index_racy_ns) <= written_ns {
+            return Ok((Wt::Clean, false));
+        }
+        let data = io(&abs, fs::read(&abs))?;
+        self.counters.content_reads.fetch_add(1, Ordering::Relaxed);
+        Ok((
+            if vcs_objects::content_id(&data) == e.id && mode_of(&m) == e.mode {
                 Wt::Clean
             } else {
                 Wt::Modified
-            });
-        }
-        if !m.is_file() {
-            return Ok(Wt::Modified);
-        }
-        let mt = mtime_ns(&m);
-        if m.len() == e.size && mt == e.mtime_ns && mode_of(&m) == e.mode && mt.saturating_add(RACY_NS) <= written_ns {
-            return Ok(Wt::Clean);
-        }
-        let data = io(&abs, fs::read(&abs))?;
-        Ok(if vcs_objects::content_id(&data) == e.id && mode_of(&m) == e.mode {
-            Wt::Clean
-        } else {
-            Wt::Modified
-        })
+            },
+            true,
+        ))
     }
 
     pub fn status(&self) -> Result<Status> {
@@ -694,21 +819,25 @@ impl Repo {
         let zones = self.zones()?;
         let ws = self.workspace()?;
         let refs = self.refs()?;
+        let fp = zones_fp(&zones);
+        let mut racy_clean: BTreeSet<String> = BTreeSet::new();
         let mut st = Status::default();
         for (zone, branch) in &ws.subs {
             let mine: BTreeMap<&String, &IndexEntry> = ix.entries.iter().filter(|(p, _)| zones.owner(p) == zone).collect();
-            // Subtree-skipping diff: hash the tree the index would commit and compare it with
-            // HEAD's tree, reading only the HEAD trees on paths that actually differ.
+            // Subtree-skipping diff: directories whose cached or computed tree id equals HEAD's
+            // are skipped; HEAD's trees are read only on paths that actually differ.
             let head_root = match self.current_head(zone, &ws, &refs) {
                 Some(h) => Some(self.commit_obj(&h)?.root),
                 None => None,
             };
-            let entries = mine.iter().map(|(p, e)| (zones.relative(zone, p), e.mode, e.id));
-            let staged: Vec<Change> = treeops::diff_index(&self.store, head_root, entries, zones.path_of(zone).unwrap_or(""))?
+            let mut it = treeops::IndexTrees::new(&self.store, &ix.entries, &zones, zone, ix.entries.cached_trees(&fp));
+            let staged: Vec<Change> = it
+                .diff(zones.path_of(zone).unwrap_or(""), head_root)?
                 .into_iter()
                 .map(|(path, kind)| Change { path, kind })
                 .collect();
-            let unstaged = self.unstaged_changes(&mine, ix.written_ns)?;
+            let (unstaged, clean) = self.unstaged_changes(&mine, ix.written_ns)?;
+            racy_clean.extend(clean);
             st.zones.push(ZoneStatus {
                 zone: zone.clone(),
                 path: zones.path_of(zone).unwrap_or("").to_owned(),
@@ -754,19 +883,28 @@ impl Repo {
             next.store(&self.vcs);
         }
         st.merging = self.merge_state()?;
+        if !racy_clean.is_empty() {
+            self.refresh_racy(ix, &racy_clean);
+        }
         Ok(st)
     }
 
-    /// Working-tree changes of the tracked `entries`, in entry order. The per-file `lstat` (and
-    /// re-hash of racy/changed files) is independent per path, so a big list is split across at
-    /// most 8 threads.
-    fn unstaged_changes(&self, entries: &BTreeMap<&String, &IndexEntry>, written_ns: u64) -> Result<Vec<Change>> {
+    /// Working-tree changes of the tracked `entries`, in entry order, plus the paths whose
+    /// content was read and found clean (racy entries). The per-file `lstat` (and re-hash of
+    /// racy/changed files) is independent per path, so a big list is split across at most 8
+    /// threads.
+    fn unstaged_changes(&self, entries: &BTreeMap<&String, &IndexEntry>, written_ns: u64) -> Result<(Vec<Change>, Vec<String>)> {
         let list: Vec<(&String, &IndexEntry)> = entries.iter().map(|(p, e)| (*p, *e)).collect();
-        let check = |part: &[(&String, &IndexEntry)]| -> Result<Vec<Change>> {
-            let mut out = Vec::new();
+        let check = |part: &[(&String, &IndexEntry)]| -> Result<(Vec<Change>, Vec<String>)> {
+            let (mut out, mut clean) = (Vec::new(), Vec::new());
             for (p, e) in part {
-                match self.wt_state(p, e, written_ns)? {
-                    Wt::Clean => {}
+                let (state, read) = self.wt_state_read(p, e, written_ns)?;
+                match state {
+                    Wt::Clean => {
+                        if read {
+                            clean.push((*p).clone());
+                        }
+                    }
                     Wt::Modified => out.push(Change {
                         path: (*p).clone(),
                         kind: ChangeKind::Modified,
@@ -777,23 +915,43 @@ impl Repo {
                     }),
                 }
             }
-            Ok(out)
+            Ok((out, clean))
         };
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
         if threads <= 1 || list.len() < 2048 {
             return check(&list);
         }
         let per = list.len().div_ceil(threads);
-        let parts: Vec<Result<Vec<Change>>> = std::thread::scope(|sc| {
+        let parts: Vec<Result<(Vec<Change>, Vec<String>)>> = std::thread::scope(|sc| {
             let check = &check;
             let hs: Vec<_> = list.chunks(per).map(|part| sc.spawn(move || check(part))).collect();
             hs.into_iter().map(|h| h.join().expect("status worker panicked")).collect()
         });
-        let mut out = Vec::new();
+        let (mut out, mut clean) = (Vec::new(), Vec::new());
         for p in parts {
-            out.extend(p?);
+            let (o, c) = p?;
+            out.extend(o);
+            clean.extend(c);
         }
-        Ok(out)
+        Ok((out, clean))
+    }
+
+    /// Record that the `verified` entries (read just now and found clean) are no longer racy, by
+    /// moving the index's `written_ns` forward. Best effort: skipped when the repository lock is
+    /// held or the index changed since `ix` was loaded, so a concurrent writer is never clobbered.
+    fn refresh_racy(&self, ix: &Index, verified: &BTreeSet<String>) {
+        let next = ix.settled_written_ns(now_ns(), self.index_racy_ns, |p| verified.contains(p));
+        if !ix.unlocks(next, self.index_racy_ns) {
+            return;
+        }
+        let Ok(_l) = self.lock() else { return };
+        let bytes = ix.encode();
+        if self.rd("index").ok().as_deref() != Some(bytes.as_slice()) {
+            return;
+        }
+        let mut ix = ix.clone();
+        ix.written_ns = next;
+        let _ = crate::meta::write_cache_atomic(&self.vcs.join("index"), &ix.encode());
     }
 
     /// Directory scan for untracked and unsupported entries. The scan is syscall-bound (one
@@ -1019,7 +1177,9 @@ impl Repo {
         let zones = self.zones()?;
         let ws = self.workspace()?;
         let mut refs = self.refs()?;
-        let ix = self.index()?;
+        let mut ix = self.index()?;
+        let fp = zones_fp(&zones);
+        let mut fresh_trees: BTreeMap<String, ObjectId> = BTreeMap::new();
         let op_author = author.clone();
         let mut updates = Vec::new();
         let mut commits = Vec::new();
@@ -1029,16 +1189,14 @@ impl Repo {
                 Some(p) => Some(self.commit_obj(&p)?.root),
                 None => None,
             };
-            let entries: Vec<(&str, EntryMode, ObjectId)> = ix
-                .entries
-                .iter()
-                .filter(|(p, _)| zones.owner(p) == zone)
-                .map(|(p, e)| (zones.relative(zone, p), e.mode, e.id))
-                .collect();
-            if parent_root.is_none() && entries.is_empty() {
+            let zpath = zones.path_of(zone).unwrap_or("");
+            let mut it = treeops::IndexTrees::new(&self.store, &ix.entries, &zones, zone, ix.entries.cached_trees(&fp));
+            if parent_root.is_none() && it.is_empty(zpath)? {
                 continue;
             }
-            let root = treeops::build(&self.store, entries)?;
+            let root = it.build_root(zpath, parent_root)?;
+            self.counters.tree_puts.fetch_add(it.puts as u64, Ordering::Relaxed);
+            fresh_trees.extend(it.cacheable());
             let second = merging
                 .as_ref()
                 .filter(|m| !is_pick && m.zone == *zone && Some(m.ours) == parent)
@@ -1079,6 +1237,13 @@ impl Repo {
         // Durability barrier: trees, commits and the transaction are durable before refs name them.
         self.store.sync()?;
         write_atomic(&self.vcs.join("refs"), &refs.encode())?; // linearization point
+                                                               // Remember the tree ids just computed so the next commit/status can skip unchanged
+                                                               // directories. `written_ns` is deliberately untouched: no entry was re-verified. Best
+                                                               // effort: a lost cache write only costs time.
+        if !fresh_trees.is_empty() {
+            ix.entries.store_trees(fp, fresh_trees);
+            let _ = crate::meta::write_cache_atomic(&self.vcs.join("index"), &ix.encode());
+        }
         if merging.is_some() {
             self.clear_merge_state()?;
         }
@@ -1452,6 +1617,7 @@ impl Repo {
                 mode,
                 size: m.len(),
                 mtime_ns: mtime_ns(&m),
+                ctime_ns: ctime_ns(&m),
             })
         };
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
@@ -1470,7 +1636,7 @@ impl Repo {
         };
         for (p, e) in changed.iter().zip(written) {
             let e = e?;
-            ix.entries.remove(*p);
+            ix.entries.remove(p);
             ix.insert(p, e)?;
         }
         // prune now-empty directories (never the worktree root)

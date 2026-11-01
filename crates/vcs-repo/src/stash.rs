@@ -262,6 +262,7 @@ impl Repo {
                             mode: *mode,
                             size: m.len(),
                             mtime_ns: 0, // unknown stat: always re-hashed
+                            ctime_ns: 0,
                         },
                     )?;
                 }
@@ -351,6 +352,7 @@ impl Repo {
                             mode: *mode,
                             size: 0,
                             mtime_ns: 0,
+                            ctime_ns: 0,
                         },
                     )?;
                 }
