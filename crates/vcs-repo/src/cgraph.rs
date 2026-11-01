@@ -1,4 +1,6 @@
-//! The commit-graph cache (`.vcs/commit-graph`), see `vcs_merge::CommitGraphFile`.
+//! The commit-graph cache, one file per zone (`.vcs/commit-graphs/<hash of zone id>`), see
+//! `vcs_merge::CommitGraphFile`. A parent always lives in its child's zone, so a zone's graph
+//! is closed and a commit in one zone never rewrites another zone's file.
 //!
 //! It is a pure cache: read paths ask for it, and anything wrong with it (missing, truncated,
 //! checksum or consistency failure, an unreadable commit) means "do not use it" or "rebuild
@@ -14,7 +16,12 @@ use vcs_merge::{CommitGraph, CommitGraphFile, MergeError};
 use vcs_objects::ObjectId;
 use vcs_store::ObjectStore;
 
-pub(crate) const CG_FILE: &str = "commit-graph";
+pub(crate) const CG_DIR: &str = "commit-graphs";
+
+/// File name of a zone's graph: 32 hex digits of the blake3 hash of the zone id.
+pub(crate) fn cg_name(zone: &str) -> String {
+    blake3::hash(zone.as_bytes()).to_hex().as_str()[..32].to_owned()
+}
 
 impl Repo {
     /// Enable or disable the commit-graph cache (default on). With it off, every query walks
@@ -23,8 +30,8 @@ impl Repo {
         self.use_commit_graph = on;
     }
 
-    fn load_cg_file(&self) -> Option<CommitGraphFile> {
-        CommitGraphFile::decode(&fs::read(self.vcs.join(CG_FILE)).ok()?).ok()
+    fn load_cg_file(&self, zone: &str) -> Option<CommitGraphFile> {
+        CommitGraphFile::decode(&fs::read(self.vcs.join(CG_DIR).join(cg_name(zone))).ok()?).ok()
     }
 
     /// `(parents, commit time)` of the real commit, the loader for building and verifying.
@@ -35,15 +42,24 @@ impl Repo {
         }
     }
 
-    /// A valid graph that covers every branch head and each of `extra`, brought up to date
-    /// (and rewritten on disk) if the file was missing, stale or corrupt. `None` when it cannot
-    /// be used (disabled, or some history is missing or malformed); callers then walk objects.
+    /// The graph of the zone that `extra` (non-empty, all in one zone) belongs to, covering
+    /// every branch head of that zone and each of `extra`, brought up to date (and rewritten
+    /// on disk) if the file was missing, stale or corrupt. `None` when it cannot be used
+    /// (disabled, no or mixed zones, or some history is missing or malformed); callers then
+    /// walk objects, with the same result.
     pub(crate) fn commit_graph(&self, extra: &[ObjectId]) -> Option<CommitGraphFile> {
         if !self.use_commit_graph {
             return None;
         }
-        let old = self.load_cg_file().unwrap_or_default();
-        let mut tips: Vec<ObjectId> = self.refs().ok()?.branches.values().copied().collect();
+        let first = extra.first()?;
+        let zone = self.commit_obj(first).ok()?.zone;
+        for e in &extra[1..] {
+            if self.commit_obj(e).ok()?.zone != zone {
+                return None;
+            }
+        }
+        let old = self.load_cg_file(&zone).unwrap_or_default();
+        let mut tips: Vec<ObjectId> = self.refs().ok()?.branches.iter().filter(|((z, _), _)| *z == zone).map(|(_, id)| *id).collect();
         tips.extend_from_slice(extra);
         // A parent must live in its child's zone. Commits entering the graph are checked here
         // (against each other, and against parents already in the file) so that the graph never
@@ -73,7 +89,9 @@ impl Repo {
             })
             .ok()?;
         if g.len() != old.len() {
-            let _ = write_cache_atomic(&self.vcs.join(CG_FILE), &g.encode()); // best effort: it is only a cache
+            let dir = self.vcs.join(CG_DIR);
+            let _ = fs::create_dir_all(&dir);
+            let _ = write_cache_atomic(&dir.join(cg_name(&zone)), &g.encode()); // best effort: it is only a cache
         }
         Some(g)
     }
@@ -88,15 +106,35 @@ impl Repo {
         r.map_err(|e| Error::Msg(format!("merge base: {e}")))
     }
 
-    /// Check `.vcs/commit-graph` (if present) against the real commits; one message per problem.
+    /// Check every file under `.vcs/commit-graphs` against the real commits; one message per problem.
     pub(crate) fn fsck_commit_graph(&self, problems: &mut Vec<String>) {
-        let bytes = match fs::read(self.vcs.join(CG_FILE)) {
-            Ok(b) => b,
-            Err(_) => return, // no cache is fine
+        let Ok(rd) = fs::read_dir(self.vcs.join(CG_DIR)) else {
+            return; // no cache is fine
         };
-        match CommitGraphFile::decode(&bytes) {
-            Err(e) => problems.push(format!("{e} (it is only a cache and is rebuilt on next use)")),
-            Ok(g) => problems.extend(g.verify_against(|id| self.cg_load(id))),
+        let mut files: Vec<_> = rd.flatten().map(|e| e.path()).collect();
+        files.sort();
+        for path in files {
+            let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            if name.contains('.') {
+                continue; // temp file of a crashed cache write
+            }
+            let bytes = match fs::read(&path) {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+            match CommitGraphFile::decode(&bytes) {
+                Err(e) => problems.push(format!("{name}: {e} (it is only a cache and is rebuilt on next use)")),
+                Ok(g) => {
+                    problems.extend(g.verify_against(|id| self.cg_load(id)).into_iter().map(|m| format!("{name}: {m}")));
+                    for id in g.ids() {
+                        if let Ok(c) = self.commit_obj(id) {
+                            if cg_name(&c.zone) != name {
+                                problems.push(format!("commit-graph {name}: {id} belongs to another zone"));
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

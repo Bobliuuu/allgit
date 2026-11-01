@@ -90,6 +90,8 @@ enum Op {
     ZoneAdd(String, String),
     /// Destructive local GC (after dropping an orphan in, and on odd serials after a repack).
     Gc,
+    /// Automatic repack (grace 0, threshold bypassed): no object may be lost, fsck stays clean.
+    AutoRepack,
 }
 
 fn show_spec(s: &str) -> &str {
@@ -133,6 +135,7 @@ impl Op {
             Op::ZoneRemove(z) => format!("zone-remove {z}"),
             Op::ZoneAdd(z, b) => format!("zone-add {z} {b}"),
             Op::Gc => "gc".into(),
+            Op::AutoRepack => "auto-repack".into(),
         }
     }
 
@@ -161,13 +164,14 @@ impl Op {
             "zone-remove" => Op::ZoneRemove(s(1)?),
             "zone-add" => Op::ZoneAdd(s(1)?, s(2)?),
             "gc" => Op::Gc,
+            "auto-repack" => Op::AutoRepack,
             _ => return None,
         })
     }
 
     /// Operations that change repository state files (candidates for crash points).
     fn crash_candidate(&self) -> bool {
-        !matches!(self, Op::Write(..) | Op::Delete(_) | Op::Rebase(..) | Op::Gc)
+        !matches!(self, Op::Write(..) | Op::Delete(_) | Op::Rebase(..) | Op::Gc | Op::AutoRepack)
     }
 }
 
@@ -225,7 +229,8 @@ fn generate(seed: u64, steps: usize) -> Vec<Op> {
             }
             95..=97 => Op::ZoneRemove(r.pick(&ZONES[3..]).into()),
             98 => Op::ZoneAdd(r.pick(&ZONES[3..]).into(), r.pick(BRANCHES).into()),
-            _ => Op::Gc,
+            _ if r.below(2) == 0 => Op::Gc,
+            _ => Op::AutoRepack,
         };
         out.push(op);
     }
@@ -421,7 +426,7 @@ impl Model {
     fn apply(&mut self, op: &Op, serial: u64) -> R<Out> {
         match op {
             // GC must be invisible to every observable the model tracks.
-            Op::Gc => Ok(Out::Done),
+            Op::Gc | Op::AutoRepack => Ok(Out::Done),
             Op::Write(p, v) => {
                 if self.subscribed(&self.owner(p)) {
                     self.wt.insert(p.clone(), content(*v));
@@ -942,6 +947,23 @@ fn apply_real(repo: &Repo, op: &Op, serial: u64, sub_ok: bool, op_ids: &[ObjectI
         Op::ZoneCreate(n, p) => e(repo.create_zone(n, p)),
         Op::ZoneRemove(z) => e(repo.zone_remove(z)),
         Op::ZoneAdd(z, b) => e(repo.zone_add(z, Some(b))),
+        Op::AutoRepack => {
+            // Odd serials exercise the grace period (nothing is old enough, so nothing moves);
+            // even ones pack every loose object, as a run long after the writes would.
+            let (now, grace) = if serial.is_multiple_of(2) {
+                (std::time::SystemTime::now(), std::time::Duration::ZERO)
+            } else {
+                (std::time::SystemTime::now(), std::time::Duration::from_secs(3600))
+            };
+            match repo.auto_repack_at(now, 0, grace, true) {
+                Ok(Some(n)) => {
+                    AUTO_PACKED.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+                    RealOut::Ok(Out::Done)
+                }
+                Ok(None) => RealOut::Err("repack returned None despite force".into()),
+                Err(x) => RealOut::Err(x.to_string()),
+            }
+        }
         Op::Gc => {
             // Pretend 60 days passed so every unreachable object is past the 14-day grace.
             let now = std::time::SystemTime::now() + std::time::Duration::from_secs(60 * 86400);
@@ -969,6 +991,7 @@ fn apply_real(repo: &Repo, op: &Op, serial: u64, sub_ok: bool, op_ids: &[ObjectI
 }
 
 /// Objects deleted by GC steps across the whole test binary (proves the steps are not vacuous).
+static AUTO_PACKED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static GC_DELETED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Independent reachability walk for the "nothing reachable is ever deleted" check: every
@@ -1229,7 +1252,12 @@ impl Harness {
         } else {
             None
         };
-        let survivors = if matches!(op, Op::Gc) { Some(must_survive(self)) } else { None };
+        let survivors = match op {
+            Op::Gc => Some(must_survive(self)),
+            // Auto repack must not lose or hide ANY object, reachable or not.
+            Op::AutoRepack => Some(self.repo.store().list().map_err(|e| e.to_string())?.into_iter().collect()),
+            _ => None,
+        };
         vcs_repo::failpoint::reset();
         let real = apply_real(&self.repo, op, serial, sub_ok, &self.op_ids);
         let writes = vcs_repo::failpoint::writes();
@@ -1256,12 +1284,12 @@ impl Harness {
         if let Some(keep) = survivors {
             for id in keep {
                 if !self.repo.store().contains(&id).map_err(|e| e.to_string())? {
-                    return Err(format!("step {i} `gc`: reachable object {id} was deleted"));
+                    return Err(format!("step {i} `{}`: object {id} was lost", op.line()));
                 }
             }
             let rep = self.repo.fsck().map_err(|e| e.to_string())?;
             if !rep.problems.is_empty() {
-                return Err(format!("step {i} `gc`: fsck after gc: {:?}", rep.problems));
+                return Err(format!("step {i} `{}`: fsck afterwards: {:?}", op.line(), rep.problems));
             }
         }
         self.check_state().map_err(|e| format!("step {i} `{}`: {e}", op.line()))?;
@@ -1460,6 +1488,9 @@ fn fixed_seeds_match_the_model() {
     assert!(trials > 0, "no crash points were exercised");
     let deleted = GC_DELETED.load(std::sync::atomic::Ordering::Relaxed);
     assert!(deleted > 0, "gc steps never deleted anything: the gc check is vacuous");
+    let packed = AUTO_PACKED.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(packed > 0, "auto repack steps never packed anything: the check is vacuous");
+    eprintln!("auto-repacked objects: {packed}");
     eprintln!("crash points exercised: {trials}; objects deleted by gc steps: {deleted}");
 }
 

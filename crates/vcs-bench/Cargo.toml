@@ -35,6 +35,10 @@ path = "src/bin/s3bench.rs"
 required-features = ["s3-tls"]
 
 [[bin]]
+name = "zonebench"
+path = "src/bin/zonebench.rs"
+
+[[bin]]
 name = "storebench"
 path = "src/bin/storebench.rs"
 

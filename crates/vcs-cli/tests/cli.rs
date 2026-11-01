@@ -336,3 +336,21 @@ fn rm_last_file_in_cwd_keeps_cwd_usable() {
     assert!(sub.is_dir(), "current directory must survive removal of its last file");
     ok(&sub, &["status"]);
 }
+
+#[test]
+fn auto_pack_limit_config_and_repack_auto() {
+    let t = tempfile::tempdir().unwrap();
+    ok(t.path(), &["init", "p"]);
+    let d = t.path().join("p");
+    assert!(!vcs(&d, &["config", "set", "gc.autoPackLimit", "lots"]).status.success());
+    ok(&d, &["config", "set", "gc.autoPackLimit", "1"]);
+    assert!(ok(&d, &["config", "get", "gc.autoPackLimit"]).contains('1'));
+    std::fs::write(d.join("a.txt"), "a\n").unwrap();
+    ok(&d, &["add", "."]); // over the limit, but nothing is past the grace period: must still succeed
+    ok(&d, &["commit", "-m", "one"]);
+    assert!(ok(&d, &["repack", "--auto"]).len() > 0);
+    ok(&d, &["config", "set", "gc.autoPackLimit", "0"]);
+    assert!(ok(&d, &["repack", "--auto"]).contains("nothing to do"));
+    assert!(ok(&d, &["fsck"]).contains("ok"));
+    assert!(ok(&d, &["log"]).contains("one"));
+}
