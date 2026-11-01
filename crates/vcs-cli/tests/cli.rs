@@ -348,7 +348,7 @@ fn auto_pack_limit_config_and_repack_auto() {
     std::fs::write(d.join("a.txt"), "a\n").unwrap();
     ok(&d, &["add", "."]); // over the limit, but nothing is past the grace period: must still succeed
     ok(&d, &["commit", "-m", "one"]);
-    assert!(ok(&d, &["repack", "--auto"]).len() > 0);
+    assert!(!ok(&d, &["repack", "--auto"]).is_empty());
     ok(&d, &["config", "set", "gc.autoPackLimit", "0"]);
     assert!(ok(&d, &["repack", "--auto"]).contains("nothing to do"));
     assert!(ok(&d, &["fsck"]).contains("ok"));

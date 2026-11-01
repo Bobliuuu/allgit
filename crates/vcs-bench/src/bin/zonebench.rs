@@ -13,7 +13,11 @@ use vcs_repo::Repo;
 use vcs_store::{LocalStore, ObjectStore};
 
 fn sig(ts: u64) -> Signature {
-    Signature { name: "B".into(), email: "b@x".into(), timestamp: ts }
+    Signature {
+        name: "B".into(),
+        email: "b@x".into(),
+        timestamp: ts,
+    }
 }
 
 fn graph_files(vcs: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
@@ -95,7 +99,11 @@ fn main() {
             refresh(&r);
             let dt = t0.elapsed();
             let after = graph_files(&vcs);
-            let rewritten: u64 = after.iter().filter(|(p, b)| warm.get(*p) != Some(*b)).map(|(_, b)| b.len() as u64).sum();
+            let rewritten: u64 = after
+                .iter()
+                .filter(|(p, b)| warm.get(*p) != Some(*b))
+                .map(|(_, b)| b.len() as u64)
+                .sum();
             let files_rewritten = after.iter().filter(|(p, b)| warm.get(*p) != Some(*b)).count();
             let total: u64 = after.values().map(|b| b.len() as u64).sum();
             println!(
@@ -118,7 +126,9 @@ fn main() {
             s.sync().unwrap();
             let (app0, al0, f0) = alloc_bytes(d.path());
             let t0 = Instant::now();
-            let packed = s.repack_older_than(SystemTime::now() + Duration::from_secs(7200), Duration::from_secs(3600)).unwrap();
+            let packed = s
+                .repack_older_than(SystemTime::now() + Duration::from_secs(7200), Duration::from_secs(3600))
+                .unwrap();
             let dt = t0.elapsed();
             let (app1, al1, f1) = alloc_bytes(d.path());
             println!(

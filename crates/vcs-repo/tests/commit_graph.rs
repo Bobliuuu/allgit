@@ -44,7 +44,12 @@ fn cg_dir(r: &Repo) -> std::path::PathBuf {
 /// Graph files present (temp files of crashed writes excluded), sorted.
 fn cg_files(r: &Repo) -> Vec<std::path::PathBuf> {
     let mut v: Vec<_> = fs::read_dir(cg_dir(r))
-        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| !p.file_name().unwrap().to_string_lossy().contains('.')).collect())
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.path())
+                .filter(|p| !p.file_name().unwrap().to_string_lossy().contains('.'))
+                .collect()
+        })
         .unwrap_or_default();
     v.sort();
     v
