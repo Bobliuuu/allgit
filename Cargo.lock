@@ -1500,6 +1500,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "clap_mangen",
+ "libc",
  "rcgen",
  "regex",
  "serde_json",

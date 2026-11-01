@@ -15,6 +15,7 @@ mod config;
 mod describe;
 mod generate;
 mod grep;
+mod hooks;
 mod json;
 mod logfmt;
 mod plumb;
@@ -74,6 +75,9 @@ struct Cli {
     /// PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
     #[arg(long, global = true, value_name = "FILE")]
     ca_pem: Option<PathBuf>,
+    /// Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+    #[arg(long, global = true)]
+    no_hooks: bool,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -807,14 +811,18 @@ fn run(cli: Cli) -> Result<(), Error> {
             }
         }
         Cmd::Commit { message } => {
-            let (repo, _) = open()?;
+            let (repo, cwd) = open()?;
             let cfg = config::Config::load()?;
             cfg.identity()?;
+            let hz = zone_of_cwd(&repo, &cwd, None)?;
+            hooks::fire_simple(&repo, &hz, "pre-commit", &[])?;
             let message = match message {
                 Some(m) => m,
                 None => config::edit_message(&cfg, &repo.worktree().join(".vcs"))?,
             };
+            let message = hooks::commit_msg(&repo, &hz, message)?;
             let rep = repo.commit(&message, author()?)?;
+            hooks::fire_simple(&repo, &hz, "post-commit", &[])?;
             let defs = repo.zones()?;
             for (zone, branch, id) in &rep.commits {
                 let zone = defs.label(zone);
@@ -1142,8 +1150,10 @@ fn run(cli: Cli) -> Result<(), Error> {
         Cmd::Switch { branch, zone } => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
+            let old = hooks::head_arg(&repo, &zone);
             repo.checkout(&zone, &branch)?;
             println!("zone {zone}: switched to {branch}");
+            hooks::fire_simple(&repo, &zone, "post-checkout", &[old, hooks::head_arg(&repo, &zone)])?;
         }
         Cmd::Merge {
             branch,
@@ -1170,6 +1180,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                 ));
             };
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
+            hooks::fire_simple(&repo, &zone, "pre-merge", &[branch.clone()])?;
             let out = if remote {
                 repo.merge_remote(&zone, &branch, author()?)?
             } else {
@@ -1178,9 +1189,13 @@ fn run(cli: Cli) -> Result<(), Error> {
             match out {
                 MergeOutcome::UpToDate => println!("already up to date"),
                 MergeOutcome::FastForward { from, to } => {
-                    println!("{zone}: fast-forward {} -> {}", opt_short(from), to.short())
+                    println!("{zone}: fast-forward {} -> {}", opt_short(from), to.short());
+                    hooks::fire_simple(&repo, &zone, "post-merge", &[branch.clone()])?;
                 }
-                MergeOutcome::Merged { commit } => println!("{zone}: merged, new commit {}", commit.short()),
+                MergeOutcome::Merged { commit } => {
+                    println!("{zone}: merged, new commit {}", commit.short());
+                    hooks::fire_simple(&repo, &zone, "post-merge", &[branch.clone()])?;
+                }
                 MergeOutcome::Conflicted { paths } => {
                     println!("automatic merge stopped: {} conflict(s)", paths.len());
                     for p in &paths {
@@ -1233,6 +1248,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                     return Err(Error::Msg("usage: vcs rebase <branch> [--zone A] | --continue | --abort".into()));
                 };
                 let zone = zone_of_cwd(&repo, &cwd, zone)?;
+                hooks::fire_simple(&repo, &zone, "pre-rebase", &[onto.clone()])?;
                 repo.rebase(&zone, &onto, author()?)?
             };
             match out {
@@ -1466,8 +1482,10 @@ fn run(cli: Cli) -> Result<(), Error> {
                     println!("created {zone}/{branch} at {}", h.short());
                 }
                 ZoneCmd::Checkout { zone, branch } => {
+                    let old = hooks::head_arg(&repo, &zone);
                     repo.checkout(&zone, &branch)?;
                     println!("zone {zone}: switched to {branch}");
+                    hooks::fire_simple(&repo, &zone, "post-checkout", &[old, hooks::head_arg(&repo, &zone)])?;
                 }
                 ZoneCmd::Add { name, branch } => {
                     match repo.remote_url()? {
@@ -1588,7 +1606,17 @@ fn run(cli: Cli) -> Result<(), Error> {
                 println!("repaired {} object(s) on the remote", repo.repair_remote(backend.as_ref())?);
             }
             let want = (!zones.is_empty()).then_some(zones.as_slice());
+            let pending = hooks::publish_lines(&repo, want);
+            hooks::fire_with_stdin(&repo, "pre-publish", &pending)?;
             let rep = repo.publish_as(backend.as_ref(), want, author()?, &principal())?;
+            let done: String = rep
+                .updated
+                .iter()
+                .map(|(a, b, old, new)| hooks::line(a, b, *old, *new))
+                .collect();
+            if !done.is_empty() {
+                hooks::fire_with_stdin(&repo, "post-publish", &done)?;
+            }
             if rep.updated.is_empty() && rep.tags.is_empty() {
                 println!("nothing to publish");
             }
@@ -1931,6 +1959,7 @@ fn run_lazy(cli: Cli) -> Result<(), Error> {
 fn main() -> ExitCode {
     let _ = ROOT_ZONE;
     let cli = Cli::parse();
+    hooks::set_disabled(cli.no_hooks);
     if let Some(ca) = &cli.ca_pem {
         // Resolved before `-C`; the config machinery reads it back as `remote.cainfo` (env VCS_CAINFO).
         let abs = std::fs::canonicalize(ca).unwrap_or_else(|_| ca.clone());

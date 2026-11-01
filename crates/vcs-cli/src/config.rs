@@ -51,6 +51,16 @@ pub const KEYS: &[(&str, &str, &str)] = &[
         "PEM private key for remote.sslcert",
     ),
     (
+        "hooks.timeout",
+        "VCS_HOOKS_TIMEOUT",
+        "seconds a client-side hook may run before it is killed (default 60; see docs/hooks.md)",
+    ),
+    (
+        "hooks.env",
+        "VCS_HOOKS_ENV",
+        "comma-separated environment variable names passed to hooks (hooks run with a scrubbed environment otherwise)",
+    ),
+    (
         "credential.helper",
         "VCS_CREDENTIAL_HELPER",
         "token store: file (default), keychain (macOS), !command or /path/to/helper",

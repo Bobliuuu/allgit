@@ -7,6 +7,9 @@ use vcs_repo::Error;
 
 #[derive(Subcommand, Clone)]
 pub enum More {
+    /// List, install or run client-side hooks (.vcs/hooks/, see docs/hooks.md)
+    #[command(subcommand)]
+    Hook(crate::hooks::HookCmd),
     /// Binary-search a zone's history for the commit that introduced a bug
     #[command(subcommand)]
     Bisect(crate::bisect::BisectCmd),
@@ -28,6 +31,7 @@ pub enum More {
 
 pub fn dispatch(cmd: &More, json: bool) -> Result<(), Error> {
     match cmd {
+        More::Hook(c) => crate::hooks::run(c),
         More::Bisect(c) => crate::bisect::run(c),
         More::Grep(a) => crate::grep::run(a),
         More::Describe(a) => crate::describe::run(a),
