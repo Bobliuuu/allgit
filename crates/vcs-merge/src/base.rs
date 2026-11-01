@@ -46,7 +46,7 @@ impl CommitGraph for StoreGraph<'_> {
 }
 
 /// All ancestors of `start`, including `start`.
-fn ancestors(g: &dyn CommitGraph, start: &ObjectId) -> Result<BTreeSet<ObjectId>, MergeError> {
+pub(crate) fn ancestors(g: &dyn CommitGraph, start: &ObjectId) -> Result<BTreeSet<ObjectId>, MergeError> {
     let mut seen = BTreeSet::new();
     let mut q = VecDeque::from([*start]);
     while let Some(c) = q.pop_front() {

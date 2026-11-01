@@ -51,13 +51,28 @@ pub struct TreeDiff {
     pub old: Flat,
     pub new: Flat,
     pub new_dir_names: Vec<Vec<String>>,
+    /// Do not collect `new_dir_names` (callers that only want the changed files).
+    lean: bool,
 }
 
 /// Diff two trees without reading subtrees whose ids are equal, so the cost follows the number of
 /// changed directories rather than tracked files. The result's `old`/`new` maps are exactly
 /// `flatten(old)`/`flatten(new)` with every path whose entry is equal on both sides removed.
 pub fn diff_trees(store: &dyn ObjectStore, old: Option<ObjectId>, new: Option<ObjectId>, prefix: &str) -> Result<TreeDiff> {
-    let mut d = TreeDiff::default();
+    diff_trees_with(store, old, new, prefix, false)
+}
+
+/// [`diff_trees`] for callers that only look at `old` and `new`: `new_dir_names` stays empty, which
+/// saves cloning every entry name of every changed directory.
+pub fn diff_trees_files(store: &dyn ObjectStore, old: Option<ObjectId>, new: Option<ObjectId>, prefix: &str) -> Result<TreeDiff> {
+    diff_trees_with(store, old, new, prefix, true)
+}
+
+fn diff_trees_with(store: &dyn ObjectStore, old: Option<ObjectId>, new: Option<ObjectId>, prefix: &str, lean: bool) -> Result<TreeDiff> {
+    let mut d = TreeDiff {
+        lean,
+        ..Default::default()
+    };
     if old != new {
         diff_pair(store, old, new, prefix, &mut d)?;
     }
@@ -143,8 +158,9 @@ fn walk_names(store: &dyn ObjectStore, tree: ObjectId, prefix: &str, out: &mut F
 }
 
 fn diff_pair(store: &dyn ObjectStore, old: Option<ObjectId>, new: Option<ObjectId>, prefix: &str, d: &mut TreeDiff) -> Result<()> {
+    let lean = d.lean;
     let (oe, ne) = (read_tree(store, old)?, read_tree(store, new)?);
-    if new.is_some() {
+    if new.is_some() && !d.lean {
         d.new_dir_names.push(ne.iter().map(|e| e.name.clone()).collect());
     }
     let (mut i, mut j) = (0, 0);
@@ -162,7 +178,7 @@ fn diff_pair(store: &dyn ObjectStore, old: Option<ObjectId>, new: Option<ObjectI
             }
             std::cmp::Ordering::Greater => {
                 let b = &ne[j];
-                add_side(store, b, join(prefix, &b.name), &mut d.new, Some(&mut d.new_dir_names))?;
+                add_side(store, b, join(prefix, &b.name), &mut d.new, if lean { None } else { Some(&mut d.new_dir_names) })?;
                 j += 1;
             }
             std::cmp::Ordering::Equal => {
@@ -177,7 +193,7 @@ fn diff_pair(store: &dyn ObjectStore, old: Option<ObjectId>, new: Option<ObjectI
                     (true, true) => diff_pair(store, Some(a.id), Some(b.id), &p, d)?,
                     _ => {
                         add_side(store, a, p.clone(), &mut d.old, None)?;
-                        add_side(store, b, p, &mut d.new, Some(&mut d.new_dir_names))?;
+                        add_side(store, b, p, &mut d.new, if lean { None } else { Some(&mut d.new_dir_names) })?;
                     }
                 }
             }

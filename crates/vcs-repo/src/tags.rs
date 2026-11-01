@@ -369,7 +369,7 @@ impl Repo {
             if let (None, Some(th), Some((_, pc))) = (pblob, follow, &parent) {
                 // renamed in this commit? match against the files it removed
                 // only what differs: a path in both trees with different content is neither gone nor new
-                let d = treeops::diff_trees(&self.store, Some(pc.root), Some(commit.root), "")?;
+                let d = treeops::diff_trees_files(&self.store, Some(pc.root), Some(commit.root), "")?;
                 let (old, new) = (d.old, d.new);
                 let gone: Vec<(&String, Vec<u8>)> = old
                     .iter()
