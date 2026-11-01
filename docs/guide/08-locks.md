@@ -25,32 +25,32 @@ Ada locks the hero painting. Bob can see it. Bob edits it anyway and tries to pu
 $ vcs lock art/hero.psd --lease-secs 3600 --reason "repainting the hero"
 locked hero.psd (zone art) token 0
 $ vcs locks
-hero.psd (zone art) held by ada@example.com until 1793503643460 (unix ms) token 0  repainting the hero
+hero.psd (zone art) held by ada@example.com until 1793503951985 (unix ms) token 0  repainting the hero
 $ cd ../bob
 $ export VCS_AUTHOR_NAME=Bob VCS_AUTHOR_EMAIL=bob@example.com
 $ vcs locks
-hero.psd (zone art) held by ada@example.com until 1793503643460 (unix ms) token 0  repainting the hero
+hero.psd (zone art) held by ada@example.com until 1793503951985 (unix ms) token 0  repainting the hero
 $ head -c 1000 /dev/urandom >> art/hero.psd && vcs add . && vcs commit -m "bob edits the hero anyway"
 staged 2 file(s), 0 removal(s)
-[art/main e4b447830358] bob edits the hero anyway
+[art/main 6bdfdcd79f1c] bob edits the hero anyway
 $ vcs publish
-error: Cannot publish: hero.psd (zone art) is locked by ada@example.com until 1793503643460 (unix ms).
+error: Cannot publish: hero.psd (zone art) is locked by ada@example.com until 1793503951985 (unix ms).
 
 Your local commits are kept. Options:
   ask ada@example.com to `vcs unlock hero.psd`, or wait for the lease to expire
   drop your change to that path and publish the rest
 [exit 1]
 $ vcs lock art/hero.psd --lease-secs 60
-error: Cannot publish: hero.psd (zone art) is locked by ada@example.com until 1793503643460 (unix ms).
+error: Cannot publish: hero.psd (zone art) is locked by ada@example.com until 1793503951985 (unix ms).
 
 Your local commits are kept. Options:
   ask ada@example.com to `vcs unlock hero.psd`, or wait for the lease to expire
   drop your change to that path and publish the rest
 [exit 1]
 $ vcs revert HEAD --zone art
-art: revert done, new commit 5082e103f079
+art: revert done, new commit da8d9f1904e2
 $ vcs publish
-art/main c12b8f7a7662 -> 5082e103f079
+art/main d693e36c7c2e -> da8d9f1904e2
 published atomically (remote generation 3)
 ```
 
@@ -68,14 +68,14 @@ Ada publishes her work and releases the lock. Her publish presents her lock toke
 $ unset VCS_AUTHOR_NAME VCS_AUTHOR_EMAIL; cd ../ada
 $ head -c 1000 /dev/urandom >> art/hero.psd && vcs add . && vcs commit -m "new hero paint"
 staged 2 file(s), 0 removal(s)
-[art/main aa06bd2faccb] new hero paint
+[art/main c0175cd445e0] new hero paint
 $ vcs publish
 error: Cannot publish art/main:
 
-Remote branch advanced to 5082e103f079.
+Remote branch advanced to da8d9f1904e2.
 
-Your local commit: aa06bd2faccb
-Remote commit:     5082e103f079
+Your local commit: c0175cd445e0
+Remote commit:     da8d9f1904e2
 
 Options:
   vcs sync

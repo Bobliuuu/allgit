@@ -24,7 +24,7 @@ checked 6 objects
 1 object(s) not cached locally; they are on the remote and will be refetched on demand
 ok
 $ vcs fetch; vcs fsck
-fetched root/main @ 3efa3ac991c0
+fetched root/main @ 2c03b463c6c5
 checked 6 objects
 1 object(s) not cached locally; they are on the remote and will be refetched on demand
 ok
@@ -49,13 +49,13 @@ checked 6 objects
 ok
 $ p=$(ls .vcs/objects/pack/*.pack); head -c 100 /dev/urandom | dd of=$p bs=1 seek=40 conv=notrunc 2>/dev/null; vcs fsck
 checked 6 objects
-PROBLEM: 3efa3ac991c0c3b6c5840a75fcbeb97db6f4304820f53e3df69204f77b1c3e3c: object 3efa3ac991c0c3b6c5840a75fcbeb97db6f4304820f53e3df69204f77b1c3e3c is corrupt: hash mismatch (content hashes to 8df7261d20f54e65dec36f34e411c4b7e059cb6ffd95cc0d1dbb1cdaba341ffb)
-PROBLEM: 52c0aeedfb9f472cf7e17f8e0fe69eb448b3b00d10240ab4920a02095f40c86b: object 52c0aeedfb9f472cf7e17f8e0fe69eb448b3b00d10240ab4920a02095f40c86b is corrupt: hash mismatch (content hashes to 3cfdd9cff95bfe9e206923dd5d51df16d847538016326227ca0189cf74a72ccd)
-PROBLEM: ref root/main: points to missing/non-commit 3efa3ac991c0c3b6c5840a75fcbeb97db6f4304820f53e3df69204f77b1c3e3c
-PROBLEM: operation f43360ce10b8ff0d2e62fe3d56185001abd4b3dcf1ec41a8c89f9148ec6b447c: view root/main -> 3efa3ac991c0c3b6c5840a75fcbeb97db6f4304820f53e3df69204f77b1c3e3c is missing or not a commit of that zone
-PROBLEM: /home/ubuntu/guide-run/ch11/healthy/.vcs/objects/pack/pack-02323a997537bdb2d423b63a135869f6111b85d949eec69d6b1207ee4fbd2d67.pack: pack checksum mismatch
-PROBLEM: /home/ubuntu/guide-run/ch11/healthy/.vcs/objects/pack/pack-02323a997537bdb2d423b63a135869f6111b85d949eec69d6b1207ee4fbd2d67.pack: object 3efa3ac991c0c3b6c5840a75fcbeb97db6f4304820f53e3df69204f77b1c3e3c hash mismatch
-PROBLEM: /home/ubuntu/guide-run/ch11/healthy/.vcs/objects/pack/pack-02323a997537bdb2d423b63a135869f6111b85d949eec69d6b1207ee4fbd2d67.pack: bad framing for 52c0aeedfb9f472cf7e17f8e0fe69eb448b3b00d10240ab4920a02095f40c86b
+PROBLEM: 2c03b463c6c59f426b75b5048cb3711a29f6fcc711fbc20396228db0ffcb4c52: object 2c03b463c6c59f426b75b5048cb3711a29f6fcc711fbc20396228db0ffcb4c52 is corrupt: hash mismatch (content hashes to 26e5b286e20e7120210ec7f5eae7fa33a37f1f494b8bcec9e8341b1cbc344439)
+PROBLEM: 52c0aeedfb9f472cf7e17f8e0fe69eb448b3b00d10240ab4920a02095f40c86b: object 52c0aeedfb9f472cf7e17f8e0fe69eb448b3b00d10240ab4920a02095f40c86b is corrupt: hash mismatch (content hashes to 433ff7eb32bccaf2415d138a432b941b7246f96a90b5b04b88e5d4c782fef153)
+PROBLEM: ref root/main: points to missing/non-commit 2c03b463c6c59f426b75b5048cb3711a29f6fcc711fbc20396228db0ffcb4c52
+PROBLEM: operation 923289641068b6761ef3aaaa326e45b0c6318a560637580529de45afa9e01445: view root/main -> 2c03b463c6c59f426b75b5048cb3711a29f6fcc711fbc20396228db0ffcb4c52 is missing or not a commit of that zone
+PROBLEM: /home/ubuntu/guide-run/ch11/healthy/.vcs/objects/pack/pack-0ff3f29940658684989b597c9cdeb14a605a61c324d4e53fdb44250334feb71e.pack: pack checksum mismatch
+PROBLEM: /home/ubuntu/guide-run/ch11/healthy/.vcs/objects/pack/pack-0ff3f29940658684989b597c9cdeb14a605a61c324d4e53fdb44250334feb71e.pack: object 2c03b463c6c59f426b75b5048cb3711a29f6fcc711fbc20396228db0ffcb4c52 hash mismatch
+PROBLEM: /home/ubuntu/guide-run/ch11/healthy/.vcs/objects/pack/pack-0ff3f29940658684989b597c9cdeb14a605a61c324d4e53fdb44250334feb71e.pack: bad framing for 52c0aeedfb9f472cf7e17f8e0fe69eb448b3b00d10240ab4920a02095f40c86b
 error: 7 problem(s) found
 [exit 1]
 ```
@@ -73,16 +73,16 @@ checks each object on the remote, and uploads the missing ones. A plain `publish
 $ cd .. && vcs init p2 && cd p2 && echo data > f.txt && vcs add . && vcs commit -m first && mkdir ../remote2 && vcs remote set ../remote2 && vcs publish
 Initialized empty vcs repository in /home/ubuntu/guide-run/ch11/p2/.vcs
 staged 1 file(s), 0 removal(s)
-[root/main 0c910ad7719c] first
+[root/main cfdec50d89d9] first
 remote set to /home/ubuntu/guide-run/ch11/remote2
-root/main (none) -> 0c910ad7719c
+root/main (none) -> cfdec50d89d9
 published atomically (remote generation 1)
 $ ls ../remote2/packs | sed "s/[0-9a-f]\{16,\}/<id>/"
 pack-<id>.idx
 pack-<id>.pack
 $ rm ../remote2/packs/*
 $ vcs clone ../remote2 ../c2
-error: remote data invalid: object 0c910ad7719c65364e6b6b4e3aced1787bef188757a315a629a8a7b33017b5d4 missing on remote
+error: remote data invalid: object cfdec50d89d9d76bdf37219900e1848d4ce9d68c75916686583f58b4f1a1f168 missing on remote
 [exit 1]
 $ vcs publish
 nothing to publish
@@ -118,7 +118,7 @@ $ vcs switch nope
 error: no such branch root/nope
 [exit 1]
 $ echo dirty >> a.txt; vcs branch other; vcs switch other
-created root/other at 3efa3ac991c0
+created root/other at 2c03b463c6c5
 error: zone "root" has uncommitted changes (0 staged, 1 unstaged); commit or revert them first
 [exit 1]
 $ vcs commit -m "nothing staged"
