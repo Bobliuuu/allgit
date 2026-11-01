@@ -720,15 +720,22 @@ impl LocalStore {
     /// once, rename pack then index (a pack without an index is ignored), fsync the directory.
     fn sync_as_pack(&self, pending: &mut HashMap<ObjectId, Pend>) -> Result<(), StoreError> {
         let items: Vec<(&ObjectId, &Pend)> = pending.iter().collect();
-        let pack = pack::write_pack_streaming(&self.dir, items.len(), items.iter().map(|(id, p)| {
-            let bytes = match p {
-                Pend::Mem(v) => std::borrow::Cow::Borrowed(v.as_slice()),
-                Pend::File(f) => std::borrow::Cow::Owned(io(f, fs::read(f))?),
-            };
-            Ok((**id, bytes))
-        }))?;
+        let pack = pack::write_pack_streaming(
+            &self.dir,
+            items.len(),
+            items.iter().map(|(id, p)| {
+                let bytes = match p {
+                    Pend::Mem(v) => std::borrow::Cow::Borrowed(v.as_slice()),
+                    Pend::File(f) => std::borrow::Cow::Owned(io(f, fs::read(f))?),
+                };
+                Ok((**id, bytes))
+            }),
+        )?;
         self.packs.write().unwrap().push(pack);
-        let files: Vec<&PathBuf> = pending.values().filter_map(|p| if let Pend::File(f) = p { Some(f) } else { None }).collect();
+        let files: Vec<&PathBuf> = pending
+            .values()
+            .filter_map(|p| if let Pend::File(f) = p { Some(f) } else { None })
+            .collect();
         // Best effort: a leftover is an orphan in tmp/ that clean_orphans removes.
         let _ = par_try_each(&files, |f| {
             let _ = fs::remove_file(f);
@@ -794,7 +801,10 @@ impl ObjectStore for LocalStore {
             }
         }
         // 1. object data to the device, then one hardware flush covering all of it.
-        let tmps: Vec<&PathBuf> = pending.values().filter_map(|p| if let Pend::File(f) = p { Some(f) } else { None }).collect();
+        let tmps: Vec<&PathBuf> = pending
+            .values()
+            .filter_map(|p| if let Pend::File(f) = p { Some(f) } else { None })
+            .collect();
         // Start write-back of every file first (Linux), so the device sees all of it at once and
         // the per-file fsync below mostly waits instead of serialising seeks and journal commits.
         #[cfg(target_os = "linux")]
@@ -816,7 +826,10 @@ impl ObjectStore for LocalStore {
         // 2. publish under final names (data is already durable, so a visible name is complete).
         let mut dirs = BTreeSet::new();
         let mut moves = Vec::with_capacity(pending.len());
-        for (id, tmp) in pending.iter().filter_map(|(i, p)| if let Pend::File(f) = p { Some((i, f)) } else { None }) {
+        for (id, tmp) in pending
+            .iter()
+            .filter_map(|(i, p)| if let Pend::File(f) = p { Some((i, f)) } else { None })
+        {
             let dest = self.path_of(id);
             let parent = dest.parent().expect("object path has parent").to_owned();
             if dirs.insert(parent.clone()) {
