@@ -11,7 +11,7 @@ Status: tool written and compiled; **no cloud run has been made yet** (the lab I
 ## Run it (operator)
 
 ```sh
-cargo build --release -p vcs-bench --bin s3bench
+cargo build --release -p vcs-bench --features s3-tls --bin s3bench
 export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... [AWS_SESSION_TOKEN=...]
 aws s3api create-bucket --bucket allgit-bench-$RANDOM --region us-east-1      # private by default
 target/release/s3bench https://s3.us-east-1.amazonaws.com <bucket> us-east-1 out.json
