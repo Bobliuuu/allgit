@@ -146,11 +146,11 @@ impl State {
     }
 }
 
-struct Helper {
+struct Helper<W: Write> {
     id: String,
     repo: Repo,
     st: Option<State>,
-    out: io::Stdout,
+    out: W,
 }
 
 fn clean_id(s: &str) -> String {
@@ -174,13 +174,12 @@ fn git_dir() -> Res<PathBuf> {
     }
 }
 
-impl Helper {
-    fn say(&self, s: &str) -> Res<()> {
-        let mut o = self.out.lock();
-        o.write_all(s.as_bytes()).map_err(e)
+impl<W: Write> Helper<W> {
+    fn say(&mut self, s: &str) -> Res<()> {
+        self.out.write_all(s.as_bytes()).map_err(e)
     }
 
-    fn capabilities(&self) -> Res<()> {
+    fn capabilities(&mut self) -> Res<()> {
         let mut s = format!(
             "import\nexport\nrefspec refs/heads/*:refs/allgit/{id}/heads/*\nrefspec refs/tags/*:refs/allgit/{id}/tags/*\n",
             id = self.id
@@ -207,7 +206,7 @@ impl Helper {
             .map(|(n, _)| n.clone())
     }
 
-    fn list(&self) -> Res<()> {
+    fn list(&mut self) -> Res<()> {
         let refs = self.repo.refs().map_err(e)?;
         let branches = refs.branches_of(ROOT_ZONE);
         let mut s = String::new();
@@ -273,9 +272,8 @@ impl Helper {
             writeln!(buf, "done").map_err(e)?;
         }
         st.add_pending(pend)?;
-        let mut o = self.out.lock();
-        o.write_all(&buf).map_err(e)?;
-        o.flush().map_err(e)
+        self.out.write_all(&buf).map_err(e)?;
+        self.out.flush().map_err(e)
     }
 
     /// `export`: read Git's fast-export stream from stdin into the root zone.
@@ -345,14 +343,19 @@ fn run() -> Res<()> {
         Ok(d) => Some(State::load(d.join("allgit").join(&id))?),
         Err(_) => None,
     };
-    let mut h = Helper {
-        id,
-        repo,
-        st,
-        out: io::stdout(),
-    };
-    let stdin = io::stdin();
-    let mut input = io::BufReader::new(stdin.lock());
+    serve(
+        Helper {
+            id,
+            repo,
+            st,
+            out: io::stdout(),
+        },
+        &mut io::BufReader::new(io::stdin().lock()),
+    )
+}
+
+/// The command loop: read helper commands from `input`, answer on `h.out`.
+fn serve<W: Write>(mut h: Helper<W>, input: &mut impl BufRead) -> Res<()> {
     let mut batch: Vec<String> = Vec::new();
     loop {
         let mut line = String::new();
@@ -369,7 +372,7 @@ fn run() -> Res<()> {
             let b = std::mem::take(&mut batch);
             h.import(&b)?;
             if line.is_empty() {
-                h.out.lock().flush().map_err(e)?;
+                h.out.flush().map_err(e)?;
                 continue;
             }
         }
@@ -377,16 +380,31 @@ fn run() -> Res<()> {
             "" => break,
             "capabilities" => h.capabilities()?,
             "list" | "list for-push" => h.list()?,
-            "export" => h.export(&mut input)?,
+            "export" => h.export(input)?,
             l if l.starts_with("option ") => h.say("unsupported\n")?,
             l => return Err(format!("unknown command {l:?}")),
         }
-        h.out.lock().flush().map_err(e)?;
+        h.out.flush().map_err(e)?;
     }
     if !batch.is_empty() {
         h.import(&batch)?;
     }
-    h.out.lock().flush().map_err(e)
+    h.out.flush().map_err(e)
+}
+
+/// Fuzz entry point (`fuzz/fuzz_targets/remote_helper.rs` includes this file as a module): load the
+/// helper state from `state_dir` and run the command loop over `cmds`, discarding the answers.
+#[allow(dead_code)]
+pub fn fuzz_entry(repo: Repo, state_dir: PathBuf, cmds: &[u8]) {
+    if let Ok(st) = State::load(state_dir) {
+        let h = Helper {
+            id: "fuzz".into(),
+            repo,
+            st: Some(st),
+            out: Vec::new(),
+        };
+        let _ = serve(h, &mut io::Cursor::new(cmds));
+    }
 }
 
 fn main() -> std::process::ExitCode {

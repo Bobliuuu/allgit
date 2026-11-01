@@ -16,6 +16,9 @@ vcs-store = { path = "../crates/vcs-store" }
 vcs-remote = { path = "../crates/vcs-remote" }
 vcs-repo = { path = "../crates/vcs-repo" }
 vcs-store-s3 = { path = "../crates/vcs-store-s3" }
+vcs-merge = { path = "../crates/vcs-merge" }
+vcs-server = { path = "../crates/vcs-server" }
+vcs-assist-claude = { path = "../crates/vcs-assist-claude", default-features = false }
 
 # Own workspace root: `cargo build --workspace` in the repository root never sees this crate
 # (it needs nightly and libFuzzer). Run it with `cargo +nightly fuzz run <target>` from here.
@@ -54,5 +57,83 @@ doc = false
 [[bin]]
 name = "s3_list"
 path = "fuzz_targets/s3_list.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "p4_marshal"
+path = "fuzz_targets/p4_marshal.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "import_p4"
+path = "fuzz_targets/import_p4.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "remote_helper"
+path = "fuzz_targets/remote_helper.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "http_request"
+path = "fuzz_targets/http_request.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "audit_verify"
+path = "fuzz_targets/audit_verify.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "config_parse"
+path = "fuzz_targets/config_parse.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "ignore_parse"
+path = "fuzz_targets/ignore_parse.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "index_decode"
+path = "fuzz_targets/index_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "pack_fetch"
+path = "fuzz_targets/pack_fetch.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "commit_graph"
+path = "fuzz_targets/commit_graph.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "state_files"
+path = "fuzz_targets/state_files.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "policy_tokens"
+path = "fuzz_targets/policy_tokens.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "assist_response"
+path = "fuzz_targets/assist_response.rs"
 test = false
 doc = false
