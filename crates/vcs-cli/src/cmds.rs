@@ -14,6 +14,8 @@ pub enum More {
     Grep(crate::grep::GrepArgs),
     /// Name a commit after the nearest tag behind it
     Describe(crate::describe::DescribeArgs),
+    /// Write the files of a revision as a .tar or .zip archive
+    Archive(crate::archive::ArchiveArgs),
 }
 
 pub fn dispatch(cmd: &More, _json: bool) -> Result<(), Error> {
@@ -21,5 +23,6 @@ pub fn dispatch(cmd: &More, _json: bool) -> Result<(), Error> {
         More::Bisect(c) => crate::bisect::run(c),
         More::Grep(a) => crate::grep::run(a),
         More::Describe(a) => crate::describe::run(a),
+        More::Archive(a) => crate::archive::run(a),
     }
 }
