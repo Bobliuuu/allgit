@@ -9,6 +9,7 @@ authentication, roles, a per-zone write policy and server-side validation of eve
 vcs-server hash-token <token>                      # prints the hash to put in the tokens file
 vcs-server --root <dir> --tokens <file> [--listen 127.0.0.1:8480] [--tls-cert <pem> --tls-key <pem> [--tls-client-ca <pem>]]
                   [--audit-log <file> [--audit-key <file>]] [--rate-limit <burst>,<per-sec>] [--max-connections <n>]
+                  [--max-conns-per-ip <n>] [--auth-fail-limit <burst>,<per-sec>]
 vcs-server audit verify <file> [--key <keyfile>]
 vcs-server --backend 's3://bucket/prefix?endpoint=URL' --tokens <file> [--policy <file>] [--max-lease-secs N] [--skew-epsilon-ms N]
 VCS_TOKEN=<token> VCS_PRINCIPAL=<name> vcs clone http://host:port ...
@@ -192,7 +193,16 @@ handshake), `body_timeout` (600 s overall for the body and again for the respons
 The overall deadlines are what stop slowloris-style trickling; per-read timeouts alone would not. Bodies are read
 incrementally, so announcing a huge `Content-Length` and stalling costs no memory. Malformed request lines, header
 names, duplicate or non-numeric `Content-Length`, NUL bytes and non-UTF-8 headers are 400. Defaults are unmeasured
-guesses, not tuned values; the binary exposes only `--max-connections` and `--max-body`.
+guesses, not tuned values; the binary exposes `--max-connections`, `--max-body`, `--max-conns-per-ip` and
+`--auth-fail-limit`.
+
+**Abuse limits (opt-in, security review finding 14).** `--auth-fail-limit <burst>,<per-sec>` keeps a leaky counter
+per client address: every failed authentication (401) adds one, it drains at `per-sec`, and at `burst` the address
+gets 429 with `Retry-After` before its token is even looked at (so guessing cannot continue, and a valid token from a
+blocked address is also refused until the counter drains). `/healthz` and `/readyz` are exempt. `--max-conns-per-ip <n>`
+refuses (503, or a drop under TLS) connections beyond `n` from one address. Both are off by default because behind a
+reverse proxy every client shares the proxy's address: enable them only where the server sees real client addresses.
+Idle cost is one relaxed atomic load per request when no failure has been recorded.
 
 ## Not done (known gaps)
 

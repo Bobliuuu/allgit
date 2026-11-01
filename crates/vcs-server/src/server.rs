@@ -52,6 +52,11 @@ pub struct Config {
     pub max_requests_per_conn: usize,
     /// Per-principal token bucket; `None` = unlimited (no built-in default).
     pub rate_limit: Option<RateLimit>,
+    /// Per-address throttle on failed authentication (`--auth-fail-limit`); `None` = off.
+    pub auth_fail_limit: Option<RateLimit>,
+    /// Most simultaneous connections from one address (`--max-conns-per-ip`); 0 = unlimited. Behind a
+    /// reverse proxy every client shares the proxy's address, so leave it off there.
+    pub max_conns_per_ip: usize,
     /// Audit log of every authenticated PUT; `None` = no audit.
     pub audit: Option<Arc<AuditLog>>,
     /// Tokens file to poll for changes (new contents replace the table; unparsable or empty ones are ignored).
@@ -87,6 +92,8 @@ impl Config {
             keepalive_idle: Duration::from_secs(5),
             max_requests_per_conn: 1000,
             rate_limit: None,
+            auth_fail_limit: None,
+            max_conns_per_ip: 0,
             audit: None,
             tokens_file: None,
             token_reload_interval: Duration::from_secs(1),
@@ -122,14 +129,25 @@ struct Shared {
     tls: RwLock<Option<Arc<rustls::ServerConfig>>>,
     read_index: Mutex<crate::readguard::ReadIndex>,
     limiter: Option<Limiter>,
+    fail_throttle: Option<crate::ratelimit::FailThrottle>,
+    per_ip: Mutex<std::collections::HashMap<std::net::IpAddr, usize>>,
     active: AtomicUsize,
     stop: AtomicBool,
 }
 
-struct ConnGuard(Arc<Shared>);
+struct ConnGuard(Arc<Shared>, Option<std::net::IpAddr>);
 impl Drop for ConnGuard {
     fn drop(&mut self) {
         self.0.active.fetch_sub(1, Ordering::SeqCst);
+        if let Some(ip) = self.1 {
+            let mut m = self.0.per_ip.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(n) = m.get_mut(&ip) {
+                *n -= 1;
+                if *n == 0 {
+                    m.remove(&ip);
+                }
+            }
+        }
     }
 }
 
@@ -186,6 +204,8 @@ impl Server {
             req_seq: AtomicU64::new(0),
             nonce,
             limiter: cfg.rate_limit.map(Limiter::new),
+            fail_throttle: cfg.auth_fail_limit.map(crate::ratelimit::FailThrottle::new),
+            per_ip: Mutex::new(Default::default()),
             tokens: RwLock::new(Arc::new(tokens)),
             validator: RwLock::new(Arc::new(cfg.validator.clone())),
             #[cfg(feature = "tls")]
@@ -207,7 +227,23 @@ impl Server {
                     refuse(&s2, conn);
                     continue;
                 }
-                let guard = ConnGuard(s2.clone());
+                let mut ip = None;
+                if s2.cfg.max_conns_per_ip > 0 {
+                    if let Ok(a) = conn.peer_addr() {
+                        let mut m = s2.per_ip.lock().unwrap_or_else(|e| e.into_inner());
+                        let n = m.entry(a.ip()).or_insert(0);
+                        if *n >= s2.cfg.max_conns_per_ip {
+                            drop(m);
+                            s2.active.fetch_sub(1, Ordering::SeqCst);
+                            s2.metrics.rate_limited.fetch_add(1, Ordering::Relaxed);
+                            refuse(&s2, conn);
+                            continue;
+                        }
+                        *n += 1;
+                        ip = Some(a.ip());
+                    }
+                }
+                let guard = ConnGuard(s2.clone(), ip);
                 let s3 = s2.clone();
                 // If the spawn fails the closure (and its guard) is dropped, releasing the slot.
                 let _ = std::thread::Builder::new().spawn(move || {
@@ -385,6 +421,11 @@ impl Write for DeadlineTcp {
 
 fn handle_conn(sh: &Shared, conn: TcpStream) {
     let _ = conn.set_nodelay(true);
+    let peer = if sh.fail_throttle.is_some() {
+        conn.peer_addr().ok().map(|a| a.ip())
+    } else {
+        None
+    };
     let deadline = Arc::new(Mutex::new(Instant::now() + sh.cfg.header_timeout));
     let ds = DeadlineTcp {
         tcp: conn,
@@ -430,6 +471,7 @@ fn handle_conn(sh: &Shared, conn: TcpStream) {
         let mut error_reply = false;
         let t0 = Instant::now();
         let mut ctx = Ctx {
+            peer,
             principal: "-".into(),
             role: "none",
             request_id: String::new(),
@@ -521,6 +563,7 @@ fn handle_conn(sh: &Shared, conn: TcpStream) {
 
 /// Per-request facts the access log and metrics need; filled in by [`route`].
 struct Ctx {
+    peer: Option<std::net::IpAddr>,
     principal: String,
     role: &'static str,
     request_id: String,
@@ -614,8 +657,18 @@ fn route_inner(sh: &Shared, req: &Request, ctx: &mut Ctx) -> Response {
         .map(str::trim);
     let now = (sh.cfg.clock)();
     let table = sh.tokens.read().unwrap_or_else(|e| e.into_inner()).clone();
+    if let (Some(t), Some(ip)) = (&sh.fail_throttle, ctx.peer) {
+        if let Err(ms) = t.blocked(ip, now) {
+            sh.metrics.rate_limited.fetch_add(1, Ordering::Relaxed);
+            return text(429, "too many failed authentication attempts").with("Retry-After", ms.div_ceil(1000).max(1).to_string());
+        }
+    }
+    let peer = ctx.peer;
     let unauthorized = |msg: &str| {
         sh.metrics.auth_failures.fetch_add(1, Ordering::Relaxed);
+        if let (Some(t), Some(ip)) = (&sh.fail_throttle, peer) {
+            t.fail(ip, now);
+        }
         text(401, msg).with("WWW-Authenticate", "Bearer")
     };
     let auth = tok.map(|t| table.authenticate_at(t, now));

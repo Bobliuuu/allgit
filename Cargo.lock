@@ -1631,6 +1631,7 @@ dependencies = [
  "vcs-objects",
  "vcs-remote",
  "vcs-repo",
+ "vcs-server",
  "vcs-store",
  "vcs-store-s3",
 ]
