@@ -12,7 +12,8 @@ use std::fs;
 use std::path::Path;
 use vcs_objects::{LockOp, Object, ObjectId, RefUpdate, Signature, Transaction};
 use vcs_remote::{
-    fetch_heads_lazy, fetch_object, fetch_objects, fetch_tags_lazy, load_manifest, Backend, Outcome, PublishError, Publisher,
+    fetch_heads_lazy_with, fetch_object, fetch_objects, fetch_tags_lazy_with, load_manifest, refresh_manifest, Backend, Manifest, Outcome,
+    PublishError, Publisher,
 };
 
 #[derive(Debug)]
@@ -116,6 +117,32 @@ impl Repo {
         }
     }
 
+    /// The remote manifest, via a one-entry on-disk cache (`.vcs/remote-manifest`: remote url,
+    /// version tag, manifest bytes). With a cached copy the backend is asked only whether the tag
+    /// changed (conditional GET): unchanged costs one request and no body. The cache is keyed by
+    /// the remote url and is best effort: any unreadable or undecodable cache is ignored and the
+    /// full manifest is read. Returns the manifest and its current version tag.
+    fn remote_manifest(&self, backend: &dyn Backend) -> Result<(Manifest, Option<String>)> {
+        let url = self.remote_url()?.unwrap_or_default();
+        let cached = fs::read(self.vcs.join("remote-manifest")).ok().and_then(|b| {
+            let mut parts = b.splitn(3, |c| *c == b'\n');
+            let (u, t, body) = (parts.next()?, parts.next()?, parts.next()?);
+            if u != url.as_bytes() || t.is_empty() {
+                return None;
+            }
+            Some((Manifest::decode(body).ok()?, String::from_utf8(t.to_vec()).ok()?))
+        });
+        let (m, tag) = refresh_manifest(backend, cached).map_err(publish_err)?;
+        if let Some(t) = &tag {
+            if !t.contains('\n') && !url.contains('\n') {
+                let mut out = format!("{url}\n{t}\n").into_bytes();
+                out.extend_from_slice(&m.encode());
+                let _ = write_atomic(&self.vcs.join("remote-manifest"), &out); // a cache: failure is fine
+            }
+        }
+        Ok((m, tag))
+    }
+
     fn save_remote_refs(&self, r: &Refs) -> Result<()> {
         write_atomic(&self.vcs.join("remote-refs"), &r.encode())
     }
@@ -188,7 +215,7 @@ impl Repo {
         let ws = self.workspace()?;
         let refs = self.refs()?;
         let tracked = self.remote_refs()?;
-        let (manifest, _) = load_manifest(backend).map_err(publish_err)?;
+        let (manifest, manifest_tag) = self.remote_manifest(backend)?;
         let zones = self.resolve_filter(zones)?;
         let zones = zones.as_deref();
         let mut updates = Vec::new();
@@ -288,6 +315,7 @@ impl Repo {
             lock_ops,
         };
         let outcome = Publisher::new(backend, &self.store, tx)
+            .with_manifest_hint(manifest.clone(), manifest_tag)
             .with_principal(principal)
             .with_zones(zone_defs)
             .with_labels(label_defs)
@@ -420,7 +448,7 @@ impl Repo {
             Some(a) => a.to_vec(),
             None => ws.subs.keys().cloned().collect(),
         };
-        let (m, _) = load_manifest(backend).map_err(publish_err)?;
+        let (m, _) = self.remote_manifest(backend)?;
         let mut defs = self.zones()?;
         let mut changed = false;
         for (n, p) in &m.zones {
@@ -443,20 +471,20 @@ impl Repo {
         if changed {
             write_atomic(&self.vcs.join("zones"), &defs.encode())?;
         }
-        let got = fetch_heads_lazy(backend, &self.store, Some(&want)).map_err(publish_err)?;
+        let got = fetch_heads_lazy_with(backend, &self.store, Some(&want), &m).map_err(publish_err)?;
         let mut rr = self.remote_refs()?;
         for (a, b, id) in &got {
             rr.branches.insert((a.clone(), b.clone()), *id);
         }
         self.save_remote_refs(&rr)?;
-        self.adopt_remote_tags(backend, Some(&want))?;
+        self.adopt_remote_tags(backend, Some(&want), &m)?;
         Ok(got)
     }
 
     /// Fetch the remote's tags of `zones` and add the ones this repository lacks. A local tag
     /// with the same name is never moved. Caller holds the lock.
-    fn adopt_remote_tags(&self, backend: &dyn Backend, zones: Option<&[String]>) -> Result<()> {
-        let got = fetch_tags_lazy(backend, &self.store, zones).map_err(publish_err)?;
+    fn adopt_remote_tags(&self, backend: &dyn Backend, zones: Option<&[String]>, m: &Manifest) -> Result<()> {
+        let got = fetch_tags_lazy_with(backend, &self.store, zones, m).map_err(publish_err)?;
         if got.is_empty() {
             return Ok(());
         }
@@ -655,7 +683,7 @@ impl Repo {
                 None => defs.names().map(str::to_owned).collect(),
             };
             repo.save_ws(&Workspace::default())?;
-            let got = fetch_heads_lazy(backend, &repo.store, Some(&want)).map_err(publish_err)?;
+            let got = fetch_heads_lazy_with(backend, &repo.store, Some(&want), &m).map_err(publish_err)?;
             let mut rr = Refs::default();
             let mut local = Refs::default();
             for (a, b, id) in &got {
@@ -664,7 +692,7 @@ impl Repo {
             }
             repo.save_remote_refs(&rr)?;
             write_atomic(&repo.vcs.join("refs"), &local.encode())?;
-            repo.adopt_remote_tags(backend, Some(&want))?;
+            repo.adopt_remote_tags(backend, Some(&want), &m)?;
             drop(_l);
             // Checkout needs the default branch's files: fetch them in one batch, not one by one.
             for a in &want {

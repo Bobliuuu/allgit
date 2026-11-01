@@ -1,4 +1,4 @@
-use crate::backend::{validate_key, Backend, BackendError, Versioned};
+use crate::backend::{validate_key, Backend, BackendError, Conditional, Versioned};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
@@ -140,6 +140,24 @@ impl Backend for MemBackend {
             g.read_log.push(key.to_owned());
         }
         Ok(r)
+    }
+    fn get_conditional(&self, key: &str, have: &str) -> Result<Conditional, BackendError> {
+        validate_key(key)?;
+        let mut g = self.inner.lock().unwrap();
+        g.requests += 1;
+        let Some((d, v)) = g.objects.get(key) else {
+            return Ok(Conditional::Missing);
+        };
+        if v.to_string() == have {
+            return Ok(Conditional::NotModified); // no body: nothing added to bytes_read
+        }
+        let out = Versioned {
+            data: d.clone(),
+            tag: v.to_string(),
+        };
+        g.bytes_read += out.data.len() as u64;
+        g.read_log.push(key.to_owned());
+        Ok(Conditional::Modified(out))
     }
     fn get_range(&self, key: &str, offset: u64, len: u64) -> Result<Option<Vec<u8>>, BackendError> {
         validate_key(key)?;

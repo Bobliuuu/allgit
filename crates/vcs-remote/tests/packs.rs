@@ -298,3 +298,97 @@ fn corrupt_pack_range_is_rejected() {
         assert!(!dst.contains(&h).unwrap());
     }
 }
+
+#[test]
+fn one_file_publish_reads_the_manifest_once() {
+    let src = MemoryStore::new();
+    let (c1, c2) = big_dir(&src, 50);
+    let mem = MemBackend::new();
+    publish(&mem, &src, "z", None, c1, true);
+    let lb = LoggingBackend::new(&mem);
+    publish(&lb, &src, "z", Some(c1), c2, true);
+    lb.dump("1-file packed publish");
+    assert_eq!(lb.count("GET manifest"), 1, "one manifest read per publish");
+    assert!(lb.calls().len() <= 6, "{:?}", lb.calls());
+}
+
+#[test]
+fn stale_manifest_hint_cannot_commit_a_stale_validation() {
+    let src = MemoryStore::new();
+    let (c1, c2) = big_dir(&src, 10);
+    let mem = MemBackend::new();
+    publish(&mem, &src, "z", None, c1, true);
+    let (hint, tag) = load_manifest(&mem).unwrap();
+    // another writer advances z/main AFTER the hint was read
+    let other = commit(&src, "z", vec![c1], c1_root(&src, c1), 77);
+    publish(&mem, &src, "z", Some(c1), other, true);
+    // our publish still believes z/main = c1: it must be refused (Diverged), never applied
+    let p = Publisher::new(&mem, &src, tx("z", Some(c1), c2)).with_manifest_hint(hint.clone(), tag.clone());
+    match p.run() {
+        Err(PublishError::Diverged { found, .. }) => assert_eq!(found, Some(other)),
+        r => panic!("a stale hint must end in Diverged, got {r:?}"),
+    }
+    assert_eq!(load_manifest(&mem).unwrap().0.head("z", "main"), Some(other));
+    // a disjoint zone's writer between hint and CAS: the CAS fails on the stale tag, the retry
+    // re-reads the manifest, and BOTH updates are present afterwards
+    let (hint, tag) = load_manifest(&mem).unwrap();
+    let zroot = c1_root(&src, c1);
+    let y1 = commit(&src, "y", vec![], zroot, 90);
+    publish(&mem, &src, "y", None, y1, true);
+    let x1 = commit(&src, "x", vec![], zroot, 91);
+    Publisher::new(&mem, &src, tx("x", None, x1))
+        .with_manifest_hint(hint, tag)
+        .run()
+        .unwrap();
+    let m = load_manifest(&mem).unwrap().0;
+    assert_eq!((m.head("y", "main"), m.head("x", "main")), (Some(y1), Some(x1)));
+    assert_eq!(m.head("z", "main"), Some(other));
+}
+
+fn c1_root(s: &MemoryStore, c: ObjectId) -> ObjectId {
+    let Object::Commit(c) = s.get(&c).unwrap() else { panic!() };
+    c.root
+}
+
+#[test]
+fn hint_is_used_once_and_a_lost_race_rereads() {
+    let src = MemoryStore::new();
+    let (c1, c2) = big_dir(&src, 10);
+    let mem = MemBackend::new();
+    publish(&mem, &src, "z", None, c1, true);
+    let (hint, tag) = load_manifest(&mem).unwrap();
+    let lb = LoggingBackend::new(&mem);
+    Publisher::new(&lb, &src, tx("z", Some(c1), c2))
+        .with_manifest_hint(hint, tag)
+        .run()
+        .unwrap();
+    assert_eq!(lb.count("GET manifest"), 0, "a fresh hint means no manifest GET at all");
+    assert_eq!(lb.count("PUT-CAS manifest"), 1);
+}
+
+#[test]
+fn conditional_get_costs_one_request_and_no_body_when_unchanged() {
+    let src = MemoryStore::new();
+    let (c1, c2) = big_dir(&src, 10);
+    let mem = MemBackend::new();
+    publish(&mem, &src, "z", None, c1, true);
+    let cb = CountingBackend::new(&mem);
+    let (m, tag) = refresh_manifest(&cb, None).unwrap();
+    let full = cb.stats();
+    assert!(full.bytes_down > 0);
+    let before = cb.stats();
+    let (m2, tag2) = refresh_manifest(&cb, Some((m.clone(), tag.clone().unwrap()))).unwrap();
+    let st = cb.stats();
+    println!(
+        "manifest refresh, unchanged: {} request(s), {} body bytes (full read: {})",
+        st.requests - before.requests,
+        st.bytes_down - before.bytes_down,
+        full.bytes_down
+    );
+    assert_eq!((st.requests - before.requests, st.bytes_down - before.bytes_down), (1, 0));
+    assert_eq!((m2.head("z", "main"), tag2), (Some(c1), tag));
+    // changed: full body, new head
+    publish(&mem, &src, "z", Some(c1), c2, true);
+    let (m3, _) = refresh_manifest(&mem, Some((m, "stale".into()))).unwrap();
+    assert_eq!(m3.head("z", "main"), Some(c2));
+}

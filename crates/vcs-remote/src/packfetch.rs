@@ -64,6 +64,9 @@ pub fn fetch_from_any_pack(b: &dyn Backend, id: &ObjectId) -> Result<Option<Vec<
 /// 1-byte ranged GET each, which yields the kind (the first byte of the encoding). `None` means
 /// the remote does not have the id.
 pub fn probe_kinds(b: &dyn Backend, ids: &[ObjectId]) -> Result<Vec<(ObjectId, Option<u8>)>, BackendError> {
+    if ids.is_empty() {
+        return Ok(vec![]); // nothing to probe: do not list and index every pack for it
+    }
     let mut packs = Vec::new();
     for key in b.list(PACK_PREFIX)? {
         let Some(stem) = key.strip_suffix(".idx") else { continue };
@@ -193,6 +196,8 @@ pub struct RemoteSource<'a> {
     read_ahead_done: Vec<bool>,
     /// Pre-read objects keyed by the hash of their bytes, so a lying pack cannot plant data.
     cache: HashMap<ObjectId, Vec<u8>>,
+    /// Commits the walk will start from (see [`RemoteSource::with_roots`]).
+    roots: Vec<ObjectId>,
 }
 
 impl<'a> RemoteSource<'a> {
@@ -203,7 +208,20 @@ impl<'a> RemoteSource<'a> {
             packs: None,
             read_ahead_done: vec![],
             cache: HashMap::new(),
+            roots: vec![],
         }
+    }
+
+    /// Tell the source which commits the walk starts from. A pack written by [`crate::Publisher`]
+    /// stores every object after its dependencies, so a root commit is the LAST object of its
+    /// closure's metadata: the end of the root's index entry bounds the metadata the walk can
+    /// need from that pack. Metadata read-ahead then fetches exactly `[header, end of last
+    /// root)` instead of guessing with 4 KiB, 16 KiB, ... requests that overshoot into file
+    /// data. Purely a request-shaping hint: anything the bounded read does not cover is still
+    /// fetched by an ordinary ranged GET, and every byte is verified against its id as before.
+    pub fn with_roots(mut self, roots: Vec<ObjectId>) -> Self {
+        self.roots = roots;
+        self
     }
 
     fn packs(&mut self) -> Result<&[(String, PackIndex)], BackendError> {
@@ -221,7 +239,7 @@ impl<'a> RemoteSource<'a> {
         Ok(self.packs.as_deref().unwrap_or(&[]))
     }
 
-    fn read_ahead(&mut self, i: usize) -> Result<(), BackendError> {
+    fn read_ahead(&mut self, i: usize, wanted: &ObjectId) -> Result<(), BackendError> {
         let (stem, pack_len) = {
             let (s, idx) = &self.packs.as_ref().expect("packs loaded")[i];
             (s.clone(), idx.pack_len)
@@ -231,7 +249,48 @@ impl<'a> RemoteSource<'a> {
         if self.ahead == ReadAhead::Whole {
             if let Some(v) = self.b.get(&key)? {
                 let to = (end as usize).min(v.data.len());
-                absorb(&mut self.cache, &v.data, PACK_HEADER as usize, to, false);
+                absorb(&mut self.cache, &v.data, PACK_HEADER as usize, to, false, &mut Vec::new());
+            }
+            return Ok(());
+        }
+        // Known bound. A pack written by `Publisher` holds its commits first and then its trees,
+        // each group dependencies-first. So the walk's root commits end the commit group, and the
+        // trees those commits (and the trees below them) name end at the last of them: read
+        // exactly up to the furthest of those ends, then stop. No guessed over-read into file data.
+        // In metadata mode the walk only asks for commits and trees, so the id that first touched
+        // this pack is itself a root of the metadata needed from it (a parent commit in an older pack).
+        let mut starts = self.roots.clone();
+        starts.push(*wanted);
+        let mut bound = self.packs.as_ref().expect("packs loaded")[i]
+            .1
+            .known_end(&starts)
+            .map(|e| e.min(end));
+        if bound.is_some() {
+            let mut pos = PACK_HEADER;
+            let mut pending: Vec<ObjectId> = Vec::new();
+            while let Some(target) = bound.filter(|t| *t > pos) {
+                let Some(buf) = self.b.get_range(&key, pos, (target - pos).min(PREFIX_MAX))? else {
+                    break;
+                };
+                let mut fresh = Vec::new();
+                let (used, stop) = absorb(&mut self.cache, &buf, 0, buf.len(), true, &mut fresh);
+                pos += used as u64;
+                if stop || used == 0 {
+                    break;
+                }
+                // metadata the parsed objects name but we have not read yet, if this pack holds it
+                let idx = &self.packs.as_ref().expect("packs loaded")[i].1;
+                for id in &fresh {
+                    if let Some(bytes) = self.cache.get(id) {
+                        pending.extend(metadata_deps(bytes));
+                    }
+                }
+                pending.retain(|d| !self.cache.contains_key(d));
+                let need = idx.known_end(&pending).map(|e| e.min(end));
+                bound = match (bound, need) {
+                    (Some(b), Some(n)) => Some(b.max(n)),
+                    (b, n) => b.or(n),
+                };
             }
             return Ok(());
         }
@@ -240,7 +299,7 @@ impl<'a> RemoteSource<'a> {
             let Some(buf) = self.b.get_range(&key, pos, want.min(end - pos))? else {
                 break;
             };
-            let (used, stop) = absorb(&mut self.cache, &buf, 0, buf.len(), true);
+            let (used, stop) = absorb(&mut self.cache, &buf, 0, buf.len(), true, &mut Vec::new());
             pos += used as u64;
             // stop: first non-metadata entry; used == 0: one entry larger than the request
             if stop || used == 0 {
@@ -265,7 +324,7 @@ impl<'a> RemoteSource<'a> {
         if let Some((i, key, off, len)) = hit {
             if self.ahead != ReadAhead::None && !self.read_ahead_done[i] {
                 self.read_ahead_done[i] = true;
-                self.read_ahead(i)?;
+                self.read_ahead(i, id)?;
                 if let Some(v) = self.cache.remove(id) {
                     return Ok(Some(v));
                 }
@@ -286,7 +345,14 @@ impl<'a> RemoteSource<'a> {
 
 /// Parse `[u32 len][object]` frames from `buf[from..to]` into `cache`. With `meta_only`, stop at
 /// the first object that is not a tree or commit. Returns (bytes consumed from `from`, stopped).
-fn absorb(cache: &mut HashMap<ObjectId, Vec<u8>>, buf: &[u8], from: usize, to: usize, meta_only: bool) -> (usize, bool) {
+fn absorb(
+    cache: &mut HashMap<ObjectId, Vec<u8>>,
+    buf: &[u8],
+    from: usize,
+    to: usize,
+    meta_only: bool,
+    fresh: &mut Vec<ObjectId>,
+) -> (usize, bool) {
     let mut p = from;
     while p + 4 <= to {
         let len = u32::from_le_bytes(buf[p..p + 4].try_into().unwrap()) as usize;
@@ -297,10 +363,27 @@ fn absorb(cache: &mut HashMap<ObjectId, Vec<u8>>, buf: &[u8], from: usize, to: u
         if meta_only && !matches!(obj.first(), Some(2 | 3)) {
             return (p - from, true);
         }
-        cache.insert(id_of_encoded(obj), obj.to_vec());
+        let id = id_of_encoded(obj);
+        cache.insert(id, obj.to_vec());
+        fresh.push(id);
         p += 4 + len;
     }
     (p - from, false)
+}
+
+/// Commits and trees a commit or tree names (parents, root tree, subdirectories). Used only to
+/// size read-ahead; an object that does not decode names nothing.
+fn metadata_deps(encoded: &[u8]) -> Vec<ObjectId> {
+    match vcs_objects::Object::decode(encoded) {
+        Ok(vcs_objects::Object::Commit(c)) => c.parents.iter().copied().chain(std::iter::once(c.root)).collect(),
+        Ok(vcs_objects::Object::Tree(t)) => t
+            .entries()
+            .iter()
+            .filter(|e| e.mode == vcs_objects::EntryMode::Directory)
+            .map(|e| e.id)
+            .collect(),
+        _ => vec![],
+    }
 }
 
 /// Upload a local pack (and its index) as `packs/<name>`. The pack goes first, so a reader
