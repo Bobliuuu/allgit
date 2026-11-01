@@ -64,6 +64,9 @@ fn tx(updates: Vec<(&str, Option<ObjectId>, ObjectId)>, msg: &str) -> Transactio
 
 struct Scenario {
     name: &'static str,
+    /// Filler branches pre-loaded into the manifest. Enough of them (>= ~1500) push it past
+    /// `COMPACT_THRESHOLD`, so every step of every schedule goes through the v5 codec.
+    seed: usize,
     /// (local store, transaction) per writer
     build: fn() -> Vec<(MemoryStore, Transaction)>,
     /// check outcomes (true = writer ended Applied/AlreadyApplied) and final manifest
@@ -138,7 +141,13 @@ fn check_closure_over_time(b: &MemBackend, ctx: &str) {
         }
     }
     for (_, m) in b.history().into_iter().filter(|(k, _)| k == "manifest") {
-        for id in Manifest::decode(&m).unwrap().branches.values() {
+        for id in Manifest::decode(&m)
+            .unwrap()
+            .branches
+            .iter()
+            .filter(|((z, _), _)| !z.starts_with("filler-"))
+            .map(|(_, v)| v)
+        {
             assert!(visible.contains_key(id), "{ctx}: manifest head {id} not readable");
         }
     }
@@ -153,8 +162,10 @@ fn check_backend(b: &MemBackend, ctx: &str) -> Manifest {
         .filter(|(k, _)| k == "manifest")
         .map(|(_, d)| Manifest::decode(&d).unwrap())
         .collect();
-    let mut prev = Manifest::default();
-    for (i, m) in hist.iter().enumerate() {
+    // a pre-seeded manifest (Scenario::seed) is the starting state, not a transaction
+    let seeded = hist.first().is_some_and(|m| m.generation == 0 && m.applied.is_empty());
+    let mut prev = if seeded { hist[0].clone() } else { Manifest::default() };
+    for (i, m) in hist.iter().enumerate().skip(usize::from(seeded)) {
         assert_eq!(m.generation, prev.generation + 1, "{ctx}: generation gap at {i}");
         assert_eq!(
             &m.applied[..m.applied.len() - 1],
@@ -205,6 +216,20 @@ fn new_pub<'a>(b: &'a MemBackend, s: &'a MemoryStore, t: Transaction, packed: bo
 fn run_schedule(sc: &Scenario, packed: bool, sched: &[Choice]) -> Option<Vec<Choice>> {
     let writers = (sc.build)();
     let backend = MemBackend::new();
+    if sc.seed > 0 {
+        let mut m = Manifest::default();
+        for i in 0..sc.seed {
+            m.branches.insert(
+                (format!("filler-{:04}", i / 5), format!("topic-{}", i % 5)),
+                ObjectId::from_bytes([(i % 251) as u8; 32]),
+            );
+        }
+        assert!(
+            m.encode_legacy().len() > vcs_remote::manifest::COMPACT_THRESHOLD && m.encode()[4] == 5,
+            "seed must exercise v5"
+        );
+        assert!(backend.put_if_absent(vcs_remote::manifest::KEY, &m.encode()).unwrap());
+    }
     let mut pubs: Vec<Option<Publisher>> = writers.iter().map(|(s, t)| Some(new_pub(&backend, s, t.clone(), packed))).collect();
     let mut st = vec![W::Running; writers.len()];
     let mut special = false;
@@ -300,6 +325,7 @@ fn go(sc: Scenario) {
 fn same_branch_race_exactly_one_wins() {
     go(Scenario {
         name: "same-branch",
+        seed: 0,
         build: || {
             let (s1, s2) = (MemoryStore::new(), MemoryStore::new());
             let x = mk_commit(&s1, "a", None, "x");
@@ -318,6 +344,7 @@ fn same_branch_race_exactly_one_wins() {
 fn disjoint_zones_both_succeed() {
     go(Scenario {
         name: "disjoint-zones",
+        seed: 0,
         build: || {
             let (s1, s2) = (MemoryStore::new(), MemoryStore::new());
             let x = mk_commit(&s1, "a", None, "x");
@@ -340,6 +367,7 @@ fn disjoint_zones_both_succeed() {
 fn multi_zone_is_atomic_against_single_zone() {
     go(Scenario {
         name: "multi-vs-single",
+        seed: 0,
         build: || {
             let (s1, s2) = (MemoryStore::new(), MemoryStore::new());
             let a1 = mk_commit(&s1, "a", None, "");
@@ -367,6 +395,7 @@ fn multi_zone_is_atomic_against_single_zone() {
 fn duplicate_submission_applies_once() {
     go(Scenario {
         name: "duplicate-tx",
+        seed: 0,
         build: || {
             let (s1, s2) = (MemoryStore::new(), MemoryStore::new());
             let x = mk_commit(&s1, "a", None, "x");
@@ -394,4 +423,32 @@ fn shared_objects_across_zones_and_unique_set_sanity() {
         .map(|t| Object::Transaction(t.clone()).id())
         .collect();
     assert_eq!(ids.len(), 2);
+}
+
+/// One writer on a manifest above `COMPACT_THRESHOLD`: every manifest read, validation and CAS
+/// goes through the compact v5 codec, under crash / lost-CAS / lost-ack at every step. (With two
+/// writers the codec cost per schedule makes the exhaustive search too slow; the interleaving
+/// semantics do not depend on the encoding and are covered by the small-manifest scenarios.)
+#[test]
+fn compact_manifest_survives_faults_at_every_step() {
+    let sc = Scenario {
+        name: "compact-single",
+        seed: 1500,
+        build: || {
+            let s1 = MemoryStore::new();
+            let x = mk_commit(&s1, "a", None, "x");
+            vec![(s1, tx(vec![("a", None, x)], "w1"))]
+        },
+        expect: |ok, m, txs| {
+            assert_eq!(ok, [true]);
+            assert_eq!(m.head("a", "main"), Some(txs[0].updates[0].new));
+            assert_eq!(m.branches.len(), 1501, "fillers untouched");
+        },
+    };
+    for packed in [false, true] {
+        let mut stats = Stats { leaves: 0 };
+        explore(&sc, packed, &mut vec![], &mut stats);
+        println!("{} (packed={packed}): {} complete schedules checked", sc.name, stats.leaves);
+        assert!(stats.leaves >= 9);
+    }
 }

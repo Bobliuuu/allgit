@@ -12,6 +12,8 @@ pub mod manifest;
 pub mod membackend;
 pub mod packfetch;
 pub mod protocol;
+#[cfg(feature = "sharded")]
+pub mod shard;
 pub mod stats;
 
 pub use backend::{Backend, BackendError, Conditional, Versioned};

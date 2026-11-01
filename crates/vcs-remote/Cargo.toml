@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# Prototype of per-zone shard records with a two-phase cross-zone commit (issue #252). Off by default.
+sharded = []
+
 [dependencies]
 vcs-objects.workspace = true
 vcs-store.workspace = true

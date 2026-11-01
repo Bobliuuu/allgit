@@ -124,8 +124,8 @@ manifest            THE authoritative state: generation, branch heads, snapshots
 **Design decision (changed from the first draft).** One manifest object, not per-zone manifests. Rationale: a single CAS
 gives multi-zone atomicity with no coordinator and no two-phase commit. Cost: all writers contend on one key. Mitigation
 implemented: on CAS loss the writer reloads and re-validates only its own `old` heads; writers on disjoint branches
-therefore succeed without user-visible conflict (model-checked). Sharding the manifest by zone is deferred until a benchmark
-shows CAS contention matters.
+therefore succeed without user-visible conflict (model-checked). Sharding the manifest by zone is deferred: the benchmark (docs/manifest-scaling.md) shows
+CAS contention at 8 or more publishers and a prototype (feature `sharded`), but not yet an integrated design.
 
 **Publish step machine** (`Publisher::step`; every step idempotent):
 `Collect → Upload* → PutTx → Load → Cas`, back to `Load` on CAS loss or any CAS error.
