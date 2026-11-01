@@ -50,6 +50,10 @@ pub const KEYS: &[(&str, &str, &str)] = &[
         "VCS_CLIENT_KEY",
         "PEM private key for remote.sslcert",
     ),
+    ("user.signingkey", "VCS_SIGNING_KEY", "path to an unencrypted OpenSSH ed25519 private key used by `commit -S` and `tag -s`"),
+    ("commit.sign", "VCS_COMMIT_SIGN", "true: sign every commit with user.signingkey (override with `commit --no-sign`)"),
+    ("signing.allowedSigners", "VCS_ALLOWED_SIGNERS", "file of `principal ssh-ed25519 base64key` lines: who may sign (verify-commit, verify-tag, log --show-signature)"),
+    ("signing.revoked", "VCS_REVOKED_SIGNERS", "file of `ssh-ed25519 base64key` lines: keys whose signatures are reported as revoked"),
     (
         "hooks.timeout",
         "VCS_HOOKS_TIMEOUT",

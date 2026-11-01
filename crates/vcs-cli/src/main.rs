@@ -21,6 +21,7 @@ mod lockable_cmd;
 mod logfmt;
 mod plumb;
 mod remote;
+mod signing_cmd;
 mod worktree_cmd;
 
 /// The assist command: `--assist`, else the opt-in `merge.assist` setting (announced, because file
@@ -127,6 +128,25 @@ enum Cmd {
         /// Commit changes to lockable files (`.vcsattributes`) even without holding their lock
         #[arg(long)]
         force_no_lock: bool,
+        /// Sign the commits with an Ed25519 key (path to an OpenSSH private key; default `user.signingkey`)
+        #[arg(short = 'S', long = "gpg-sign", value_name = "KEY", num_args = 0..=1, default_missing_value = "")]
+        sign: Option<String>,
+        /// Do not sign even when `commit.sign` is true
+        #[arg(long, conflicts_with = "sign")]
+        no_sign: bool,
+    },
+    /// Check the Ed25519 signature of a commit against `signing.allowedSigners` (exit 1 unless good)
+    VerifyCommit {
+        /// Revision (default HEAD)
+        rev: Option<String>,
+        #[arg(long)]
+        zone: Option<String>,
+    },
+    /// Check the Ed25519 signature of an annotated tag (exit 1 unless good)
+    VerifyTag {
+        name: String,
+        #[arg(long)]
+        zone: Option<String>,
     },
     /// Get, set, list or unset settings (repo .vcs/config, user config, environment)
     #[command(subcommand)]
@@ -192,6 +212,9 @@ enum Cmd {
         /// When to colour output
         #[arg(long, value_enum, default_value_t = logfmt::ColorWhen::Auto)]
         color: logfmt::ColorWhen,
+        /// Show the signature verdict of each commit (against `signing.allowedSigners`)
+        #[arg(long)]
+        show_signature: bool,
         /// Branch (default: the checked-out one)
         branch: Option<String>,
         /// Only commits that change these paths (after `--`)
@@ -229,9 +252,12 @@ enum Cmd {
         /// Make an annotated tag with this message
         #[arg(short, long)]
         message: Option<String>,
-        /// Opaque signature text stored in an annotated tag (not verified)
+        /// Opaque signature text stored in an annotated tag (never verified; use --sign for a real signature)
         #[arg(long, requires = "message")]
         signature: Option<String>,
+        /// Sign the annotated tag with `user.signingkey` (Ed25519; needs -m)
+        #[arg(short = 's', long)]
+        sign: bool,
         /// Delete the named tag
         #[arg(short = 'd', long)]
         delete: bool,
@@ -820,11 +846,30 @@ fn run(cli: Cli) -> Result<(), Error> {
                 }
             }
         }
-        Cmd::Commit { message, force_no_lock } => {
+        Cmd::VerifyCommit { rev, zone } => {
+            let (repo, cwd) = open()?;
+            let zone = zone_of_cwd(&repo, &cwd, zone)?;
+            signing_cmd::verify_commit(&repo, &zone, rev.as_deref().unwrap_or("HEAD"))?;
+        }
+        Cmd::VerifyTag { name, zone } => {
+            let (repo, cwd) = open()?;
+            let zone = zone_of_cwd(&repo, &cwd, zone)?;
+            signing_cmd::verify_tag(&repo, &zone, &name)?;
+        }
+        Cmd::Commit { message, force_no_lock, sign, no_sign } => {
             let (repo, cwd) = open()?;
             lockable_cmd::guard(&repo, lockable_cmd::Stage::Commit, &[], force_no_lock)?;
             let cfg = config::Config::load()?;
             cfg.identity()?;
+            let key = if no_sign {
+                None
+            } else if let Some(k) = &sign {
+                Some(signing_cmd::load_key(&cfg, Some(k).filter(|k| !k.is_empty()).map(String::as_str))?)
+            } else if cfg.get("commit.sign").as_deref() == Some("true") {
+                Some(signing_cmd::load_key(&cfg, None)?)
+            } else {
+                None
+            };
             let hz = zone_of_cwd(&repo, &cwd, None)?;
             hooks::fire_simple(&repo, &hz, "pre-commit", &[])?;
             let message = match message {
@@ -832,7 +877,14 @@ fn run(cli: Cli) -> Result<(), Error> {
                 None => config::edit_message(&cfg, &repo.worktree().join(".vcs"))?,
             };
             let message = hooks::commit_msg(&repo, &hz, message)?;
-            let rep = repo.commit(&message, author()?)?;
+            let signer = key
+                .as_ref()
+                .map(|k| move |c: &vcs_objects::Commit| vcs_objects::signing::sign_commit(c, k));
+            let rep = repo.commit_signed(
+                &message,
+                author()?,
+                signer.as_ref().map(|f| f as &dyn Fn(&vcs_objects::Commit) -> vcs_objects::Commit),
+            )?;
             hooks::fire_simple(&repo, &hz, "post-commit", &[])?;
             let defs = repo.zones()?;
             for (zone, branch, id) in &rep.commits {
@@ -1044,6 +1096,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             graph,
             author,
             color,
+            show_signature,
             branch,
             paths,
         } => {
@@ -1056,6 +1109,11 @@ fn run(cli: Cli) -> Result<(), Error> {
                 author,
                 color: color.enabled(),
                 paths,
+                trust: if show_signature {
+                    Some(signing_cmd::load_trust(&config::Config::load()?)?)
+                } else {
+                    None
+                },
             };
             print!("{}", logfmt::run(&repo, &cwd, &zone, branch.as_deref(), limit, &opts)?);
         }
@@ -1065,6 +1123,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             zone,
             message,
             signature,
+            sign,
             delete,
         } => {
             let (repo, cwd) = open()?;
@@ -1093,7 +1152,27 @@ fn run(cli: Cli) -> Result<(), Error> {
                     println!("deleted tag {n} (was {})", c.short());
                 }
                 Some(n) => {
+                    if sign && (message.is_none() || signature.is_some()) {
+                        return Err(Error::Msg(
+                            "--sign needs -m <message> and cannot be combined with --signature".into(),
+                        ));
+                    }
                     let ann = match message.as_deref() {
+                        Some(m) if sign => {
+                            let key = signing_cmd::load_key(&config::Config::load()?, None)?;
+                            let zone_id = repo.resolve_zone(&zone)?;
+                            let target = repo.resolve_rev(&zone_id, rev.as_deref().unwrap_or("HEAD"))?;
+                            let tagger = author()?;
+                            let t = vcs_objects::AnnotatedTag {
+                                zone: zone_id,
+                                name: n.clone(),
+                                target,
+                                tagger: tagger.clone(),
+                                message: m.to_owned(),
+                                signature: vec![],
+                            };
+                            Some((m, tagger, vcs_objects::signing::sign_tag(&t, &key)))
+                        }
                         Some(m) => Some((m, author()?, signature.unwrap_or_default().into_bytes())),
                         None => None,
                     };
@@ -1112,7 +1191,8 @@ fn run(cli: Cli) -> Result<(), Error> {
                 println!("Tagger: {} <{}>", t.tagger.name, t.tagger.email);
                 println!("Date:   {}", t.tagger.timestamp);
                 if !t.signature.is_empty() {
-                    println!("Signature: {} bytes (not verified)", t.signature.len());
+                    let trust = signing_cmd::load_trust(&config::Config::load()?)?;
+                    println!("Signature: {}", signing_cmd::describe(&vcs_objects::signing::verify_tag(t, &trust)));
                 }
                 for l in t.message.lines() {
                     println!("    {l}");
@@ -1127,7 +1207,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             }
             println!("Author: {} <{}>", c.author.name, c.author.email);
             println!("Date:   {}", c.author.timestamp);
-            for l in c.message.lines() {
+            for l in vcs_objects::signing::strip_commit_signature(&c.message).lines() {
                 println!("    {l}");
             }
             println!();
