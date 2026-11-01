@@ -306,6 +306,16 @@ impl Repo {
         })
     }
 
+    /// Re-upload every object reachable from the local branch heads that the remote lacks, even
+    /// beneath objects it has (a remote that lost a descendant). Unbounded: one existence check
+    /// per reachable object. Moves no ref. Returns how many objects were uploaded.
+    pub fn repair_remote(&self, backend: &dyn Backend) -> Result<usize> {
+        let _l = self.lock()?;
+        let refs = self.refs()?;
+        let roots: Vec<ObjectId> = refs.branches.values().chain(refs.tags.values()).copied().collect();
+        vcs_remote::repair_remote(backend, &self.store, &roots).map_err(publish_err)
+    }
+
     /// Lock repo-relative `paths` (files) for `principal` for `lease_ms`, in one transaction.
     /// Returns (zone id, zone-relative path, fencing token) per path.
     pub fn lock_paths(

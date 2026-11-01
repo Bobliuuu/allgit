@@ -20,7 +20,7 @@ pub use manifest::{Lock, Manifest};
 pub use membackend::{CasFault, MemBackend};
 pub use packfetch::fetch_many;
 pub use protocol::{
-    changed_paths, fetch_heads, fetch_heads_lazy, fetch_object, fetch_objects, fetch_tags_lazy, load_manifest, Outcome, PublishError,
-    Publisher, Step,
+    changed_paths, fetch_heads, fetch_heads_lazy, fetch_object, fetch_objects, fetch_tags_lazy, load_manifest, repair_remote, Outcome,
+    PublishError, Publisher, Step,
 };
 pub use stats::{CountingBackend, TransferStats};

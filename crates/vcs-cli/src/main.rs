@@ -372,6 +372,9 @@ enum Cmd {
     Publish {
         #[arg(long = "zone")]
         zones: Vec<String>,
+        /// First re-upload any object the remote lost beneath objects it still has (checks every reachable object)
+        #[arg(long)]
+        repair: bool,
     },
     /// Lock files on the remote so others cannot publish changes to them
     Lock {
@@ -1462,9 +1465,12 @@ fn run(cli: Cli) -> Result<(), Error> {
                 println!("  add one later with `vcs zone add <name>` then `vcs fetch --zone <name>`");
             }
         }
-        Cmd::Publish { zones } => {
+        Cmd::Publish { zones, repair } => {
             let (repo, _) = open()?;
             let backend = remote::open_backend(&need_remote(&repo)?)?;
+            if repair {
+                println!("repaired {} object(s) on the remote", repo.repair_remote(backend.as_ref())?);
+            }
             let want = (!zones.is_empty()).then_some(zones.as_slice());
             let rep = repo.publish_as(backend.as_ref(), want, author()?, &principal())?;
             if rep.updated.is_empty() && rep.tags.is_empty() {
