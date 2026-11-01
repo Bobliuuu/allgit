@@ -54,13 +54,15 @@ Commands:
   conflict     Inspect conflicts of an in-progress merge
   resolve      Resolve a conflicted path of a merge or rebase (ours = recorded left side, theirs = right)
   zone         Manage zones
+  worktree     Linked worktrees over one object store (add, list, remove)
   snapshot     Manage snapshots (pinned sets of zone versions)
   remote       Manage the remote
   login        Save a server token for an http:// remote (via the credential helper)
   logout       Forget the saved token for a remote (default: the current remote)
   auth         Show authentication state
   credential   Credential helper protocol: key=value lines on stdin/stdout
-  clone        Clone a remote into a new directory (sparse with --zone)
+  bundle       Create or verify an offline bundle of branches and zones
+  clone        Clone a remote (or a bundle file) into a new directory (sparse with --zone)
   publish      Publish checked-out branches to the remote in one atomic transaction
   lock         Lock files on the remote so others cannot publish changes to them
   unlock       Release locks you hold (`--break` removes anyone's lock; unrestricted for now)
@@ -1386,6 +1388,76 @@ Options:
   -h, --help           Print help
 ```
 
+## `vcs worktree`
+
+```text
+Linked worktrees over one object store (add, list, remove)
+
+Usage: vcs worktree [OPTIONS] <COMMAND>
+
+Commands:
+  add     Create a linked worktree sharing this repository's objects and refs
+  list    List worktrees and what each has checked out
+  remove  Delete a linked worktree (refuses when it has uncommitted work unless --force)
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+  -h, --help           Print help
+```
+
+### `vcs worktree add`
+
+```text
+Create a linked worktree sharing this repository's objects and refs
+
+Usage: vcs worktree add [OPTIONS] <PATH> [BRANCH]
+
+Arguments:
+  <PATH>    
+  [BRANCH]  Root-zone branch to check out (default: the directory name; created here if new)
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+  -h, --help           Print help
+```
+
+#### `vcs worktree list`
+
+```text
+List worktrees and what each has checked out
+
+Usage: vcs worktree list [OPTIONS]
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+  -h, --help           Print help
+```
+
+##### `vcs worktree remove`
+
+```text
+Delete a linked worktree (refuses when it has uncommitted work unless --force)
+
+Usage: vcs worktree remove [OPTIONS] <PATH>
+
+Arguments:
+  <PATH>  
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --force          
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+  -h, --help           Print help
+```
+
 ## `vcs snapshot`
 
 ```text
@@ -1649,10 +1721,65 @@ Options:
   -h, --help           Print help
 ```
 
+## `vcs bundle`
+
+```text
+Create or verify an offline bundle of branches and zones
+
+Usage: vcs bundle [OPTIONS] <COMMAND>
+
+Commands:
+  create  Write a bundle of branches or zones (default: every branch) to a file
+  verify  Check a bundle's hashes, structure and completeness (needs no repository)
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+  -h, --help           Print help
+```
+
+### `vcs bundle create`
+
+```text
+Write a bundle of branches or zones (default: every branch) to a file
+
+Usage: vcs bundle create [OPTIONS] <FILE> [SELECTORS]...
+
+Arguments:
+  <FILE>          
+  [SELECTORS]...  `zone` (all its branches), `zone/branch`, or a root-zone branch name
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --since <SINCE>  Leave out everything reachable from this revision; it becomes a prerequisite
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+  -h, --help           Print help
+```
+
+#### `vcs bundle verify`
+
+```text
+Check a bundle's hashes, structure and completeness (needs no repository)
+
+Usage: vcs bundle verify [OPTIONS] <FILE>
+
+Arguments:
+  <FILE>  
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+  -h, --help           Print help
+```
+
 ## `vcs clone`
 
 ```text
-Clone a remote into a new directory (sparse with --zone)
+Clone a remote (or a bundle file) into a new directory (sparse with --zone)
 
 Usage: vcs clone [OPTIONS] <URL> <DIR>
 
@@ -1741,7 +1868,10 @@ Options:
 ```text
 Download remote objects and update remote-tracking refs (local branches untouched)
 
-Usage: vcs fetch [OPTIONS]
+Usage: vcs fetch [OPTIONS] [SOURCE]
+
+Arguments:
+  [SOURCE]  Fetch from this bundle file instead of the remote
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
