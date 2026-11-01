@@ -170,3 +170,27 @@ vcs gen man --dir ./man           # vcs.1 plus one vcs-<command>.1 per command
 
 Both are generated from the same clap definition as `--help`, so they cannot drift from the binary.
 Completions also support `elvish` and `powershell`.
+
+# Everyday commands
+
+## `vcs bisect`
+
+Binary search over one zone's first-parent history for the commit that introduced a problem.
+
+```
+vcs bisect start [<bad> [<good>...]] [--zone Z]
+vcs bisect good|bad|skip [<rev>...]     # default: the commit currently checked out
+vcs bisect run <cmd> [args...]          # a single argument is run with `sh -c`
+vcs bisect reset
+```
+
+- Candidates are checked out on the branch `bisect/work` of the zone, with the same safety as
+  `vcs switch`: the command refuses while the zone has uncommitted changes or a merge in
+  progress. `reset` switches back to the original branch and deletes `bisect/work`.
+- State is `.vcs/bisect`, replaced atomically after every mark, so an interrupted run resumes
+  with the next `good`/`bad`/`skip` (or `bisect run` again).
+- Only the first-parent chain of the first bad commit is searched; a good commit must lie on it.
+  Merged-in side branches are not searched.
+- `run` exit codes follow git: 0 good, 125 skip, 1-127 (other than 125) bad, above 127 aborts
+  and leaves the bisection in place. If only skipped commits remain, the candidates for the
+  first bad commit are listed.
