@@ -1180,7 +1180,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                 ));
             };
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
-            hooks::fire_simple(&repo, &zone, "pre-merge", &[branch.clone()])?;
+            hooks::fire_simple(&repo, &zone, "pre-merge", std::slice::from_ref(&branch))?;
             let out = if remote {
                 repo.merge_remote(&zone, &branch, author()?)?
             } else {
@@ -1190,11 +1190,11 @@ fn run(cli: Cli) -> Result<(), Error> {
                 MergeOutcome::UpToDate => println!("already up to date"),
                 MergeOutcome::FastForward { from, to } => {
                     println!("{zone}: fast-forward {} -> {}", opt_short(from), to.short());
-                    hooks::fire_simple(&repo, &zone, "post-merge", &[branch.clone()])?;
+                    hooks::fire_simple(&repo, &zone, "post-merge", std::slice::from_ref(&branch))?;
                 }
                 MergeOutcome::Merged { commit } => {
                     println!("{zone}: merged, new commit {}", commit.short());
-                    hooks::fire_simple(&repo, &zone, "post-merge", &[branch.clone()])?;
+                    hooks::fire_simple(&repo, &zone, "post-merge", std::slice::from_ref(&branch))?;
                 }
                 MergeOutcome::Conflicted { paths } => {
                     println!("automatic merge stopped: {} conflict(s)", paths.len());
@@ -1248,7 +1248,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                     return Err(Error::Msg("usage: vcs rebase <branch> [--zone A] | --continue | --abort".into()));
                 };
                 let zone = zone_of_cwd(&repo, &cwd, zone)?;
-                hooks::fire_simple(&repo, &zone, "pre-rebase", &[onto.clone()])?;
+                hooks::fire_simple(&repo, &zone, "pre-rebase", std::slice::from_ref(&onto))?;
                 repo.rebase(&zone, &onto, author()?)?
             };
             match out {

@@ -137,7 +137,9 @@ fn settings() -> Result<Settings, Error> {
 }
 
 /// Environment variables every hook may see besides the VCS_* ones set by us.
-const BASE_ENV: &[&str] = &["PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", "TZ"];
+const BASE_ENV: &[&str] = &[
+    "PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", "TZ",
+];
 
 /// Run `name` if installed. Gating hooks (pre-*, commit-msg) turn a failure into an error;
 /// post hooks only warn. Skipped by `--no-hooks` / `VCS_NO_HOOKS=1` and when not installed.
@@ -149,7 +151,10 @@ pub fn fire(r: &Run, name: &str) -> Result<(), Error> {
     match state(&dir, name) {
         State::Missing => return Ok(()),
         State::NotExecutable => {
-            eprintln!("warning: hook {name} is not executable; skipped (chmod 755 {})", dir.join(name).display());
+            eprintln!(
+                "warning: hook {name} is not executable; skipped (chmod 755 {})",
+                dir.join(name).display()
+            );
             return Ok(());
         }
         State::Writable(p) => {
@@ -213,9 +218,7 @@ fn execute(r: &Run, name: &str, dir: &Path) -> Result<(), Error> {
         use std::os::unix::process::CommandExt;
         cmd.process_group(0); // own group so a timeout can kill the whole tree
     }
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| Error::Msg(format!("cannot run hook {name}: {e}")))?;
+    let mut child = cmd.spawn().map_err(|e| Error::Msg(format!("cannot run hook {name}: {e}")))?;
     if let (Some(data), Some(mut si)) = (r.stdin, child.stdin.take()) {
         let data = data.to_owned();
         std::thread::spawn(move || {
@@ -331,7 +334,10 @@ pub fn commit_msg(repo: &Repo, zone: &str, message: String) -> Result<String, Er
         return Ok(message);
     }
     let path = repo.worktree().join(".vcs").join("COMMIT_EDITMSG");
-    std::fs::write(&path, &message).map_err(|source| Error::Io { path: path.clone(), source })?;
+    std::fs::write(&path, &message).map_err(|source| Error::Io {
+        path: path.clone(),
+        source,
+    })?;
     let r = fire_simple(repo, zone, "commit-msg", &[path.to_string_lossy().into_owned()]);
     let new = std::fs::read_to_string(&path);
     let _ = std::fs::remove_file(&path);
@@ -415,7 +421,10 @@ pub fn run(cmd: &HookCmd) -> Result<(), Error> {
             if !force && std::fs::symlink_metadata(&dest).is_ok() {
                 return msg(format!("hook {name} is already installed; use --force to replace it"));
             }
-            let data = std::fs::read(file).map_err(|source| Error::Io { path: file.clone(), source })?;
+            let data = std::fs::read(file).map_err(|source| Error::Io {
+                path: file.clone(),
+                source,
+            })?;
             std::fs::create_dir_all(&dir).map_err(|source| Error::Io { path: dir.clone(), source })?;
             #[cfg(unix)]
             {
@@ -430,7 +439,10 @@ pub fn run(cmd: &HookCmd) -> Result<(), Error> {
                 std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))
                     .map_err(|source| Error::Io { path: tmp.clone(), source })?;
             }
-            std::fs::rename(&tmp, &dest).map_err(|source| Error::Io { path: dest.clone(), source })?;
+            std::fs::rename(&tmp, &dest).map_err(|source| Error::Io {
+                path: dest.clone(),
+                source,
+            })?;
             println!("installed {}", dest.display());
         }
     }
