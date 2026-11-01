@@ -18,65 +18,6 @@ Native zone-aware version control
 Usage: vcs [OPTIONS] <COMMAND>
 
 Commands:
-<<<<<<< HEAD
-  init         Create a new repository (default: current directory)
-  add          Stage files or directories (also stages deletions)
-  restore      Discard working-tree changes (from the index) or unstage them (--staged, from HEAD)
-  rm           Remove tracked files from the index and working tree
-  mv           Move or rename a tracked file or directory (within one zone)
-  commit       Commit staged changes in all subscribed zones atomically
-  config       Get, set, list or unset settings (repo .vcs/config, user config, environment)
-  status       Show staged, unstaged and untracked changes per zone
-  diff         Show unstaged changes (or --staged)
-  import-git   Import a `git fast-export` stream (file, or `-` for stdin) into the root zone
-  import-p4    Import recorded Perforce output (fixture directory, see docs/import-p4.md) into the root zone. Checked once against real p4d output on a small history; see that document
-  export-git   Write a zone branch as a Git fast-import stream (stdout, or --output)
-  log          Show commit history of a zone branch
-  gen          Generate shell completions or man pages
-  branch       List branches of the current zone, or create one (at the checked-out head)
-  stash        Set tracked changes aside (push, pop, list, drop); untracked files are left alone
-  sparse       Materialize only some paths of a zone (set, add, remove, list, disable); the rest stays tracked, not deleted
-  tag          List tags of the current zone, create one (lightweight, or annotated with -m), or delete one with -d
-  show         Show a commit (default HEAD) with its diff against the first parent
-  blame        Attribute each line of a file to a commit, following first parents
-  hook         List, install or run client-side hooks (.vcs/hooks/, see docs/hooks.md)
-  bisect       Binary-search a zone's history for the commit that introduced a bug
-  grep         Search tracked files (working tree, or a revision) for a regular expression
-  describe     Name a commit after the nearest tag behind it
-  archive      Write the files of a revision as a .tar or .zip archive
-  rev-parse    Resolve revisions to commit ids
-  ls-files     List tracked files
-  cat-file     Show the type, size or content of an object
-  shortlog     Summarize history by author
-  switch       Switch branch (in the zone containing cwd, or --zone)
-  merge        Merge a branch into the checked-out branch (fast-forward when possible)
-  cherry-pick  Re-apply the change of one commit onto the checked-out branch
-  revert       Create a commit that undoes one commit
-  rebase       Replay the checked-out branch onto another branch, keeping each change id
-  conflict     Inspect conflicts of an in-progress merge
-  resolve      Resolve a conflicted path of a merge or rebase (ours = recorded left side, theirs = right)
-  zone         Manage zones
-  worktree     Linked worktrees over one object store (add, list, remove)
-  snapshot     Manage snapshots (pinned sets of zone versions)
-  remote       Manage the remote
-  login        Save a server token for an http:// remote (via the credential helper)
-  logout       Forget the saved token for a remote (default: the current remote)
-  auth         Show authentication state
-  credential   Credential helper protocol: key=value lines on stdin/stdout
-  bundle       Create or verify an offline bundle of branches and zones
-  clone        Clone a remote (or a bundle file) into a new directory (sparse with --zone)
-  publish      Publish checked-out branches to the remote in one atomic transaction
-  lock         Lock files on the remote so others cannot publish changes to them
-  unlock       Release locks you hold (`--break` removes anyone's lock; unrestricted for now)
-  locks        Show locks recorded on the remote (as of now; advisory until a validating writer exists)
-  fetch        Download remote objects and update remote-tracking refs (local branches untouched)
-  sync         Fetch, then fast-forward local branches where safe
-  fsck         Verify all objects and graph invariants
-  repack       Move loose objects into a pack (one pack + index under .vcs/objects/pack). With --format, existing packs are rewritten to that format too
-  gc           Garbage collection. DESTRUCTIVE unless --dry-run: permanently deletes unreachable objects older than the grace period (local), or with --remote --yes on the remote
-  op           Operation log: inspect, undo, restore (local branches and workspace only)
-  help         Print this message or the help of the given subcommand(s)
-=======
   init           Create a new repository (default: current directory)
   add            Stage files or directories (also stages deletions)
   restore        Discard working-tree changes (from the index) or unstage them (--staged, from HEAD)
@@ -99,6 +40,7 @@ Commands:
   tag            List tags of the current zone, create one (lightweight, or annotated with -m), or delete one with -d
   show           Show a commit (default HEAD) with its diff against the first parent
   blame          Attribute each line of a file to a commit, following first parents
+  hook           List, install or run client-side hooks (.vcs/hooks/, see docs/hooks.md)
   bisect         Binary-search a zone's history for the commit that introduced a bug
   grep           Search tracked files (working tree, or a revision) for a regular expression
   describe       Name a commit after the nearest tag behind it
@@ -135,7 +77,6 @@ Commands:
   gc             Garbage collection. DESTRUCTIVE unless --dry-run: permanently deletes unreachable objects older than the grace period (local), or with --remote --yes on the remote
   op             Operation log: inspect, undo, restore (local branches and workspace only)
   help           Print this message or the help of the given subcommand(s)
->>>>>>> c0d6d7c (feat(objects): ✨ ed25519 signed commits and tags with require-signed policy)
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
@@ -254,11 +195,8 @@ Options:
       --json               Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
   -S, --gpg-sign [<KEY>]   Sign the commits with an Ed25519 key (path to an OpenSSH private key; default `user.signingkey`)
       --ca-pem <FILE>      PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
-<<<<<<< HEAD
-      --no-hooks           Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
-=======
       --no-sign            Do not sign even when `commit.sign` is true
->>>>>>> c0d6d7c (feat(objects): ✨ ed25519 signed commits and tags with require-signed policy)
+      --no-hooks           Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help               Print help
 ```
 
@@ -277,6 +215,7 @@ Options:
       --zone <ZONE>    
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -295,6 +234,7 @@ Options:
       --zone <ZONE>    
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -805,9 +745,9 @@ Options:
   -m, --message <MESSAGE>      Make an annotated tag with this message
       --ca-pem <FILE>          PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --signature <SIGNATURE>  Opaque signature text stored in an annotated tag (never verified; use --sign for a real signature)
+      --no-hooks               Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -s, --sign                   Sign the annotated tag with `user.signingkey` (Ed25519; needs -m)
   -d, --delete                 Delete the named tag
-      --no-hooks               Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help                   Print help
 ```
 
