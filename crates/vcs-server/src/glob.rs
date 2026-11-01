@@ -7,21 +7,49 @@
 //! Matching is anchored: `art/*.psd` does not match `art/x/y.psd`; `art/**` matches `art/x/y.psd`
 //! but not `art` itself unless you also write `art`. There are no character classes or escapes.
 
+/// Wildcard match of one segment: `*` any run, `?` one byte. Iterative with one backtrack point, so
+/// the work is at most `p.len() * s.len()` (a recursive version is exponential in the number of `*`).
 fn seg_match(p: &[u8], s: &[u8]) -> bool {
-    match p.split_first() {
-        None => s.is_empty(),
-        Some((b'*', rest)) => (0..=s.len()).any(|i| seg_match(rest, &s[i..])),
-        Some((b'?', rest)) => !s.is_empty() && seg_match(rest, &s[1..]),
-        Some((c, rest)) => s.first() == Some(c) && seg_match(rest, &s[1..]),
+    let (mut pi, mut si) = (0, 0);
+    let mut star: Option<(usize, usize)> = None;
+    while si < s.len() {
+        if pi < p.len() && p[pi] == b'*' {
+            star = Some((pi, si));
+            pi += 1;
+        } else if pi < p.len() && (p[pi] == b'?' || p[pi] == s[si]) {
+            pi += 1;
+            si += 1;
+        } else if let Some((sp, ss)) = star {
+            pi = sp + 1;
+            si = ss + 1;
+            star = Some((sp, ss + 1));
+        } else {
+            return false;
+        }
     }
+    p[pi..].iter().all(|c| *c == b'*')
 }
 
+/// Segment-level match where a `**` segment matches zero or more segments. Dynamic programming over
+/// (pattern index, path index): `O(p * s)` segment matches.
 fn segs_match(p: &[&str], s: &[&str]) -> bool {
-    match p.split_first() {
-        None => s.is_empty(),
-        Some((&"**", rest)) => (0..=s.len()).any(|i| segs_match(rest, &s[i..])),
-        Some((seg, rest)) => !s.is_empty() && seg_match(seg.as_bytes(), s[0].as_bytes()) && segs_match(rest, &s[1..]),
+    // ok[j] = p[i..] matches s[j..]
+    let mut ok = vec![false; s.len() + 1];
+    ok[s.len()] = true;
+    for seg in p.iter().rev() {
+        if *seg == "**" {
+            // ok'[j] = any ok[k], k >= j
+            for j in (0..s.len()).rev() {
+                ok[j] = ok[j] || ok[j + 1];
+            }
+        } else {
+            for j in 0..s.len() {
+                ok[j] = ok[j + 1] && seg_match(seg.as_bytes(), s[j].as_bytes());
+            }
+            ok[s.len()] = false;
+        }
     }
+    ok[0]
 }
 
 /// True if the zone-relative `path` matches `glob`.
@@ -53,5 +81,19 @@ mod tests {
         assert!(!g("h?ro.*", "hro.bin"));
         assert!(g("**", "any/thing/at/all"));
         assert!(!g("", "x"));
+    }
+
+    /// Found by the policy_tokens fuzz target: the recursive matcher took exponential time.
+    #[test]
+    fn many_wildcards_do_not_blow_up() {
+        let t = std::time::Instant::now();
+        let stars = "*".repeat(60);
+        assert!(!g(&format!("{stars}b"), &"a".repeat(60)));
+        assert!(g(&stars, &"a".repeat(60)));
+        let segs = vec!["**"; 40].join("/");
+        let path = vec!["x"; 40].join("/");
+        assert!(g(&segs, &path));
+        assert!(!g(&format!("{segs}/q"), &path));
+        assert!(t.elapsed().as_secs() < 1);
     }
 }
