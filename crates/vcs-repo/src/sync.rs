@@ -11,7 +11,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 use vcs_objects::{LockOp, Object, ObjectId, RefUpdate, Signature, Transaction};
-use vcs_remote::{fetch_heads_lazy, fetch_object, fetch_tags_lazy, fetch_objects, load_manifest, Backend, Outcome, PublishError, Publisher};
+use vcs_remote::{
+    fetch_heads_lazy, fetch_object, fetch_objects, fetch_tags_lazy, load_manifest, Backend, Outcome, PublishError, Publisher,
+};
 
 #[derive(Debug)]
 pub struct PublishReport {
@@ -278,7 +280,11 @@ impl Repo {
             updates: updates.clone(),
             author,
             // a tags-only publish must not collide with an earlier one in the applied-tx window
-            message: if updates.is_empty() { format!("publish tags {}", now_ms()) } else { "publish".into() },
+            message: if updates.is_empty() {
+                format!("publish tags {}", now_ms())
+            } else {
+                "publish".into()
+            },
             lock_ops,
         };
         let outcome = Publisher::new(backend, &self.store, tx)
