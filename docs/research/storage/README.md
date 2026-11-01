@@ -8,5 +8,7 @@ Index of documents under `docs/research/storage/`. Add new documents here, one l
 | [cost-model.md](cost-model.md) | #181 | Provider pricing (retrieved 2026-10-31) and the executable cost model |
 | [provider-comparison.md](provider-comparison.md) | #181 | Capability matrix: S3, R2, GCS, B2, MinIO, RustFS, Ceph RGW |
 | [conformance-test-plan.md](conformance-test-plan.md) | #181 | `Backend` trait contract tests and per-provider operator commands |
+| [compression-experiments.md](compression-experiments.md) | #183 | Codecs, dictionaries, adaptive choice, independently compressed blocks, random-access cost |
+| [chunking-experiments.md](chunking-experiments.md) | #183 | Whole-file, fixed, FastCDC, Rabin, hybrid chunking; dedup across revisions and zones; manifest/index overhead |
 
 Scripts: `scripts/storage_cost_model.py`, `scripts/storage_score.py` (tests: `scripts/test_storage_*.py`). Data: `data/`.
