@@ -10,6 +10,7 @@
 //!  * past the window with the branch back at its old value (ABA): the retry applies AGAIN.
 //!    This is the failure the window bound exists to prevent, kept as a negative-result test
 //!    so the requirement `window > publishes during a publisher's retry horizon` stays visible.
+//!
 //! The default window (4096 = `MAX_APPLIED`) is exercised by `model.rs`'s `duplicate_submission_applies_once`.
 
 use vcs_objects::*;
