@@ -73,7 +73,10 @@ for tool in git vcs; do
     BIN="$VCS_BIN"; INIT="$VCS_BIN init"; ADD="$VCS_BIN add ."; COMMIT="$VCS_BIN commit -m c"; STATUS="$VCS_BIN status"; LOG="$VCS_BIN log"
     RESET="rm -rf .vcs"
   fi
-  cd "$W"
+  case "$W" in "$WORK"/*) ;; *) echo "refusing to run outside \$WORK: $W" >&2; exit 1;; esac
+  [ -d "$W" ] && [ -n "$WORK" ] || { echo "bad work dir" >&2; exit 1; }
+  cd "$W" || exit 1
+  [ "$(pwd -P)" != "$HOME" ] && case "$(pwd -P)" in */.cargo*|"$HOME") echo "refusing to modify files in $(pwd -P)" >&2; exit 1;; esac
   time_cmd "$tool init"          "$RESET"                                   "$INIT"
   time_cmd "$tool add . (fresh)" "$RESET; $INIT"                            "$ADD"
   time_cmd "$tool commit (all)"  "$RESET; $INIT; $ADD"                      "$COMMIT"
