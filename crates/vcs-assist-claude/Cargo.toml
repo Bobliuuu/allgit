@@ -15,8 +15,9 @@ serde_json = "1"
 
 [features]
 # `tls` is needed for the real https://api.anthropic.com endpoint (rustls, certificates always verified).
-# The structural features give a parse check of the proposal for Rust, Python, TypeScript and Go.
-default = ["tls", "structural", "structural-python", "structural-typescript", "structural-go"]
+# The structural features give a parse check of the proposal for Rust, Python, TypeScript and Go. They are off by
+# default (like in vcs-merge) so that a workspace build does not switch the structural merge on for `vcs` itself.
+default = ["tls"]
 tls = ["ureq/tls"]
 structural = ["vcs-merge/structural"]
 structural-python = ["vcs-merge/structural-python"]

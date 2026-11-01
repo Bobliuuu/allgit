@@ -22,7 +22,8 @@ Anthropic Messages API for a resolution, validates the answer, and prints the pr
 ## Setup
 
 ```sh
-cargo build --release -p vcs-assist-claude          # includes rustls and the tree-sitter parsers
+cargo build --release -p vcs-assist-claude --features structural,structural-python,structural-typescript,structural-go
+# (rustls is always built in; the structural features add the parse check, see below)
 export ANTHROPIC_API_KEY=...                         # your key
 export VCS_ASSIST_MODEL=claude-sonnet-5-5            # optional; this is the default
 vcs merge feature --assist vcs-assist-claude
@@ -69,7 +70,7 @@ Precedence is the usual one (`VCS_MERGE_ASSIST` environment, repository, user). 
    * **non-conflicting hunks preserved**: the line merge (Myers diff3) of base/ours/theirs is computed; the text outside
      the conflicting hunks must appear in the answer unchanged, in order, and only the conflicting regions may differ;
    * **parses**, for Rust, Python, TypeScript (`.ts`) and Go when the crate is built with the structural features
-     (default): if ours and theirs parse, the answer must too. Other languages are not parse-checked.
+     (off by default; see Setup): if ours and theirs parse, the answer must too. Other languages are not parse-checked.
 4. Prints `{"resolution": ..., "explanation": ...}`.
 
 A trailing-newline note: the model is told the line break before `</resolved_file>` is framing; if both sides end with a
@@ -100,7 +101,7 @@ responses; they test the harness, not the model. No quality numbers for any real
 
 ## Tests
 
-`cargo test -p vcs-assist-claude` uses a local scripted HTTP server on 127.0.0.1 (never the real API): request shape,
+`cargo test -p vcs-assist-claude` (add `--features structural` to include the parse checks) uses a local scripted HTTP server on 127.0.0.1 (never the real API): request shape,
 model override, refusal, nine kinds of invalid proposal, malformed API bodies, 429/5xx retry and backoff, give-up count,
 non-retried 4xx, timeout, key never present in stdout/stderr (even when a server echoes it), oversize and binary
 inputs, and the eval harness. Not tested: a real API call, or real certificate handling for `https://` (the HTTP

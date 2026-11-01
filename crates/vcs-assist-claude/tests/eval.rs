@@ -11,12 +11,20 @@ fn offline_eval_scores_recorded_responses_deterministically() {
     let o = bin().args(["eval", fixtures()]).output().unwrap();
     assert!(o.status.success(), "{}", all_output(&o));
     let t = String::from_utf8_lossy(&o.stdout).into_owned();
-    assert!(t.contains("badparse") && t.contains("invalid"), "{t}");
     assert!(t.contains("good") && t.contains("exact"), "{t}");
     assert!(t.contains("cases: 5"), "{t}");
     assert!(t.contains("exact-match: 20.0% (1/5)"), "{t}");
-    assert!(t.contains("proposals passing validation: 40.0% (2/5)"), "{t}");
-    assert!(t.contains("refused: 1, invalid: 1, no response: 1"), "{t}");
+    // Without a parser (default build) the unparsable answer is a valid proposal that merely differs.
+    #[cfg(feature = "structural")]
+    assert!(
+        t.contains("proposals passing validation: 40.0% (2/5)") && t.contains("refused: 1, invalid: 1, no response: 1"),
+        "{t}"
+    );
+    #[cfg(not(feature = "structural"))]
+    assert!(
+        t.contains("proposals passing validation: 60.0% (3/5)") && t.contains("refused: 1, invalid: 0, no response: 1"),
+        "{t}"
+    );
     // Same input, same output.
     let o2 = bin().args(["eval", fixtures()]).output().unwrap();
     assert_eq!(o.stdout, o2.stdout);
