@@ -734,3 +734,7 @@ What changed:
 - Not run: macOS FSEvents (the `notify` backend compiles in on macOS but was not exercised), network filesystems, and
   watch-limit exhaustion (`vcs watch` fails to start, or writes `X` and exits, which clients treat as a full scan).
   Index-decode memory per entry is unchanged (`BTreeMap<String, IndexEntry>`); a path arena was not attempted.
+
+## Remote workflows: walgit vs vcs-server vs plain git (local RustFS)
+
+See [research/walgit-benchmark.md](research/walgit-benchmark.md): push, clone, partial clone, fetch, cold variants, store request counts and server CPU, 10k and 100k files (JSON under `docs/research/data/walgit-bench/`). walgit has no client of its own, so its add/commit/status/log/checkout cost is the git column above.
