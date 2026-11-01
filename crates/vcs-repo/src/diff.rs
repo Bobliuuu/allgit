@@ -18,6 +18,47 @@ fn split_lines(b: &[u8]) -> Vec<&[u8]> {
     b.split_inclusive(|&c| c == b'\n').collect()
 }
 
+fn intern<'a>(ids: &mut std::collections::HashMap<&'a [u8], u32>, ls: &[&'a [u8]]) -> Vec<u32> {
+    ls.iter()
+        .map(|l| {
+            let next = ids.len() as u32;
+            *ids.entry(*l).or_insert(next)
+        })
+        .collect()
+}
+
+fn lcs_ops<T>(am: &[u32], bm: &[u32], p: usize, ops: &mut Vec<(Tag, usize, usize)>)
+where
+    T: Copy + Ord + Default + From<u8> + std::ops::Add<Output = T>,
+{
+    let (n, m) = (am.len(), bm.len());
+    let w = m + 1;
+    let mut t = vec![T::default(); (n + 1) * w];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            t[i * w + j] = if am[i] == bm[j] {
+                t[(i + 1) * w + j + 1] + T::from(1u8)
+            } else {
+                t[(i + 1) * w + j].max(t[i * w + j + 1])
+            };
+        }
+    }
+    let (mut i, mut j) = (0, 0);
+    while i < n || j < m {
+        if i < n && j < m && am[i] == bm[j] {
+            ops.push((Tag::Eq, p + i, p + j));
+            i += 1;
+            j += 1;
+        } else if i < n && (j == m || t[(i + 1) * w + j] >= t[i * w + j + 1]) {
+            ops.push((Tag::Del, p + i, 0));
+            i += 1;
+        } else {
+            ops.push((Tag::Ins, 0, p + j));
+            j += 1;
+        }
+    }
+}
+
 fn script(a: &[&[u8]], b: &[&[u8]]) -> Vec<(Tag, usize, usize)> {
     // (tag, index into a, index into b); unused index is 0
     let p = a.iter().zip(b).take_while(|(x, y)| x == y).count();
@@ -36,30 +77,14 @@ fn script(a: &[&[u8]], b: &[&[u8]]) -> Vec<(Tag, usize, usize)> {
             ops.push((Tag::Ins, 0, p + j));
         }
     } else {
-        let w = m + 1;
-        let mut t = vec![0u32; (n + 1) * w];
-        for i in (0..n).rev() {
-            for j in (0..m).rev() {
-                t[i * w + j] = if am[i] == bm[j] {
-                    t[(i + 1) * w + j + 1] + 1
-                } else {
-                    t[(i + 1) * w + j].max(t[i * w + j + 1])
-                };
-            }
-        }
-        let (mut i, mut j) = (0, 0);
-        while i < n || j < m {
-            if i < n && j < m && am[i] == bm[j] {
-                ops.push((Tag::Eq, p + i, p + j));
-                i += 1;
-                j += 1;
-            } else if i < n && (j == m || t[(i + 1) * w + j] >= t[i * w + j + 1]) {
-                ops.push((Tag::Del, p + i, 0));
-                i += 1;
-            } else {
-                ops.push((Tag::Ins, 0, p + j));
-                j += 1;
-            }
+        // the table holds LCS lengths, at most min(n, m): 16 bits halve the memory traffic when they fit
+        // lines become small integers first: the inner loop compares n*m pairs
+        let mut ids: std::collections::HashMap<&[u8], u32> = std::collections::HashMap::new();
+        let (ai, bi) = (intern(&mut ids, am), intern(&mut ids, bm));
+        if n.min(m) < u16::MAX as usize {
+            lcs_ops::<u16>(&ai, &bi, p, &mut ops);
+        } else {
+            lcs_ops::<u32>(&ai, &bi, p, &mut ops);
         }
     }
     for k in 0..s {
@@ -175,6 +200,75 @@ pub fn unified(path: &str, old: Option<&[u8]>, new: Option<&[u8]>) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// The original byte-slice DP, kept as the reference for the interned, 16-bit version.
+    fn script_ref(a: &[&[u8]], b: &[&[u8]]) -> Vec<(Tag, usize, usize)> {
+        let p = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+        let s = a[p..].iter().rev().zip(b[p..].iter().rev()).take_while(|(x, y)| x == y).count();
+        let (n, m) = (a.len() - p - s, b.len() - p - s);
+        let mut ops: Vec<_> = (0..p).map(|i| (Tag::Eq, i, i)).collect();
+        let (am, bm) = (&a[p..p + n], &b[p..p + m]);
+        let w = m + 1;
+        let mut t = vec![0u32; (n + 1) * w];
+        for i in (0..n).rev() {
+            for j in (0..m).rev() {
+                t[i * w + j] = if am[i] == bm[j] { t[(i + 1) * w + j + 1] + 1 } else { t[(i + 1) * w + j].max(t[i * w + j + 1]) };
+            }
+        }
+        let (mut i, mut j) = (0, 0);
+        while i < n || j < m {
+            if i < n && j < m && am[i] == bm[j] {
+                ops.push((Tag::Eq, p + i, p + j));
+                i += 1;
+                j += 1;
+            } else if i < n && (j == m || t[(i + 1) * w + j] >= t[i * w + j + 1]) {
+                ops.push((Tag::Del, p + i, 0));
+                i += 1;
+            } else {
+                ops.push((Tag::Ins, 0, p + j));
+                j += 1;
+            }
+        }
+        for k in 0..s {
+            ops.push((Tag::Eq, p + n + k, p + m + k));
+        }
+        ops
+    }
+
+    #[test]
+    fn interned_script_equals_the_reference() {
+        let mut x = 12345u64;
+        let mut next = |n: u64| {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (x >> 33) % n
+        };
+        for _ in 0..300 {
+            let len = 1 + next(60) as usize;
+            let alphabet = 1 + next(12);
+            let a: Vec<String> = (0..len).map(|_| format!("l{}\n", next(alphabet))).collect();
+            let mut b = a.clone();
+            for _ in 0..next(6) {
+                match next(3) {
+                    0 if !b.is_empty() => {
+                        let k = next(b.len() as u64) as usize;
+                        b.remove(k);
+                    }
+                    1 => {
+                        let k = next(b.len() as u64 + 1) as usize;
+                        b.insert(k, format!("l{}\n", next(alphabet + 3)));
+                    }
+                    _ if !b.is_empty() => {
+                        let k = next(b.len() as u64) as usize;
+                        b[k] = format!("l{}\n", next(alphabet));
+                    }
+                    _ => {}
+                }
+            }
+            let ar: Vec<&[u8]> = a.iter().map(|s| s.as_bytes()).collect();
+            let br: Vec<&[u8]> = b.iter().map(|s| s.as_bytes()).collect();
+            assert_eq!(script(&ar, &br), script_ref(&ar, &br));
+        }
+    }
+
     use super::*;
 
     /// Apply the edit script and check it reproduces `new` (correctness, not minimality).

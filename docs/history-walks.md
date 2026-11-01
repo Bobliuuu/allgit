@@ -98,6 +98,27 @@ Where the short-walk floor comes from: about 41 ms of the 62-66 ms is not the wa
 here. The graph (about 5 ms now) and filter (about 5 ms) files are the rest. Reading the pack index on demand is a
 `vcs-store` change and was not made here.
 
+### Pack index read on demand (100k commits, quiet machine, medians of 5 starts)
+
+A local `Pack::open` used to read the whole `.idx` (32 MB at this size) on every start. v2+ indexes are now opened by
+reading the header and fanout only; a lookup reads its first-byte bucket (about 50 KB) once. Verification is
+unchanged: `fsck`/`verify` still check the trailer, ordering and fanout, objects are still hash-checked on read, and a
+file whose length does not match its entry count is refused at open. v1 indexes are still read and verified in full at
+open (existing contract). The streaming pack writer (used by import and sync) now writes v2 packs (raw codec) so new data
+gets the fanout index; existing v1 repositories get it after a repack.
+
+| Command, 100k commits | v1 packs (before) | v2 packs, on-demand index |
+|---|---|---|
+| `rev-parse HEAD` | 40-50 ms | under 10 ms |
+| `status` | 50 ms | under 10 ms |
+| `log -n20 -- file` (hot) | 60 ms | 20 ms |
+| `describe` | 60 ms | 20 ms |
+| `blame` (5000-edit file) | 3.9 s | 2.9 s |
+
+(ms are `/usr/bin/time` centiseconds, so "under 10 ms" is a bound, not a measurement; git `rev-parse` is also under 10 ms.)
+`blame` at 100k is dominated by the line diff; the LCS table is now 16 bit and lines are interned (identical alignments,
+tested against the old routine), which is the 3.9 s to 2.9 s. git takes about 1.1 s; still 2.6x slower.
+
 ### Known limits
 
 * First long path walk on a history builds the filters (it reads the commits it passes); the first run on the 20k set took

@@ -254,13 +254,33 @@ fn resolve_v4(mut off: u64, first: Vec<u8>, max: u64, fetch: &mut dyn FnMut(u64)
 /// verifies everything; [`PackIndex::from_vec_lazy`] (local open) checks only structure and leaves
 /// the BLAKE3 trailer, ordering and fanout consistency to [`PackIndex::verify_full`] (fsck).
 pub struct PackIndex {
-    bytes: Vec<u8>,
+    src: Src,
     version: u8,
     count: usize,
     base: usize,
     pub pack_len: u64,
     checksum: [u8; 32],
     fanout: Option<Box<[u32; 256]>>,
+}
+
+/// Where the index bytes live: in memory, or in the file, read on demand (a local open of a big
+/// pack must not read tens of megabytes before the first lookup).
+enum Src {
+    Mem(Vec<u8>),
+    File {
+        file: fs::File,
+        len: u64,
+        /// Entries of one first-byte bucket, read the first time a lookup lands in it.
+        buckets: std::sync::Mutex<Vec<Option<std::sync::Arc<Vec<u8>>>>>,
+    },
+}
+
+#[cfg(unix)]
+fn pread_exact(f: &fs::File, off: u64, n: usize) -> std::io::Result<Vec<u8>> {
+    use std::os::unix::fs::FileExt;
+    let mut v = vec![0u8; n];
+    f.read_exact_at(&mut v, off)?;
+    Ok(v)
 }
 
 fn entry_at(b: &[u8], base: usize, i: usize) -> (ObjectId, u64, u32) {
@@ -282,7 +302,59 @@ impl PackIndex {
     /// Structure-only parse (header, length, fanout shape). v1 indexes are always fully verified
     /// because their binary search has no other guard.
     pub fn from_vec_lazy(bytes: Vec<u8>, label: &Path) -> Result<PackIndex, StoreError> {
-        let b = &bytes;
+        let (version, count, pack_len, checksum, fanout, base) = Self::parse_header(&bytes, bytes.len() as u64, label)?;
+        let idx = PackIndex {
+            src: Src::Mem(bytes),
+            version,
+            count,
+            base,
+            pack_len,
+            checksum,
+            fanout,
+        };
+        if version == 1 {
+            idx.verify_full().map_err(|e| bad(label, e))?;
+        }
+        Ok(idx)
+    }
+
+    /// Like [`PackIndex::from_vec_lazy`] for an index file: only the header and fanout table are read
+    /// now; entries are read per first-byte bucket on first use. Same structure checks (the file length
+    /// must match the entry count); v1 indexes and non-unix platforms read the whole file (v1 is
+    /// verified in full at open).
+    pub fn open_lazy(path: &Path) -> Result<PackIndex, StoreError> {
+        #[cfg(unix)]
+        {
+            let f = fs::File::open(path).map_err(|source| StoreError::Io { path: path.to_owned(), source })?;
+            let len = f.metadata().map_err(|source| StoreError::Io { path: path.to_owned(), source })?.len();
+            let head_n = ((8 + 4 + 8 + 32 + FANOUT_BYTES) as u64).min(len);
+            // v1 has no fanout and is always fully verified at open (see `from_vec_lazy`): read whole
+            let v2_plus = head_n >= 8 && pread_exact(&f, 0, 8).is_ok_and(|m| m != IDX_MAGIC[..]);
+            if v2_plus && head_n >= 8 + 4 + 8 + 32 {
+                let head = pread_exact(&f, 0, head_n as usize).map_err(|source| StoreError::Io { path: path.to_owned(), source })?;
+                let (version, count, pack_len, checksum, fanout, base) = Self::parse_header(&head, len, path)?;
+                return Ok(PackIndex {
+                    src: Src::File {
+                        file: f,
+                        len,
+                        buckets: std::sync::Mutex::new(vec![None; 256]),
+                    },
+                    version,
+                    count,
+                    base,
+                    pack_len,
+                    checksum,
+                    fanout,
+                });
+            }
+        }
+        let b = fs::read(path).map_err(|source| StoreError::Io { path: path.to_owned(), source })?;
+        Self::from_vec_lazy(b, path)
+    }
+
+    /// Header fields from the first bytes of an index whose whole length is `total`.
+    #[allow(clippy::type_complexity)]
+    fn parse_header(b: &[u8], total: u64, label: &Path) -> Result<(u8, usize, u64, [u8; 32], Option<Box<[u32; 256]>>, usize), StoreError> {
         let version = match b.get(..8) {
             Some(m) if m == IDX_MAGIC => 1u8,
             Some(m) if m == IDX_MAGIC_V2 => 2u8,
@@ -292,13 +364,13 @@ impl PackIndex {
         };
         let fan = if version >= 2 { FANOUT_BYTES } else { 0 };
         let base = 8 + 4 + 8 + 32 + fan;
-        if b.len() < base + 32 {
+        if (total as usize) < base + 32 || b.len() < base {
             return Err(bad(label, "bad index header"));
         }
         let count = u32::from_le_bytes(b[8..12].try_into().unwrap()) as usize;
         let pack_len = u64::from_le_bytes(b[12..20].try_into().unwrap());
         let checksum: [u8; 32] = b[20..52].try_into().unwrap();
-        if count.checked_mul(IDX_ENTRY) != Some(b.len() - base - 32) {
+        if count.checked_mul(IDX_ENTRY).map(|n| n as u64) != Some(total - base as u64 - 32) {
             return Err(bad(label, "index length does not match entry count"));
         }
         let fanout = if version >= 2 {
@@ -313,31 +385,32 @@ impl PackIndex {
         } else {
             None
         };
-        let idx = PackIndex {
-            bytes,
-            version,
-            count,
-            base,
-            pack_len,
-            checksum,
-            fanout,
-        };
-        if version == 1 {
-            idx.verify_full().map_err(|e| bad(label, e))?;
-        }
-        Ok(idx)
+        Ok((version, count, pack_len, checksum, fanout, base))
     }
+
+    /// The whole index file (memory, or read from disk).
+    fn all_bytes(&self) -> Result<std::borrow::Cow<'_, [u8]>, String> {
+        match &self.src {
+            Src::Mem(b) => Ok(std::borrow::Cow::Borrowed(b)),
+            #[cfg(unix)]
+            Src::File { file, len, .. } => pread_exact(file, 0, *len as usize).map(std::borrow::Cow::Owned).map_err(|e| format!("index read: {e}")),
+            #[cfg(not(unix))]
+            Src::File { .. } => unreachable!("file-backed indexes exist on unix only"),
+        }
+    }
+
     /// Everything the lazy open skips: BLAKE3 trailer, strict ordering, every entry inside the
     /// pack, fanout agreeing with the ids.
     pub fn verify_full(&self) -> Result<(), String> {
-        let (body, trailer) = self.bytes.split_at(self.bytes.len() - 32);
+        let all = self.all_bytes()?;
+        let (body, trailer) = all.split_at(all.len() - 32);
         if blake3::hash(body).as_bytes() != trailer {
             return Err("index checksum mismatch".into());
         }
         let mut counts = [0u32; 256];
         let mut prev: Option<ObjectId> = None;
         for i in 0..self.count {
-            let (id, off, len) = entry_at(&self.bytes, self.base, i);
+            let (id, off, len) = entry_at(&all, self.base, i);
             self.check_entry(off, len).map_err(|_| "index entry outside pack".to_string())?;
             if prev.is_some_and(|p| p >= id) {
                 return Err("index not strictly sorted".into());
@@ -379,7 +452,9 @@ impl PackIndex {
     /// All entries as `(id, offset, len)`, sorted by id. `len` covers the whole entry payload
     /// (for v2 including the codec byte).
     pub fn iter(&self) -> impl Iterator<Item = (ObjectId, u64, u32)> + '_ {
-        (0..self.count).map(|i| entry_at(&self.bytes, self.base, i))
+        let all = self.all_bytes().map(|c| c.into_owned()).unwrap_or_default();
+        let (base, count) = (self.base, if all.is_empty() { 0 } else { self.count });
+        (0..count).map(move |i| entry_at(&all, base, i))
     }
     /// The pack's whole-file checksum, which is also the pack's last 32 bytes (its trailer).
     pub fn checksum(&self) -> &[u8; 32] {
@@ -392,16 +467,41 @@ impl PackIndex {
     }
     /// Bounds-checked lookup: one fanout read, then a binary search inside the id's bucket.
     pub fn lookup(&self, id: &ObjectId) -> Result<Option<(u64, u32)>, String> {
-        let (mut lo, mut hi) = match &self.fanout {
+        let (lo, hi) = match &self.fanout {
             Some(f) => {
                 let first = id.as_bytes()[0] as usize;
                 (if first == 0 { 0 } else { f[first - 1] as usize }, f[first] as usize)
             }
             None => (0, self.count),
         };
+        match &self.src {
+            Src::Mem(b) => self.search(&b[self.base + lo * IDX_ENTRY..self.base + hi * IDX_ENTRY], id),
+            #[cfg(unix)]
+            Src::File { file, buckets, .. } => {
+                let first = id.as_bytes()[0] as usize;
+                let cached = buckets.lock().unwrap()[first].clone();
+                let ents = match cached {
+                    Some(e) => e,
+                    None => {
+                        let e = std::sync::Arc::new(
+                            pread_exact(file, (self.base + lo * IDX_ENTRY) as u64, (hi - lo) * IDX_ENTRY).map_err(|e| format!("index read: {e}"))?,
+                        );
+                        buckets.lock().unwrap()[first] = Some(e.clone());
+                        e
+                    }
+                };
+                self.search(&ents, id)
+            }
+            #[cfg(not(unix))]
+            Src::File { .. } => unreachable!("file-backed indexes exist on unix only"),
+        }
+    }
+    /// Binary search of `id` in sorted entries `ents` (a whole bucket or table).
+    fn search(&self, ents: &[u8], id: &ObjectId) -> Result<Option<(u64, u32)>, String> {
+        let (mut lo, mut hi) = (0, ents.len() / IDX_ENTRY);
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
-            let (eid, off, len) = entry_at(&self.bytes, self.base, mid);
+            let (eid, off, len) = entry_at(ents, 0, mid);
             match eid.cmp(id) {
                 std::cmp::Ordering::Equal => {
                     self.check_entry(off, len)
@@ -615,8 +715,7 @@ impl Pack {
     /// Open `<name>.idx` (and check the sibling `.pack` exists with the recorded length).
     /// Cheap: hashes neither the pack nor (v2) the index; [`Pack::verify`] does both.
     pub fn open(idx_path: &Path) -> Result<Pack, StoreError> {
-        let b = io(idx_path, fs::read(idx_path))?;
-        let idx = PackIndex::from_vec_lazy(b, idx_path)?;
+        let idx = PackIndex::open_lazy(idx_path)?;
         let pack_path = idx_path.with_extension("pack");
         let actual = io(&pack_path, fs::metadata(&pack_path))?.len();
         if actual != idx.pack_len {
@@ -1156,12 +1255,14 @@ pub fn write_pack_streaming<'a>(
             hasher: blake3::Hasher::new(),
             len: 0,
         };
-        io(&tmp, w.put(PACK_MAGIC))?;
+        io(&tmp, w.put(PACK_MAGIC_V2))?;
         io(&tmp, w.put(&(count as u32).to_le_bytes()))?;
         for o in objects {
             let (id, enc) = o?;
-            io(&tmp, w.put(&(enc.len() as u32).to_le_bytes()))?;
-            ents.push((id, w.len, enc.len() as u32));
+            // v2 entry: codec byte (raw: these packs are written for speed) then the encoded object
+            io(&tmp, w.put(&(enc.len() as u32 + 1).to_le_bytes()))?;
+            ents.push((id, w.len, enc.len() as u32 + 1));
+            io(&tmp, w.put(&[CODEC_RAW]))?;
             io(&tmp, w.put(&enc))?;
         }
         let sum = *w.hasher.finalize().as_bytes();
@@ -1174,10 +1275,19 @@ pub fn write_pack_streaming<'a>(
     let (sum, pack_len) = sum;
     ents.sort_by_key(|e| e.0);
     let mut idx = Vec::with_capacity(8 + 4 + 8 + 32 + ents.len() * IDX_ENTRY + 32);
-    idx.extend_from_slice(IDX_MAGIC);
+    idx.extend_from_slice(IDX_MAGIC_V2);
     idx.extend_from_slice(&(ents.len() as u32).to_le_bytes());
     idx.extend_from_slice(&pack_len.to_le_bytes());
     idx.extend_from_slice(&sum);
+    let mut counts = [0u32; 256];
+    for e in &ents {
+        counts[e.0.as_bytes()[0] as usize] += 1;
+    }
+    let mut run = 0u32;
+    for c in counts {
+        run += c;
+        idx.extend_from_slice(&run.to_le_bytes());
+    }
     for (id, off, len) in &ents {
         idx.extend_from_slice(id.as_bytes());
         idx.extend_from_slice(&off.to_le_bytes());
