@@ -133,9 +133,11 @@ fn metrics(addr: std::net::SocketAddr) -> std::collections::BTreeMap<String, f64
 }
 
 fn req_count(m: &std::collections::BTreeMap<String, f64>, method: &str, status: u16, role: &str) -> f64 {
-    m.get(&format!("vcs_server_requests_total{{method=\"{method}\",status=\"{status}\",role=\"{role}\"}}"))
-        .copied()
-        .unwrap_or(0.0)
+    m.get(&format!(
+        "vcs_server_requests_total{{method=\"{method}\",status=\"{status}\",role=\"{role}\"}}"
+    ))
+    .copied()
+    .unwrap_or(0.0)
 }
 
 #[test]
@@ -209,7 +211,13 @@ fn metrics_auth_and_counters_move() {
     assert!(m0["vcs_server_open_connections"] >= 1.0, "the scrape itself is open");
     // a 404 GET as writer, then a PUT (audited, 2nd of the writer's 2 tokens), then the 3rd is rate limited
     assert_eq!(http(a, "GET", "/v1/o/nokey", Some(WRITER), "").0, 404);
-    let put = http(a, "PUT", "/v1/o/misc/x", Some(WRITER), "If-None-Match: *\r\nContent-Length: 3\r\n\r\nabc");
+    let put = http(
+        a,
+        "PUT",
+        "/v1/o/misc/x",
+        Some(WRITER),
+        "If-None-Match: *\r\nContent-Length: 3\r\n\r\nabc",
+    );
     assert_eq!(put.0, 201, "{put:?}");
     assert_eq!(http(a, "GET", "/v1/o/misc/x", Some(WRITER), "").0, 429);
     // backend errors: 3 attempts fail (retries=2) -> one unavailable error, 2 retries; admin is not limited
@@ -276,12 +284,25 @@ fn json_access_log_has_request_id_and_never_the_token() {
     }
     let line = logs.lines().find(|l| l.contains(&rid)).expect("access line for the request");
     assert!(line.starts_with('{') && line.ends_with('}'));
-    for k in ["\"msg\":\"request\"", "\"method\":\"GET\"", "\"path\":\"/v1/whoami\"", "\"status\":200", "\"principal\":\"wendy\"", "\"dur_ms\":", "\"bytes_out\":", "\"ts\":\""] {
+    for k in [
+        "\"msg\":\"request\"",
+        "\"method\":\"GET\"",
+        "\"path\":\"/v1/whoami\"",
+        "\"status\":200",
+        "\"principal\":\"wendy\"",
+        "\"dur_ms\":",
+        "\"bytes_out\":",
+        "\"ts\":\"",
+    ] {
         assert!(line.contains(k), "{k} in {line}");
     }
     assert!(logs.lines().any(|l| l.contains("\"status\":401")));
     assert!(logs.lines().any(|l| l.contains("\"status\":400")), "parse errors are logged too");
-    assert_eq!(logs.lines().filter(|l| l.contains("\"msg\":\"request\"")).count(), 7, "one line per request");
+    assert_eq!(
+        logs.lines().filter(|l| l.contains("\"msg\":\"request\"")).count(),
+        7,
+        "one line per request"
+    );
 }
 
 #[test]
@@ -300,7 +321,10 @@ fn text_log_and_level_filter() {
     http(srv.local_addr(), "GET", "/healthz", None, "");
     drop(srv);
     let t = buf.text();
-    assert!(t.contains(" INFO  request ") && t.contains("status=200") && t.contains("request_id="), "{t}");
+    assert!(
+        t.contains(" INFO  request ") && t.contains("status=200") && t.contains("request_id="),
+        "{t}"
+    );
 }
 
 #[test]
@@ -383,7 +407,11 @@ fn graceful_shutdown_waits_for_in_flight_requests_and_flushes_audit() {
     let a = srv.local_addr();
     // an in-flight request: headers sent, body still to come
     let mut s = TcpStream::connect(a).unwrap();
-    write!(s, "PUT /v1/o/misc/z HTTP/1.1\r\nAuthorization: Bearer {WRITER}\r\nIf-None-Match: *\r\nContent-Length: 4\r\n\r\nab").unwrap();
+    write!(
+        s,
+        "PUT /v1/o/misc/z HTTP/1.1\r\nAuthorization: Bearer {WRITER}\r\nIf-None-Match: *\r\nContent-Length: 4\r\n\r\nab"
+    )
+    .unwrap();
     std::thread::sleep(Duration::from_millis(100));
     let finisher = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(300));

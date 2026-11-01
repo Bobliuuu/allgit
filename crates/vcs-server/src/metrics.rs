@@ -120,9 +120,7 @@ impl Metrics {
         for ((m, s, r), n) in self.requests.lock().unwrap_or_else(|e| e.into_inner()).iter() {
             let _ = writeln!(o, "vcs_server_requests_total{{method=\"{m}\",status=\"{s}\",role=\"{r}\"}} {n}");
         }
-        o.push_str(
-            "# HELP vcs_server_request_duration_seconds Request latency.\n# TYPE vcs_server_request_duration_seconds histogram\n",
-        );
+        o.push_str("# HELP vcs_server_request_duration_seconds Request latency.\n# TYPE vcs_server_request_duration_seconds histogram\n");
         let mut cum = 0;
         for (i, b) in BUCKETS.iter().enumerate() {
             cum += self.buckets[i].load(Relaxed);
@@ -135,15 +133,60 @@ impl Metrics {
              vcs_server_request_duration_seconds_sum {:.6}\nvcs_server_request_duration_seconds_count {cum}\n",
             self.lat_sum_us.load(Relaxed) as f64 / 1e6
         );
-        counter(&mut o, "vcs_server_request_bytes_total", "Request body bytes received.", self.bytes_in.load(Relaxed));
-        counter(&mut o, "vcs_server_response_bytes_total", "Response body bytes sent.", self.bytes_out.load(Relaxed));
-        counter(&mut o, "vcs_server_auth_failures_total", "Requests rejected with 401.", self.auth_failures.load(Relaxed));
-        counter(&mut o, "vcs_server_rate_limited_total", "Requests rejected with 429.", self.rate_limited.load(Relaxed));
-        counter(&mut o, "vcs_server_lock_conflicts_total", "Manifest writes refused by a lock (409/428).", self.lock_conflicts.load(Relaxed));
-        counter(&mut o, "vcs_server_audit_appends_total", "Audit log records appended.", self.audit_appends.load(Relaxed));
-        counter(&mut o, "vcs_server_audit_errors_total", "Audit log append failures.", self.audit_errors.load(Relaxed));
-        counter(&mut o, "vcs_server_backend_retries_total", "Backend calls retried after a transient error.", self.backend_retries.load(Relaxed));
-        counter(&mut o, "vcs_server_backend_breaker_trips_total", "Times the circuit breaker opened.", self.breaker_trips.load(Relaxed));
+        counter(
+            &mut o,
+            "vcs_server_request_bytes_total",
+            "Request body bytes received.",
+            self.bytes_in.load(Relaxed),
+        );
+        counter(
+            &mut o,
+            "vcs_server_response_bytes_total",
+            "Response body bytes sent.",
+            self.bytes_out.load(Relaxed),
+        );
+        counter(
+            &mut o,
+            "vcs_server_auth_failures_total",
+            "Requests rejected with 401.",
+            self.auth_failures.load(Relaxed),
+        );
+        counter(
+            &mut o,
+            "vcs_server_rate_limited_total",
+            "Requests rejected with 429.",
+            self.rate_limited.load(Relaxed),
+        );
+        counter(
+            &mut o,
+            "vcs_server_lock_conflicts_total",
+            "Manifest writes refused by a lock (409/428).",
+            self.lock_conflicts.load(Relaxed),
+        );
+        counter(
+            &mut o,
+            "vcs_server_audit_appends_total",
+            "Audit log records appended.",
+            self.audit_appends.load(Relaxed),
+        );
+        counter(
+            &mut o,
+            "vcs_server_audit_errors_total",
+            "Audit log append failures.",
+            self.audit_errors.load(Relaxed),
+        );
+        counter(
+            &mut o,
+            "vcs_server_backend_retries_total",
+            "Backend calls retried after a transient error.",
+            self.backend_retries.load(Relaxed),
+        );
+        counter(
+            &mut o,
+            "vcs_server_backend_breaker_trips_total",
+            "Times the circuit breaker opened.",
+            self.breaker_trips.load(Relaxed),
+        );
         let _ = write!(
             o,
             "# HELP vcs_server_backend_circuit_open 1 while the backend circuit breaker is open.\n\

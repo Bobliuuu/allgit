@@ -12,11 +12,11 @@
 
 use crate::audit::AuditLog;
 use crate::auth::{hash_token, AuthError, Principal, Role, TokenTable};
+use crate::http::{pct_decode, read_request, write_response, Limits, ParseError, Request, Response};
 use crate::log::{Format, Level, Logger, V};
 use crate::metrics::Metrics;
-use crate::resilient::{set_request_deadline, Resilience, ResilientBackend};
-use crate::http::{pct_decode, read_request, write_response, Limits, ParseError, Request, Response};
 use crate::ratelimit::{Limiter, RateLimit};
+use crate::resilient::{set_request_deadline, Resilience, ResilientBackend};
 use crate::validate::{validate_and_normalize, Reject, ValidatorConfig};
 use std::io::{BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -236,7 +236,9 @@ impl Server {
                             *s.tokens.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(t);
                             s.log.info("reloaded tokens", &[("file", V::S(&path.display().to_string()))]);
                         }
-                        Ok(_) => s.log.warn("ignoring empty tokens file", &[("file", V::S(&path.display().to_string()))]),
+                        Ok(_) => s
+                            .log
+                            .warn("ignoring empty tokens file", &[("file", V::S(&path.display().to_string()))]),
                         Err(e) => s.log.warn(
                             "keeping old tokens, cannot reload",
                             &[("file", V::S(&path.display().to_string())), ("error", V::S(&e))],
@@ -513,9 +515,7 @@ fn new_request_id(sh: &Shared) -> String {
 /// Reuse a client-supplied `X-Request-Id` when it is short and plain, else mint one.
 fn request_id(sh: &Shared, req: &Request) -> String {
     match req.header("x-request-id") {
-        Some(v) if !v.is_empty() && v.len() <= 64 && v.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b)) => {
-            v.to_owned()
-        }
+        Some(v) if !v.is_empty() && v.len() <= 64 && v.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b)) => v.to_owned(),
         _ => new_request_id(sh),
     }
 }
