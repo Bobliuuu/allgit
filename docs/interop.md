@@ -143,8 +143,8 @@ No numbers are claimed; nothing here was benchmarked.
 ## Perforce changelist mapping
 
 A fixture-driven **import** prototype exists (`vcs import-p4`, see [import-p4.md](import-p4.md)): changelists become commits
-in the root zone, with a view file for path mapping and a `Perforce-Change: N` trailer. It is tested only against
-hand-written fixtures and has never been run against a real server or `p4` output. The table below is the wider design;
+in the root zone, with a view file for path mapping and a `Perforce-Change: N` trailer. It is tested against
+hand-written fixtures and once against real `p4d` 2026.1 output on a small history (see import-p4.md). The table below is the wider design;
 rows other than add/edit/delete/move, `+x`/symlink types and the id table are not built. Export to Perforce is not built.
 
 | Perforce | vcs |
