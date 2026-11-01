@@ -235,7 +235,14 @@ fn main() {
     log.info(
         &format!("vcs-server listening on {scheme}://{}", srv.local_addr()),
         &[
-            ("tls", V::S(if scheme == "https" { "yes" } else { "no (use a TLS proxy beyond loopback)" })),
+            (
+                "tls",
+                V::S(if scheme == "https" {
+                    "yes"
+                } else {
+                    "no (use a TLS proxy beyond loopback)"
+                }),
+            ),
             ("version", V::S(env!("CARGO_PKG_VERSION"))),
         ],
     );
@@ -255,7 +262,10 @@ fn main() {
             std::thread::sleep(std::time::Duration::from_millis(25));
         }
         sd_notify("STOPPING=1");
-        log.info("shutting down: draining in-flight requests", &[("grace_s", V::F(grace.as_secs_f64()))]);
+        log.info(
+            "shutting down: draining in-flight requests",
+            &[("grace_s", V::F(grace.as_secs_f64()))],
+        );
         let clean = srv.shutdown_graceful(grace);
         if clean {
             log.info("shutdown complete", &[]);

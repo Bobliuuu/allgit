@@ -90,7 +90,10 @@ impl ResilientBackend {
 
     fn jitter(&self, max_ms: u64) -> u64 {
         // splitmix64 step over an atomic counter: cheap, thread-safe, good enough for jitter
-        let mut z = self.rng.fetch_add(0x9E37_79B9_7F4A_7C15, Relaxed).wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self
+            .rng
+            .fetch_add(0x9E37_79B9_7F4A_7C15, Relaxed)
+            .wrapping_add(0x9E37_79B9_7F4A_7C15);
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
         z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
         (z ^ (z >> 31)) % (max_ms + 1)
@@ -134,7 +137,7 @@ impl ResilientBackend {
         } else {
             b.fails = b.fails.saturating_add(1);
             if b.fails >= self.cfg.breaker_threshold {
-                if b.open_until.map_or(true, |t| Instant::now() >= t) {
+                if !matches!(b.open_until, Some(t) if Instant::now() < t) {
                     self.metrics.breaker_trips.fetch_add(1, Relaxed);
                 }
                 b.open_until = Some(Instant::now() + self.cfg.breaker_cooldown);
@@ -169,7 +172,7 @@ impl ResilientBackend {
                 }
                 Err(e) => {
                     let wait = self.backoff(attempt);
-                    let fits = deadline.map_or(true, |d| Instant::now() + wait < d);
+                    let fits = !matches!(deadline, Some(d) if Instant::now() + wait >= d);
                     if attempt >= retries || !fits {
                         self.metrics.backend_error("unavailable");
                         self.record(false);

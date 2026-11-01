@@ -30,7 +30,7 @@ pub use audit::AuditLog;
 pub use auth::{Principal, Role, TokenTable};
 pub use client::HttpBackend;
 pub use policy::Policy;
-pub use resilient::Resilience;
 pub use ratelimit::RateLimit;
+pub use resilient::Resilience;
 pub use server::{Config, Handle, Server};
 pub use validate::ValidatorConfig;

@@ -25,11 +25,7 @@ fn spawn(extra: &[&str], config: Option<&str>) -> Srv {
     match config {
         Some(c) => {
             let cfg = dir.path().join("server.toml");
-            std::fs::write(
-                &cfg,
-                c.replace("@DIR", dir.path().to_str().unwrap()),
-            )
-            .unwrap();
+            std::fs::write(&cfg, c.replace("@DIR", dir.path().to_str().unwrap())).unwrap();
             cmd.arg("--config").arg(&cfg);
         }
         None => {
@@ -54,10 +50,16 @@ fn spawn(extra: &[&str], config: Option<&str>) -> Srv {
         stderr.push(l.clone());
         if let Some(i) = l.find("http://") {
             let rest = &l[i + 7..];
-            break rest.split(|c: char| c == '"' || c == ' ').next().unwrap().to_owned();
+            break rest.split(['"', ' ']).next().unwrap().to_owned();
         }
     };
-    Srv { child, addr, stderr, rx, dir }
+    Srv {
+        child,
+        addr,
+        stderr,
+        rx,
+        dir,
+    }
 }
 
 impl Srv {
@@ -69,7 +71,11 @@ impl Srv {
         o
     }
     fn kill(&self, sig: &str) {
-        assert!(Command::new("kill").args([sig, &self.child.id().to_string()]).status().unwrap().success());
+        assert!(Command::new("kill")
+            .args([sig, &self.child.id().to_string()])
+            .status()
+            .unwrap()
+            .success());
     }
     fn wait_exit(&mut self, within: Duration) -> std::process::ExitStatus {
         let t0 = Instant::now();
@@ -96,7 +102,11 @@ impl Drop for Srv {
 
 fn raw_put(addr: &str) -> String {
     let mut s = TcpStream::connect(addr).unwrap();
-    write!(s, "PUT /v1/o/misc/a HTTP/1.1\r\nAuthorization: Bearer {TOKEN}\r\nIf-None-Match: *\r\nContent-Length: 2\r\n\r\nhi").unwrap();
+    write!(
+        s,
+        "PUT /v1/o/misc/a HTTP/1.1\r\nAuthorization: Bearer {TOKEN}\r\nIf-None-Match: *\r\nContent-Length: 2\r\n\r\nhi"
+    )
+    .unwrap();
     let mut o = String::new();
     s.read_to_string(&mut o).unwrap();
     o
@@ -173,11 +183,21 @@ fn bad_config_gives_file_line_errors_and_exit_2() {
     ] {
         let f = dir.path().join("server.toml");
         std::fs::write(&f, text).unwrap();
-        let out = Command::new(env!("CARGO_BIN_EXE_vcs-server")).arg("--config").arg(&f).output().unwrap();
+        let out = Command::new(env!("CARGO_BIN_EXE_vcs-server"))
+            .arg("--config")
+            .arg(&f)
+            .output()
+            .unwrap();
         assert_eq!(out.status.code(), Some(2), "{text:?}");
         let e = String::from_utf8_lossy(&out.stderr);
-        assert!(e.contains(&f.to_str().unwrap().replace("server.toml", "")) && e.contains(want), "{text:?}: {e}");
+        assert!(
+            e.contains(&f.to_str().unwrap().replace("server.toml", "")) && e.contains(want),
+            "{text:?}: {e}"
+        );
     }
-    let out = Command::new(env!("CARGO_BIN_EXE_vcs-server")).args(["--config", "/nonexistent/x.toml"]).output().unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_vcs-server"))
+        .args(["--config", "/nonexistent/x.toml"])
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(2));
 }
