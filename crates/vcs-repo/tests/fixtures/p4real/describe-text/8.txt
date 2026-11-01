@@ -1,0 +1,10 @@
+Change 8 by bob@bob_ws on 2026/11/01 02:30:39
+
+	Executable readme, crlf file, binary tool
+
+Affected files ...
+
+... //depot/proj/README.txt#2 edit
+... //depot/proj/bin/tool.bin#1 add
+... //depot/proj/crlf.txt#1 add
+

@@ -1,0 +1,15 @@
+Change 4 by bob@bob_ws on 2026/11/01 02:30:38
+
+	Branch proj to rel
+
+Affected files ...
+
+... //depot/rel/README.txt#1 branch
+... //depot/rel/bin/run.sh#1 branch
+... //depot/rel/data/blob.bin#1 branch
+... //depot/rel/empty.txt#1 branch
+... //depot/rel/link#1 branch
+... //depot/rel/sp ace.txt#1 branch
+... //depot/rel/src/lib/util.c#1 branch
+... //depot/rel/src/main.c#1 branch
+
