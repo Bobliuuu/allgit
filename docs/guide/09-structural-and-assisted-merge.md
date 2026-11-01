@@ -115,13 +115,13 @@ By default no assistant runs. You consent in one of two ways:
 $ env -u ANTHROPIC_API_KEY vcs-assist-claude < req.json
 vcs-assist-claude: ANTHROPIC_API_KEY is not set
 [exit 1]
-$ vcs config set merge.assist vcs-assist-claude
+$ vcs config set --user merge.assist vcs-assist-claude
 $ vcs config list
-merge.assist=vcs-assist-claude  (repo)
+merge.assist=vcs-assist-claude  (user)
 user.email=ada@example.com  (user)
 user.name=Ada Lovelace  (user)
-$ vcs config set merge.assist off
-$ vcs config unset merge.assist
+$ vcs config set --user merge.assist off
+$ vcs config unset --user merge.assist
 ```
 
 The run above shows the opt-in setting and that `vcs-assist-claude` refuses to start without `ANTHROPIC_API_KEY`.

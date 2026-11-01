@@ -61,7 +61,7 @@ fn setting_is_known_and_opt_in() {
     assert!(!out.contains("assist:"), "{out}");
     ok(&r, home.path(), &["merge", "--abort"]);
     // Set: runs, announces itself.
-    ok(&r, home.path(), &["config", "set", "merge.assist", cmd]);
+    ok(&r, home.path(), &["config", "set", "--user", "merge.assist", cmd]);
     assert_eq!(ok(&r, home.path(), &["config", "get", "merge.assist"]).trim(), cmd);
     let out = out_of(&r, home.path(), &["merge", "side"]);
     assert!(out.contains("merge.assist is set") && out.contains("proposal saved"), "{out}");
@@ -72,7 +72,7 @@ fn setting_is_known_and_opt_in() {
     assert!(!out.contains("proposal saved") && !out.contains("merge.assist is set"), "{out}");
     ok(&r, home.path(), &["merge", "--abort"]);
     // `off` disables.
-    ok(&r, home.path(), &["config", "set", "merge.assist", "off"]);
+    ok(&r, home.path(), &["config", "set", "--user", "merge.assist", "off"]);
     let out = out_of(&r, home.path(), &["merge", "side"]);
     assert!(!out.contains("proposal saved"), "{out}");
 }

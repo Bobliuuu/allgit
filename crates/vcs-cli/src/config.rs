@@ -296,9 +296,29 @@ impl Config {
         }
     }
 
+    /// A key whose value is a command to run. Like `credential.helper`, a command named by the
+    /// repository's own config is refused (security review finding 15): the file is not part of the
+    /// object graph, but it is writable by anything that runs inside the worktree, so only the user
+    /// config and the environment may name programs. A warning says so once.
+    fn command_setting(&self, key: &str) -> Option<String> {
+        match self.get_with_source(key)? {
+            (_, Source::Repo) => {
+                static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+                if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    eprintln!(
+                        "warning: ignoring {key} from the repository config (commands from a repository config are refused); set it with `vcs config set --user {key} ...`"
+                    );
+                }
+                self.user.get(key).cloned()
+            }
+            (v, _) => Some(v),
+        }
+    }
+
     /// merge.assist: the opt-in assistant command (unset, empty or `off` means none).
     pub fn assist_command(&self) -> Option<String> {
-        self.get("merge.assist").filter(|v| !v.trim().is_empty() && v.trim() != "off")
+        self.command_setting("merge.assist")
+            .filter(|v| !v.trim().is_empty() && v.trim() != "off")
     }
 
     /// merge.renames, default off. An invalid value is an error.
@@ -320,7 +340,7 @@ impl Config {
 
     /// Editor: core.editor, then $VISUAL, then $EDITOR.
     pub fn editor(&self) -> Option<String> {
-        self.get("core.editor").or_else(|| {
+        self.command_setting("core.editor").or_else(|| {
             ["VISUAL", "EDITOR"]
                 .iter()
                 .find_map(|k| std::env::var(k).ok().filter(|v| !v.trim().is_empty()))
@@ -345,9 +365,17 @@ impl Config {
     }
 }
 
+/// Keys that name a program to run: only the user config (and the environment) may set them.
+pub const COMMAND_KEYS: &[&str] = &["core.editor", "merge.assist"];
+
 pub fn set(scope: Scope, key: &str, value: &str) -> Result<(), Error> {
     validate_key(key)?;
     validate_value(key, value)?;
+    if scope == Scope::Repo && COMMAND_KEYS.contains(&key) && !matches!(value.trim(), "" | "off") {
+        return msg(format!(
+            "{key} names a command, and commands from a repository config are refused; set it with `vcs config set --user {key} ...`"
+        ));
+    }
     let p = scope_path(scope)?;
     let mut m = read_file(&p)?;
     m.insert(key.to_owned(), value.to_owned());

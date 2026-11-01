@@ -39,9 +39,9 @@ By default no assistant ever runs. To make `vcs merge` and `vcs rebase` run one 
 `--assist`, set the command explicitly (this is your consent to send file contents to it):
 
 ```sh
-vcs config set merge.assist vcs-assist-claude        # this repository only
+# a repository's own config cannot name a program (security review finding 15): use --user
 vcs config set --user merge.assist vcs-assist-claude # all repositories
-vcs config set merge.assist off                      # disable again (or `vcs config unset merge.assist`)
+vcs config set --user merge.assist off                # disable again (or `vcs config unset --user merge.assist`)
 vcs merge feature --no-assist                        # skip it once
 ```
 
