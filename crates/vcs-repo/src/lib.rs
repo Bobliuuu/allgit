@@ -37,6 +37,7 @@ pub mod treeops;
 #[cfg(feature = "watcher")]
 pub mod watcher;
 pub mod worktree;
+mod zone_batch;
 pub mod worktree_fs;
 
 pub use assist::{AssistResult, ProposalInfo};

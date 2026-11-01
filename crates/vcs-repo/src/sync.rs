@@ -10,9 +10,11 @@ use crate::treeops;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 use vcs_objects::{LockOp, Object, ObjectId, RefUpdate, Signature, Transaction};
+use vcs_remote::packfetch::{self, PackCatalog};
 use vcs_remote::{
-    fetch_heads_lazy_with, fetch_object, fetch_objects, fetch_tags_lazy_with, load_manifest, refresh_manifest, Backend, Manifest, Outcome,
+    fetch_heads_lazy_shared, fetch_object, fetch_tags_lazy_shared, load_manifest, refresh_manifest, Backend, Manifest, Outcome,
     PublishError, Publisher,
 };
 
@@ -472,20 +474,21 @@ impl Repo {
         if changed {
             write_atomic(&self.common.join("zones"), &defs.encode())?;
         }
-        let got = fetch_heads_lazy_with(backend, &self.store, Some(&want), &m).map_err(publish_err)?;
+        let cat = Arc::new(PackCatalog::new());
+        let got = fetch_heads_lazy_shared(backend, &self.store, Some(&want), &m, &cat).map_err(publish_err)?;
         let mut rr = self.remote_refs()?;
         for (a, b, id) in &got {
             rr.branches.insert((a.clone(), b.clone()), *id);
         }
         self.save_remote_refs(&rr)?;
-        self.adopt_remote_tags(backend, Some(&want), &m)?;
+        self.adopt_remote_tags(backend, Some(&want), &m, &cat)?;
         Ok(got)
     }
 
     /// Fetch the remote's tags of `zones` and add the ones this repository lacks. A local tag
     /// with the same name is never moved. Caller holds the lock.
-    fn adopt_remote_tags(&self, backend: &dyn Backend, zones: Option<&[String]>, m: &Manifest) -> Result<()> {
-        let got = fetch_tags_lazy_with(backend, &self.store, zones, m).map_err(publish_err)?;
+    fn adopt_remote_tags(&self, backend: &dyn Backend, zones: Option<&[String]>, m: &Manifest, cat: &Arc<PackCatalog>) -> Result<()> {
+        let got = fetch_tags_lazy_shared(backend, &self.store, zones, m, cat).map_err(publish_err)?;
         if got.is_empty() {
             return Ok(());
         }
@@ -556,11 +559,24 @@ impl Repo {
         prefix: &str,
         set: Option<&BTreeSet<String>>,
     ) -> Result<usize> {
+        let mut files = BTreeSet::new();
+        self.collect_missing_files(root, prefix, set, &mut files)?;
+        self.prefetch_ids(backend, files)
+    }
+
+    /// Add to `files` every file blob under the tree `root` (at repo path `prefix`, restricted to
+    /// `set` when given) that is not stored yet. Reads trees only.
+    pub(crate) fn collect_missing_files(
+        &self,
+        root: ObjectId,
+        prefix: &str,
+        set: Option<&BTreeSet<String>>,
+        files: &mut BTreeSet<ObjectId>,
+    ) -> Result<()> {
         use vcs_objects::EntryMode;
         use vcs_store::ObjectStore;
         let mut trees = vec![(root, prefix.to_owned())];
         let mut seen = BTreeSet::new();
-        let mut files = BTreeSet::new();
         while let Some((t, dir)) = trees.pop() {
             if !seen.insert((t, dir.clone())) {
                 continue;
@@ -578,33 +594,49 @@ impl Repo {
                     if set.is_none_or(|s| crate::meta::sparse_may_contain(s, &path)) {
                         trees.push((e.id, path));
                     }
-                } else if set.is_none_or(|s| crate::meta::in_sparse_set(s, &path)) && !self.store.contains(&e.id)? {
+                } else if set.is_none_or(|s| crate::meta::in_sparse_set(s, &path))
+                    && !files.contains(&e.id)
+                    && !self.store.contains(&e.id)?
+                {
                     files.insert(e.id);
                 }
             }
         }
-        self.prefetch_ids(backend, files)
+        Ok(())
     }
 
     /// Download `files` (and the chunks of chunked ones) that are not stored, in batches.
     pub(crate) fn prefetch_ids(&self, backend: &dyn Backend, files: BTreeSet<ObjectId>) -> Result<usize> {
+        self.prefetch_ids_with(backend, &PackCatalog::new(), files)
+    }
+
+    /// [`Self::prefetch_ids`] with a shared pack catalog. Packs are read by parallel ranged GETs;
+    /// each object is hashed once, on the wire bytes, and stored from those bytes (no decode,
+    /// re-encode or re-hash for plain file blobs). The local store writes a large batch as one pack.
+    pub(crate) fn prefetch_ids_with(&self, backend: &dyn Backend, cat: &PackCatalog, files: BTreeSet<ObjectId>) -> Result<usize> {
         use vcs_store::ObjectStore;
         let mut total = 0;
         let mut batch: Vec<ObjectId> = files.into_iter().collect();
         while !batch.is_empty() {
             let mut next = Vec::new();
-            for (id, obj) in fetch_objects(backend, &batch).map_err(publish_err)? {
-                if let Object::Chunked(m) = &obj {
-                    for c in &m.chunks {
-                        if !self.store.contains(&c.id)? {
-                            next.push(c.id);
+            packfetch::fetch_many_each::<PublishError>(backend, cat, &batch, &mut |id, enc| {
+                let plain_blob = enc.len() >= 2 && enc[0] == vcs_objects::Kind::Blob as u8 && enc[1] == vcs_objects::FORMAT_VERSION;
+                if !plain_blob {
+                    // Anything else must decode strictly; a chunk manifest names more to fetch.
+                    let obj = Object::decode(&enc).map_err(|e| PublishError::Remote(format!("object {id}: {e}")))?;
+                    if let Object::Chunked(m) = obj {
+                        for c in &m.chunks {
+                            if !self.store.contains(&c.id)? {
+                                next.push(c.id);
+                            }
                         }
                     }
                 }
-                self.store.put(&obj)?;
-                debug_assert_eq!(obj.id(), id);
+                self.store.put_encoded_prehashed(&id, &enc)?;
                 total += 1;
-            }
+                Ok(())
+            })
+            .map_err(publish_err)?;
             batch = next;
         }
         self.store.sync()?;
@@ -718,7 +750,8 @@ impl Repo {
                 None => defs.names().map(str::to_owned).collect(),
             };
             repo.save_ws(&Workspace::default())?;
-            let got = fetch_heads_lazy_with(backend, &repo.store, Some(&want), &m).map_err(publish_err)?;
+            let cat = Arc::new(PackCatalog::new());
+            let got = fetch_heads_lazy_shared(backend, &repo.store, Some(&want), &m, &cat).map_err(publish_err)?;
             let mut rr = Refs::default();
             let mut local = Refs::default();
             for (a, b, id) in &got {
@@ -727,17 +760,19 @@ impl Repo {
             }
             repo.save_remote_refs(&rr)?;
             write_atomic(&repo.common.join("refs"), &local.encode())?;
-            repo.adopt_remote_tags(backend, Some(&want), &m)?;
+            repo.adopt_remote_tags(backend, Some(&want), &m, &cat)?;
             drop(_l);
-            // Checkout needs the default branch's files: fetch them in one batch, not one by one.
+            // Checkout needs the default branch's files: fetch them of ALL zones in one batch
+            // (one pack catalog, parallel ranged reads), not zone by zone.
+            let mut files = BTreeSet::new();
             for a in &want {
                 if let Some(h) = local.head(a, crate::meta::DEFAULT_BRANCH) {
-                    repo.prefetch_files(backend, repo.commit_obj(&h)?.root)?;
+                    repo.collect_missing_files(repo.commit_obj(&h)?.root, "", None, &mut files)?;
                 }
             }
-            for a in &want {
-                repo.zone_add(a, None)?;
-            }
+            repo.prefetch_ids_with(backend, &cat, files)?;
+            let _l = repo.lock()?;
+            repo.zone_add_many_locked(&want)?;
             Ok(())
         })();
         r.map(|()| repo)

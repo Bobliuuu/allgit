@@ -1,8 +1,10 @@
 //! Read one object out of a remote pack with a ranged GET, instead of downloading the pack.
 
 use crate::backend::{Backend, BackendError};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 use vcs_objects::{id_of_encoded, ObjectId};
 use vcs_store::pack::{block_is_metadata, decode_block, BlockCache, PackIndex};
 
@@ -88,28 +90,128 @@ pub fn fetch_from_any_pack_retrying(b: &dyn Backend, id: &ObjectId, rounds: usiz
     Ok(None)
 }
 
-/// Read every pack index, listing again while some index vanished between the LIST and its GET.
-fn load_indexes(b: &dyn Backend, rounds: usize) -> Result<Vec<(String, PackIndex)>, BackendError> {
-    let mut packs = Vec::new();
-    for round in 0..rounds.max(1) {
-        packs.clear();
-        let mut vanished = false;
-        for key in b.list(PACK_PREFIX)? {
-            let Some(stem) = key.strip_suffix(".idx") else { continue };
-            let Some(idx) = b.get(&key)? else {
-                vanished = true;
-                continue;
-            };
-            packs.push((
-                stem.to_owned(),
-                PackIndex::parse(&idx.data, Path::new(stem)).map_err(|e| BackendError::Other(e.to_string()))?,
-            ));
+/// Worker threads (at most) used for parallel ranged GETs and index reads. Bounded so one clone
+/// never opens more than this many connections to the remote.
+pub const FETCH_THREADS: usize = 8;
+
+/// Pack stems with their parsed indexes.
+type PackList = Vec<(String, PackIndex)>;
+/// One pack's wanted objects as `(offset, length, id)`, sorted by offset.
+type Hits = Vec<(u64, u32, ObjectId)>;
+
+/// What one listing of `packs/` produced.
+pub struct Loaded {
+    packs: PackList,
+    /// The `packs/` listing `packs` was built from.
+    listing: Vec<String>,
+    /// An index named by the listing was gone when read (a compaction removed it).
+    vanished: bool,
+}
+
+/// The remote's packs: one `list` plus one index GET per pack, done once and shared by every
+/// step of a clone or fetch (walk, existence probes, file prefetch), instead of repeated for
+/// each step. Valid for the duration of one operation: packs are immutable, and an object the
+/// manifest names is in a pack that was listed before the manifest was published. A reader that
+/// finds a pack vanished (compaction) calls [`PackCatalog::invalidate`] and the next use lists again.
+#[derive(Default)]
+pub struct PackCatalog {
+    state: Mutex<Option<Arc<Loaded>>>,
+    trailers_ok: Mutex<HashSet<String>>,
+}
+
+impl PackCatalog {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The listing and indexes, loaded on first use (index GETs run on a bounded pool).
+    pub fn get(&self, b: &dyn Backend) -> Result<Arc<Loaded>, BackendError> {
+        let mut g = self.state.lock().unwrap();
+        if let Some(l) = g.as_ref() {
+            return Ok(l.clone());
         }
-        if !vanished || round + 1 == rounds.max(1) {
-            break;
+        let listing = b.list(PACK_PREFIX)?;
+        let stems: Vec<(String, String)> = listing
+            .iter()
+            .filter_map(|k| k.strip_suffix(".idx").map(|s| (s.to_owned(), k.clone())))
+            .collect();
+        let loaded = par_map(
+            &stems,
+            FETCH_THREADS,
+            |(stem, key)| -> Result<Option<(String, PackIndex)>, BackendError> {
+                let Some(idx) = b.get(key)? else { return Ok(None) };
+                let idx = PackIndex::parse(&idx.data, Path::new(stem)).map_err(|e| BackendError::Other(e.to_string()))?;
+                Ok(Some((stem.clone(), idx)))
+            },
+        );
+        let mut packs = Vec::with_capacity(loaded.len());
+        let mut vanished = false;
+        for r in loaded {
+            match r? {
+                Some(x) => packs.push(x),
+                None => vanished = true,
+            }
+        }
+        let l = Arc::new(Loaded { packs, listing, vanished });
+        *g = Some(l.clone());
+        Ok(l)
+    }
+
+    /// Like [`PackCatalog::get`], but while an index vanished between the LIST and its GET, list again
+    /// (up to [`RACE_ROUNDS`] times).
+    fn get_settled(&self, b: &dyn Backend) -> Result<Arc<Loaded>, BackendError> {
+        for round in 0..RACE_ROUNDS {
+            let l = self.get(b)?;
+            if !l.vanished || round + 1 == RACE_ROUNDS {
+                return Ok(l);
+            }
+            self.invalidate(&l);
+        }
+        unreachable!("RACE_ROUNDS >= 1")
+    }
+
+    /// Forget `stale` (if it is still the current listing) so the next use lists again.
+    pub fn invalidate(&self, stale: &Arc<Loaded>) {
+        let mut g = self.state.lock().unwrap();
+        if g.as_ref().is_some_and(|cur| Arc::ptr_eq(cur, stale)) {
+            *g = None;
         }
     }
-    Ok(packs)
+
+    /// [`check_trailer`], at most once per pack for this catalog. `Ok(false)`: the pack is gone.
+    fn check_trailer_once(&self, b: &dyn Backend, stem: &str, idx: &PackIndex) -> Result<bool, BackendError> {
+        if self.trailers_ok.lock().unwrap().contains(stem) {
+            return Ok(true);
+        }
+        let ok = check_trailer(b, stem, idx)?;
+        if ok {
+            self.trailers_ok.lock().unwrap().insert(stem.to_owned());
+        }
+        Ok(ok)
+    }
+}
+
+/// Run `f` over `items` on up to `threads` scoped threads, results in input order.
+fn par_map<T: Sync, R: Send>(items: &[T], threads: usize, f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let n = threads.min(items.len());
+    if n <= 1 {
+        return items.iter().map(&f).collect();
+    }
+    let next = AtomicUsize::new(0);
+    let slots: Vec<Mutex<Option<R>>> = items.iter().map(|_| Mutex::new(None)).collect();
+    std::thread::scope(|sc| {
+        for _ in 0..n {
+            sc.spawn(|| loop {
+                let i = next.fetch_add(1, Ordering::Relaxed);
+                let Some(it) = items.get(i) else { break };
+                *slots[i].lock().unwrap() = Some(f(it));
+            });
+        }
+    });
+    slots
+        .into_iter()
+        .map(|m| m.into_inner().unwrap().expect("every slot filled"))
+        .collect()
 }
 
 /// Which of `ids` the remote has, without downloading object bodies. Packs are consulted first:
@@ -119,27 +221,31 @@ fn load_indexes(b: &dyn Backend, rounds: usize) -> Result<Vec<(String, PackIndex
 /// 1-byte ranged GET each, which yields the kind (the first byte of the encoding). `None` means
 /// the remote does not have the id.
 pub fn probe_kinds(b: &dyn Backend, ids: &[ObjectId]) -> Result<Vec<(ObjectId, Option<u8>)>, BackendError> {
+    probe_kinds_with(b, &PackCatalog::new(), ids)
+}
+
+/// [`probe_kinds`] with a shared [`PackCatalog`]: no `list` or index GET when the catalog is warm.
+/// Loose probes run on the bounded pool.
+pub fn probe_kinds_with(b: &dyn Backend, cat: &PackCatalog, ids: &[ObjectId]) -> Result<Vec<(ObjectId, Option<u8>)>, BackendError> {
     if ids.is_empty() {
         return Ok(vec![]); // nothing to probe: do not list and index every pack for it
     }
-    let packs: Vec<PackIndex> = load_indexes(b, RACE_ROUNDS)?.into_iter().map(|p| p.1).collect();
-    let mut out = Vec::with_capacity(ids.len());
-    for id in ids {
-        if packs.iter().any(|p| p.find(id).is_some()) {
-            out.push((*id, Some(0)));
-            continue;
+    let loaded = cat.get_settled(b)?;
+    let probed = par_map(ids, FETCH_THREADS, |id| -> Result<(ObjectId, Option<u8>), BackendError> {
+        if loaded.packs.iter().any(|(_, p)| p.find(id).is_some()) {
+            return Ok((*id, Some(0)));
         }
         let h = id.to_hex();
         let key = format!("objects/{}/{}", &h[..2], &h[2..]);
-        out.push((
+        Ok((
             *id,
             match b.get_range(&key, 0, 1)? {
                 Some(v) if v.len() == 1 => Some(v[0]),
                 _ => None, // absent, or a zero-length (damaged) object file
             },
-        ));
-    }
-    Ok(out)
+        ))
+    });
+    probed.into_iter().collect()
 }
 
 /// Maximum unwanted bytes read between two wanted ranges to keep them in one request.
@@ -247,6 +353,246 @@ fn scan_packs(b: &dyn Backend, remaining: &mut Vec<ObjectId>, out: &mut Vec<(Obj
     Ok(raced)
 }
 
+/// One ranged GET of a pack, holding whole entries: `[start, end)`.
+struct Segment<'a> {
+    stem: &'a str,
+    idx: &'a PackIndex,
+    start: u64,
+    end: u64,
+    hits: Hits,
+}
+
+/// Plan the ranged reads for `want` (sorted, unique): assign each id to the first pack that
+/// indexes it, merge hits closer than [`COALESCE_GAP`], and cut merged ranges into segments of
+/// about `total / (2 * threads)` bytes (at least 256 KiB) so the pool has work to share.
+/// Returns the segments, the ids no pack has, and the ids of packs found gone (to retry).
+fn plan_segments<'a>(
+    b: &dyn Backend,
+    cat: &PackCatalog,
+    packs: &'a PackList,
+    want: Vec<ObjectId>,
+) -> Result<(Vec<Segment<'a>>, Vec<ObjectId>, Vec<ObjectId>), BackendError> {
+    let mut remaining = want;
+    let mut gone = Vec::new();
+    let mut per_pack: Vec<(usize, Hits)> = Vec::new();
+    for (pi, (stem, idx)) in packs.iter().enumerate() {
+        if remaining.is_empty() {
+            break;
+        }
+        let mut hits = Vec::new();
+        remaining.retain(|id| match idx.find(id) {
+            Some((off, len)) => {
+                hits.push((off, len, *id));
+                false
+            }
+            None => true,
+        });
+        hits.sort_by_key(|h| h.0);
+        if hits.is_empty() {
+            continue;
+        }
+        if !cat.check_trailer_once(b, stem, idx)? {
+            gone.extend(hits.iter().map(|h| h.2));
+            continue;
+        }
+        per_pack.push((pi, hits));
+    }
+    let total: u64 = per_pack.iter().flat_map(|(_, h)| h.iter()).map(|h| h.1 as u64).sum();
+    let target = (total / (2 * FETCH_THREADS as u64)).clamp(256 * 1024, 8 * 1024 * 1024);
+    let mut segs = Vec::new();
+    for (pi, hits) in per_pack {
+        let (stem, idx) = (packs[pi].0.as_str(), &packs[pi].1);
+        let mut i = 0;
+        while i < hits.len() {
+            let start = hits[i].0;
+            let mut end = hits[i].0 + hits[i].1 as u64;
+            let mut j = i + 1;
+            // never cut between two ids of one block (same offset): the block is decoded once
+            while j < hits.len() && hits[j].0 <= end + COALESCE_GAP && (end - start < target || hits[j].0 == hits[j - 1].0) {
+                end = end.max(hits[j].0 + hits[j].1 as u64);
+                j += 1;
+            }
+            segs.push(Segment {
+                stem,
+                idx,
+                start,
+                end,
+                hits: hits[i..j].to_vec(),
+            });
+            i = j;
+        }
+    }
+    Ok((segs, remaining, gone))
+}
+
+/// What one unit of fetch work produced: verified objects, or "the pack is gone" (retry).
+enum Done {
+    Objects(Vec<(ObjectId, Vec<u8>)>),
+    Raced(Vec<ObjectId>),
+}
+
+enum Job<'a> {
+    Seg(Segment<'a>),
+    Loose(ObjectId),
+}
+
+fn run_job(b: &dyn Backend, j: &Job) -> Result<Done, BackendError> {
+    match j {
+        Job::Seg(seg) => {
+            let stem = seg.stem;
+            let Some(buf) = b.get_range(&format!("{stem}.pack"), seg.start, seg.end - seg.start)? else {
+                return Ok(Done::Raced(seg.hits.iter().map(|h| h.2).collect()));
+            };
+            let mut blocks = BlockCache::default();
+            let mut out = Vec::with_capacity(seg.hits.len());
+            for (off, len, id) in &seg.hits {
+                let s = (off - seg.start) as usize;
+                let e = s + *len as usize;
+                let Some(bytes) = buf.get(s..e) else {
+                    return Err(BackendError::Other(format!("pack {stem}: short read for {id}")));
+                };
+                let enc = seg
+                    .idx
+                    .decode_entry_cached(id, *off, bytes, &mut blocks)
+                    .map_err(|e| BackendError::Other(format!("pack {stem}: object {id}: {e}")))?;
+                if id_of_encoded(&enc) != *id {
+                    return Err(BackendError::Other(format!("pack {stem}: object {id} fails hash verification")));
+                }
+                out.push((*id, enc.into_owned()));
+            }
+            Ok(Done::Objects(out))
+        }
+        Job::Loose(id) => {
+            let h = id.to_hex();
+            match b.get(&format!("objects/{}/{}", &h[..2], &h[2..]))? {
+                Some(v) if id_of_encoded(&v.data) != *id => Err(BackendError::Other(format!("object {id} fails hash verification"))),
+                Some(v) => Ok(Done::Objects(vec![(*id, v.data)])),
+                None => Err(BackendError::Other(format!("object {id} missing on remote"))),
+            }
+        }
+    }
+}
+
+/// Run `jobs` on a bounded pool. Verified objects go to `sink` on the calling thread, as they
+/// arrive; ids of vanished packs are appended to `retry`. After the first error nothing further
+/// is requested.
+fn run_pool<E: From<BackendError>>(
+    b: &dyn Backend,
+    jobs: Vec<Job>,
+    sink: &mut dyn FnMut(ObjectId, Vec<u8>) -> Result<(), E>,
+    retry: &mut Vec<ObjectId>,
+) -> Result<(), E> {
+    let mut deliver = |r: Result<Done, BackendError>| -> Result<(), E> {
+        match r? {
+            Done::Objects(v) => v.into_iter().try_for_each(|(id, d)| sink(id, d)),
+            Done::Raced(ids) => {
+                retry.extend(ids);
+                Ok(())
+            }
+        }
+    };
+    let threads = FETCH_THREADS.min(jobs.len());
+    if threads <= 1 {
+        for j in &jobs {
+            deliver(run_job(b, j))?;
+        }
+        return Ok(());
+    }
+    let next = AtomicUsize::new(0);
+    let stop = AtomicBool::new(false);
+    let (tx, rx) = mpsc::sync_channel::<Result<Done, BackendError>>(threads * 2);
+    let mut result: Result<(), E> = Ok(());
+    std::thread::scope(|sc| {
+        for _ in 0..threads {
+            let tx = tx.clone();
+            let (next, stop, jobs) = (&next, &stop, &jobs);
+            sc.spawn(move || loop {
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                let i = next.fetch_add(1, Ordering::Relaxed);
+                let Some(j) = jobs.get(i) else { break };
+                let r = run_job(b, j);
+                let failed = r.is_err();
+                if tx.send(r).is_err() || failed {
+                    break;
+                }
+            });
+        }
+        drop(tx);
+        for r in rx.iter() {
+            if let Err(e) = deliver(r) {
+                result = Err(e);
+                stop.store(true, Ordering::Relaxed);
+                break; // dropping rx unblocks workers stuck in send
+            }
+        }
+        drop(rx);
+    });
+    result
+}
+
+/// Fetch `ids` and hand each verified encoding to `sink` as it arrives (order unspecified).
+/// Packs come from `cat` (listed and indexed once); the ranged reads, decompression and hash
+/// checks run on up to [`FETCH_THREADS`] threads while the calling thread runs `sink`, so
+/// writing overlaps downloading. Each object is hashed exactly once, on the wire bytes. Ids in
+/// no pack are read loose. An id absent everywhere is an error; after the first error nothing
+/// further is requested. A pack that vanishes mid-read (compaction) makes the catalog list again
+/// and the affected ids are retried, up to [`RACE_ROUNDS`] times.
+pub fn fetch_many_each<E: From<BackendError>>(
+    b: &dyn Backend,
+    cat: &PackCatalog,
+    ids: &[ObjectId],
+    sink: &mut dyn FnMut(ObjectId, Vec<u8>) -> Result<(), E>,
+) -> Result<(), E> {
+    fetch_many_each_retrying(b, cat, ids, RACE_ROUNDS, sink)
+}
+
+/// [`fetch_many_each`] with an explicit retry budget (`rounds` = 1: no retry; tests only).
+#[doc(hidden)]
+pub fn fetch_many_each_retrying<E: From<BackendError>>(
+    b: &dyn Backend,
+    cat: &PackCatalog,
+    ids: &[ObjectId],
+    rounds: usize,
+    sink: &mut dyn FnMut(ObjectId, Vec<u8>) -> Result<(), E>,
+) -> Result<(), E> {
+    let mut remaining: Vec<ObjectId> = ids.to_vec();
+    remaining.sort();
+    remaining.dedup();
+    let rounds = rounds.max(1);
+    for round in 0..rounds {
+        if remaining.is_empty() {
+            return Ok(());
+        }
+        let loaded = cat.get(b)?;
+        let (segs, leftover, gone) = plan_segments(b, cat, &loaded.packs, std::mem::take(&mut remaining))?;
+        let mut retry = gone;
+        run_pool(b, segs.into_iter().map(Job::Seg).collect(), sink, &mut retry)?;
+        remaining = leftover;
+        let raced = loaded.vanished || !retry.is_empty();
+        remaining.extend(retry);
+        if !raced || round + 1 == rounds {
+            break;
+        }
+        cat.invalidate(&loaded);
+    }
+    // what no pack has (or the last round could not reach) is read loose, or is missing
+    let mut none = Vec::new();
+    run_pool(b, remaining.into_iter().map(Job::Loose).collect(), sink, &mut none)
+}
+
+/// [`fetch_many`] with a shared [`PackCatalog`]; objects are fetched in parallel (see
+/// [`fetch_many_each`]).
+pub fn fetch_many_with(b: &dyn Backend, cat: &PackCatalog, ids: &[ObjectId]) -> Result<Vec<(ObjectId, Vec<u8>)>, BackendError> {
+    let mut out = Vec::with_capacity(ids.len());
+    fetch_many_each(b, cat, ids, &mut |id, d| -> Result<(), BackendError> {
+        out.push((id, d));
+        Ok(())
+    })?;
+    Ok(out)
+}
+
 /// First ranged GET when streaming the metadata prefix of a pack, then x4 per request up to the
 /// cap. Small first so a pack that is mostly file data costs little over-read.
 const PREFIX_FIRST: u64 = 4 * 1024;
@@ -274,15 +620,13 @@ pub enum ReadAhead {
 pub struct RemoteSource<'a> {
     b: &'a dyn Backend,
     ahead: ReadAhead,
-    packs: Option<Vec<(String, PackIndex)>>,
+    catalog: Arc<PackCatalog>,
+    packs: Option<Arc<Loaded>>,
     read_ahead_done: Vec<bool>,
     /// Pre-read objects keyed by the hash of their bytes, so a lying pack cannot plant data.
     cache: HashMap<ObjectId, Vec<u8>>,
     /// Commits the walk will start from (see [`RemoteSource::with_roots`]).
     roots: Vec<ObjectId>,
-    /// The `packs/` listing `packs` was built from, and whether an index vanished while loading.
-    listing: Vec<String>,
-    vanished: bool,
     rounds: usize,
 }
 
@@ -291,14 +635,20 @@ impl<'a> RemoteSource<'a> {
         Self {
             b,
             ahead,
+            catalog: Arc::new(PackCatalog::new()),
             packs: None,
             read_ahead_done: vec![],
             cache: HashMap::new(),
             roots: vec![],
-            listing: vec![],
-            vanished: false,
             rounds: RACE_ROUNDS,
         }
+    }
+
+    /// Share a [`PackCatalog`] with other steps of the same operation, so the packs are listed
+    /// and indexed once for all of them.
+    pub fn with_catalog(mut self, catalog: Arc<PackCatalog>) -> Self {
+        self.catalog = catalog;
+        self
     }
 
     /// Retry budget for packs that vanish mid-read (1 = none; tests only).
@@ -322,27 +672,16 @@ impl<'a> RemoteSource<'a> {
 
     fn packs(&mut self) -> Result<&[(String, PackIndex)], BackendError> {
         if self.packs.is_none() {
-            let mut v = Vec::new();
-            self.listing = self.b.list(PACK_PREFIX)?;
-            self.vanished = false;
-            for key in &self.listing {
-                let Some(stem) = key.strip_suffix(".idx") else { continue };
-                let Some(idx) = self.b.get(key)? else {
-                    self.vanished = true;
-                    continue;
-                };
-                let idx = PackIndex::parse(&idx.data, Path::new(stem)).map_err(|e| BackendError::Other(e.to_string()))?;
-                v.push((stem.to_owned(), idx));
-            }
-            self.read_ahead_done = vec![false; v.len()];
-            self.packs = Some(v);
+            let l = self.catalog.get(self.b)?;
+            self.read_ahead_done = vec![false; l.packs.len()];
+            self.packs = Some(l);
         }
-        Ok(self.packs.as_deref().unwrap_or(&[]))
+        Ok(self.packs.as_deref().map_or(&[][..], |l| l.packs.as_slice()))
     }
 
     fn read_ahead(&mut self, i: usize, wanted: &ObjectId) -> Result<(), BackendError> {
         let (stem, pack_len, version) = {
-            let (s, idx) = &self.packs.as_ref().expect("packs loaded")[i];
+            let (s, idx) = &self.packs.as_ref().expect("packs loaded").packs[i];
             (s.clone(), idx.pack_len, idx.version())
         };
         let key = format!("{stem}.pack");
@@ -362,7 +701,7 @@ impl<'a> RemoteSource<'a> {
         // this pack is itself a root of the metadata needed from it (a parent commit in an older pack).
         let mut starts = self.roots.clone();
         starts.push(*wanted);
-        let mut bound = self.packs.as_ref().expect("packs loaded")[i]
+        let mut bound = self.packs.as_ref().expect("packs loaded").packs[i]
             .1
             .known_end(&starts)
             .map(|e| e.min(end));
@@ -380,7 +719,7 @@ impl<'a> RemoteSource<'a> {
                     break;
                 }
                 // metadata the parsed objects name but we have not read yet, if this pack holds it
-                let idx = &self.packs.as_ref().expect("packs loaded")[i].1;
+                let idx = &self.packs.as_ref().expect("packs loaded").packs[i].1;
                 for id in &fresh {
                     if let Some(bytes) = self.cache.get(id) {
                         pending.extend(metadata_deps(bytes));
@@ -428,12 +767,19 @@ impl<'a> RemoteSource<'a> {
                 Fetched::Raced => {}
                 Fetched::Absent => {
                     // Not anywhere. Before saying so, rule out a pack set that changed under us.
-                    if last || (!self.vanished && self.b.list(PACK_PREFIX)? == self.listing) {
+                    if last {
                         return Ok(None);
+                    }
+                    if let Some(l) = &self.packs {
+                        if !l.vanished && self.b.list(PACK_PREFIX)? == l.listing {
+                            return Ok(None);
+                        }
                     }
                 }
             }
-            self.packs = None;
+            if let Some(l) = self.packs.take() {
+                self.catalog.invalidate(&l);
+            }
         }
         Ok(None)
     }
@@ -472,7 +818,7 @@ impl<'a> RemoteSource<'a> {
                     None => Err(BackendError::Other(format!("pack {key}: object {id} fails hash verification"))),
                 };
             }
-            let enc = self.packs.as_ref().expect("packs loaded")[i]
+            let enc = self.packs.as_ref().expect("packs loaded").packs[i]
                 .1
                 .decode_entry(id, &bytes)
                 .map_err(|e| BackendError::Other(format!("pack {key}: object {id}: {e}")))?;
@@ -483,6 +829,7 @@ impl<'a> RemoteSource<'a> {
         }
         let h = id.to_hex();
         Ok(match self.b.get(&format!("objects/{}/{}", &h[..2], &h[2..]))? {
+            Some(v) if id_of_encoded(&v.data) != *id => return Err(BackendError::Other(format!("object {id} fails hash verification"))),
             Some(v) => Fetched::Found(v.data),
             None => Fetched::Absent,
         })
