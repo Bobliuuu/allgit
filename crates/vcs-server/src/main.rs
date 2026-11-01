@@ -5,7 +5,7 @@
 //!
 //! Options: `--audit-log <file> [--audit-key <keyfile>]`, `--rate-limit <burst>,<per-sec>`,
 //! `--max-connections <n>`, `--max-body <bytes>`, and with the `tls` feature `--tls-cert <pem> --tls-key <pem>`.
-//! Policy options: `--policy <file> [--max-lease-secs N] [--skew-epsilon-ms N]` (docs/deploy.md).
+//! Policy options: `--policy <file> [--allowed-signers <file>] [--revoked-signers <file>] [--max-lease-secs N] [--skew-epsilon-ms N]` (docs/deploy.md).
 //! Without TLS the server speaks plain HTTP (docs/server.md).
 
 use std::path::Path;
@@ -14,7 +14,7 @@ use vcs_server::audit::{parse_key, verify_file};
 use vcs_server::{auth, backend_url, AuditLog, Config, Policy, RateLimit, Server, TokenTable};
 
 const USAGE: &str = "usage: vcs-server (--root <dir> | --backend <s3://...|dir>) --tokens <file> [--listen host:port] [--audit-log <file> [--audit-key <file>]] \
-[--rate-limit <burst>,<per-sec>] [--max-connections <n>] [--max-body <bytes>] [--policy <file>] [--max-lease-secs N] [--skew-epsilon-ms N] [--tls-cert <pem> --tls-key <pem> [--tls-client-ca <pem>]]\n       \
+[--rate-limit <burst>,<per-sec>] [--max-connections <n>] [--max-body <bytes>] [--policy <file>] [--allowed-signers <file>] [--revoked-signers <file>] [--max-lease-secs N] [--skew-epsilon-ms N] [--tls-cert <pem> --tls-key <pem> [--tls-client-ca <pem>]]\n       \
 vcs-server hash-token <token>\n       vcs-server audit verify <file> [--key <file>]";
 
 fn die(m: &str) -> ! {
@@ -67,6 +67,7 @@ fn main() {
     let (mut audit_log, mut audit_key, mut rate, mut maxc, mut maxb) = (None, None, None, None, None);
     let (mut tls_cert, mut tls_key, mut tls_client_ca) = (None, None, None);
     let (mut backend_arg, mut policy_path, mut max_lease, mut eps) = (None, None, None, None);
+    let (mut allowed_signers, mut revoked_signers) = (None, None);
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         let mut val = |n: &str| it.next().unwrap_or_else(|| die(&format!("{n} needs a value")));
@@ -84,6 +85,8 @@ fn main() {
             "--tls-client-ca" => tls_client_ca = Some(val("--tls-client-ca")),
             "--backend" => backend_arg = Some(val("--backend")),
             "--policy" => policy_path = Some(val("--policy")),
+            "--allowed-signers" => allowed_signers = Some(val("--allowed-signers")),
+            "--revoked-signers" => revoked_signers = Some(val("--revoked-signers")),
             "--max-lease-secs" => max_lease = Some(val("--max-lease-secs")),
             "--skew-epsilon-ms" => eps = Some(val("--skew-epsilon-ms")),
             _ => die(USAGE),
@@ -107,6 +110,14 @@ fn main() {
     if let Some(p) = policy_path {
         let text = std::fs::read_to_string(&p).unwrap_or_else(|e| die(&format!("cannot read {p}: {e}")));
         cfg.validator.policy = Policy::parse(&text).unwrap_or_else(|e| die(&e));
+    }
+    if let Some(p) = allowed_signers {
+        let text = std::fs::read_to_string(&p).unwrap_or_else(|e| die(&format!("cannot read {p}: {e}")));
+        cfg.validator.signers.parse_allowed(&text).unwrap_or_else(|e| die(&e));
+    }
+    if let Some(p) = revoked_signers {
+        let text = std::fs::read_to_string(&p).unwrap_or_else(|e| die(&format!("cannot read {p}: {e}")));
+        cfg.validator.signers.parse_revoked(&text).unwrap_or_else(|e| die(&e));
     }
     let num = |n: &str, v: Option<String>| v.map(|v| v.parse::<u64>().unwrap_or_else(|_| die(&format!("{n} must be a number"))));
     if let Some(s) = num("--max-lease-secs", max_lease) {

@@ -7,6 +7,7 @@ pub mod codec;
 pub mod id;
 pub mod names;
 pub mod object;
+pub mod signing;
 
 pub use codec::DecodeError;
 pub use id::{ChangeId, IdParseError, ObjectId};
