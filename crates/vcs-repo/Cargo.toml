@@ -16,6 +16,7 @@ unicode-normalization.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 proptest.workspace = true
+sha2 = "0.10"
 
 [features]
 default = []
