@@ -10,15 +10,15 @@ manifest the CAS replaces, `vcs lock`, `vcs unlock [--break]`, `vcs locks`, and 
 `LockedBy`, `LockBroken` and `NotHolder` reject the whole transaction.
 
 **Known gaps (not implemented):**
-* `require-lock` policy and acquire-on-publish *policy* (acquire-in-the-same-transaction works, nothing requires it).
+* Acquire-on-publish *policy*: `require-lock` exists in `vcs-server` (see the end of this page); a client does not yet take the lock automatically during `publish`.
 * The epsilon margin for replicas with skewed clocks: epsilon is 0, i.e. a single validator clock. Mutual exclusion with
   replicas whose skew is nonzero is NOT provided; the model checks the single-validator case only.
 * A real validating writer and authentication: today the *client's* `Publisher` runs the validator, and the principal is
   `VCS_PRINCIPAL` or the author email. Anyone with write access to the manifest bypasses every rule here, so enforcement
   is advisory until a validating writer holds the only manifest credential (see "Advisory vs enforced").
 * Lease and hold-time defaults: `vcs lock --lease-secs` is required; no default is proposed until contention is measured.
-* Read-only worktree bit, `status`/`log` display, and `add`/`commit` warnings (advisory features).
-* `Break` is unrestricted (no `lock-admin` role until authn/authz exists) and writes no separate tombstone beyond the
+* `log` display of lock holders. (The read-only bit, `status` display and `add`/`commit` guard now exist, see "Lockable files".)
+* `Break` is unrestricted on a plain directory remote; `vcs-server` requires an admin token (no separate `lock-admin` role) and writes no separate tombstone beyond the
   `tx/<txid>` record, which already carries the author and the op.
 
 ## Problem
@@ -259,3 +259,39 @@ contention cost. Those need integration tests and a measurement.
   guarantees that nobody else takes a lock over before the holder had the full lease in real time; the model checker
   (`model_locks.rs`, invariant L-SKEW) proves this for two replicas and fails for `eps = 0` and for `eps < 2S`.
 * **require-lock and path policy** are configured in the server's `--policy` file; see [deploy.md](deploy.md).
+
+## Lockable files (`.vcsattributes`)
+
+Perforce-style exclusive checkout for binaries, built on the locks above. Code: `crates/vcs-repo/src/lockable.rs`
+(attributes, held-lock record, modes, binary merge), `crates/vcs-cli/src/lockable_cmd.rs` (guard and glue). Tests:
+`crates/vcs-cli/tests/lockable.rs` (directory remote), `crates/vcs-cli/tests/lockable_server.rs` (real `vcs-server`,
+including two users racing for one file, `require-lock` and admin `--break`).
+
+**File format.** `.vcsattributes` is tracked, one per directory; patterns are the `.vcsignore` matcher (gitignore-style,
+no `!`), then attributes separated by spaces: `lockable`, `-lockable`, `merge=binary`, `merge=text`. Later lines and
+deeper files win. Unknown attributes are ignored.
+
+**Semantics.**
+* A lockable tracked file is read-only unless this repository holds its lock. Applied after `clone`, `switch`, `sync`,
+  `merge`, `rebase`, `restore`, `commit`, `zone`, `worktree`, `snapshot`, `sparse`, `stash`, `op`, in every worktree.
+* `vcs lock` records the lock in `<common dir>/lockable-held` (path, token, local lease end) and makes the file
+  writable; `vcs unlock` and `lock.releaseOnPublish=on` drop the record and restore read-only. The record is shared by
+  all worktrees of a repository. It is a convenience and never authoritative; the manifest is.
+* `vcs add` / `vcs commit` of a modified or deleted lockable file without a held lock fail. `--force-no-lock` bypasses
+  the client check only. New files are exempt on the client; a server `require-lock` rule still applies to them.
+  Without a configured remote the guard only warns (a lock cannot be taken).
+* Before add/commit with a held lock, the client lists the remote locks and drops any that are no longer ours (expired,
+  broken, re-taken). Unreachable remote: `lock.offline=warn` (default) trusts the record with a warning; `refuse` fails.
+  `vcs lock` itself needs the remote and cannot be done offline.
+* `merge=binary`: `Repo::tree3` (used by merge, rebase, cherry-pick, revert) removes such paths from the text merge and
+  reports `AddAdd`, `DeleteModify` or `ModifyModify` conflicts without hunks; ours stays in the worktree.
+* Stale locks: an expired lock is shown as stale by `vcs locks`; anyone can `vcs lock` over it. `--break` removes a live
+  lock: an admin token with `vcs-server`, anyone on a directory remote.
+
+**Advisory.** The read-only bit and the add/commit guard are advisory (a user can `chmod`, `--force-no-lock`, or use a
+client without these checks). Enforcement is the server's `require-lock` policy and the lock validator.
+
+**Not done / known limits.** Windows read-only attribute is implemented through `std::fs::Permissions::set_readonly`
+but untested. Removing `lockable` from a pattern does not restore write permission. Attribute files are read from the
+working tree, not from the other side of a merge. `lock.releaseOnPublish` releases in a second transaction after the
+publish, not atomically with it. No automatic acquire-on-publish.

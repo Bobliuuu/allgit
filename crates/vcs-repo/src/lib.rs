@@ -16,6 +16,7 @@ pub mod ignore;
 pub mod import;
 pub mod import_p4;
 pub mod index;
+pub mod lockable;
 pub mod manage;
 pub mod merge;
 pub mod meta;

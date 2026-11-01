@@ -66,7 +66,7 @@ Commands:
   clone        Clone a remote (or a bundle file) into a new directory (sparse with --zone)
   publish      Publish checked-out branches to the remote in one atomic transaction
   lock         Lock files on the remote so others cannot publish changes to them
-  unlock       Release locks you hold (`--break` removes anyone's lock; unrestricted for now)
+  unlock       Release locks you hold (`--break` removes anyone's lock; the server requires an admin token)
   locks        Show locks recorded on the remote (as of now; advisory until a validating writer exists)
   fetch        Download remote objects and update remote-tracking refs (local branches untouched)
   sync         Fetch, then fast-forward local branches where safe
@@ -115,6 +115,7 @@ Arguments:
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --force-no-lock  Stage changes to lockable files (`.vcsattributes`) even without holding their lock
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
@@ -190,6 +191,7 @@ Usage: vcs commit [OPTIONS]
 Options:
   -C <DIR>                 Run as if vcs was started in <DIR> (applied before repository discovery)
   -m, --message <MESSAGE>  Commit message (omit to write it in core.editor / $EDITOR)
+      --force-no-lock      Commit changes to lockable files (`.vcsattributes`) even without holding their lock
       --json               Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>      PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks           Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
@@ -2009,7 +2011,7 @@ Options:
 ## `vcs unlock`
 
 ```text
-Release locks you hold (`--break` removes anyone's lock; unrestricted for now)
+Release locks you hold (`--break` removes anyone's lock; the server requires an admin token)
 
 Usage: vcs unlock [OPTIONS] [PATHS]...
 

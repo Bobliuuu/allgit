@@ -124,7 +124,7 @@ pub enum MergeOutcome {
 
 impl Repo {
     /// Three-way tree merge honouring the structural and rename-detection settings.
-    pub(crate) fn tree3(
+    pub(crate) fn tree3_plain(
         &self,
         base: &Flat,
         ours: &Flat,

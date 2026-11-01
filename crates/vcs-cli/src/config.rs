@@ -61,6 +61,16 @@ pub const KEYS: &[(&str, &str, &str)] = &[
         "comma-separated environment variable names passed to hooks (hooks run with a scrubbed environment otherwise)",
     ),
     (
+        "lock.releaseOnPublish",
+        "VCS_LOCK_RELEASEONPUBLISH",
+        "on/off: after `vcs publish`, release held locks whose files have no local changes (default off)",
+    ),
+    (
+        "lock.offline",
+        "VCS_LOCK_OFFLINE",
+        "warn (default) or refuse: when the remote is unreachable, trust the local lock record with a warning, or refuse to add/commit lockable files",
+    ),
+    (
         "credential.helper",
         "VCS_CREDENTIAL_HELPER",
         "token store: file (default), keychain (macOS), !command or /path/to/helper",
@@ -94,6 +104,8 @@ pub fn validate_value(key: &str, value: &str) -> Result<(), Error> {
         "merge.renames" if !matches!(value, "on" | "off") => msg("merge.renames must be 'on' or 'off'"),
         "merge.structural" if !matches!(value, "on" | "off") => msg("merge.structural must be 'on' or 'off'"),
         "log.default-format" if !matches!(value, "full" | "oneline") => msg("log.default-format must be 'full' or 'oneline'"),
+        "lock.releaseOnPublish" if !matches!(value, "on" | "off") => msg("lock.releaseOnPublish must be 'on' or 'off'"),
+        "lock.offline" if !matches!(value, "warn" | "refuse") => msg("lock.offline must be 'warn' or 'refuse'"),
         "gc.autoPackLimit" if value.trim().parse::<usize>().is_err() => msg("gc.autoPackLimit must be a non-negative integer"),
         "user.name" | "user.email" | "core.editor" | "remote.default" | "remote.cainfo" | "merge.assist" if value.trim().is_empty() => {
             msg(format!("{key} cannot be empty (use `vcs config unset {key}`)"))

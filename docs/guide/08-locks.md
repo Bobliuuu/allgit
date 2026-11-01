@@ -13,7 +13,8 @@ Other limits you should know:
 
 - A lease length is required: `--lease-secs N`. There is no default.
 - Locks cover one file in one zone, on every branch. The lock path is relative to the zone.
-- `vcs unlock --break` removes anyone's lock. There is no admin role check yet.
+- `vcs unlock --break` removes anyone's lock. A directory remote has no roles, so anyone can; `vcs-server` accepts it only
+  from an admin token.
 - The lock holder is `VCS_PRINCIPAL`, or your author email.
 - Commits are local-first. You can still commit a locked file. The lock is checked when you publish.
 
@@ -99,5 +100,52 @@ no locks
 
 `--break` works for anyone today. In the run above the same person broke her own lock.
 `vcs locks --json` is not supported yet.
+
+## Lockable files: read-only until you lock
+
+You do not have to remember which files need a lock. List them in a tracked `.vcsattributes` file (one per directory;
+repo root or a zone root is typical). It uses the same patterns as `.vcsignore`:
+
+```text
+# .vcsattributes
+*.psd lockable
+assets/** lockable merge=binary
+*.fbx lockable merge=binary
+*.dat merge=binary
+```
+
+What `lockable` does:
+
+- Matching files are checked out **read-only** (mode bits cleared; the read-only attribute on Windows, which is
+  implemented but not tested). `clone`, `switch`, `sync`, `merge`, `restore`, `commit` and `worktree add` re-apply it.
+- `vcs lock <path> --lease-secs N` makes the file writable, in every worktree of the repository.
+  `vcs unlock <path>` makes it read-only again.
+- `vcs add` and `vcs commit` refuse a change to a tracked lockable file when you do not hold its lock. They say which
+  files and how to take the lock. `--force-no-lock` overrides this locally and prints a warning; it is off by default.
+  A brand-new file is exempt from this client check (there is nothing to lose yet).
+- `vcs status` lists lockable files that are modified without a lock.
+- `vcs locks` shows holder, age, time to expiry, and marks expired locks as stale. Anyone can take a stale lock;
+  an admin can also `vcs unlock --break` it.
+- With `vcs config set lock.releaseOnPublish on`, `vcs publish` releases your locks on files that have no local
+  changes left, which makes them read-only again.
+
+Your held locks are recorded in `.vcs/lockable-held`, so the checks work offline. Before it lets you add or commit, the
+client asks the remote whether the lock is still yours. If the remote cannot be reached, `lock.offline` decides:
+`warn` (default) trusts the local record and prints a warning, `refuse` stops. If your lease ended or an admin broke the
+lock, the message says so and the file is read-only again.
+
+The server still has the last word. With a `require-lock` rule in the server policy, a publish that changes a matching
+path without a live lock is refused with a 428, even if the client used `--force-no-lock`. New files under such a rule
+need a lock too: `vcs lock` the path before the first publish.
+
+### Merging binaries: `merge=binary`
+
+With `merge=binary` a merge, rebase, cherry-pick or revert never text-merges that path, even when both sides look like
+text and would merge cleanly. If both sides changed it differently you get a conflict, your side stays in the
+working tree untouched (no markers), and you choose: `vcs resolve <path> --ours` or `--theirs`, then `vcs add` and
+`vcs commit`.
+
+Limits: removing a `lockable` line does not make already read-only files writable again (run `chmod u+w`). The
+attribute files are read from the files in your working tree that are tracked (plus a root file on disk).
 
 Next: [chapter 9, structural and AI-assisted merge](09-structural-and-assisted-merge.md).
