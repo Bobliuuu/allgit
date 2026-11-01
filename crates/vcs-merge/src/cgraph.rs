@@ -51,6 +51,44 @@ impl CommitGraphFile {
         &self.ids
     }
 
+    /// Number of commits reachable from `from` (itself included) that are not reachable from
+    /// `hide` (itself included); `None` if either is not in the graph. Index based, no hashing.
+    pub fn count_reachable_not_from(&self, from: &ObjectId, hide: &ObjectId) -> Option<usize> {
+        let (a, b) = (self.index_of(from)?, self.index_of(hide)?);
+        let mark = |start: usize, seen: &mut Vec<bool>| {
+            let mut todo = vec![start];
+            seen[start] = true;
+            while let Some(i) = todo.pop() {
+                for &p in &self.parents[i] {
+                    if !seen[p as usize] {
+                        seen[p as usize] = true;
+                        todo.push(p as usize);
+                    }
+                }
+            }
+        };
+        let mut hidden = vec![false; self.ids.len()];
+        mark(b, &mut hidden);
+        let mut seen = hidden.clone();
+        let mut n = 0;
+        // walk from `from`, not entering anything hidden or already counted
+        if !seen[a] {
+            seen[a] = true;
+            n += 1;
+            let mut todo = vec![a];
+            while let Some(i) = todo.pop() {
+                for &p in &self.parents[i] {
+                    if !seen[p as usize] {
+                        seen[p as usize] = true;
+                        n += 1;
+                        todo.push(p as usize);
+                    }
+                }
+            }
+        }
+        Some(n)
+    }
+
     /// Add every commit reachable from `tips` that is not yet present. `load(id)` returns
     /// `(parents, commit time)` of the real commit. Fails if a commit cannot be loaded or has
     /// too many parents; the caller then just does not use a graph.

@@ -169,6 +169,26 @@ impl Repo {
             } else {
                 return msg(format!("bad revision {rev:?}"));
             };
+            if steps >= 64 {
+                // a long way back: follow first parents in the commit-graph cache instead of reading each commit
+                if let Some(g) = self.commit_graph(&[cur]) {
+                    let mut c = cur;
+                    let mut ok = true;
+                    for _ in 0..steps {
+                        match vcs_merge::CommitGraph::parents(&g, &c).ok().and_then(|p| p.first().copied()) {
+                            Some(p) => c = p,
+                            None => {
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+                    if ok {
+                        cur = c;
+                        continue;
+                    }
+                }
+            }
             for _ in 0..steps {
                 match self.commit_obj(&cur)?.parents.first() {
                     Some(p) => cur = *p,
@@ -328,7 +348,15 @@ impl Repo {
         // (final line, line index in the commit being examined)
         let mut pending: Vec<(usize, usize)> = (0..n).map(|i| (i, i)).collect();
         let mut id = head;
+        let mut skipper = crate::histwalk::FirstParentSkip::new(self, &zone, head);
         while !pending.is_empty() {
+            // commits that leave this file as it is in their first parent change nothing here
+            let reached = skipper.skip(id, &rel);
+            if reached != id {
+                id = reached;
+                commit = self.commit_obj(&id)?;
+            }
+            skipper.note(&id, &commit);
             let parent = match commit.parents.first() {
                 Some(p) => Some((*p, self.commit_obj(p)?)),
                 None => None,
@@ -340,8 +368,9 @@ impl Repo {
             let mut prev_rel = rel.clone();
             if let (None, Some(th), Some((_, pc))) = (pblob, follow, &parent) {
                 // renamed in this commit? match against the files it removed
-                let old = treeops::flatten(&self.store, Some(pc.root), "")?;
-                let new = treeops::flatten(&self.store, Some(commit.root), "")?;
+                // only what differs: a path in both trees with different content is neither gone nor new
+                let d = treeops::diff_trees(&self.store, Some(pc.root), Some(commit.root), "")?;
+                let (old, new) = (d.old, d.new);
                 let gone: Vec<(&String, Vec<u8>)> = old
                     .iter()
                     .filter(|(p, _)| !new.contains_key(*p))

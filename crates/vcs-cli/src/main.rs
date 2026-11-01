@@ -16,6 +16,7 @@ mod describe;
 mod difftool;
 mod generate;
 mod grep;
+mod histcmds;
 mod hooks;
 mod json;
 mod lockable_cmd;

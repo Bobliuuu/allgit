@@ -26,17 +26,6 @@ pub struct DescribeArgs {
     pub zone: Option<String>,
 }
 
-fn ancestors(repo: &Repo, from: ObjectId) -> Result<BTreeSet<ObjectId>, Error> {
-    let mut seen = BTreeSet::new();
-    let mut todo = vec![from];
-    while let Some(id) = todo.pop() {
-        if seen.insert(id) {
-            todo.extend(repo.commit_of(&id)?.parents);
-        }
-    }
-    Ok(seen)
-}
-
 /// `(tag name, distance)` of the nearest tag, or `None`.
 pub fn nearest(repo: &Repo, zone: &str, start: ObjectId, tags: bool) -> Result<Option<(String, usize)>, Error> {
     // commit -> best tag name on it
@@ -54,6 +43,7 @@ pub fn nearest(repo: &Repo, zone: &str, start: ObjectId, tags: bool) -> Result<O
             by_commit.insert(t.commit, (rank, t.name));
         }
     }
+    let graph = repo.parent_index(&[start]);
     let mut seen = BTreeSet::new();
     let mut q = VecDeque::from([start]);
     while let Some(id) = q.pop_front() {
@@ -61,11 +51,10 @@ pub fn nearest(repo: &Repo, zone: &str, start: ObjectId, tags: bool) -> Result<O
             continue;
         }
         if let Some((_, name)) = by_commit.get(&id) {
-            let behind = ancestors(repo, id)?;
-            let dist = ancestors(repo, start)?.difference(&behind).count();
+            let dist = graph.count_not_reachable_from(start, id)?;
             return Ok(Some((name.clone(), dist)));
         }
-        q.extend(repo.commit_of(&id)?.parents);
+        q.extend(graph.parents(&id)?);
     }
     Ok(None)
 }

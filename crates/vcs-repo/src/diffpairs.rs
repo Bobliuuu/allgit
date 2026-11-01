@@ -93,8 +93,9 @@ impl Repo {
             Some(p) => Some(self.commit_obj(p)?),
             None => None,
         };
-        let old = treeops::flatten(&self.store, parent.map(|c| c.root), &prefix)?;
-        let new = treeops::flatten(&self.store, Some(commit.root), &prefix)?;
+        // only the parts of the two trees that differ (equal subtrees are not read)
+        let d = treeops::diff_trees(&self.store, parent.map(|c| c.root), Some(commit.root), &prefix)?;
+        let (old, new) = (d.old, d.new);
         let mut paths: BTreeSet<&String> = old.keys().collect();
         paths.extend(new.keys());
         let mut out = Vec::new();
