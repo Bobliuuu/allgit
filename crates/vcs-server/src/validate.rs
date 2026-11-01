@@ -29,6 +29,10 @@ pub enum Reject {
 /// Allowed forward distance of `time_hw` from the server clock (ms), to absorb replica skew.
 pub const TIME_SKEW_MS: u64 = 60_000;
 
+/// Most the fencing counter `next_token` may advance in one write (one token per lock granted).
+/// It can never decrease, so an unbounded jump would let one writer exhaust it for good.
+pub const MAX_TOKEN_JUMP: u64 = 1 << 16;
+
 /// Default longest lease a client may ask for (7 days).
 pub const DEFAULT_MAX_LEASE_MS: u64 = 7 * 24 * 3600 * 1000;
 
@@ -91,6 +95,11 @@ pub fn validate_and_normalize(
     // Monotonic counters; clients cannot move time or fencing tokens backwards or far ahead.
     if new.next_token < cur.next_token {
         return Err(Reject::Invalid("next_token decreased".into()));
+    }
+    if new.next_token - cur.next_token > MAX_TOKEN_JUMP {
+        return Err(Reject::Invalid(format!(
+            "next_token jumped by more than {MAX_TOKEN_JUMP} in one write"
+        )));
     }
     if new.time_hw < cur.time_hw {
         return Err(Reject::Invalid("time_hw decreased".into()));
