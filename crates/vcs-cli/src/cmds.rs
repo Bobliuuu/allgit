@@ -12,11 +12,14 @@ pub enum More {
     Bisect(crate::bisect::BisectCmd),
     /// Search tracked files (working tree, or a revision) for a regular expression
     Grep(crate::grep::GrepArgs),
+    /// Name a commit after the nearest tag behind it
+    Describe(crate::describe::DescribeArgs),
 }
 
 pub fn dispatch(cmd: &More, _json: bool) -> Result<(), Error> {
     match cmd {
         More::Bisect(c) => crate::bisect::run(c),
         More::Grep(a) => crate::grep::run(a),
+        More::Describe(a) => crate::describe::run(a),
     }
 }

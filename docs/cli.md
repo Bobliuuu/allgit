@@ -205,3 +205,10 @@ reassembled. Binary files (a NUL in the first 8000 bytes) and symlinks are skipp
 repository-relative and sorted; `--` limits the search to files or directories. Files are
 searched in parallel. Output is `path:text`, `path:line:text` with `-n`, file names with `-l`,
 `path:count` with `-c`. Exit status 1 when nothing matches.
+
+## `vcs describe [<rev>] [--tags] [--always] [--zone Z]`
+
+Name a commit after the nearest tag behind it: `v1` when the commit is tagged, else
+`v1-<n>-g<short id>` where `n` counts the commits reachable from the revision but not from the
+tag. Annotated tags only unless `--tags`; `--always` falls back to the short id instead of
+failing. The nearest tag is the first one met walking parents breadth-first.
