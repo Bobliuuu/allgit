@@ -39,6 +39,8 @@ pub mod watcher;
 pub mod worktree;
 mod zone_batch;
 pub mod worktree_fs;
+pub mod zonedetect;
+mod zonesplit;
 
 pub use assist::{AssistResult, ProposalInfo};
 pub use diffpairs::FilePair;
@@ -57,3 +59,4 @@ pub use stash::{StashEntry, StashPopOutcome, StashZone};
 pub use sync::{PublishReport, SyncAction, SyncReport};
 pub use tags::{BlameLine, ShowReport, TagInfo};
 pub use worktree::WorktreeInfo;
+pub use zonesplit::SplitReport;

@@ -25,6 +25,7 @@ clap_complete.workspace = true
 clap_mangen.workspace = true
 regex = "1"
 libc = "0.2"
+tempfile.workspace = true
 
 [features]
 default = []

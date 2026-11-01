@@ -1484,17 +1484,20 @@ Manage zones
 Usage: vcs zone [OPTIONS] <COMMAND>
 
 Commands:
-  create    Create a zone owning a path prefix (zones may not overlap)
-  list      
-  show      
-  branches  
-  branch    Create a branch in a zone
-  checkout  Check out a branch in a zone
-  add       Subscribe to (and materialize) a zone
-  remove    Unsubscribe from a zone (removes its files from the workspace)
-  rename    Rename a zone (also with history: commits keep the original name as the zone's id)
-  delete    Delete a zone definition (refuses a dirty zone; --force drops its branches and snapshot pins)
-  help      Print this message or the help of the given subcommand(s)
+  create     Create a zone owning a path prefix (zones may not overlap)
+  list       
+  show       
+  branches   
+  branch     Create a branch in a zone
+  checkout   Check out a branch in a zone
+  add        Subscribe to (and materialize) a zone
+  remove     Unsubscribe from a zone (removes its files from the workspace)
+  rename     Rename a zone (also with history: commits keep the original name as the zone's id)
+  delete     Delete a zone definition (refuses a dirty zone; --force drops its branches and snapshot pins)
+  suggest    Propose zone boundaries from manifests, ownership files, directories (read-only; see docs/zones-autodetect.md)
+  apply      Turn one suggestion into a zone (plan only without --yes; history is not rewritten)
+  subscribe  Subscribe to the minimal zone set for a path, symbol, task or person, plus their dependencies
+  help       Print this message or the help of the given subcommand(s)
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
@@ -1679,6 +1682,80 @@ Options:
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
+```
+
+############# `vcs zone suggest`
+
+```text
+Propose zone boundaries from manifests, ownership files, directories (read-only; see docs/zones-autodetect.md)
+
+Usage: vcs zone suggest [OPTIONS]
+
+Options:
+  -C <DIR>
+          Run as if vcs was started in <DIR> (applied before repository discovery)
+      --min-confidence <MIN_CONFIDENCE>
+          Hide proposals below this confidence (0..1) [default: 0.4]
+      --json
+          Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --min-files <MIN_FILES>
+          Ignore candidates with fewer files than this [default: 3]
+      --ca-pem <FILE>
+          PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --cochange
+          Also analyse history: which proposed zones change in the same commits (reads commit trees)
+      --max-commits <MAX_COMMITS>
+          How many commits of the root zone `--cochange` looks at [default: 500]
+      --no-hooks
+          Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help
+          Print help
+```
+
+############## `vcs zone apply`
+
+```text
+Turn one suggestion into a zone (plan only without --yes; history is not rewritten)
+
+Usage: vcs zone apply [OPTIONS] <TARGET>
+
+Arguments:
+  <TARGET>  Path or proposed name of a suggestion from `vcs zone suggest`
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --name <NAME>    Zone name to use instead of the proposed one
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --yes            Actually do it. Without this only the plan is printed
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+############### `vcs zone subscribe`
+
+```text
+Subscribe to the minimal zone set for a path, symbol, task or person, plus their dependencies
+
+Usage: vcs zone subscribe [OPTIONS]
+
+Options:
+  -C <DIR>                 Run as if vcs was started in <DIR> (applied before repository discovery)
+      --for <PATH|SYMBOL>  Pull what is needed for this: a file, a directory, a zone name, or a symbol-ish name (`parse_config`, `net::Client`, `pkg.mod`). Repeatable. Plus the zones they depend on
+      --json               Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --task <TEXT>        Describe a task in words; zones are chosen by offline keyword matching (a proposal)
+      --ca-pem <FILE>      PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --for-owner <USER>   Pull the zones a person relates to (CODEOWNERS entries, and commit authorship)
+      --no-hooks           Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+      --task-assist <CMD>  Ask this command to propose zones for `--task` (JSON on stdin/stdout, see docs). Off unless given
+      --explain            Show why each zone is included
+      --dry-run            Only print the plan with files and bytes; download no file content and change nothing
+      --no-deps            Do not add the zones the selection depends on
+      --max-depth <N>      Follow dependencies at most this many hops
+      --deep               Also scan source imports (Go, Python, JS/TS), downloading the source of selected zones to do so
+      --search-content     Search file contents for definitions of symbol-ish queries (remote: downloads source files)
+      --partial            Continue when some `--for` queries match nothing (default: refuse)
+  -h, --help               Print help
 ```
 
 ## `vcs worktree`
@@ -2104,13 +2181,24 @@ Arguments:
   <DIR>  
 
 Options:
-  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
-      --zone <ZONES>   Only download these zones (repeatable)
-      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
-      --stats          Print the number of remote requests and bytes transferred
-      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
-      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
-  -h, --help           Print help
+  -C <DIR>                 Run as if vcs was started in <DIR> (applied before repository discovery)
+      --zone <ZONES>       Only download these zones (repeatable)
+      --json               Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --stats              Print the number of remote requests and bytes transferred
+      --ca-pem <FILE>      PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --for <PATH|SYMBOL>  Pull what is needed for this: a file, a directory, a zone name, or a symbol-ish name (`parse_config`, `net::Client`, `pkg.mod`). Repeatable. Plus the zones they depend on
+      --no-hooks           Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+      --task <TEXT>        Describe a task in words; zones are chosen by offline keyword matching (a proposal)
+      --for-owner <USER>   Pull the zones a person relates to (CODEOWNERS entries, and commit authorship)
+      --task-assist <CMD>  Ask this command to propose zones for `--task` (JSON on stdin/stdout, see docs). Off unless given
+      --explain            Show why each zone is included
+      --dry-run            Only print the plan with files and bytes; download no file content and change nothing
+      --no-deps            Do not add the zones the selection depends on
+      --max-depth <N>      Follow dependencies at most this many hops
+      --deep               Also scan source imports (Go, Python, JS/TS), downloading the source of selected zones to do so
+      --search-content     Search file contents for definitions of symbol-ish queries (remote: downloads source files)
+      --partial            Continue when some `--for` queries match nothing (default: refuse)
+  -h, --help               Print help
 ```
 
 ## `vcs publish`
