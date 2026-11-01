@@ -19,6 +19,7 @@ vcs-remote.workspace = true
 tempfile.workspace = true
 blake3.workspace = true
 vcs-store-s3 = { path = "../vcs-store-s3" }
+sha2 = "0.10"
 vcs-server = { path = "../vcs-server" }
 
 [dev-dependencies]
@@ -36,6 +37,10 @@ path = "src/bin/packbench.rs"
 name = "s3bench"
 path = "src/bin/s3bench.rs"
 required-features = ["s3-tls"]
+
+[[bin]]
+name = "s3e2e"
+path = "src/bin/s3e2e.rs"
 
 [[bin]]
 name = "zonebench"
