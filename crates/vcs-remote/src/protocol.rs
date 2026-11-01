@@ -18,7 +18,7 @@
 use crate::backend::{Backend, BackendError};
 use crate::manifest::{self, Manifest, MAX_APPLIED};
 use crate::packfetch;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use vcs_objects::{id_of_encoded, EntryMode, Object, ObjectId, Transaction};
 use vcs_store::{ObjectStore, StoreError};
 
@@ -102,6 +102,7 @@ pub struct Publisher<'a> {
     retries: u32,
     zones: BTreeMap<String, String>,
     labels: BTreeMap<String, String>,
+    verify_budget: usize,
     principal: String,
     clock: Box<dyn Fn() -> u64 + 'a>,
     fault: Option<crate::locks::LockFault>,
@@ -181,6 +182,82 @@ fn post_order(
     Ok(())
 }
 
+/// Present objects whose own dependencies a publish re-checks on the remote before trusting
+/// "present means complete". Bounded so a publish stays cheap; [`repair_remote`] is unbounded.
+pub const PUBLISH_VERIFY_BUDGET: usize = 64;
+
+/// Breadth-first walk over the local closure of `roots`. Returns the objects the remote lacks
+/// and every existence answer obtained (so callers never ask twice). Objects missing remotely
+/// are always expanded (they will be uploaded); present ones only until `budget` present
+/// objects have been expanded. A present object that is not stored locally is not expanded
+/// (a lazy clone cannot vouch for it); a missing one that is not stored locally is an error.
+fn find_holes(
+    backend: &dyn Backend,
+    local: &dyn ObjectStore,
+    roots: impl IntoIterator<Item = ObjectId>,
+    budget: usize,
+) -> Result<(HashSet<ObjectId>, HashMap<ObjectId, bool>), PublishError> {
+    let mut known: HashMap<ObjectId, bool> = HashMap::new();
+    let mut missing = HashSet::new();
+    let mut queue: VecDeque<ObjectId> = roots.into_iter().collect();
+    let mut expanded_present = 0usize;
+    while let Some(id) = queue.pop_front() {
+        if known.contains_key(&id) {
+            continue;
+        }
+        let present = backend.exists(&object_key(&id))?;
+        known.insert(id, present);
+        if present {
+            if expanded_present >= budget {
+                continue;
+            }
+            expanded_present += 1;
+        } else {
+            missing.insert(id);
+        }
+        match local.get(&id) {
+            Ok(o) => queue.extend(deps(&o)),
+            Err(StoreError::NotFound(_)) if present => {}
+            Err(StoreError::NotFound(_)) => {
+                return Err(PublishError::Remote(format!(
+                    "object {id} is missing on the remote and not stored locally; cannot publish or repair it from here"
+                )))
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok((missing, known))
+}
+
+/// Upload, dependencies first, every object reachable from `roots` that the remote lacks, even
+/// beneath objects it already has (a remote that lost a descendant, e.g. through corruption).
+/// Walks the whole local closure with one existence check per object. Returns how many objects
+/// were uploaded.
+pub fn repair_remote(backend: &dyn Backend, local: &dyn ObjectStore, roots: &[ObjectId]) -> Result<usize, PublishError> {
+    let (missing, known) = find_holes(backend, local, roots.iter().copied(), usize::MAX)?;
+    let mut list = Vec::new();
+    let mut seen = HashSet::new();
+    let mut order: Vec<ObjectId> = missing.into_iter().collect();
+    order.sort();
+    for m in order {
+        post_order(
+            m,
+            &mut |id| Ok(known.get(id).copied().unwrap_or(false)),
+            &mut |id| local.get(id).map_err(Into::into),
+            &mut |id, _| {
+                list.push(*id);
+                Ok(())
+            },
+            &mut seen,
+            &deps,
+        )?;
+    }
+    for id in &list {
+        backend.put_if_absent(&object_key(id), &local.get(id)?.encode())?;
+    }
+    Ok(list.len())
+}
+
 impl<'a> Publisher<'a> {
     pub fn new(backend: &'a dyn Backend, local: &'a dyn ObjectStore, tx: Transaction) -> Self {
         let txid = Object::Transaction(tx.clone()).id();
@@ -194,6 +271,7 @@ impl<'a> Publisher<'a> {
             retries: 0,
             zones: BTreeMap::new(),
             labels: BTreeMap::new(),
+            verify_budget: PUBLISH_VERIFY_BUDGET,
             principal: String::new(),
             clock: Box::new(|| {
                 std::time::SystemTime::now()
@@ -228,6 +306,12 @@ impl<'a> Publisher<'a> {
     /// A later publisher's label for a zone replaces the stored one.
     pub fn with_labels(mut self, labels: BTreeMap<String, String>) -> Self {
         self.labels = labels;
+        self
+    }
+    /// How many already-present objects the upload walk looks beneath before trusting that the
+    /// rest of their closure is present (default [`PUBLISH_VERIFY_BUDGET`]; 0 trusts all).
+    pub fn with_verify_budget(mut self, n: usize) -> Self {
+        self.verify_budget = n;
         self
     }
     pub fn txid(&self) -> ObjectId {
@@ -273,11 +357,25 @@ impl<'a> Publisher<'a> {
                 let mut list = Vec::new();
                 let mut seen = HashSet::new();
                 let heads: BTreeSet<ObjectId> = self.tx.updates.iter().map(|u| u.new).collect();
-                for h in heads {
-                    let (backend, local) = (self.backend, self.local);
+                let (backend, local) = (self.backend, self.local);
+                let (missing, known) = match find_holes(backend, local, heads.iter().copied(), self.verify_budget) {
+                    Ok(x) => x,
+                    Err(PublishError::Backend(e)) => {
+                        self.state = State::Collect;
+                        return self.retry(e);
+                    }
+                    Err(e) => return Err(e),
+                };
+                let mut roots: Vec<ObjectId> = missing.into_iter().collect();
+                roots.sort();
+                roots.extend(heads);
+                for h in roots {
                     let r = post_order(
                         h,
-                        &mut |id| backend.exists(&object_key(id)).map_err(Into::into),
+                        &mut |id| match known.get(id) {
+                            Some(p) => Ok(*p),
+                            None => backend.exists(&object_key(id)).map_err(Into::into),
+                        },
                         &mut |id| local.get(id).map_err(Into::into),
                         &mut |id, _| {
                             list.push(*id);
@@ -587,6 +685,56 @@ pub fn fetch_heads_lazy(
     fetch_heads_impl(backend, local, zones, true)
 }
 
+/// File objects (and the chunks of chunked files) probed per lazy fetch. A lazy fetch does not
+/// download file content, so without this a remote that lost a blob or a chunk is only noticed
+/// when the file is read. Bounded: files past the budget are not checked (a full check is
+/// `fetch_heads`, which downloads everything).
+pub const LAZY_VERIFY_BUDGET: usize = 128;
+
+/// Check that up to `budget` of `files` exist on the remote and, for chunk manifests among
+/// them, that every chunk exists too.
+fn verify_files_exist(backend: &dyn Backend, files: &[ObjectId], budget: usize) -> Result<(), PublishError> {
+    let files = &files[..files.len().min(budget)];
+    let missing = |what: &str, ids: Vec<ObjectId>| {
+        PublishError::Remote(format!(
+            "object {} missing on remote ({} {what} object(s) reachable from the fetched head are absent)",
+            ids[0],
+            ids.len()
+        ))
+    };
+    let probed = packfetch::probe_kinds(backend, files)?;
+    let gone: Vec<ObjectId> = probed.iter().filter(|(_, k)| k.is_none()).map(|(i, _)| *i).collect();
+    if !gone.is_empty() {
+        return Err(missing("file", gone));
+    }
+    let manifests: Vec<ObjectId> = probed
+        .iter()
+        .filter(|(_, k)| *k == Some(vcs_objects::object::Kind::Chunked as u8))
+        .map(|(i, _)| *i)
+        .collect();
+    if manifests.is_empty() {
+        return Ok(());
+    }
+    let mut chunks = Vec::new();
+    for (_, o) in fetch_objects(backend, &manifests)? {
+        if let Object::Chunked(m) = o {
+            chunks.extend(m.chunks.iter().map(|c| c.id));
+        }
+    }
+    chunks.sort();
+    chunks.dedup();
+    let gone: Vec<ObjectId> = packfetch::probe_kinds(backend, &chunks)?
+        .into_iter()
+        .filter(|(_, k)| k.is_none())
+        .map(|(i, _)| i)
+        .collect();
+    if gone.is_empty() {
+        Ok(())
+    } else {
+        Err(missing("chunk", gone))
+    }
+}
+
 fn fetch_heads_impl(
     backend: &dyn Backend,
     local: &dyn ObjectStore,
@@ -600,17 +748,28 @@ fn fetch_heads_impl(
         if zones.is_some_and(|w| !w.iter().any(|x| x == a)) {
             continue;
         }
+        let mut new_files: Vec<ObjectId> = Vec::new();
         post_order(
             *id,
             &mut |i| Ok(local.contains(i)?),
             &mut |i| fetch_object(backend, i),
             &mut |_, o| {
+                if let (true, Object::Tree(t)) = (skip_files, o) {
+                    for e in t.entries().iter().filter(|e| e.mode != EntryMode::Directory) {
+                        if new_files.len() < LAZY_VERIFY_BUDGET && !local.contains(&e.id)? {
+                            new_files.push(e.id);
+                        }
+                    }
+                }
                 local.put(o)?;
                 Ok(())
             },
             &mut seen,
             &|o| deps_of(o, skip_files),
         )?;
+        if skip_files {
+            verify_files_exist(backend, &new_files, LAZY_VERIFY_BUDGET).map_err(|e| PublishError::Remote(format!("{a}/{b}: {e}")))?;
+        }
         out.push((a.clone(), b.clone(), *id));
     }
     // Durability barrier: fetched objects are durable before the caller moves any ref to them.

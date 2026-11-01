@@ -39,6 +39,46 @@ pub fn fetch_from_any_pack(b: &dyn Backend, id: &ObjectId) -> Result<Option<Vec<
     Ok(None)
 }
 
+/// Where each of `ids` lives on the remote, without downloading object bodies: for every id
+/// the first byte of its encoding (the object kind) if the remote has it (loose, else in a
+/// pack), `None` if it does not. Cost: one ranged 1-byte GET per loose hit, one `list` and one
+/// index GET per pack, one more 1-byte ranged GET per packed hit.
+pub fn probe_kinds(b: &dyn Backend, ids: &[ObjectId]) -> Result<Vec<(ObjectId, Option<u8>)>, BackendError> {
+    let mut out: Vec<(ObjectId, Option<u8>)> = Vec::with_capacity(ids.len());
+    let mut rest: Vec<ObjectId> = Vec::new();
+    for id in ids {
+        let h = id.to_hex();
+        let key = format!("objects/{}/{}", &h[..2], &h[2..]);
+        match b.get_range(&key, 0, 1)? {
+            Some(v) if v.len() == 1 => out.push((*id, Some(v[0]))),
+            Some(_) => out.push((*id, None)), // zero-length object file: damaged
+            None => rest.push(*id),
+        }
+    }
+    if !rest.is_empty() {
+        let mut packs = Vec::new();
+        for key in b.list(PACK_PREFIX)? {
+            let Some(stem) = key.strip_suffix(".idx") else { continue };
+            let Some(idx) = b.get(&key)? else { continue };
+            let idx = PackIndex::parse(&idx.data, Path::new(stem)).map_err(|e| BackendError::Other(e.to_string()))?;
+            packs.push((stem.to_owned(), idx));
+        }
+        for id in rest {
+            let mut kind = None;
+            for (stem, idx) in &packs {
+                if let Some((off, len)) = idx.find(&id) {
+                    if len > 0 {
+                        kind = b.get_range(&format!("{stem}.pack"), off, 1)?.and_then(|v| v.first().copied());
+                    }
+                    break;
+                }
+            }
+            out.push((id, kind));
+        }
+    }
+    Ok(out)
+}
+
 /// Maximum unwanted bytes read between two wanted ranges to keep them in one request.
 const COALESCE_GAP: u64 = 64 * 1024;
 
