@@ -779,7 +779,7 @@ impl Repo {
                     }
                 } else if set.is_none_or(|s| crate::meta::in_sparse_set(s, &path))
                     && !files.contains(&e.id)
-                    && !self.store.contains(&e.id)?
+                    && !self.store.contains_hint(&e.id)?
                 {
                     files.insert(e.id);
                 }
