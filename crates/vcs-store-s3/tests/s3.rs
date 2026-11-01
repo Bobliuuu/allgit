@@ -349,7 +349,7 @@ fn delete_sends_a_signed_unconditional_delete_and_tolerates_404() {
         let b = S3Backend::new_unchecked(cfg(&ep)).unwrap();
         b.delete("objects/ab/cdef").unwrap();
         assert_eq!(*seen.lock().unwrap(), vec!["DELETE /b/objects/ab/cdef"]);
-        assert!(!b.supports_gc(), "S3 touch/age/clock are not implemented: remote GC must refuse it");
+        assert!(b.supports_gc(), "S3 implements touch/age/clock since remote gc landed");
     }
     let (ep, _) = recording_server("403 Forbidden");
     assert!(S3Backend::new_unchecked(cfg(&ep)).unwrap().delete("k/x").is_err());
