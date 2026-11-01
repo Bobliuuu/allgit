@@ -9,7 +9,7 @@ vcs-objects.workspace = true
 thiserror.workspace = true
 blake3.workspace = true
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
 libc = "0.2"
 
 [dev-dependencies]

@@ -440,3 +440,44 @@ History: 10,000 commits, two branches diverging 10 commits before each tip. Grap
 experimental graph-driven log was measured at 2.42 ms, 10.8 ms and 93.9 ms, i.e. slower, so it was dropped). The ~2.3 ms
 floor with the graph is loading and validating the 10k-entry file; building it cold was not measured.
 These numbers are from a different machine than the earlier tables in this file and are not comparable with them.
+
+## Perf pass: big-file add/fsck and checkout at 100k files (measured, Linux box)
+
+Machine: the shared 30-core Lambda box (ext4, load average 10-22 during these runs, so absolute numbers are noisy; each
+pair was run interleaved, base and new alternating). "base" = `origin/main` at `8b94091`; "new" = this branch.
+
+What the profile said (callgrind, instructions; timers for wall time):
+- Chunked add: every chunk was hashed in `ChunkedBlob::plan`, hashed again in `put` (`id_of_encoded`), copied twice
+  (`to_vec`, `encode`), and `add` with fewer than 64 files ran on one thread. The first `sync` (fsync of about 2,000
+  loose files) was about 85% of add wall time on ext4.
+- Loose `fsck`: every chunk was read and hashed twice (once as a listed object, once more by its manifest), serially.
+- `switch` at 100k flat: decoding the index twice (one `Index::insert` with two `format!` allocations per entry), the
+  untracked-file walk inside the clean check (not needed for it), the whole-tree case-fold collision scan, and
+  flattening both full trees.
+
+Changes (on-disk format and ids unchanged; chunk boundaries are pinned by a test against the old scan):
+single hash per chunk and no copy on write; `chunk_ends` as two branch-free scans; `add` parallel (at most 8 threads)
+when any file is 256 KiB or more; fsync pass preceded by a parallel `sync_file_range` write-back on Linux and up to 32
+fsync threads; fsck reads objects on 8 threads and checks manifests against what it already read; index decode builds
+the map in one pass; case-fold scan skips shared leading directories; `switch` loads the index once, skips the
+untracked walk, diffs the two trees skipping equal subtrees, checks collisions per changed directory, and writes
+files on up to 8 threads; `status` stats files on up to 8 threads.
+
+`packbench 20 2097152 4 4 4096` (20 files of 2 MiB, 4 versions; 7 runs each, medians):
+
+| metric | base | new |
+|---|---|---|
+| add + commit, 4 versions (includes file mutation, about 0.2 s) | 2.44 s | 0.85 s |
+| loose fsck | 385 ms | 54 ms |
+| packed fsck | 410 ms | 109 ms |
+
+Add + commit of one version (first sync dominated), 9 interleaved runs: base about 0.85 s, new about 0.32-0.39 s.
+
+`vcs switch main` with 1% of 100k flat files different (`~/swbench`, same dataset as `scripts/bench_scale.sh flat`):
+base runs 1194-2652 ms (median of 9: 1.44 s), new 324-402 ms (median 0.35 s). The earlier table on main has git at
+605 ms for this cell on the same box; this was not re-measured against git in this pass.
+
+Not measured: deep and binary layouts, macOS/APFS, a cold cache, `add` of 100k small files (unchanged: still reads and
+hashes every file), parallel chunking inside a single huge file. Caveat on the switch change: the case-fold collision
+check now looks at directories that differ between the two branches, so a collision that already exists inside
+unchanged directories of both branches is no longer reported by `switch` (it is still reported by `add`).

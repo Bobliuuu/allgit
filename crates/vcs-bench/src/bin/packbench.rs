@@ -53,13 +53,19 @@ fn main() {
         timestamp: ts,
     };
     let start = Instant::now();
+    let (mut t_add, mut t_commit) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
     for v in 0..versions {
         if v > 0 {
             mutate_binary(t.path(), n, edits, elen, 1000 + v as u64).unwrap();
         }
+        let s = Instant::now();
         repo.add(&[String::new()]).unwrap();
+        t_add += s.elapsed();
+        let s = Instant::now();
         repo.commit(&format!("v{v}"), sig(v as u64)).unwrap();
+        t_commit += s.elapsed();
     }
+    println!("  of which add: {t_add:?}, commit: {t_commit:?} (rest is untimed-by-phase file mutation)");
     println!("files={n} size={size} versions={versions} edits/file={edits} edit_len={elen}");
     println!("add+commit all versions: {:?}", start.elapsed());
     let objs = t.path().join(".vcs/objects");
