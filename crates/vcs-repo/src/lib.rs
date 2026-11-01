@@ -2,6 +2,7 @@
 //! See docs/architecture.md.
 
 pub mod assist;
+pub mod bundle;
 pub mod cgraph;
 pub mod diff;
 mod dircache;
