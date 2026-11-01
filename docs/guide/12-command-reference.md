@@ -557,6 +557,7 @@ Options:
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --force          With --delete: delete even if its commits are not reachable from another branch or snapshot
+      --at <COMMIT>    Create the branch at this commit (full id or prefix) instead of the checked-out head
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
@@ -1488,6 +1489,14 @@ Options:
           Seconds the assistant gets per conflict [default: 30]
       --no-assist
           Do not run the assistant even if the `merge.assist` setting is configured
+      --no-ff
+          Always create a merge commit, even when a fast-forward is possible
+      --squash
+          Stage the merged result without a merge commit; the branch does not move (then `vcs commit`)
+      --ff-only
+          Refuse unless the merge is a fast-forward (or already up to date)
+  -m, --message <MESSAGE>
+          Message for the merge commit
   -h, --help
           Print help
 ```
@@ -2393,16 +2402,34 @@ Options:
 ```text
 Publish checked-out branches to the remote in one atomic transaction
 
-Usage: vcs publish [OPTIONS]
+Usage: vcs publish [OPTIONS] [BRANCHES]...
+
+Arguments:
+  [BRANCHES]...  Publish only these branches (default: every checked-out branch)
 
 Options:
-  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
-      --zone <ZONES>   
-      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
-      --repair         First re-upload any object the remote lost beneath objects it still has (checks every reachable object)
-      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
-      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
-  -h, --help           Print help
+  -C <DIR>
+          Run as if vcs was started in <DIR> (applied before repository discovery)
+      --zone <ZONES>
+          
+      --json
+          Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --repair
+          First re-upload any object the remote lost beneath objects it still has (checks every reachable object)
+      --ca-pem <FILE>
+          PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --force
+          Replace a remote branch that is not an ancestor of yours, but only if it is still the head you last fetched (a lease). Needs the branch name(s)
+      --force-with-lease[=<BRANCH[:ID]>]
+          Like --force; `=BRANCH` leases that branch, `=BRANCH:ID` leases it against the remote head starting with ID
+      --no-hooks
+          Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+      --force-without-lease
+          Replace the remote head whatever it is when the publish reads it (still one atomic compare-and-swap, but not checked against what you last fetched)
+      --delete <BRANCH>
+          Delete this remote branch (only if it is the head you last fetched; repeatable)
+  -h, --help
+          Print help
 ```
 
 ## `vcs lock`

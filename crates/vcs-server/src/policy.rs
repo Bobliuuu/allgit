@@ -26,6 +26,12 @@
 //! file and not in its revoked list (docs/signing.md). It applies to everyone, admins included, and
 //! does not switch writes to deny-by-default.
 //!
+//! **Protected branches**: `protect-branch <zone|*> <branch-glob>` (three fields). A publish that
+//! would move a matching branch head to a commit that is not a descendant of its current head
+//! (a force push), or delete the branch, is refused. It applies to everyone, admins included, and
+//! does not switch writes to deny-by-default. Without this rule a forced update is allowed (it is
+//! always a compare-and-swap) but is recorded in the audit log as `FORCE`.
+//!
 //! `require-lock`: a change to a path matching the glob is refused unless the writer holds a
 //! live lock on exactly that path in the resulting manifest, so binary assets cannot be
 //! overwritten blind. Locks are validated by the existing lock logic; this rule only demands
@@ -44,6 +50,8 @@ pub enum Effect {
     ShelveRead,
     /// `require-signed <zone> <branch-glob>`: stored with principal `*`, glob = branch glob.
     RequireSigned,
+    /// `protect-branch <zone> <branch-glob>`: no non-fast-forward move, no deletion.
+    ProtectBranch,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -97,6 +105,18 @@ impl Policy {
                 });
                 continue;
             }
+            if f.first() == Some(&"protect-branch") {
+                if f.len() != 3 || f[2].is_empty() {
+                    return Err(err("expected `protect-branch <zone|*> <branch-glob>`"));
+                }
+                rules.push(Rule {
+                    effect: Effect::ProtectBranch,
+                    principal: "*".into(),
+                    zone: f[1].to_owned(),
+                    glob: f[2].to_owned(),
+                });
+                continue;
+            }
             if f.len() != 4 {
                 return Err(err(
                     "expected `<allow|deny|require-lock|allow-read|deny-read|shelve-read> <principal|*> <zone|*> <glob>`",
@@ -136,9 +156,19 @@ impl Policy {
     /// True when there is no write-side rule (`allow`, `deny`, `require-lock`). Read rules alone do
     /// not switch writes to deny-by-default.
     pub fn is_empty(&self) -> bool {
+        self.rules.iter().all(|r| {
+            matches!(
+                r.effect,
+                Effect::AllowRead | Effect::DenyRead | Effect::ShelveRead | Effect::RequireSigned | Effect::ProtectBranch
+            )
+        })
+    }
+
+    /// Is `zone`/`branch` protected against non-fast-forward moves and deletion?
+    pub fn protects_branch(&self, zone: &str, branch: &str) -> bool {
         self.rules
             .iter()
-            .all(|r| matches!(r.effect, Effect::AllowRead | Effect::DenyRead | Effect::ShelveRead | Effect::RequireSigned))
+            .any(|r| r.effect == Effect::ProtectBranch && (r.zone == "*" || r.zone == zone) && glob_match(&r.glob, branch))
     }
 
     /// Must new commits published to `zone`/`branch` be signed?

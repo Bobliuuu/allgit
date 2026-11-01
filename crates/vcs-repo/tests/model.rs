@@ -924,6 +924,7 @@ fn apply_real(repo: &Repo, op: &Op, serial: u64, sub_ok: bool, op_ids: &[ObjectI
             Ok(MergeOutcome::UpToDate) => RealOut::Ok(Out::UpToDate),
             Ok(MergeOutcome::FastForward { .. }) => RealOut::Ok(Out::FastForward),
             Ok(MergeOutcome::Merged { .. }) => RealOut::Ok(Out::Merged),
+            Ok(MergeOutcome::Squashed { .. }) => RealOut::Err("unexpected squash".into()),
             Ok(MergeOutcome::Conflicted { .. }) => match repo.merge_abort() {
                 Ok(()) => RealOut::Ok(Out::Conflict),
                 Err(x) => RealOut::Err(format!("merge --abort failed: {x}")),

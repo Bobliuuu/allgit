@@ -17,7 +17,7 @@ use crate::log::{Format, Level, Logger, V};
 use crate::metrics::Metrics;
 use crate::ratelimit::{Limiter, RateLimit};
 use crate::resilient::{set_request_deadline, Resilience, ResilientBackend};
-use crate::validate::{validate_and_normalize, Reject, ValidatorConfig};
+use crate::validate::{validate_and_report, Reject, Rewrite, ValidatorConfig};
 use std::io::{BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
@@ -919,6 +919,7 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str) -> Respons
     let mut body = std::borrow::Cow::Borrowed(req.body.as_slice());
     // Read the manifest we are about to replace; validate against exactly that version.
     let mut cur = Manifest::default();
+    let mut rewrites: Vec<Rewrite> = Vec::new();
     if is_manifest {
         let v = match sh.backend.get(key) {
             Ok(v) => v,
@@ -945,7 +946,15 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str) -> Respons
             Err(e) => return text(422, &format!("Invalid: {e}")),
         };
         let vcfg = sh.validator.read().unwrap_or_else(|e| e.into_inner()).clone();
-        if let Err(r) = validate_and_normalize(sh.backend.as_ref(), &cur, &mut new, who, (sh.cfg.clock)(), &vcfg) {
+        if let Err(r) = validate_and_report(
+            sh.backend.as_ref(),
+            &cur,
+            &mut new,
+            who,
+            (sh.cfg.clock)(),
+            &vcfg,
+            Some(&mut rewrites),
+        ) {
             if matches!(r, Reject::LockedBy { .. } | Reject::LockRequired { .. }) {
                 sh.metrics.lock_conflicts.fetch_add(1, Ordering::Relaxed);
             }
@@ -962,9 +971,36 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str) -> Respons
         }
     } else {
         match sh.backend.put_if_match(key, &body, &if_match.unwrap_or_default()) {
-            Ok(Some(t)) => Response::new(200, "").with("ETag", etag(&t)),
+            Ok(Some(t)) => {
+                audit_rewrites(sh, who, &rewrites);
+                Response::new(200, "").with("ETag", etag(&t))
+            }
             Ok(None) => Response::new(412, ""),
             Err(e) => backend_err(e),
+        }
+    }
+}
+
+/// Forced head moves and branch deletions that a manifest write just made are audited on their own
+/// lines (`FORCE`, `DELETE-BRANCH`), in addition to the generic `PUT manifest` record, so a
+/// reviewer can grep the chain for history rewrites. The old head is named in full: it is the
+/// recovery point.
+fn audit_rewrites(sh: &Shared, who: &Principal, rewrites: &[Rewrite]) {
+    let Some(a) = &sh.cfg.audit else { return };
+    let now = (sh.cfg.clock)();
+    for r in rewrites {
+        let (op, what) = match r.new {
+            Some(n) => (
+                if r.unverified { "FORCE?" } else { "FORCE" },
+                format!("{}/{} {} -> {}", r.zone, r.branch, r.old.to_hex(), n.to_hex()),
+            ),
+            None => ("DELETE-BRANCH", format!("{}/{} {} -> (deleted)", r.zone, r.branch, r.old.to_hex())),
+        };
+        if let Err(e) = a.record(now, &who.name, op, &what, "200") {
+            sh.metrics.audit_errors.fetch_add(1, Ordering::Relaxed);
+            sh.log.error("audit write failed", &[("error", V::S(&e.to_string()))]);
+        } else {
+            sh.metrics.audit_appends.fetch_add(1, Ordering::Relaxed);
         }
     }
 }

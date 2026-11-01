@@ -179,6 +179,8 @@ pub struct Publisher<'a> {
     zones: BTreeMap<String, String>,
     labels: BTreeMap<String, String>,
     tags: BTreeMap<(String, String), ObjectId>,
+    /// Branch deletions: (zone, branch, head the caller saw). Compare-and-swapped like an update.
+    deletes: Vec<(String, String, ObjectId)>,
     verify_budget: Option<usize>,
     principal: String,
     clock: Box<dyn Fn() -> u64 + 'a>,
@@ -400,6 +402,7 @@ impl<'a> Publisher<'a> {
             zones: BTreeMap::new(),
             labels: BTreeMap::new(),
             tags: BTreeMap::new(),
+            deletes: vec![],
             verify_budget: None,
             principal: String::new(),
             clock: Box::new(|| {
@@ -500,6 +503,13 @@ impl<'a> Publisher<'a> {
     /// Tags ((zone, name) -> commit or annotated tag object) to record in the manifest with this
     /// tx. Their objects are uploaded first. A tag the remote already has with another target is
     /// a conflict (tags are never moved by a publish); an identical one is a no-op.
+    /// Delete remote branches `(zone, branch, expected head)` atomically with this tx. Each is a
+    /// compare-and-swap: if the remote head is not `expected` the publish fails `Diverged`. Name
+    /// every deletion in `tx.message` so the transaction id (and the tx log) records it.
+    pub fn with_deletes(mut self, deletes: Vec<(String, String, ObjectId)>) -> Self {
+        self.deletes = deletes;
+        self
+    }
     pub fn with_tags(mut self, tags: BTreeMap<(String, String), ObjectId>) -> Self {
         self.tags = tags;
         self
@@ -1006,7 +1016,22 @@ impl<'a> Publisher<'a> {
                         });
                     }
                 }
+                for (z, b, exp) in &self.deletes {
+                    let found = cur.head(z, b);
+                    if found != Some(*exp) {
+                        self.state = State::Finished;
+                        return Err(PublishError::Diverged {
+                            zone: z.clone(),
+                            branch: b.clone(),
+                            expected: Some(*exp),
+                            found,
+                        });
+                    }
+                }
                 let mut new = cur.clone();
+                for (z, b, _) in &self.deletes {
+                    new.branches.remove(&(z.clone(), b.clone()));
+                }
                 for (n, p) in &self.zones {
                     match cur.zones.get(n) {
                         Some(q) if q == p => {}

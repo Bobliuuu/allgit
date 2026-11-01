@@ -171,6 +171,14 @@ process per log file. If the append fails the client gets 503 even though the wr
 (the request is not rolled back). This is a different shape from the create-only `audit/<id>` objects and
 `GET /v1/audit` sketched in #127: it covers PUTs only, has no txid, zone, path summary or policy hash.
 
+**Forced updates and deletions.** A publish that replaces a branch head with a commit that does not descend from
+it, or removes a branch, is allowed (it is always a compare-and-swap on the old head, so a stale writer fails) but the
+server records it on its own audit line: op `FORCE` (key `zone/branch <old full id> -> <new full id>`) or
+`DELETE-BRANCH`, before the generic `PUT manifest` line. `FORCE?` means the ancestry walk hit its bound (100000
+commits) and descent could not be established. The old head also stays a garbage-collection root while the
+transaction is in the manifest's applied window. The policy rule `protect-branch <zone|*> <branch-glob>` refuses
+both (403, admins included); `require-signed` and locks are checked on the forced head exactly as on any other.
+
 **Rate limiting** (`--rate-limit <burst>,<per-sec>`): a token bucket per authenticated principal, applied to every
 authenticated request, 429 with `Retry-After` (whole seconds, at least 1) when empty. Off unless configured; there
 are no built-in numbers, and none have been measured. State is per process, so N replicas allow N times the rate.
