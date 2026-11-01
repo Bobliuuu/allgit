@@ -495,10 +495,14 @@ enum Cmd {
         /// Only if loose objects exceed gc.autoPackLimit, and only those older than the grace period
         #[arg(long)]
         auto: bool,
-        /// Pack format: v2 (zstd, fanout index; the default for new packs) or v1 (rollback for
-        /// older binaries)
+        /// Pack format: v2 (zstd, fanout index; the default for new packs), v1 (rollback for
+        /// older binaries) or v3 (independently compressed blocks, for compacted packs)
         #[arg(long)]
         format: Option<String>,
+        /// Do not merge small packs afterwards (by default packs of similar size are merged
+        /// geometrically, with commits and trees first and file content grouped by path)
+        #[arg(long)]
+        no_compact: bool,
     },
     /// Garbage collection. DESTRUCTIVE unless --dry-run: permanently deletes unreachable
     /// objects older than the grace period (local), or with --remote --yes on the remote
@@ -522,6 +526,20 @@ enum Cmd {
         /// exceed twice this (default 1 hour)
         #[arg(long, default_value_t = 3600)]
         hold_secs: u64,
+        /// With --remote: instead of sweeping, merge the remote's many small packs into fewer
+        /// (tiered; new pack and index first, old ones deleted after; commits and trees first,
+        /// file content grouped by path). Needs --yes unless --dry-run. See docs/gc.md
+        #[arg(long)]
+        compact: bool,
+        /// With --compact: pack format of the merged pack. v3 (the default) stores independently
+        /// compressed blocks in path order; v2 or v1 is the rollback that every release reads
+        /// (also `VCS_PACK_FORMAT=v2`). Packs already written are never rewritten by choosing this
+        #[arg(long)]
+        pack_format: Option<String>,
+        /// With --compact and v3: uncompressed KiB per block (default 4096). Bigger blocks
+        /// compress better; reading one object fetches its whole compressed block
+        #[arg(long)]
+        block_kib: Option<usize>,
     },
     /// Operation log: inspect, undo, restore (local branches and workspace only)
     #[command(subcommand)]
@@ -1733,7 +1751,10 @@ fn run(cli: Cli) -> Result<(), Error> {
                 eprintln!("warning: tag {z}/{n} exists on the remote at another target; not moved");
             }
             match rep.outcome {
-                Some(Outcome::Applied { generation }) => println!("published atomically (remote generation {generation})"),
+                Some(Outcome::Applied { generation }) => {
+                    println!("published atomically (remote generation {generation})");
+                    suggest_compaction(backend.as_ref(), generation);
+                }
                 Some(Outcome::AlreadyApplied) => println!("transaction was already applied on the remote"),
                 None => {}
             }
@@ -1872,7 +1893,13 @@ fn run(cli: Cli) -> Result<(), Error> {
             remote: false,
             yes: _,
             hold_secs: _,
+            compact,
+            pack_format: _,
+            block_kib: _,
         } => {
+            if compact {
+                return Err(Error::Msg("--compact works on the remote: use `vcs gc --remote --compact`".into()));
+            }
             let (repo, _) = open()?;
             let grace = std::time::Duration::from_secs(grace_secs);
             if dry_run {
@@ -1928,8 +1955,14 @@ fn run(cli: Cli) -> Result<(), Error> {
             remote: true,
             yes,
             hold_secs,
+            compact,
+            pack_format,
+            block_kib,
         } => {
             let (repo, _) = open()?;
+            if compact {
+                return compact_remote(&repo, dry_run, yes, pack_format.as_deref(), block_kib);
+            }
             if !dry_run && !yes {
                 return Err(Error::Msg(
                     "`vcs gc --remote` PERMANENTLY DELETES objects on the remote and affects every clone that shares it;\n\
@@ -1986,17 +2019,20 @@ fn run(cli: Cli) -> Result<(), Error> {
                 );
             }
         }
-        Cmd::Repack { auto, format } => {
+        Cmd::Repack { auto, format, no_compact } => {
             let (repo, _) = open()?;
             if let Some(f) = format {
                 if auto {
                     return Err(Error::Msg("--format cannot be combined with --auto".into()));
                 }
                 let Some(fmt) = vcs_store::pack::PackFormat::parse(&f) else {
-                    return Err(Error::Msg(format!("unknown pack format {f:?} (use v1 or v2)")));
+                    return Err(Error::Msg(format!("unknown pack format {f:?} (use v1, v2 or v3)")));
                 };
                 let (n, c) = repo.repack_as(fmt)?;
                 println!("packed {n} object(s); rewrote {c} existing pack(s) as v{}", fmt.version());
+                if !no_compact {
+                    compact_local_as(&repo, fmt)?;
+                }
             } else if auto {
                 let limit = config::Config::load()?.auto_pack_limit()?;
                 match repo.auto_repack(limit, vcs_repo::Repo::AUTO_REPACK_GRACE)? {
@@ -2006,6 +2042,9 @@ fn run(cli: Cli) -> Result<(), Error> {
             } else {
                 let n = repo.repack()?;
                 println!("packed {n} object(s)");
+                if !no_compact {
+                    compact_local(&repo)?;
+                }
             }
         }
         Cmd::Fsck => {
@@ -2089,6 +2128,96 @@ fn main() -> ExitCode {
 
 /// After add/commit: pack old loose objects when over `gc.autoPackLimit`. Best effort: any
 /// failure here never fails the command that already succeeded.
+fn compact_local(repo: &vcs_repo::Repo) -> Result<(), Error> {
+    compact_local_as(repo, vcs_store::pack::PackFormat::from_env())
+}
+
+fn compact_local_as(repo: &vcs_repo::Repo, fmt: vcs_store::pack::PackFormat) -> Result<(), Error> {
+    match repo.compact_packs(fmt)? {
+        Some(c) if c.merges > 0 => println!(
+            "merged {} pack(s) into {} ({} object(s)); {} pack(s) now",
+            c.packs_removed, c.packs_written, c.objects, c.packs_after
+        ),
+        Some(_) => {}
+        None => println!("repository busy: small packs were not merged"),
+    }
+    Ok(())
+}
+
+/// `vcs gc --remote --compact`: merge the remote's small packs (docs/gc.md, "Compaction").
+fn compact_remote(
+    repo: &vcs_repo::Repo,
+    dry_run: bool,
+    yes: bool,
+    pack_format: Option<&str>,
+    block_kib: Option<usize>,
+) -> Result<(), Error> {
+    let format = match pack_format {
+        Some(f) => {
+            vcs_store::pack::PackFormat::parse(f).ok_or_else(|| Error::Msg(format!("unknown pack format {f:?} (use v1, v2 or v3)")))?
+        }
+        None => vcs_store::pack::PackFormat::for_compaction(),
+    };
+    if !dry_run && !yes {
+        return Err(Error::Msg(
+            "`vcs gc --remote --compact` rewrites the remote's packs (new pack first, then the old ones are DELETED) and affects every clone that shares it;\n\
+             run with --dry-run first, then re-run with --yes (see docs/gc.md)"
+                .into(),
+        ));
+    }
+    let url = repo
+        .remote_url()?
+        .ok_or_else(|| Error::Msg("no remote configured (use `vcs remote set <url>`)".into()))?;
+    let backend = remote::open_backend(&url)?;
+    let counting = vcs_remote::CountingBackend::new(backend.as_ref());
+    let opts = vcs_remote::CompactOptions {
+        dry_run,
+        format,
+        block_bytes: block_kib.map_or(vcs_store::pack::BLOCK_TARGET, |k| k.max(1) * 1024),
+        owner: format!("vcs-compact pid {}", std::process::id()),
+        ..Default::default()
+    };
+    let r = vcs_remote::compact(&counting, &opts).map_err(|e| Error::Msg(format!("remote compaction: {e}")))?;
+    println!("{} pack(s) on the remote; {} after compaction", r.packs_before, r.packs_after);
+    for (inputs, out) in &r.merges {
+        if dry_run {
+            println!("  would merge {} packs", inputs.len());
+        } else {
+            println!("  merged {} packs into {out}", inputs.len());
+        }
+    }
+    if dry_run {
+        println!("dry run: nothing was changed");
+    } else {
+        println!(
+            "read {} object(s) ({} duplicate(s) dropped), wrote {}; {} request(s), {} byte(s) read and {} written on the remote",
+            r.objects_read,
+            r.duplicates,
+            r.objects_written,
+            counting.stats().requests,
+            counting.stats().bytes_down,
+            counting.stats().bytes_up
+        );
+    }
+    Ok(())
+}
+
+/// After a publish, now and then (every 8th remote generation, so about one extra LIST per 8
+/// publishes) count the remote's packs and suggest compaction when there are many.
+fn suggest_compaction(backend: &dyn vcs_remote::Backend, generation: u64) {
+    if !generation.is_multiple_of(8) {
+        return;
+    }
+    if let Ok(n) = vcs_remote::compact::count_packs(backend) {
+        if n > vcs_remote::compact::SUGGEST_PACKS {
+            println!(
+                "hint: the remote holds {n} packs, so every fetch pays one index request per pack; \
+                 `vcs gc --remote --compact --dry-run` shows how few it could be"
+            );
+        }
+    }
+}
+
 fn maybe_auto_repack(repo: &vcs_repo::Repo) {
     let Ok(limit) = config::Config::load().and_then(|c| c.auto_pack_limit()) else {
         return;

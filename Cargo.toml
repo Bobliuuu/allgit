@@ -27,6 +27,10 @@ vcs-store-s3 = { path = "crates/vcs-store-s3" }
 vcs-server = { path = "crates/vcs-server" }
 
 [profile.test]
+opt-level = 1
+
+# The exhaustive model checker explores ~1.7M schedules; keep it optimized.
+[profile.test.package.vcs-remote]
 opt-level = 3
 
 [profile.dev]

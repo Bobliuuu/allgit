@@ -2244,9 +2244,10 @@ Usage: vcs repack [OPTIONS]
 Options:
       --auto             Only if loose objects exceed gc.autoPackLimit, and only those older than the grace period
   -C <DIR>               Run as if vcs was started in <DIR> (applied before repository discovery)
-      --format <FORMAT>  Pack format: v2 (zstd, fanout index; the default for new packs) or v1 (rollback for older binaries)
+      --format <FORMAT>  Pack format: v2 (zstd, fanout index; the default for new packs), v1 (rollback for older binaries) or v3 (independently compressed blocks, for compacted packs)
       --json             Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>    PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-compact       Do not merge small packs afterwards (by default packs of similar size are merged geometrically, with commits and trees first and file content grouped by path)
       --no-hooks         Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help             Print help
 ```
@@ -2259,16 +2260,19 @@ Garbage collection. DESTRUCTIVE unless --dry-run: permanently deletes unreachabl
 Usage: vcs gc [OPTIONS]
 
 Options:
-  -C <DIR>                       Run as if vcs was started in <DIR> (applied before repository discovery)
-      --dry-run                  Report what would be deleted; delete nothing
-      --grace-secs <GRACE_SECS>  Keep unreachable objects younger than this many seconds (default 14 days). A real sweep refuses values below the touch-on-dedup threshold (3.5 days) [default: 1209600]
-      --json                     Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
-      --ca-pem <FILE>            PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
-      --remote                   Collect the REMOTE (protocol G1, docs/gc.md) instead of the local store. Needs --yes unless --dry-run. Directory (`path` / `file://`) remotes only: S3 and HTTP lack the touch / object-age / clock operations the protocol needs
-      --no-hooks                 Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
-      --yes                      Confirm a destructive REMOTE sweep (never needed for --dry-run or local gc)
-      --hold-secs <HOLD_SECS>    Remote only: the publishers' maximum hold time in seconds. The grace period must exceed twice this (default 1 hour) [default: 3600]
-  -h, --help                     Print help
+  -C <DIR>                         Run as if vcs was started in <DIR> (applied before repository discovery)
+      --dry-run                    Report what would be deleted; delete nothing
+      --grace-secs <GRACE_SECS>    Keep unreachable objects younger than this many seconds (default 14 days). A real sweep refuses values below the touch-on-dedup threshold (3.5 days) [default: 1209600]
+      --json                       Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>              PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --remote                     Collect the REMOTE (protocol G1, docs/gc.md) instead of the local store. Needs --yes unless --dry-run. Directory (`path` / `file://`) remotes only: S3 and HTTP lack the touch / object-age / clock operations the protocol needs
+      --no-hooks                   Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+      --yes                        Confirm a destructive REMOTE sweep (never needed for --dry-run or local gc)
+      --hold-secs <HOLD_SECS>      Remote only: the publishers' maximum hold time in seconds. The grace period must exceed twice this (default 1 hour) [default: 3600]
+      --compact                    With --remote: instead of sweeping, merge the remote's many small packs into fewer (tiered; new pack and index first, old ones deleted after; commits and trees first, file content grouped by path). Needs --yes unless --dry-run. See docs/gc.md
+      --pack-format <PACK_FORMAT>  With --compact: pack format of the merged pack. v3 (the default) stores independently compressed blocks in path order; v2 or v1 is the rollback that every release reads (also `VCS_PACK_FORMAT=v2`). Packs already written are never rewritten by choosing this
+      --block-kib <BLOCK_KIB>      With --compact and v3: uncompressed KiB per block (default 4096). Bigger blocks compress better; reading one object fetches its whole compressed block
+  -h, --help                       Print help
 ```
 
 ## `vcs op`

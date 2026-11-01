@@ -64,7 +64,7 @@ pack in one GET; for a zone-filtered full walk, one ranged GET per object. A pac
 incremental fetch costs about the new packs. Everything read ahead is keyed by the hash of its bytes, so a lying pack can only
 cause a miss, never plant an object; ranged reads are verified against the requested id.
 Objects not in any pack are fetched loose, as before. Many small packs (one per publish) mean one index GET each per fetch;
-there is no compaction yet (no remote delete in `Backend`).
+`vcs gc --remote --compact` merges them (docs/gc.md, "Compaction"); the publish output suggests it when the remote holds more than 24 packs.
 
 ## Tests
 

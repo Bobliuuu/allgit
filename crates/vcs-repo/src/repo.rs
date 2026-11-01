@@ -2163,6 +2163,17 @@ impl Repo {
         Ok(self.store.repack()?)
     }
 
+    /// Merge small local packs geometrically (tiered; commits, trees, then files by path) under
+    /// the repository lock. `Ok(None)` when another process holds the lock.
+    pub fn compact_packs(&self, fmt: vcs_store::pack::PackFormat) -> Result<Option<vcs_store::LocalCompaction>> {
+        let _lock = match self.lock() {
+            Ok(l) => l,
+            Err(Error::Locked(_)) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        Ok(Some(self.store.compact_packs(fmt)?))
+    }
+
     /// Repack in an explicit pack format; also rewrites existing packs of the other format.
     /// `vcs repack --format v1` is the rollback to the format older binaries read.
     /// Returns `(loose objects packed, packs converted)`.
