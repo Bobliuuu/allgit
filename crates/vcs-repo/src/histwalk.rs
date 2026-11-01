@@ -125,7 +125,7 @@ impl Repo {
     }
 
     /// Load commits, on several threads when there are many.
-    fn load_commits(&self, ids: Vec<ObjectId>) -> Result<Vec<(ObjectId, Commit)>> {
+    pub(crate) fn load_commits(&self, ids: Vec<ObjectId>) -> Result<Vec<(ObjectId, Commit)>> {
         if ids.len() < 256 {
             return ids.into_iter().map(|i| Ok((i, self.commit_obj(&i)?))).collect();
         }
@@ -497,7 +497,9 @@ impl<'a> FirstParentSkip<'a> {
     pub fn skip(&self, mut id: ObjectId, rel: &str) -> ObjectId {
         let Some(g) = &self.graph else { return id };
         loop {
-            let Ok(ps) = vcs_merge::CommitGraph::parents(g, &id) else { return id };
+            let Ok(ps) = vcs_merge::CommitGraph::parents(g, &id) else {
+                return id;
+            };
             let Some(first) = ps.first() else { return id };
             match self.blooms.get(&id) {
                 Some(fs) if fs.len() == ps.len() && !may_contain(&fs[0], rel) => id = *first,

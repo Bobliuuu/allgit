@@ -35,8 +35,22 @@ pub struct Opts {
     pub trust: Option<vcs_objects::signing::Trust>,
 }
 
-/// The commits `vcs log` would show (filters applied, count applied). The flag is true when the
-/// branch has no commits at all.
+/// The revision list the log starts from, when it is more than one plain branch: `A..B`,
+/// `A...B`, `^A B`, several branches, `--not`, `--all`. `None` for the ordinary case.
+fn rev_spec(branch: Option<&str>, o: &Opts) -> Result<Option<vcs_repo::RevSpec>, Error> {
+    let tokens: Vec<&str> = branch.into_iter().chain(o.x.revs.iter().map(String::as_str)).collect();
+    if tokens.len() <= 1 && !tokens.iter().any(|t| vcs_repo::RevSpec::is_range_token(t)) && o.x.not.is_empty() && !o.x.all {
+        return Ok(None);
+    }
+    let mut spec = vcs_repo::RevSpec::parse(&tokens)?;
+    spec.exclude.extend(o.x.not.iter().cloned());
+    spec.all = o.x.all;
+    Ok(Some(spec))
+}
+
+/// The commits `vcs log` would show (filters applied, count applied, `--reverse` applied). The
+/// flag is true when the branch has no commits at all. With `--all-zones` the commits of every
+/// zone are merged newest first (ties by larger id), exactly the order `log` uses inside a zone.
 pub fn select(
     repo: &Repo,
     cwd: &Path,
@@ -44,6 +58,38 @@ pub fn select(
     branch: Option<&str>,
     limit: usize,
     o: &Opts,
+) -> Result<(Vec<(ObjectId, Commit)>, bool), Error> {
+    let (mut shown, empty) = if o.x.all_zones {
+        if branch.is_some() || !o.x.revs.is_empty() || !o.x.not.is_empty() {
+            return Err(Error::Msg(
+                "--all-zones takes no revisions (branch names belong to one zone)".into(),
+            ));
+        }
+        let mut merged: Vec<(ObjectId, Commit)> = Vec::new();
+        for z in repo.zones()?.names() {
+            merged.extend(select_zone(repo, cwd, z, None, limit, o, true)?.0);
+        }
+        merged.sort_by_key(|(id, c)| std::cmp::Reverse((c.author.timestamp, *id)));
+        merged.truncate(limit);
+        let e = merged.is_empty();
+        (merged, e)
+    } else {
+        select_zone(repo, cwd, zone, branch, limit, o, o.x.all)?
+    };
+    if o.x.reverse {
+        shown.reverse();
+    }
+    Ok((shown, empty))
+}
+
+fn select_zone(
+    repo: &Repo,
+    cwd: &Path,
+    zone: &str,
+    branch: Option<&str>,
+    limit: usize,
+    o: &Opts,
+    all_refs: bool,
 ) -> Result<(Vec<(ObjectId, Commit)>, bool), Error> {
     let defs = repo.zones()?;
     let prefix = defs.path_of(zone).unwrap_or("").to_owned();
@@ -53,17 +99,34 @@ pub fn select(
             specs.push(repo.rel_path(cwd, p)?);
         }
     }
+    let mut spec = rev_spec(branch, o)?;
+    if all_refs {
+        spec.get_or_insert_with(Default::default).all = true;
+    }
+    if let Some(sp) = &spec {
+        if all_refs && repo.zone_tips(zone)?.is_empty() {
+            return Ok((Vec::new(), true));
+        }
+        // a range or a multi-ref start: take the set from the commit-graph, then filter it
+        if !o.x.filters() && specs.is_empty() && o.author.is_none() {
+            let v = repo.rev_list(zone, sp, limit)?;
+            return Ok((v, false));
+        }
+    }
     // Author and path filters look at one commit at a time, so the walk can stop at the
     // `limit`-th match instead of reading the whole history. The other filters need all of it.
-    if !o.x.filters() {
+    if spec.is_none() && !o.x.filters() {
         let mine = |c: &Commit| o.author.as_deref().is_none_or(|a| author_matches(c, a));
         let f: Option<&dyn Fn(&Commit) -> bool> = o.author.is_some().then_some(&mine);
         return repo.log_paths(zone, branch, &specs, f, limit);
     }
     // Filters need the whole history; the count applies after filtering.
-    let mut all = repo.log(zone, branch, usize::MAX)?;
+    let mut all = match &spec {
+        Some(sp) => repo.rev_list(zone, sp, usize::MAX)?,
+        None => repo.log(zone, branch, usize::MAX)?,
+    };
     if all.is_empty() {
-        return Ok((Vec::new(), true));
+        return Ok((Vec::new(), spec.is_none()));
     }
     if o.x.first_parent {
         all = crate::logopts::first_parent_chain(&all);
@@ -95,6 +158,11 @@ pub fn run(repo: &Repo, cwd: &Path, zone: &str, branch: Option<&str>, limit: usi
         return Ok(format!("zone {}: no commits yet\n", defs.label(zone)));
     }
     if shown.is_empty() {
+        if rev_spec(branch, o)?.is_some() || o.x.all_zones {
+            // like git: an empty range prints nothing (the note goes to stderr)
+            eprintln!("no commits in this range");
+            return Ok(String::new());
+        }
         return Ok("no matching commits\n".to_string());
     }
     let notes = o.x.notes(repo, zone, &shown)?;

@@ -32,6 +32,21 @@ pub fn validate_zone_name(s: &str) -> Result<(), NameError> {
     }
 }
 
+/// Internal ref name under which a zone keeps its detached HEAD: `refs[(zone, DETACHED_BRANCH)]`
+/// is the detached commit and `workspace[zone] == DETACHED_BRANCH` marks the zone as detached.
+/// It starts with a dot, so [`validate_branch_name`] never lets a user create a branch by that name.
+pub const DETACHED_BRANCH: &str = ".detached";
+
+/// Like [`validate_branch_name`] but also accepts [`DETACHED_BRANCH`]; used when decoding stored
+/// refs, workspaces and operation views.
+pub fn validate_stored_branch_name(s: &str) -> Result<(), NameError> {
+    if s == DETACHED_BRANCH {
+        Ok(())
+    } else {
+        validate_branch_name(s)
+    }
+}
+
 pub fn validate_branch_name(s: &str) -> Result<(), NameError> {
     let ok = !s.is_empty()
         && s.len() <= 200
