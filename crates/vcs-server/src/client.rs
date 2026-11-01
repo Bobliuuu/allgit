@@ -187,6 +187,8 @@ impl HttpBackend {
         Ok(format!("/v1/mtime/{}", pct_encode(key, true)))
     }
 
+    /// The anchor is the instant the request was SENT, so the estimate can only run ahead of the server by
+    /// about one round trip, never behind a time the server already stamped.
     /// The server clock now (anchored read, see [`Backend::now_ms`]), or `None` if unsupported.
     fn gc_anchor(&self) -> Option<u64> {
         let cur = *self.gc.lock().unwrap_or_else(|e| e.into_inner());
@@ -199,7 +201,7 @@ impl HttpBackend {
         let read = self.send_raw(self.req("GET", "/v1/clock"), None);
         let next = match read {
             Ok(Ok((t, _, _))) => match t.trim().parse::<u64>() {
-                Ok(ms) => GcClock::Anchored(ms, std::time::Instant::now() - before.elapsed() / 2),
+                Ok(ms) => GcClock::Anchored(ms, before),
                 Err(_) => GcClock::Unsupported,
             },
             // old server (404), unsupported backend (501), or no permission: not a GC remote
