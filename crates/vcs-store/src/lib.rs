@@ -96,7 +96,8 @@ pub trait ObjectStore: Send + Sync {
         match self.get(id)? {
             Object::Blob(b) => Ok(b),
             Object::Chunked(m) => {
-                let mut out = Vec::with_capacity(m.total_len as usize);
+                // total_len comes from the (possibly hostile) manifest: cap the up-front reservation and grow as verified chunks arrive
+                let mut out = Vec::with_capacity(m.total_len.min(16 << 20) as usize);
                 for c in &m.chunks {
                     let b = self.get_blob(&c.id)?;
                     if b.len() != c.len as usize {
