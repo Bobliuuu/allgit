@@ -237,7 +237,7 @@ mod tests {
         assert!(e.contains("VCS_TOKEN"), "{e}");
         assert!(open_http("http://127.0.0.1:1", Some("t".into())).is_ok());
         #[cfg(not(feature = "tls"))]
-        assert!(open_http("https://127.0.0.1:1", Some("t".into()))
+        assert!(open_http("https://127.0.0.1:1", Some("secret-xyz".into()))
             .err()
             .unwrap()
             .to_string()
