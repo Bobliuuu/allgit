@@ -655,13 +655,7 @@ impl Repo {
             .map(|(p, e)| (p.clone(), (e.mode, e.id)))
             .collect();
         self.transition(&st.zone, &zones, &cur, &ours, &mut ix)?;
-        for mut d in dirs {
-            while d != self.worktree && d.starts_with(&self.worktree) && fs::remove_dir(&d).is_ok() {
-                if !d.pop() {
-                    break;
-                }
-            }
-        }
+        self.prune_dirs(dirs);
         self.save_index(&mut ix)?;
         Ok(())
     }

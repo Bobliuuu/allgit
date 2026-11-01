@@ -1474,13 +1474,7 @@ impl Repo {
             ix.insert(p, e)?;
         }
         // prune now-empty directories (never the worktree root)
-        for mut d in dirs {
-            while d != self.worktree && d.starts_with(&self.worktree) && fs::remove_dir(&d).is_ok() {
-                if !d.pop() {
-                    break;
-                }
-            }
-        }
+        self.prune_dirs(dirs);
         Ok(())
     }
 

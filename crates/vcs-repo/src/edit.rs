@@ -78,9 +78,13 @@ impl Repo {
         Ok(())
     }
 
-    fn prune_dirs(&self, dirs: BTreeSet<PathBuf>) {
+    /// Remove now-empty directories, never the worktree root and never the process's current directory
+    /// (removing it would leave the caller's next command failing with "No such file or directory").
+    pub(crate) fn prune_dirs(&self, dirs: impl IntoIterator<Item = PathBuf>) {
+        let cwd = std::env::current_dir().ok().and_then(|c| c.canonicalize().ok());
+        let keep = |d: &PathBuf| cwd.as_ref().is_some_and(|c| d.canonicalize().is_ok_and(|d| *c == d));
         for mut d in dirs {
-            while d != self.worktree && d.starts_with(&self.worktree) && fs::remove_dir(&d).is_ok() {
+            while d != self.worktree && d.starts_with(&self.worktree) && !keep(&d) && fs::remove_dir(&d).is_ok() {
                 if !d.pop() {
                     break;
                 }
