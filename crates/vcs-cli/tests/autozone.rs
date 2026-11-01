@@ -171,6 +171,32 @@ fn apply_splits_without_rewriting_history() {
     assert!(fail(&a, &["zone", "apply", "web", "--yes"]).contains("uncommitted"));
 }
 
+#[test]
+fn apply_several_targets_in_one_step() {
+    let t = tempfile::tempdir().unwrap();
+    let a = generate(t.path());
+    assert!(fail(&a, &["zone", "apply", "crates/util", "web", "--name", "x"]).contains("--name needs exactly one target"));
+    let plan = ok(&a, &["zone", "apply", "crates/util", "web"]);
+    assert!(plan.contains("plan (nothing changed)"), "{plan}");
+    assert!(!ok(&a, &["zone", "list"]).contains("util"));
+    let out = ok(&a, &["zone", "apply", "crates/util", "web", "--yes"]);
+    assert!(out.contains("created zone util") && out.contains("created zone web"), "{out}");
+    let zl = ok(&a, &["zone", "list"]);
+    assert!(zl.contains("util") && zl.contains("web"), "{zl}");
+    assert_eq!(
+        std::fs::read_to_string(a.join("web/src/index.js")).unwrap(),
+        "console.log('hi')\n"
+    );
+    let st = ok(&a, &["status"]);
+    assert!(!st.contains("new file") && !st.contains("deleted") && !st.contains("modified"), "{st}");
+    assert!(ok(&a, &["fsck"]).contains("ok"));
+    // one root commit for both directories, one start commit per zone
+    let log = ok(&a, &["log"]);
+    assert!(log.contains("init") && log.contains("split 2 directories"), "{log}");
+    assert!(ok(&a, &["log", "--zone", "util"]).contains("start of zone util"));
+    assert!(ok(&a, &["log", "--zone", "web"]).contains("start of zone web"));
+}
+
 /// Apply every strong suggestion plus `misc`, publish to a directory remote.
 fn publish_split(t: &Path) -> (std::path::PathBuf, String) {
     let a = generate(t);

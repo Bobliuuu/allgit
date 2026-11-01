@@ -455,7 +455,7 @@ impl Repo {
             ));
         }
         let prefix = zones.path_of(zone).unwrap_or("").to_owned();
-        let status = self.status()?;
+        let status = self.status_tracked()?;
         self.require_clean(zone, &status)?;
         let their_commit = self.commit_obj(&theirs)?;
         if their_commit.zone != zone {
@@ -711,7 +711,7 @@ impl Repo {
     pub(crate) fn restore_pre_merge(&self, st: &MergeState, target: ObjectId) -> Result<()> {
         let zones = self.zones()?;
         let prefix = zones.path_of(&st.zone).unwrap_or("").to_owned();
-        let status = self.status()?;
+        let status = self.status_tracked()?;
         let a = status.zones.iter().find(|a| a.zone == st.zone).expect("subscribed");
         let ours_root = self.commit_obj(&target)?.root;
         let ours = treeops::flatten(&self.store, Some(ours_root), &prefix)?;

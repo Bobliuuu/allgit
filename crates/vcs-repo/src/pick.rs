@@ -138,7 +138,7 @@ impl Repo {
                 st.theirs_label, st.zone, st.branch
             ));
         }
-        let status = self.status()?;
+        let status = self.status_tracked()?;
         self.require_clean(zone, &status)?;
         let c = self.commit_obj(&target)?;
         if c.zone != zone {

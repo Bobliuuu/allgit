@@ -37,9 +37,11 @@ pub struct SuggestArgs {
 
 #[derive(Args, Clone)]
 pub struct ApplyArgs {
-    /// Path or proposed name of a suggestion from `vcs zone suggest`
-    pub target: String,
-    /// Zone name to use instead of the proposed one
+    /// Path or proposed name of a suggestion from `vcs zone suggest`; several make all the zones
+    /// in one step (one status check, one new root commit, one write of the repository state)
+    #[arg(required = true)]
+    pub target: Vec<String>,
+    /// Zone name to use instead of the proposed one (only with a single target)
     #[arg(long)]
     pub name: Option<String>,
     /// Actually do it. Without this only the plan is printed.
@@ -558,55 +560,69 @@ fn apply(a: &ApplyArgs, json: bool) -> Result<(), Error> {
         max_commits: 0,
     };
     let (_v, rep) = compute_suggestions(&repo, &sa, 0.0)?;
-    let t = a.target.trim_matches('/');
-    let Some(z) = rep.zones.iter().find(|z| z.path == t || z.name == t) else {
-        return Err(Error::Msg(format!(
-            "{:?} is not a current suggestion of `vcs zone suggest` (paths: {}). `apply` only adopts suggestions.",
-            a.target,
-            rep.zones.iter().map(|z| z.path.as_str()).collect::<Vec<_>>().join(", ")
-        )));
-    };
-    let name = a.name.clone().unwrap_or_else(|| z.name.clone());
-    let rep2 = repo.zone_split(&name, &z.path, author()?, !a.yes)?;
+    if a.name.is_some() && a.target.len() > 1 {
+        return Err(Error::Msg("--name needs exactly one target".into()));
+    }
+    let mut splits = Vec::new();
+    for target in &a.target {
+        let t = target.trim_matches('/');
+        let Some(z) = rep.zones.iter().find(|z| z.path == t || z.name == t) else {
+            return Err(Error::Msg(format!(
+                "{:?} is not a current suggestion of `vcs zone suggest` (paths: {}). `apply` only adopts suggestions.",
+                target,
+                rep.zones.iter().map(|z| z.path.as_str()).collect::<Vec<_>>().join(", ")
+            )));
+        };
+        splits.push((a.name.clone().unwrap_or_else(|| z.name.clone()), z.path.clone()));
+    }
+    let reps = repo.zone_split_many(&splits, author()?, !a.yes)?;
     if json {
-        emit(doc(
-            "zone apply",
-            vec![
-                ("applied", J::Bool(a.yes)),
-                ("zone", s(&rep2.zone)),
-                ("path", s(&rep2.path)),
-                ("files", n(rep2.files as u64)),
-                ("root_commit", rep2.root_commit.map_or(J::Null, |c| s(c.to_string()))),
-                ("zone_commit", rep2.zone_commit.map_or(J::Null, |c| s(c.to_string()))),
-                ("history_rewritten", J::Bool(false)),
-            ],
-        ));
+        for rep2 in &reps {
+            emit(doc(
+                "zone apply",
+                vec![
+                    ("applied", J::Bool(a.yes)),
+                    ("zone", s(&rep2.zone)),
+                    ("path", s(&rep2.path)),
+                    ("files", n(rep2.files as u64)),
+                    ("root_commit", rep2.root_commit.map_or(J::Null, |c| s(c.to_string()))),
+                    ("zone_commit", rep2.zone_commit.map_or(J::Null, |c| s(c.to_string()))),
+                    ("history_rewritten", J::Bool(false)),
+                ],
+            ));
+        }
         return Ok(());
     }
+    for rep2 in &reps {
+        let name = &rep2.zone;
+        if !a.yes {
+            println!(
+                "plan (nothing changed): split {}/ ({} file(s)) into new zone {name}",
+                rep2.path, rep2.files
+            );
+            println!(
+                "  - root zone gets one new commit that removes {}/ from its tree; its old commits are untouched",
+                rep2.path
+            );
+            println!("  - zone {name} gets one root commit with that directory; no file data is copied or rewritten");
+            println!("  - the working tree is not touched; {name}'s own history starts at the split");
+            println!(
+                "  - collaborators: after you publish, a plain `vcs sync` removes {}/ for them until they run `vcs zone add {name}`",
+                rep2.path
+            );
+        } else {
+            println!(
+                "created zone {name} owning {}/ ({} file(s)); root commit {}, zone commit {}",
+                rep2.path,
+                rep2.files,
+                rep2.root_commit.unwrap().short(),
+                rep2.zone_commit.unwrap().short()
+            );
+        }
+    }
     if !a.yes {
-        println!(
-            "plan (nothing changed): split {}/ ({} file(s)) into new zone {name}",
-            rep2.path, rep2.files
-        );
-        println!(
-            "  - root zone gets one new commit that removes {}/ from its tree; its old commits are untouched",
-            rep2.path
-        );
-        println!("  - zone {name} gets one root commit with that directory; no file data is copied or rewritten");
-        println!("  - the working tree is not touched; {name}'s own history starts at the split");
-        println!(
-            "  - collaborators: after you publish, a plain `vcs sync` removes {}/ for them until they run `vcs zone add {name}`",
-            rep2.path
-        );
         println!("run again with --yes to do it");
     } else {
-        println!(
-            "created zone {name} owning {}/ ({} file(s)); root commit {}, zone commit {}",
-            rep2.path,
-            rep2.files,
-            rep2.root_commit.unwrap().short(),
-            rep2.zone_commit.unwrap().short()
-        );
         println!("history was not rewritten: commits before the split stay in the root zone");
     }
     Ok(())

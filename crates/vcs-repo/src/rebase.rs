@@ -363,7 +363,7 @@ impl Repo {
         if self.commit_obj(&onto_id)?.zone != zone {
             return msg(format!("{onto} belongs to another zone"));
         }
-        let status = self.status()?;
+        let status = self.status_tracked()?;
         self.require_clean(zone, &status)?;
         let Some(head) = refs.head(zone, &branch) else {
             return msg(format!("{zone}/{branch} has no commits to rebase"));
@@ -532,7 +532,7 @@ impl Repo {
             ));
         }
         let zones = self.zones()?;
-        let status = self.status()?;
+        let status = self.status_tracked()?;
         if let Some(a) = status.zones.iter().find(|a| a.zone == rs.zone) {
             if !a.unstaged.is_empty() {
                 return msg(format!(
