@@ -458,13 +458,7 @@ impl<'a> Publisher<'a> {
             State::Collect => {
                 let mut list = Vec::new();
                 let mut seen = HashSet::new();
-                let heads: BTreeSet<ObjectId> = self
-                    .tx
-                    .updates
-                    .iter()
-                    .map(|u| u.new)
-                    .chain(self.tags.values().copied())
-                    .collect();
+                let heads: BTreeSet<ObjectId> = self.tx.updates.iter().map(|u| u.new).chain(self.tags.values().copied()).collect();
                 for h in heads {
                     let (backend, local) = (self.backend, self.local);
                     let r = post_order(
