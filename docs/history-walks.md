@@ -46,4 +46,50 @@ parallel tree walking inside one `diff_trees` (the cost is dominated by object r
   previous release binary and this one for 24 commands (log with paths, `--follow`, `-S`, `--name-status`, blame, `-M`,
   describe, show, grep): identical output in each case, and `diff-tree` equals `git diff --no-renames --name-status`.
 
-RESULTS_PLACEHOLDER
+## Results
+
+All medians of 9 rounds (7 for the 100k set), warm page cache, wall ms (CPU in the log files was within a few percent
+except where noted). Machine for the 20k set: AWS 8 vCPU, **load1 15-25 during the runs (shared, not quiet)**; for the
+100k set: a second 8 vCPU instance, load1 1.6-1.9.
+
+### 20,000 commits, 20,000 files (git 2.43.0)
+
+| Case | git | git + commit-graph --changed-paths | vcs (this branch) | vcs before (1 run) |
+|---|---|---|---|---|
+| `log -n20 -- file` (hot 1%) | 94 | 24 | 45 | 510,199 (8.5 min) |
+| `log -n20 -- file` (cold) | 163 | 28 | 67 | not run (same algorithm) |
+| `log -n20 -- dir` | 40 | 13 | 31 | not run |
+| `log --follow file` | 298 | 210 | 163 | not run |
+| `log -S str` | 1560 | 1409 | 1332 (CPU 6650) | not run |
+| `log -n200 --name-status` | 36 | 37 | 62 | not run |
+| `blame` (400 lines, 1000 edits) | 248 | 147 | 298 | not run |
+| diff of two commits 10,000 apart (names) | 111 | 72 | 65 (`diff-tree`) | no such command |
+| `merge-base` | 34 | 8 | 27 | not run |
+| `describe` | 9 | 5 | 21 | not run |
+| `grep` one revision | 207 | 206 | 71 | not run |
+
+Honest reading: against a default git repository vcs is faster on most rows; against git with the same kind of caches
+vcs is slower on `log -- path` (about 2x), `blame`, `describe`, `merge-base`, `--name-status`. `-S` wall time is below git's only
+because it runs on all cores (4x the CPU). `bisect` was not timed to completion. The "before" column is the binary
+at the base commit; it is O(commits x files), so only one run of the first case was taken. The other "before" cells
+were not measured at this size (3000 commits / 2000 files: 10.8 s for `log -n20 -- file` before, 27 ms after, one load-14 run).
+
+### 100,000 commits, 1,000 files (quiet machine, partial: the run was cut when this doc was written)
+
+| Case | git | git + cg | vcs |
+|---|---|---|---|
+| `log -n20 -- file` (hot 1%) | 7.9 | 6.4 | 83.6 |
+| `log -n20 -- dir` | 7.7 | 6.1 | 82.2 |
+| `log -n20 -- file` (cold) | 282 | 70 | 222 |
+| `log` all matches (cold) | 757 | 192 | 483 |
+| `log --follow` | 894 | 517 | 645 |
+
+On a short walk at 100k commits vcs is about 10x slower than git: loading the 100k-entry commit-graph and
+filter files (decode and verify, no mmap) costs about 80 ms per run. A fixed-layout file read in place would remove it;
+not done. Remaining 100k rows were not measured.
+
+### Known limits
+
+* First long path walk on a history builds the filters (it reads the commits it passes); the first run on the 20k set took
+  about 5 s CPU. 
+* Every object read still opens the loose path before the pack and decompresses on its own; per-read cost (about 25 us) bounds `-S` and `blame`.
