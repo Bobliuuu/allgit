@@ -31,6 +31,13 @@ pub enum More {
     MergeBase(crate::histcmds::MergeBaseArgs),
     /// List the files that differ between two revisions (A/D/M and path)
     DiffTree(crate::histcmds::DiffTreeArgs),
+    /// Move the checked-out branch of a zone to another commit (--soft, --mixed, --hard); acts on one zone
+    Reset(crate::everyday::ResetArgs),
+    /// Delete untracked files (-n lists, -f deletes)
+    Clean(crate::everyday::CleanArgs),
+    /// Run a git command line as its vcs equivalent, e.g. `vcs git log --oneline` (table: docs/git-to-vcs.md; `--map` lists it)
+    #[command(name = "git")]
+    Git(crate::gitmap::GitArgs),
 }
 
 pub fn dispatch(cmd: &More, json: bool) -> Result<(), Error> {
@@ -46,5 +53,8 @@ pub fn dispatch(cmd: &More, json: bool) -> Result<(), Error> {
         More::Shortlog(a) => crate::plumb::shortlog(a, json),
         More::MergeBase(a) => crate::histcmds::merge_base(a, json),
         More::DiffTree(a) => crate::histcmds::diff_tree(a, json),
+        More::Reset(a) => crate::everyday::reset(a),
+        More::Clean(a) => crate::everyday::clean(a),
+        More::Git(a) => crate::gitmap::run(&a.args, json),
     }
 }
