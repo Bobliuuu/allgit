@@ -184,6 +184,9 @@ string `resolution`, a NUL in it, or any line starting with a conflict marker (`
 `>>>>>>>`). Unknown fields are ignored; `explanation` is truncated to 4 KiB. A non-zero exit, a failure to start, or
 running past the timeout also yields no proposal. stderr is discarded.
 
+A ready-made assistant for the Anthropic API, with its own validation, is described in [assist.md](assist.md); the
+opt-in `merge.assist` setting makes `vcs merge`/`vcs rebase` run an assistant without `--assist`.
+
 Not validated: that the resolution is a *good* merge, or that it parses in the file's language. That is what the diff
 review is for. On timeout only the shell is killed; a grandchild that ignores that may linger until it exits. Not done:
 a `--reject` command, and batching several conflicts per call.

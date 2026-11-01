@@ -13,6 +13,22 @@ mod json;
 mod logfmt;
 mod remote;
 
+/// The assist command: `--assist`, else the opt-in `merge.assist` setting (announced, because file
+/// contents are then handed to that command), unless `--no-assist`.
+fn effective_assist(flag: Option<&str>, no_assist: bool) -> Result<Option<String>, Error> {
+    if no_assist {
+        return Ok(None);
+    }
+    if let Some(c) = flag {
+        return Ok(Some(c.to_owned()));
+    }
+    let cmd = config::Config::load()?.assist_command();
+    if let Some(c) = &cmd {
+        println!("merge.assist is set: running `{c}` on the conflicting files (use --no-assist to skip)");
+    }
+    Ok(cmd)
+}
+
 /// Run the assistant over the unresolved conflicts and print what happened (proposals only).
 fn run_assist(repo: &Repo, cmd: &str, secs: u64) -> Result<(), Error> {
     let rep = repo.assist_conflicts(cmd, std::time::Duration::from_secs(secs))?;
@@ -230,8 +246,11 @@ enum Cmd {
         #[arg(long, value_name = "COMMAND")]
         assist: Option<String>,
         /// Seconds the assistant gets per conflict
-        #[arg(long, default_value_t = 30, requires = "assist")]
+        #[arg(long, default_value_t = 30)]
         assist_timeout: u64,
+        /// Do not run the assistant even if the `merge.assist` setting is configured
+        #[arg(long, conflicts_with = "assist")]
+        no_assist: bool,
     },
     /// Re-apply the change of one commit onto the checked-out branch
     #[command(name = "cherry-pick")]
@@ -271,8 +290,11 @@ enum Cmd {
         #[arg(long, value_name = "COMMAND")]
         assist: Option<String>,
         /// Seconds the assistant gets per conflict
-        #[arg(long, default_value_t = 30, requires = "assist")]
+        #[arg(long, default_value_t = 30)]
         assist_timeout: u64,
+        /// Do not run the assistant even if the `merge.assist` setting is configured
+        #[arg(long, conflicts_with = "assist")]
+        no_assist: bool,
     },
     /// Inspect conflicts of an in-progress merge
     #[command(subcommand)]
@@ -1040,6 +1062,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             no_structural,
             assist,
             assist_timeout,
+            no_assist,
         } => {
             let (mut repo, cwd) = open()?;
             repo.set_structural(!no_structural && config::Config::load()?.structural()?);
@@ -1070,8 +1093,8 @@ fn run(cli: Cli) -> Result<(), Error> {
                     for p in &paths {
                         println!("  conflict: {p}");
                     }
-                    if let Some(cmd) = &assist {
-                        run_assist(&repo, cmd, assist_timeout)?;
+                    if let Some(cmd) = effective_assist(assist.as_deref(), no_assist)? {
+                        run_assist(&repo, &cmd, assist_timeout)?;
                     }
                     println!("\nResolve the files, `vcs add` each one, then `vcs commit`.");
                     println!("Inspect with `vcs conflict list|show <path>`; give up with `vcs merge --abort`.");
@@ -1099,6 +1122,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             no_structural,
             assist,
             assist_timeout,
+            no_assist,
         } => {
             let (mut repo, cwd) = open()?;
             repo.set_structural(!no_structural && config::Config::load()?.structural()?);
@@ -1126,8 +1150,8 @@ fn run(cli: Cli) -> Result<(), Error> {
                     for p in &paths {
                         println!("  conflict: {p}");
                     }
-                    if let Some(cmd) = &assist {
-                        run_assist(&repo, cmd, assist_timeout)?;
+                    if let Some(cmd) = effective_assist(assist.as_deref(), no_assist)? {
+                        run_assist(&repo, &cmd, assist_timeout)?;
                     }
                     println!("\nResolve the files, `vcs add` each one, then `vcs rebase --continue`.");
                     println!("Inspect with `vcs conflict list|show <path>`; give up with `vcs rebase --abort`.");
