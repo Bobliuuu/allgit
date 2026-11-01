@@ -14,7 +14,7 @@ Commit ids and timestamps will differ on your machine.
 | [2. Daily workflow](02-daily-workflow.md) | add, commit, status, diff, log, restore, stash, tags |
 | [3. Branches, merging and undo](03-branches-merging-undo.md) | branches, merge, rebase, conflicts, the operation log |
 | [4. Zones](04-zones.md) | zones with a game studio example, atomic commits, snapshots |
-| [5. Remotes](05-remotes.md) | directory, S3 and vcs-server remotes, publish, fetch, sync, clone, sparse clones, tokens |
+| [5. Remotes](05-remotes.md) | directory, S3 and vcs-server remotes, publish, fetch, sync, clone, sparse clones, tokens, shelves |
 | [6. Large files](06-large-files.md) | chunking, packs, repack, gc |
 | [7. Git and Perforce](07-git-and-perforce.md) | import-git, export-git, git-remote-allgit, import-p4 |
 | [8. Locks](08-locks.md) | locks for binary assets (advisory) |

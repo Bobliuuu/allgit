@@ -34,6 +34,9 @@ Commands:
   gen          Generate shell completions or man pages
   branch       List branches of the current zone, or create one (at the checked-out head)
   stash        Set tracked changes aside (push, pop, list, drop); untracked files are left alone
+  shelve       Park your changes on the remote as a private shelf (the working tree is left alone); `--delete` removes one
+  shelves      List your shelves on the remote (`--all`: also other people's that you may read)
+  unshelve     Apply a shelf from the remote to the working tree (staged, like `stash pop`)
   sparse       Materialize only some paths of a zone (set, add, remove, list, disable); the rest stays tracked, not deleted
   tag          List tags of the current zone, create one (lightweight, or annotated with -m), or delete one with -d
   show         Show a commit (default HEAD) with its diff against the first parent
@@ -564,6 +567,62 @@ Usage: vcs stash drop [OPTIONS] [INDEX]
 
 Arguments:
   [INDEX]  
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+## `vcs shelve`
+
+```text
+Park your changes on the remote as a private shelf (the working tree is left alone); `--delete` removes one
+
+Usage: vcs shelve [OPTIONS] [NAME]
+
+Arguments:
+  [NAME]  Shelf name (default: shelf-<unix time>); with --delete, `name` or `principal/name`
+
+Options:
+  -C <DIR>                  Run as if vcs was started in <DIR> (applied before repository discovery)
+  -m, --message <MESSAGE>   Description of the shelf
+      --json                Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --zone <ZONE>         Shelve only this zone (default: every subscribed zone with changes)
+      --ca-pem <FILE>       PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --expires <DURATION>  Let `vcs gc --remote` delete the shelf after this long (e.g. 90m, 12h, 30d, 2w)
+      --delete              Delete the shelf instead of creating it (owner or admin)
+      --no-hooks            Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help                Print help
+```
+
+## `vcs shelves`
+
+```text
+List your shelves on the remote (`--all`: also other people's that you may read)
+
+Usage: vcs shelves [OPTIONS]
+
+Options:
+      --all            Also list shelves of other principals that you are allowed to read
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+## `vcs unshelve`
+
+```text
+Apply a shelf from the remote to the working tree (staged, like `stash pop`)
+
+Usage: vcs unshelve [OPTIONS] <SHELF>
+
+Arguments:
+  <SHELF>  `principal/name` as printed by `vcs shelves --all` (a bare `name` is one of yours)
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)

@@ -27,6 +27,7 @@ pub mod plumbing;
 pub mod portable;
 pub mod rebase;
 pub mod repo;
+pub mod shelve;
 pub mod sparse;
 pub mod stash;
 pub mod sync;

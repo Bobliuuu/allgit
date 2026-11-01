@@ -48,7 +48,7 @@ Deletion units are a loose object (`objects/xx/...`) or a whole pack (`packs/<na
 reader is pointed at a vanishing pack). A pack is deleted only if none of its objects is needed; a pack holding any live
 object is kept whole (`packs_with_garbage_kept` in the report; **no remote pack rewriting**). A `.pack` with no index (a publisher
 that died between PutPack and PutIdx) is a unit with no objects and is deleted once old. Roots: branch heads, snapshots, tags, and the
-old/new heads of every transaction in the manifest's applied window (the retention window). Never deleted: the manifest and `tx/`.
+old/new heads of every transaction in the manifest's applied window (the retention window), and the base commits of every unexpired shelf (`shelves/*/*/meta`, docs/shelves.md). Expired shelves are deleted by a non-dry-run sweep. Never deleted: the manifest, `tx/` and the packs of live shelves.
 
 Publisher side (`Publisher`, only against GC-capable backends). What a publish relies on without having just created it is
 guarded: a legacy loose object Collect pruned at (`commit_on_remote`), and a pack or index that `put_if_absent` found already there

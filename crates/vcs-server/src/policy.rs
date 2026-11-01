@@ -34,6 +34,8 @@ pub enum Effect {
     RequireLock,
     AllowRead,
     DenyRead,
+    /// `shelve-read <reader|*> <owner|*> **`: the reader may read the owner's shelves.
+    ShelveRead,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,7 +79,7 @@ impl Policy {
             let err = |m: &str| format!("policy line {}: {m}", n + 1);
             if f.len() != 4 {
                 return Err(err(
-                    "expected `<allow|deny|require-lock|allow-read|deny-read> <principal|*> <zone|*> <glob>`",
+                    "expected `<allow|deny|require-lock|allow-read|deny-read|shelve-read> <principal|*> <zone|*> <glob>`",
                 ));
             }
             let effect = match f[0] {
@@ -86,9 +88,14 @@ impl Policy {
                 "require-lock" => Effect::RequireLock,
                 "allow-read" => Effect::AllowRead,
                 "deny-read" => Effect::DenyRead,
-                _ => return Err(err("effect must be allow, deny, require-lock, allow-read or deny-read")),
+                "shelve-read" => Effect::ShelveRead,
+                _ => {
+                    return Err(err(
+                        "effect must be allow, deny, require-lock, allow-read, deny-read or shelve-read",
+                    ))
+                }
             };
-            if matches!(effect, Effect::AllowRead | Effect::DenyRead) && f[3] != "**" {
+            if matches!(effect, Effect::AllowRead | Effect::DenyRead | Effect::ShelveRead) && f[3] != "**" {
                 return Err(err(
                     "read rules apply to whole zones: the glob must be `**` (objects are content-addressed, so reads cannot be limited to paths)",
                 ));
@@ -109,7 +116,9 @@ impl Policy {
     /// True when there is no write-side rule (`allow`, `deny`, `require-lock`). Read rules alone do
     /// not switch writes to deny-by-default.
     pub fn is_empty(&self) -> bool {
-        self.rules.iter().all(|r| matches!(r.effect, Effect::AllowRead | Effect::DenyRead))
+        self.rules
+            .iter()
+            .all(|r| matches!(r.effect, Effect::AllowRead | Effect::DenyRead | Effect::ShelveRead))
     }
 
     /// Does any read rule name this principal (or `*`)? Only then are its reads checked at all.
@@ -117,6 +126,15 @@ impl Policy {
         self.rules
             .iter()
             .any(|r| matches!(r.effect, Effect::AllowRead | Effect::DenyRead) && (r.principal == "*" || r.principal == principal))
+    }
+
+    /// May `reader` read the shelves of `owner`? (The owner always may; admins are never asked.)
+    pub fn shelve_read_allowed(&self, reader: &str, owner: &str) -> bool {
+        reader == owner
+            || self
+                .rules
+                .iter()
+                .any(|r| r.effect == Effect::ShelveRead && r.applies(reader, owner))
     }
 
     /// May a non-admin `principal` read objects of `zone`? Admins are never asked.
@@ -230,6 +248,20 @@ mod tests {
         // a policy with read rules only leaves write behaviour alone
         assert!(p.is_empty());
         assert!(!Policy::parse("allow-read a z **\nallow a z **").unwrap().is_empty());
+    }
+
+    #[test]
+    fn shelve_read_rules() {
+        let p = Policy::parse("shelve-read bob alice **\nshelve-read * carol **\n").unwrap();
+        assert!(p.shelve_read_allowed("alice", "alice"));
+        assert!(p.shelve_read_allowed("bob", "alice"));
+        assert!(!p.shelve_read_allowed("bob", "dave"));
+        assert!(!p.shelve_read_allowed("alice", "bob"));
+        assert!(p.shelve_read_allowed("anyone", "carol"));
+        // not a write rule, not a zone read restriction
+        assert!(p.is_empty());
+        assert!(!p.read_restricted("bob"));
+        assert!(Policy::parse("shelve-read bob alice src/**").is_err());
     }
 
     #[test]

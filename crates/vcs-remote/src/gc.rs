@@ -110,6 +110,8 @@ pub struct RemoteGcReport {
     pub stale_tombs_cleared: usize,
     /// Packs kept although they contain some unreachable objects (no remote pack rewriting).
     pub packs_with_garbage_kept: usize,
+    /// Shelves (`principal/name`) past their expiry: removed (dry run: would be removed).
+    pub expired_shelves: Vec<String>,
 }
 
 /// Points at which a test can interleave other actors with the sweeper.
@@ -258,9 +260,14 @@ fn tomb_of(u: &Unit) -> String {
 
 /// Roots from the manifest: branch heads, snapshots, and the old/new heads of every transaction
 /// in the applied (retention) window.
-fn roots(b: &dyn Backend, quirks: &GcQuirks) -> Result<Vec<ObjectId>, GcError> {
+fn roots(b: &dyn Backend, quirks: &GcQuirks, now: u64) -> Result<Vec<ObjectId>, GcError> {
+    let shelf_roots = if quirks.sweeper_ignores_shelves {
+        vec![]
+    } else {
+        crate::shelf::roots(b, now).map_err(|e| GcError::Damaged(format!("shelves: {e}")))?
+    };
     if quirks.sweeper_ignores_manifest {
-        return Ok(vec![]);
+        return Ok(shelf_roots);
     }
     let (m, _) = load_manifest(b)?;
     let mut r: Vec<ObjectId> = m
@@ -269,6 +276,7 @@ fn roots(b: &dyn Backend, quirks: &GcQuirks) -> Result<Vec<ObjectId>, GcError> {
         .copied()
         .chain(m.snapshots.values().copied())
         .chain(m.tags.values().copied())
+        .chain(shelf_roots)
         .collect();
     for txid in &m.applied {
         if let Some(v) = b.get(&tx_key(txid))? {
@@ -359,13 +367,22 @@ pub fn remote_gc_with(
         }
         Some(g)
     };
+    // Expired shelves stop pinning their bases and are removed (meta first). Dry run: report only.
+    if !quirks.sweeper_ignores_shelves {
+        for (p, n) in crate::shelf::expired(b, now).map_err(|e| GcError::Damaged(format!("shelves: {e}")))? {
+            if !opts.dry_run {
+                crate::shelf::delete(b, &p, &n).map_err(|e| GcError::Damaged(format!("shelves: {e}")))?;
+            }
+            rep.expired_shelves.push(format!("{p}/{n}"));
+        }
+    }
     let grace = opts.grace_ms;
 
     // 1. Candidates: units that are old and contain nothing reachable.
     let view = View::load(b)?;
     rep.packs = view.packs.len();
     let mut marked = HashSet::new();
-    view.closure(roots(b, &quirks)?, true, &mut marked)?;
+    view.closure(roots(b, &quirks, now)?, true, &mut marked)?;
     let mut candidates: Vec<Unit> = Vec::new();
     for u in view.all_units() {
         let objs = view.objects_of(&u);
@@ -415,7 +432,7 @@ pub fn remote_gc_with(
     let keep_set = |v: &View| -> Result<(HashSet<ObjectId>, HashSet<Unit>), GcError> {
         let mut keep = HashSet::new();
         let mut touched_units = HashSet::new();
-        v.closure(roots(b, &quirks)?, true, &mut keep)?;
+        v.closure(roots(b, &quirks, now)?, true, &mut keep)?;
         if !quirks.sweeper_young_not_roots {
             let mut survivors = Vec::new();
             let at = b.now_ms()?;

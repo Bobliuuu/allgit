@@ -110,6 +110,8 @@ pub struct GcQuirks {
     pub sweeper_young_not_roots: bool,
     /// Sweeper: ignore the manifest (no branch / snapshot / transaction roots).
     pub sweeper_ignores_manifest: bool,
+    /// Sweeper: ignore shelves (their base commits are not roots; expired shelves are not removed).
+    pub sweeper_ignores_shelves: bool,
 }
 
 /// What to do when the current guard list has been processed.
