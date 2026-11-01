@@ -37,9 +37,19 @@ In-flight transactions: every stored `Transaction` object is kept, which covers 
 **Remote sweep** (`vcs gc --remote`, `vcs_remote::gc::remote_gc`). Protocol G1 of
 `docs/research/storage/concurrency-and-correctness.md`, on the backend's clock. Needs `--yes` unless `--dry-run`; grace must exceed
 twice `--hold-secs` (default 1 h); the backend must support `delete`, `now_ms`, `modified_ms` and `touch`
-(`Backend::supports_gc`). Supported: directory remotes (`FsBackend`) and `MemBackend::with_gc()` (tests). **Not supported, refused
-with an error:** S3 (touch would be a server-side copy-to-self with `x-amz-metadata-directive: REPLACE`, ages come from
-`Last-Modified`, the clock from the `Date` header; none implemented) and the HTTP server (no touch, age or clock endpoint).
+(`Backend::supports_gc`). Supported: directory remotes (`FsBackend`), `MemBackend::with_gc()` (tests), **S3** and the **HTTP server**
+(#232). S3 (`crates/vcs-store-s3/src/gcops.rs`): `touch` is a server-side copy of the object onto itself with
+`x-amz-metadata-directive: REPLACE` (needs `s3:GetObject` and `s3:PutObject`; the ETag of a single-PUT object is unchanged; an
+object over 5 GiB cannot be copied), `modified_ms` is the `LastModified` of a ListObjectsV2 on the exact key, `now_ms` is the server's
+`LastModified` of a touch of `<prefix>gc/clock`, read once and then advanced with the local monotonic clock (re-read every 10 minutes),
+so publishers pay one extra request per process, not per reading. Resolution is one second on S3. HTTP (`vcs-server`):
+`GET /v1/clock` (any role), `GET /v1/mtime/<key>` (admin), `POST /v1/touch/<key>` (write; never the manifest or shelf keys for non-admins);
+the client reports `supports_gc` only if the server answers `/v1/clock` (an older server or a backend that cannot be collected: false, as
+before). Tested: `s3_conformance_gc` and `s3_sweeper_deletes_old_garbage_keeps_the_head_and_touch_protects` in
+`crates/vcs-store-s3/tests/gc_s3.rs` (gated on `VCS_TEST_S3_ENDPOINT`; run on RustFS 1.0.4 only, not AWS S3 or MinIO), and
+`gc_primitives_over_http_follow_roles_and_the_backend` in `crates/vcs-server/tests/server.rs` (HTTP over a directory backend, `conformance_gc`).
+The interleaving/model tests (`gc_real.rs`, `model_gc.rs`) run on `MemBackend`; nothing here re-runs them against S3 timing. **Still not
+done:** remote pack rewriting (a pack with any live object stays whole) and renewal of the sweeper's lock lease during a very long sweep.
 `delete` itself is implemented for all four (S3 `DeleteObject`; HTTP `DELETE /v1/o/<key>`, admin token only, never the manifest).
 **S3 has no conditional delete** (no `If-Match` on DELETE), so deletes are unconditional and the tombstone handshake is what makes
 them safe.
@@ -150,8 +160,7 @@ The remote is S3-like: create-only PUT, CAS on `manifest`, no multi-key transact
    copy, because packs are shared and immutable. Tested by `readopted_old_orphan_is_kept_after_dedup_put` and the store
    unit tests; cost in `docs/benchmarks.md`. `MemoryStore` reports no age, so GC keeps its objects anyway.
 3. (done) Local `vcs gc` sweep under the repo lock, with crash tests.
-4. (done, directory remotes) Remote design items 1-7 as protocol G1, model test first, then implementation. Open: S3 / HTTP touch,
-   age and clock; remote pack compaction.
+4. (done, directory remotes) Remote design items 1-7 as protocol G1, model test first, then implementation. S3 / HTTP touch, age and clock: done (#232). Open: remote pack rewriting, sweeper lease renewal.
 
 ## Limits of the dry run
 
@@ -201,10 +210,10 @@ it existing. Pack **age is laundered**: the output is young, so garbage inside a
 sweep can take it. Compaction does not drop garbage.
 
 **Backends.** Compaction needs `list`, `get`, `put_if_absent`, `delete`. It runs on directory remotes and on S3 (RustFS tested,
-below). On a backend without a trusted clock (S3 today) there is no `gc/lock`; there is no sweeper there either (remote GC is
+below). On a backend without a trusted clock (HTTP servers in front of a non-GC backend, wrappers) there is no `gc/lock`; there is no sweeper there either (remote GC is
 refused), and two concurrent compactors are harmless (C1 makes a merge idempotent; a compactor whose input vanished aborts before
 deleting anything). `tests/compact_real.rs::two_lockless_compactors_never_lose_an_object_at_any_phase` runs a second compactor to
-completion inside the first one's hook at every phase on a backend without a clock and checks I-IDX, I-LIVE and G-REACH. When #232 gives S3 a clock and touch, the lock applies automatically. The HTTP server's `DELETE` needs the
+completion inside the first one's hook at every phase on a backend without a clock and checks I-IDX, I-LIVE and G-REACH. S3 and the HTTP server now have a clock, so compaction there takes `gc/lock` like a directory remote. The HTTP server's `DELETE` needs the
 admin token; not tested here.
 
 **Publish hint.** Every 8th remote generation `vcs publish` lists `packs/` (one extra request per 8 publishes) and prints

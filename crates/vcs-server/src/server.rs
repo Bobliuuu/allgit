@@ -6,6 +6,9 @@
 //! * `GET|HEAD /v1/o/<key>[?offset=N&len=M]` read (ETag header = version tag)
 //! * `PUT /v1/o/<key>` with `If-None-Match: *` (create-only) or `If-Match: "<tag>"` (CAS)
 //! * `DELETE /v1/o/<key>` admin only, never the manifest (garbage collection)
+//! * `GET /v1/clock` (any role): the backend's clock in unix ms; 501 if the backend cannot be garbage collected
+//! * `GET /v1/mtime/<key>` (admin): last write or touch time in unix ms on the backend's clock; 404 if absent
+//! * `POST /v1/touch/<key>` (write): refresh the object's time (204; 404 if absent); never the manifest or a shelf key
 //! * `GET /v1/list?prefix=`
 //!
 //! Writes to the manifest key are validated by [`crate::validate`] before the CAS.
@@ -780,6 +783,50 @@ fn dispatch(sh: &Shared, req: &Request, who: &Principal, extra: &mut Extra) -> R
                         .join("\n"),
                 ),
                 Err(e) => backend_err(e),
+            }
+        }
+        ("GET", "/v1/clock") => {
+            if !sh.backend.supports_gc() {
+                return text(501, "garbage collection is not supported by this server's backend");
+            }
+            match sh.backend.now_ms() {
+                Ok(t) => text(200, &t.to_string()),
+                Err(e) => backend_err(e),
+            }
+        }
+        (m, p) if (m == "GET" && p.starts_with("/v1/mtime/")) || (m == "POST" && p.starts_with("/v1/touch/")) => {
+            let touch = m == "POST";
+            let rest = &p[if touch { "/v1/touch/".len() } else { "/v1/mtime/".len() }..];
+            let Some(key) = pct_decode(rest) else {
+                return text(400, "bad key encoding");
+            };
+            if let Err(e) = validate_key(&key) {
+                return backend_err(e);
+            }
+            if !sh.backend.supports_gc() {
+                return text(501, "garbage collection is not supported by this server's backend");
+            }
+            if touch {
+                if who.role < Role::Write {
+                    return text(403, "Forbidden: touch needs a write token");
+                }
+                if (key == manifest::KEY || shadows_manifest(&key) || key.starts_with(vcs_remote::shelf::SHELF_PREFIX)) && who.role < Role::Admin {
+                    return text(403, "Forbidden: only an admin may touch the manifest or shelf keys");
+                }
+                match sh.backend.touch(&key) {
+                    Ok(true) => Response::new(204, ""),
+                    Ok(false) => text(404, "no such key"),
+                    Err(e) => backend_err(e),
+                }
+            } else {
+                if who.role < Role::Admin {
+                    return text(403, "Forbidden: object ages need an admin token");
+                }
+                match sh.backend.modified_ms(&key) {
+                    Ok(Some(t)) => text(200, &t.to_string()),
+                    Ok(None) => text(404, "no such key"),
+                    Err(e) => backend_err(e),
+                }
             }
         }
         (m, p) if p.starts_with("/v1/o/") => {
