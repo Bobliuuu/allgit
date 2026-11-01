@@ -58,7 +58,11 @@ fn read_response(s: &mut TcpStream) -> (u16, String, String) {
     let code = head[9..12].parse().unwrap();
     let len: usize = head
         .lines()
-        .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap()))
+        .find_map(|l| {
+            l.to_ascii_lowercase()
+                .strip_prefix("content-length:")
+                .map(|v| v.trim().parse().unwrap())
+        })
         .unwrap();
     let mut body = vec![0u8; len];
     s.read_exact(&mut body).unwrap();
@@ -76,7 +80,8 @@ fn many_requests_on_one_socket_then_close_on_request() {
         assert_eq!((c, body.trim()), (200, "ok"), "request {i}");
         assert!(head.to_ascii_lowercase().contains("connection: keep-alive"), "{head}");
     }
-    s.write_all(b"GET /healthz HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").unwrap();
+    s.write_all(b"GET /healthz HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+        .unwrap();
     let (c, head, _) = read_response(&mut s);
     assert_eq!(c, 200);
     assert!(head.to_ascii_lowercase().contains("connection: close"));

@@ -71,7 +71,10 @@ impl RetryBackend {
     }
 
     fn jitter(&self, max_ms: u64) -> u64 {
-        let mut z = self.rng.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed).wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self
+            .rng
+            .fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed)
+            .wrapping_add(0x9E37_79B9_7F4A_7C15);
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
         z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
         (z ^ (z >> 31)) % (max_ms + 1)
@@ -80,7 +83,9 @@ impl RetryBackend {
     /// Sleep before retry `n` (0-based): half fixed, half random ("equal jitter"), capped.
     fn pause(&self, n: u32) {
         self.retried.fetch_add(1, Ordering::Relaxed);
-        let d = (self.policy.base.as_millis() as u64).saturating_mul(1u64 << n.min(20)).min(self.policy.cap.as_millis() as u64);
+        let d = (self.policy.base.as_millis() as u64)
+            .saturating_mul(1u64 << n.min(20))
+            .min(self.policy.cap.as_millis() as u64);
         if d > 0 {
             std::thread::sleep(Duration::from_millis(d / 2 + self.jitter(d / 2)));
         }
@@ -130,7 +135,7 @@ impl Backend for RetryBackend {
                     n += 1;
                     // The write may have applied. Look before repeating.
                     match self.idem(|| self.inner.get(key)) {
-                        Ok(None) => {}                // did not apply: repeat
+                        Ok(None) => {}                   // did not apply: repeat
                         Ok(Some(_)) => return Ok(false), // exists (ours or not): conservative answer
                         Err(_) => return Err(BackendError::Unavailable(why)),
                     }

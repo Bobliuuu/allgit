@@ -65,7 +65,11 @@ fn spawn(extra: &[&str], config: Option<&str>) -> Srv {
 impl Srv {
     fn get(&self, path: &str) -> String {
         let mut s = TcpStream::connect(&self.addr).unwrap();
-        write!(s, "GET {path} HTTP/1.1\r\nConnection: close\r\nAuthorization: Bearer {TOKEN}\r\n\r\n").unwrap();
+        write!(
+            s,
+            "GET {path} HTTP/1.1\r\nConnection: close\r\nAuthorization: Bearer {TOKEN}\r\n\r\n"
+        )
+        .unwrap();
         let mut o = String::new();
         s.read_to_string(&mut o).unwrap();
         o
@@ -137,7 +141,11 @@ fn sigterm_and_sigint_exit_zero_and_flush_audit() {
 fn sigterm_lets_in_flight_requests_finish() {
     let mut s = spawn(&["--shutdown-grace", "5"], None);
     let mut c = TcpStream::connect(&s.addr).unwrap();
-    write!(c, "GET /v1/whoami HTTP/1.1\r\nConnection: close\r\nAuthorization: Bearer {TOKEN}\r\n").unwrap();
+    write!(
+        c,
+        "GET /v1/whoami HTTP/1.1\r\nConnection: close\r\nAuthorization: Bearer {TOKEN}\r\n"
+    )
+    .unwrap();
     std::thread::sleep(Duration::from_millis(200));
     s.kill("-TERM");
     std::thread::sleep(Duration::from_millis(400));
