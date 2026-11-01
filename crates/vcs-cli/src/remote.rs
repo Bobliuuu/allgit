@@ -68,6 +68,15 @@ pub fn open_backend(url: &str) -> Result<Box<dyn Backend>, Error> {
     Ok(Box::new(vcs_remote::RetryBackend::new(Box::new(b))))
 }
 
+/// [`open_backend`] behind a per-process read memo (see [`vcs_remote::MemoBackend`]). `snapshot` also
+/// memoizes the manifest and the pack listing for the life of the command and reads them
+/// concurrently up front: use it for clone only, never for publishing.
+pub fn open_memo(url: &str, snapshot: bool) -> Result<vcs_remote::MemoBackend, Error> {
+    let b = vcs_remote::MemoBackend::new(open_backend(url)?, snapshot);
+    b.prime();
+    Ok(b)
+}
+
 /// `http(s)://host:port` = a `vcs-server`. The bearer token comes from `VCS_TOKEN` or the credential helper (`vcs login`) only (never
 /// the URL, so it is never written to `.vcs/remote`). Set `VCS_PRINCIPAL` to the server-side
 /// principal name so lock holders match. `https://` needs the `tls` cargo feature; the server certificate is always

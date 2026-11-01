@@ -1022,10 +1022,10 @@ fn clone_for(url: &str, dir: &Path, zones: &[String], stats: bool, a: &ForArgs, 
     if !a.dry_run && dir.exists() && std::fs::read_dir(dir).map(|mut x| x.next().is_some()).unwrap_or(true) {
         return Err(Error::Msg(format!("destination {} exists and is not empty", dir.display())));
     }
-    let backend = remote::open_backend(&url)?;
+    let backend = remote::open_memo(&url, true)?;
     // Planning reads commits and trees (and the few manifest files) into a throwaway store, so a
     // plan that is refused or only a dry run leaves nothing behind and fsck of the clone stays clean.
-    let plan_ct = vcs_remote::CountingBackend::new(backend.as_ref());
+    let plan_ct = vcs_remote::CountingBackend::new(&backend);
     let (sel, planning);
     {
         let mut view = View::remote(&plan_ct, None, a.queries_hint())?;
@@ -1038,7 +1038,7 @@ fn clone_for(url: &str, dir: &Path, zones: &[String], stats: bool, a: &ForArgs, 
     if a.dry_run {
         return Ok(());
     }
-    let ct = vcs_remote::CountingBackend::new(backend.as_ref());
+    let ct = vcs_remote::CountingBackend::new(&backend);
     let want = names_of(&sel);
     Repo::clone_from(&ct, &url, dir, Some(&want))?;
     if stats {

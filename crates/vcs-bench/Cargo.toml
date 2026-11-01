@@ -68,3 +68,7 @@ path = "src/bin/manifestbench.rs"
 [[bin]]
 name = "netbench"
 path = "src/bin/netbench.rs"
+
+[[bin]]
+name = "latsrv"
+path = "src/bin/latsrv.rs"

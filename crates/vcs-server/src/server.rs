@@ -171,6 +171,11 @@ impl Server {
         let addr = listener.local_addr()?;
         let tokens = std::mem::take(&mut cfg.tokens);
         let metrics = Arc::new(Metrics::new());
+        // Immutable reads (indexes, pack ranges, objects) and this server's own recent pack writes
+        // are remembered, so validating a publish does not re-read from the object store what the
+        // same client uploaded a moment ago.
+        let backend: Arc<dyn Backend> =
+            Arc::new(vcs_remote::MemoBackend::new(Box::new(backend.clone()), false).with_write_through(128 << 20));
         let resilient = Arc::new(ResilientBackend::new(backend, cfg.resilience.clone(), metrics.clone()));
         let nonce = {
             let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
