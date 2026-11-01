@@ -183,12 +183,12 @@ fn apply_several_targets_in_one_step() {
     assert!(out.contains("created zone util") && out.contains("created zone web"), "{out}");
     let zl = ok(&a, &["zone", "list"]);
     assert!(zl.contains("util") && zl.contains("web"), "{zl}");
-    assert_eq!(
-        std::fs::read_to_string(a.join("web/src/index.js")).unwrap(),
-        "console.log('hi')\n"
-    );
+    assert_eq!(std::fs::read_to_string(a.join("web/src/index.js")).unwrap(), "console.log('hi')\n");
     let st = ok(&a, &["status"]);
-    assert!(!st.contains("new file") && !st.contains("deleted") && !st.contains("modified"), "{st}");
+    assert!(
+        !st.contains("new file") && !st.contains("deleted") && !st.contains("modified"),
+        "{st}"
+    );
     assert!(ok(&a, &["fsck"]).contains("ok"));
     // one root commit for both directories, one start commit per zone
     let log = ok(&a, &["log"]);
