@@ -9,5 +9,9 @@ Index of documents under `docs/research/storage/`. Add new documents here, one l
 | [provider-comparison.md](provider-comparison.md) | #181 | Capability matrix: S3, R2, GCS, B2, MinIO, RustFS, Ceph RGW |
 | [conformance-test-plan.md](conformance-test-plan.md) | #181 | `Backend` trait contract tests and per-provider operator commands |
 | [workloads.md](workloads.md) | #182 | The 16 seeded dataset generators of `storebench` (parameters, purpose, limits) |
+| [packing-experiments.md](packing-experiments.md) | #184 | Experiments A, C, E: git-style delta packing baseline, bounded depth / checkpoints / blocks, placement policies (static vs adaptive) |
+| [compaction-experiments.md](compaction-experiments.md) | #184 | Experiments F, G: LSM write buffers, tiered vs leveled compaction, hot/cold tiering (GC sections: meta agent) |
 
 Scripts: `scripts/storage_cost_model.py`, `scripts/storage_score.py` (tests: `scripts/test_storage_*.py`). Data: `data/`.
+
+Lab code for #184: `crates/vcs-storage-lab` (own workspace; table generator `tools/tables.py`). Data: `data/packing/`.
