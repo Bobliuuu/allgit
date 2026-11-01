@@ -14,5 +14,9 @@ Index of documents under `docs/research/storage/`. Add new documents here, one l
 | [walgit-analysis.md](walgit-analysis.md) | #179 | tobi/walgit read, built and tested at `80e9a20`: WAL and manifest CAS, remote reader, pack lifecycle, round-trip model, limits |
 | [indexing-experiments.md](indexing-experiments.md) | #185 | Experiment H: object-location indexes (per-pack, fanout, global, hash, MPH, B-tree, LSM, SQLite), Bloom/cuckoo/fuse filters, commit reachability, per-zone commit-graph files, changed-path filters, tree indexes; lab crate `crates/vcs-storage-lab`, data `data/idx_*`, `hist*`, `tree*` |
 | [caching-experiments.md](caching-experiments.md) | #185 | Experiment J: cache backends, LRU/ARC/W-TinyLFU on generated checkout/sync traces, two-level, prefetch, warming, safety under concurrent publish and GC (exhaustive model check, negative caching), data `data/cache.jsonl`, `backend.jsonl`, `negcache.jsonl`, `modelcheck.jsonl` |
+| [packing-experiments.md](packing-experiments.md) | #184 | Experiments A, C, E: git-style delta packing baseline, bounded depth / checkpoints / blocks, placement policies (static vs adaptive) |
+| [compaction-experiments.md](compaction-experiments.md) | #184 | Experiments F, G: LSM write buffers, tiered vs leveled compaction, hot/cold tiering (GC sections: meta agent) |
 
 Scripts: `scripts/storage_cost_model.py`, `scripts/storage_score.py` (tests: `scripts/test_storage_*.py`). Data: `data/`.
+
+Lab code for #184: `crates/vcs-storage-lab` (own workspace; table generator `tools/tables.py`). Data: `data/packing/`.
