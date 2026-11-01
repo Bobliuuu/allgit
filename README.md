@@ -186,7 +186,8 @@ Known gaps are listed in [docs/architecture.md](docs/architecture.md#known-limit
 
 - **S3 was measured once**: one run against real AWS S3 (us-east-1) from a Mac, about 2,700 requests. Other clouds (R2, GCS, B2) are unmeasured.
 - **No cloud TLS interop test.** HTTPS for `s3://` and for `vcs-server` is implemented with rustls, but only exercised against local servers, not against a real cloud endpoint or a public CA.
-- **Perforce has never been run against a real server.** The importer only knows the fixtures we wrote.
+- **Perforce was run once, on loopback only.** Real `p4d` 2026.1 on the same box, no network latency, journal off, shared noisy machine. The importer was validated against real `p4` output and found real bugs ([details](docs/research/perforce-benchmark.md)).
+- **walgit has no timing comparison yet.** It was built, tested and read ([analysis](docs/research/storage/walgit-analysis.md)); a head-to-head benchmark is still running.
 - **Windows has never been run**, only compiled.
 - **The Claude merge assistant has never been called live.** No quality or cost numbers exist.
 - **Structural and rename-aware merge** are measured on generated and replayed histories, not on a large body of real-world merges.
@@ -208,6 +209,24 @@ Numbers come from [docs/benchmarks.md](docs/benchmarks.md) and [docs/research/st
 | checkout (1% differ) | 584 / 285 | 748 / 497 | 577 / 297 |
 
 So: vcs wins `commit`, `log` and `checkout` here, git still wins `add` on text and `status` on flat and binary. An earlier run on the same box had vcs 2x to 4x slower in several of these cells ([before and after](docs/benchmarks.md#100k-files-again-on-current-main-git-vs-vcs-2026-11-01-before-and-after)); that run was at different machine load, so treat the size of the gain as approximate.
+
+### vs Perforce and walgit
+
+**Perforce (Helix Core)**, real `p4d` 2026.1 server on loopback, same 100k-file datasets, median of 5 runs, ms. Perforce is client/server, so every command is a round trip to a server process; git and vcs are local programs. **This is not apples to apples**, and the Perforce run was on a different day and at much higher machine load (load1 18 to 87) than the git/vcs table above. Do not read differences below about 2x as real.
+
+| workflow | Perforce flat | deep | binary | git / vcs flat (table above) |
+|---|---|---|---|---|
+| add everything (`reconcile -a`) | 5,348 | 20,233 | 7,694 | 9,562 / 12,510 |
+| initial submit / commit (100k files) | 67,985 | 105,148 | 64,297 | 647 / 291 (`commit` only, after `add`) |
+| status, clean (`reconcile -n`) | 2,303 | 5,578 | 2,983 | 106 / 188 |
+| submit 1 changed file | 44 | 21 | 13 | not measured at 100k |
+| log, 50 entries (`changes -m 50`) | 54 | 50 | 49 | 19.9 / 4.3 |
+| checkout, 1% differ (`sync @1->@2`) | 719 | 653 | 405 | 584 / 285 |
+| full clone (`sync` into empty workspace) | 32,203 | 37,013 | 16,564 | not measured |
+
+What this says: Perforce's "add and submit everything" costs 64 to 105 s because the server copies and stores every file; status takes seconds because it compares the whole workspace with the server's have list. A one-file submit is fast (13 to 44 ms). The `commit` cells are not the same work (git/vcs `commit` follows an `add`), so compare sums only against the doc. Not measured: remote server latency, multiple clients, `p4 sync --parallel`, cold cache. Full method, licence notes and disk usage: [perforce-benchmark.md](docs/research/perforce-benchmark.md).
+
+**walgit** ([tobi/walgit](https://github.com/tobi/walgit)): built from source, its fault-injection tests run (19 simulation tests pass), and its design read in detail, but **no head-to-head timings exist yet**. A 100k-file comparison is in progress and will be added here with the same rules (interleaved runs, medians, load noted). Until then, the honest comparison is design-level: walgit keeps Git's pack format on an object store with a write-ahead log and CAS manifest; allgit uses its own object format with zones and a single CAS manifest. See [walgit-analysis.md](docs/research/storage/walgit-analysis.md).
 
 **Real S3** (client on a Mac over home internet to us-east-1, one run, 20 to 40 requests per cell): every request costs about 150 ms regardless of kind or size (p50: HEAD 153, 1 KiB GET 156, manifest compare-and-swap 176 ms). That is why remote packs matter: a one-file publish into a 5,000-entry directory went from 5,009 to 6 requests in the counting harness (an in-memory count, not a timed publish). The same run found that S3's ETag repeats for identical bytes, which is safe only because the manifest embeds an ever-growing generation number.
 
