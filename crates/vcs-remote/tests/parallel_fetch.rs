@@ -4,7 +4,10 @@
 
 use std::collections::BTreeMap;
 use vcs_objects::*;
-use vcs_remote::packfetch::{fetch_many_each, fetch_many_with, probe_kinds_with, PackCatalog};
+use vcs_remote::backend::Versioned;
+use vcs_remote::compact::compact;
+use vcs_remote::packfetch::{self, fetch_many_each, fetch_many_with, probe_kinds_with, PackCatalog};
+use vcs_remote::CompactOptions;
 use vcs_remote::*;
 use vcs_store::{MemoryStore, ObjectStore};
 
@@ -142,4 +145,86 @@ fn empty_request_makes_no_request() {
     let counted = CountingBackend::new(&b);
     fetch_many_each::<BackendError>(&counted, &PackCatalog::new(), &[], &mut |_, _| Ok(())).unwrap();
     assert_eq!(counted.stats().requests, 0);
+}
+
+/// Runs `compact --all` the first time a data range of a pack (not the 33-byte trailer check) is
+/// requested, so the packs the fetch planned against vanish mid-read.
+struct CompactsMidRead<'a> {
+    inner: &'a MemBackend,
+    done: std::sync::atomic::AtomicBool,
+}
+impl Backend for CompactsMidRead<'_> {
+    fn get(&self, k: &str) -> Result<Option<Versioned>, BackendError> {
+        self.inner.get(k)
+    }
+    fn get_range(&self, k: &str, o: u64, l: u64) -> Result<Option<Vec<u8>>, BackendError> {
+        if k.ends_with(".pack") && l > 33 && !self.done.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            let opts = CompactOptions {
+                all: true,
+                dry_run: false,
+                owner: "t".into(),
+                ..Default::default()
+            };
+            compact(self.inner, &opts).unwrap();
+        }
+        self.inner.get_range(k, o, l)
+    }
+    fn exists(&self, k: &str) -> Result<bool, BackendError> {
+        self.inner.exists(k)
+    }
+    fn put_if_absent(&self, k: &str, d: &[u8]) -> Result<bool, BackendError> {
+        self.inner.put_if_absent(k, d)
+    }
+    fn put_if_match(&self, k: &str, d: &[u8], t: &str) -> Result<Option<String>, BackendError> {
+        self.inner.put_if_match(k, d, t)
+    }
+    fn list(&self, p: &str) -> Result<Vec<String>, BackendError> {
+        self.inner.list(p)
+    }
+    fn delete(&self, k: &str) -> Result<(), BackendError> {
+        self.inner.delete(k)
+    }
+    fn supports_gc(&self) -> bool {
+        self.inner.supports_gc()
+    }
+    fn now_ms(&self) -> Result<u64, BackendError> {
+        self.inner.now_ms()
+    }
+    fn modified_ms(&self, k: &str) -> Result<Option<u64>, BackendError> {
+        self.inner.modified_ms(k)
+    }
+    fn touch(&self, k: &str) -> Result<bool, BackendError> {
+        self.inner.touch(k)
+    }
+}
+
+#[test]
+fn compaction_during_a_parallel_fetch_is_retried_and_without_retry_is_an_error() {
+    let ids = {
+        let b = MemBackend::new();
+        seed(&b, 4, 120)
+    };
+    for (rounds, must_succeed) in [(4usize, true), (1, false)] {
+        let b = MemBackend::new();
+        let ids2 = seed(&b, 4, 120);
+        assert_eq!(ids, ids2, "seed is deterministic");
+        let racy = CompactsMidRead {
+            inner: &b,
+            done: Default::default(),
+        };
+        let mut got = BTreeMap::new();
+        let r = packfetch::fetch_many_each_retrying::<BackendError>(&racy, &PackCatalog::new(), &ids, rounds, &mut |id, d| {
+            got.insert(id, d);
+            Ok(())
+        });
+        if must_succeed {
+            r.unwrap();
+            assert_eq!(got.len(), ids.len());
+            for (id, d) in &got {
+                assert_eq!(id_of_encoded(d), *id);
+            }
+        } else {
+            assert!(r.is_err(), "with no retry budget a vanished pack must not be silently skipped");
+        }
+    }
 }
