@@ -39,6 +39,7 @@ Commands:
   shelve         Park your changes on the remote as a private shelf (the working tree is left alone); `--delete` removes one
   shelves        List your shelves on the remote (`--all`: also other people's that you may read)
   unshelve       Apply a shelf from the remote to the working tree (staged, like `stash pop`)
+  p4             Run a Perforce command in its vcs form, one to one (`vcs p4 --list` shows the map, `--explain` the translation; docs/p4-to-vcs.md)
   sparse         Materialize only some paths of a zone (set, add, remove, list, disable); the rest stays tracked, not deleted
   tag            List tags of the current zone, create one (lightweight, or annotated with -m), or delete one with -d
   show           Show a commit (default HEAD) with its diff against the first parent
@@ -700,6 +701,64 @@ Options:
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
+```
+
+## `vcs p4`
+
+```text
+p4 command	vcs command	status	test
+client -o / workspace -o	zone list; sparse list	different-semantics	client_view
+clients / workspaces	worktree list	different-semantics	clients
+depots	zone list	renamed	depots
+sync	sync	different-semantics	sync
+sync -f	sync; restore .	different-semantics	sync_f
+sync -n	fetch	different-semantics	sync_n
+sync path@rev / sync @label	(none)	missing	sync_rev_missing
+edit	lock (lockable files); nothing otherwise	different-semantics	edit_plain
+add	add	exact	add
+delete	rm	renamed	delete
+move / rename	mv	renamed	move
+revert	restore --staged; restore	renamed	revert
+revert -a	(nothing to do)	different-semantics	revert_a
+diff	diff; diff --staged (filtered to the files)	different-semantics	diff
+diff2	(computed) unified diff of two revisions	renamed	diff2
+opened	status (without untracked)	renamed	opened
+opened -a	locks	different-semantics	opened_a
+reconcile [-a -e -d -n]	add (the selected files)	renamed	reconcile
+status	reconcile -n	renamed	p4_status
+submit [-d msg]	add (edits); commit -m; publish	different-semantics	submit
+changes [-m -s -u -l]	log [-n --author --oneline]	renamed	changes
+describe [-s]	show [--name-status]	renamed	describe
+filelog	log --follow --name-status -- file	renamed	filelog
+annotate	blame	renamed	annotate
+files	ls-files --rev	renamed	files
+fstat	log -n 1 --format ... -- file	different-semantics	fstat
+print	cat-file -p rev:path	renamed	print
+have	ls-files	renamed	have
+integrate / merge	merge	different-semantics	integrate
+copy	(none)	missing	copy_missing
+resolve [-at -ay -af -n]	resolve --theirs/--ours/--mark; conflict list	renamed	resolve
+shelve [-c name] [-d]	shelve [name] [--delete]	different-semantics	shelve
+unshelve -s name	unshelve name	different-semantics	shelve
+label / tag / labelsync	tag [-d]	different-semantics	label
+labels	tag	renamed	labels
+branch / stream	branch [-d]	different-semantics	branch
+branches / streams	branch	renamed	branches
+switch	switch	exact	switch
+lock	lock --lease-secs	different-semantics	lock
+unlock [-f]	unlock [--break]	exact	lock
+locks	locks	exact	lock
+where	(computed) zone path, worktree path	renamed	where
+info	(computed) identity, root, remote	different-semantics	info
+users	shortlog -s -e	different-semantics	users
+login / logout	login / logout	exact	login
+init / fetch / push / clone	init / fetch / publish / clone	renamed	push
+grep	grep	exact	grep
+clean	restore --staged .; restore .	different-semantics	clean
+change / changelist	status	different-semantics	change
+verify	fsck	renamed	verify
+reopen / obliterate / jobs / fix	(none)	missing	missing_cmds
+protect / groups / group / user / passwd	(none: vcs-server tokens)	missing	protect_missing
 ```
 
 ## `vcs sparse`

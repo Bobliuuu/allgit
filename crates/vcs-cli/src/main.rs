@@ -23,6 +23,7 @@ mod json;
 mod lockable_cmd;
 mod logfmt;
 mod logopts;
+mod p4map;
 mod plumb;
 mod remote;
 mod shelve_cmd;
@@ -251,6 +252,9 @@ enum Cmd {
     Shelves(shelve_cmd::ShelvesArgs),
     /// Apply a shelf from the remote to the working tree (staged, like `stash pop`)
     Unshelve(shelve_cmd::UnshelveArgs),
+    /// Run a Perforce command in its vcs form, one to one (`vcs p4 --list` shows the map, `--explain` the translation; docs/p4-to-vcs.md)
+    #[command(disable_help_flag = true)]
+    P4(p4map::P4Args),
     /// Materialize only some paths of a zone (set, add, remove, list, disable); the rest stays tracked, not deleted
     #[command(subcommand)]
     Sparse(SparseCmd),
@@ -1716,6 +1720,7 @@ fn run(cli: Cli) -> Result<(), Error> {
         Cmd::Shelve(a) => shelve_cmd::shelve(&open()?.0, a, &principal(), author()?)?,
         Cmd::Shelves(a) => shelve_cmd::shelves(&open()?.0, a, &principal())?,
         Cmd::Unshelve(a) => shelve_cmd::unshelve(&open()?.0, a, &principal())?,
+        Cmd::P4(a) => p4map::run(&a)?,
         Cmd::Clone { url, dir, zones, stats, .. } => {
             if bundle_cmd::try_clone(&url, &dir, &zones, author()?)? {
                 return Ok(());
