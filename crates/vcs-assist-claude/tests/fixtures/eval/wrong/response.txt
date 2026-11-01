@@ -1,0 +1,14 @@
+<resolved_file>
+fn a() -> i32 {
+    22
+}
+
+fn b() -> i32 {
+    2
+}
+
+fn c() -> i32 {
+    30
+}
+
+</resolved_file>
