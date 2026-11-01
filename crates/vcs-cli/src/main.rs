@@ -9,8 +9,8 @@ use vcs_repo::{AssistResult, ChangeKind, Error, MergeOutcome, RebaseOutcome, Rep
 mod archive;
 mod auth;
 mod bisect;
-mod cmds;
 mod bundle_cmd;
+mod cmds;
 mod config;
 mod describe;
 mod generate;
@@ -119,6 +119,9 @@ enum Cmd {
     Config(ConfigCmd),
     /// Show staged, unstaged and untracked changes per zone
     Status,
+    /// Watch the working tree and journal changed paths so `status` can skip a full scan (runs until killed)
+    #[cfg(feature = "watcher")]
+    Watch,
     /// Show unstaged changes (or --staged)
     Diff {
         #[arg(long)]
@@ -822,9 +825,18 @@ fn run(cli: Cli) -> Result<(), Error> {
             }
             maybe_auto_repack(&repo);
         }
+        #[cfg(feature = "watcher")]
+        Cmd::Watch => {
+            let (repo, _) = open()?;
+            eprintln!(
+                "watching {} (Ctrl-C to stop); `vcs status` uses the journal while this runs",
+                repo.worktree().display()
+            );
+            vcs_repo::watcher::run(&repo, &std::sync::atomic::AtomicBool::new(false))?;
+        }
         Cmd::Status => {
             let (repo, _) = open()?;
-            let st = repo.status()?;
+            let st = repo.status_auto(Default::default())?;
             let defs = repo.zones()?;
             for a in &st.zones {
                 let loc = if a.path.is_empty() {

@@ -1,6 +1,7 @@
 use crate::diff;
 use crate::dircache::{stamp_of, DirCache, Kind, Listing};
 use crate::error::{io, msg, Error, Result};
+use crate::fsmonitor::{self, Changed, FsMonitor};
 use crate::ignore::IgnoreStack;
 use crate::index::{Index, IndexEntry};
 use crate::meta::{write_atomic, LockGuard, Refs, Workspace, Zones, DEFAULT_BRANCH, ROOT_ZONE};
@@ -30,6 +31,14 @@ struct WalkOut {
     fresh: Vec<(String, Listing)>,
     /// Directories read from disk this walk (cache misses, trustworthy or not).
     scanned: usize,
+}
+
+/// Saved status adjusted by a monitor's changed paths (see `status_monitored`).
+pub(crate) struct Incremental {
+    dirty: BTreeMap<String, ChangeKind>,
+    rewalk: bool,
+    untracked: Vec<String>,
+    unsupported: Vec<String>,
 }
 
 /// Per-walk settings for the directory cache.
@@ -824,7 +833,7 @@ impl Repo {
     }
 
     pub fn status(&self) -> Result<Status> {
-        self.status_with(StatusOpts::default())
+        self.status_auto(StatusOpts::default())
     }
 
     /// `status` that never reads or writes the directory cache: the reference implementation the
@@ -836,26 +845,122 @@ impl Repo {
         })
     }
 
+    /// `status`, consulting the filesystem monitor `.vcs/fsmon` (written by `vcs watch`) when one
+    /// is running; identical to [`Self::status_with`] otherwise. `VCS_NO_FSMONITOR` disables it.
+    pub fn status_auto(&self, opts: StatusOpts) -> Result<Status> {
+        if std::env::var_os("VCS_NO_FSMONITOR").is_none() {
+            if let Some(m) = crate::fsmonitor::JournalMonitor::open(&self.vcs) {
+                return self.status_monitored(opts, &m);
+            }
+        }
+        self.status_with(opts)
+    }
+
+    /// `status` using `mon` to skip the stat of unchanged files and the untracked walk. The
+    /// result always equals [`Self::status_full`]; any doubt makes this a full scan (see
+    /// `fsmonitor`). The last result is kept in `.vcs/fsmon/state`, keyed by index, zone layout
+    /// and the monitor token it was computed at.
+    pub fn status_monitored(&self, opts: StatusOpts, mon: &dyn FsMonitor) -> Result<Status> {
+        let ix_bytes = self.rd("index")?;
+        let ix = Index::decode(&ix_bytes)?;
+        let fp = fsmonitor::fingerprint(&ix_bytes, &self.rd("zones")?, &self.rd("workspace")?);
+        let prev = fsmonitor::State::load(&self.vcs).filter(|s| s.fp == fp);
+        let ans = mon.changed_since(prev.as_ref().map(|s| s.token.as_str()));
+        let (token, inc) = match (prev.as_ref(), ans) {
+            (Some(p), Changed::Paths { paths, new_token }) => (Some(new_token), self.incremental(&ix, p, &paths)?),
+            (_, Changed::Paths { new_token, .. }) => (Some(new_token), None),
+            (_, Changed::FullScan { new_token }) => (new_token, None),
+        };
+        let st = self.status_inner(opts, &ix, true, inc.as_ref())?;
+        let Some(token) = token else { return Ok(st) };
+        let mut dirty = BTreeMap::new();
+        for z in &st.zones {
+            for c in &z.unstaged {
+                dirty.insert(c.path.clone(), c.kind);
+            }
+        }
+        // A racy-entry refresh may have rewritten the index (new `written_ns`, same entries);
+        // bind the state to what is on disk now only if the entries are unchanged.
+        let fp_now = match self.rd("index") {
+            Ok(b) if b == ix_bytes => fp,
+            Ok(b) if Index::decode(&b).is_ok_and(|n| n.entries == ix.entries) => {
+                fsmonitor::fingerprint(&b, &self.rd("zones")?, &self.rd("workspace")?)
+            }
+            _ => return Ok(st),
+        };
+        let new = fsmonitor::State {
+            fp: fp_now,
+            token,
+            dirty,
+            untracked: st.untracked.clone(),
+            unsupported: st.unsupported.clone(),
+        };
+        if prev.as_ref() != Some(&new) {
+            new.store(&self.vcs);
+        }
+        Ok(st)
+    }
+
+    /// Apply the monitor's changed paths to the saved state: re-check only tracked files at or
+    /// beneath a changed path; any other kind of change (new or vanished names, ignore files)
+    /// asks for the untracked walk. `None`: too much or odd, do the full scan.
+    fn incremental(&self, ix: &Index, prev: &fsmonitor::State, paths: &[String]) -> Result<Option<Incremental>> {
+        if paths.len() > 20_000 || !paths.iter().all(|p| fsmonitor::plain_path(p)) {
+            return Ok(None);
+        }
+        let mut inc = Incremental {
+            dirty: prev.dirty.clone(),
+            rewalk: false,
+            untracked: prev.untracked.clone(),
+            unsupported: prev.unsupported.clone(),
+        };
+        for p in paths {
+            // A tracked name that is now a directory can hide new untracked names beneath it.
+            if p.rsplit('/').next() == Some(crate::ignore::IGNORE_FILE)
+                || !ix.entries.contains_key(p.as_str())
+                || self.wfs.stat(p).is_ok_and(|m| m.kind == FileKind::Dir)
+            {
+                inc.rewalk = true;
+            }
+            for t in ix.under(p) {
+                let e = &ix.entries[t.as_str()];
+                match self.wt_state(&t, e, ix.written_ns)? {
+                    Wt::Clean => {
+                        inc.dirty.remove(&t);
+                    }
+                    Wt::Modified => {
+                        inc.dirty.insert(t, ChangeKind::Modified);
+                    }
+                    Wt::Deleted => {
+                        inc.dirty.insert(t, ChangeKind::Deleted);
+                    }
+                }
+            }
+        }
+        Ok(Some(inc))
+    }
+
     pub fn status_with(&self, opts: StatusOpts) -> Result<Status> {
         let ix = self.index()?;
-        self.status_inner(opts, &ix, true)
+        self.status_inner(opts, &ix, true, None)
     }
 
     /// `status_with` on an index the caller already loaded; `untracked: false` skips the walk
     /// for untracked files (`Status::untracked` / `unsupported` are then left empty), which is
     /// all a caller that only needs staged/unstaged/merge state has to pay for.
-    pub(crate) fn status_inner(&self, opts: StatusOpts, ix: &Index, untracked: bool) -> Result<Status> {
+    pub(crate) fn status_inner(&self, opts: StatusOpts, ix: &Index, untracked: bool, inc: Option<&Incremental>) -> Result<Status> {
         let zones = self.zones()?;
         let ws = self.workspace()?;
         let refs = self.refs()?;
         let fp = zones_fp(&zones);
         let mut racy_clean: BTreeSet<String> = BTreeSet::new();
         let mut st = Status::default();
+        let single_zone = zones.names().count() <= 1;
         for (zone, branch) in &ws.subs {
-            let mine: BTreeMap<&String, &IndexEntry> = ix
+            let mine: Vec<(&String, &IndexEntry)> = ix
                 .entries
                 .iter()
-                .filter(|(p, _)| zones.owner(p) == zone && !ws.skips(zone, p))
+                .filter(|(p, _)| (single_zone || zones.owner(p) == zone) && !ws.skips(zone, p))
                 .collect();
             // Subtree-skipping diff: directories whose cached or computed tree id equals HEAD's
             // are skipped; HEAD's trees are read only on paths that actually differ.
@@ -869,7 +974,17 @@ impl Repo {
                 .into_iter()
                 .map(|(path, kind)| Change { path, kind })
                 .collect();
-            let (unstaged, clean) = self.unstaged_changes(&mine, ix.written_ns)?;
+            let (unstaged, clean) = match inc {
+                Some(i) => (
+                    i.dirty
+                        .iter()
+                        .filter(|(p, _)| (single_zone || zones.owner(p) == zone) && !ws.skips(zone, p))
+                        .map(|(p, k)| Change { path: p.clone(), kind: *k })
+                        .collect(),
+                    Vec::new(),
+                ),
+                None => self.unstaged_changes(&mine, ix.written_ns)?,
+            };
             racy_clean.extend(clean);
             st.zones.push(ZoneStatus {
                 zone: zone.clone(),
@@ -886,6 +1001,13 @@ impl Repo {
             }
         }
         if !untracked {
+            st.merging = self.merge_state()?;
+            return Ok(st);
+        }
+        if let Some(i) = inc.filter(|i| !i.rewalk) {
+            // The monitor vouches that no untracked name appeared or went away.
+            st.untracked = i.untracked.clone();
+            st.unsupported = i.unsupported.clone();
             st.merging = self.merge_state()?;
             return Ok(st);
         }
@@ -926,8 +1048,7 @@ impl Repo {
     /// content was read and found clean (racy entries). The per-file `lstat` (and re-hash of
     /// racy/changed files) is independent per path, so a big list is split across at most 8
     /// threads.
-    fn unstaged_changes(&self, entries: &BTreeMap<&String, &IndexEntry>, written_ns: u64) -> Result<(Vec<Change>, Vec<String>)> {
-        let list: Vec<(&String, &IndexEntry)> = entries.iter().map(|(p, e)| (*p, *e)).collect();
+    fn unstaged_changes(&self, list: &[(&String, &IndexEntry)], written_ns: u64) -> Result<(Vec<Change>, Vec<String>)> {
         let check = |part: &[(&String, &IndexEntry)]| -> Result<(Vec<Change>, Vec<String>)> {
             let (mut out, mut clean) = (Vec::new(), Vec::new());
             for (p, e) in part {
@@ -950,9 +1071,9 @@ impl Repo {
             }
             Ok((out, clean))
         };
-        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(16);
         if threads <= 1 || list.len() < 2048 {
-            return check(&list);
+            return check(list);
         }
         let per = list.len().div_ceil(threads);
         let parts: Vec<Result<(Vec<Change>, Vec<String>)>> = std::thread::scope(|sc| {
@@ -1070,7 +1191,18 @@ impl Repo {
             }
         };
         let mut items = Vec::new();
+        // Tracked names directly in this directory, as two sorted lists: matching the (sorted)
+        // listing against them is a linear merge, with no per-name lookup or path allocation.
+        let ch = ix.entries.children(dir);
+        let mut fp = 0usize;
         for (name, kind) in entries {
+            while fp < ch.files.len() && ch.files[fp] < name.as_str() {
+                fp += 1;
+            }
+            let file_tracked = fp < ch.files.len() && ch.files[fp] == name.as_str();
+            if file_tracked && *kind == Kind::File {
+                continue; // tracked file: nothing to report whichever zone owns it
+            }
             let rel = if dir.is_empty() { name.clone() } else { format!("{dir}/{name}") };
             if *kind == Kind::Other {
                 items.push(Item::Unsupported(rel));
@@ -1080,13 +1212,13 @@ impl Repo {
                 continue;
             }
             if *kind == Kind::Dir {
-                let tracked_below = ix.has_under(&rel);
+                let tracked_below = file_tracked || ch.dirs.binary_search(&name.as_str()).is_ok();
                 let ignored = stack.is_ignored(&rel, true);
                 if ignored && !tracked_below {
                     continue;
                 }
                 items.push(Item::Dir(rel, tracked_below, ignored));
-            } else if !ix.entries.contains_key(&rel) && !stack.is_ignored(&rel, false) {
+            } else if !stack.is_ignored(&rel, false) {
                 items.push(Item::File(rel));
             }
         }
@@ -1424,7 +1556,7 @@ impl Repo {
         };
         let mut ix = self.index()?;
         // Only staged/unstaged/merge state matters here, so skip the untracked-file walk.
-        let st = self.status_inner(StatusOpts::default(), &ix, false)?;
+        let st = self.status_inner(StatusOpts::default(), &ix, false, None)?;
         self.require_clean(zone, &st)?;
         let prefix = zones.path_of(zone).unwrap();
         let old_root = match self.current_head(zone, &ws, &refs) {

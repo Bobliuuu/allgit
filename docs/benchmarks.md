@@ -671,3 +671,60 @@ vs 4.6 us fanout): each pack still costs a cache-missing fanout read plus a bina
 entries. Open time did not drop as much as hashing alone would suggest, because the whole index file is still read
 into memory; only the BLAKE3 pass is gone. Compression time (`repack` v1 to v2 conversion: source 17.7 ms, text 16.7 ms,
 binary 439 ms including the raw fallback attempt on 100 MB) was measured once.
+## `status` at 100k files: faster index decode, merged untracked walk, optional watcher (2026-11-01)
+
+Machine: the shared 30-core Linux box (AMD EPYC 7J13, ext4, warm cache). **Load average was 40-58 during these runs**
+(other jobs share the box), so absolute numbers are noisy; each cell is the median of 9 interleaved runs of
+`vcs status` (min/max in the raw log), after one untimed warm-up. "base" is the binary built from `origin/main` before
+this change on a repository it created; "new" is this change on a repository it created (so it reads the new index
+layout). 100k files, `datagen flat` (1,000 directories of 100) and `datagen deep` (87,640 directories).
+"watcher" is `vcs watch` running (inotify) and `status` consulting its journal; the state saved by the first
+monitored `status` is loaded by the following ones. 1% modified = every 100th file rewritten.
+
+| `status`, median ms | layout | base | new, no watcher | new, with watcher |
+|---|---|---|---|---|
+| clean | flat | 368.5 (min 204.6) | 288.7 (min 167.0) | 64.1 (min 59.0) |
+| 1% modified | flat | 214.6 | 177.1 | 61.4 |
+| clean | deep | 627.4 | 435.6 | 84.1 |
+| 1% modified | deep | 599.3 | 423.5 | 89.8 |
+
+The flat-clean row was hit hardest by load spikes (max 514 ms base); the 1%-modified rows are the steadier pair for
+flat. The earlier uncontended `scripts/bench_scale.sh` run (see `bench100k`) had `status` clean at 188 ms for vcs and
+105 ms for Git on this layout; this change was not re-measured against Git under the same conditions, so no claim is
+made about beating Git without the watcher. With the watcher, the remaining cost is the index decode and the hash that
+binds the saved state to the index (about 40-60 ms on this box under load).
+
+What changed:
+
+- **Index layout `AGI3`** (reads `AGI2` and `AGIX` as before; written only as `AGI3`, so an older binary cannot read a
+  repository this version has written to): entries are stored in blocks of 2,048 behind a table of block byte
+  lengths, so the decode runs on up to 16 threads (it stays on one thread below 16,384 entries), and the
+  file/directory conflict check runs by binary search over the sorted key list on the same threads. `index_cost`
+  (100k entries, release, same box under load): 17.7 ms decode, against 61 ms recorded earlier for the single-threaded
+  decoder.
+- **Untracked walk**: instead of one `BTreeMap` lookup plus one `format!` per name, each directory's (sorted) listing is
+  merged against the sorted list of tracked names directly in that directory (`Entries::children`). A tracked file
+  allocates nothing.
+- `status` builds the per-zone entry list as a `Vec` (a single zone needs no ownership filtering) and uses up to 16
+  stat threads (was 8).
+- **Filesystem monitor** (`fsmonitor.rs`, issues #113 and #154): `FsMonitor::changed_since(token)` returns
+  `Changed::Paths { paths, new_token }` or `Changed::FullScan`. The saved result of the last `status`
+  (`.vcs/fsmon/state`: unstaged set, untracked and unsupported lists, token) is keyed by a hash of the index, `zones` and
+  `workspace` files; with a matching key and a `Paths` answer, `status` re-checks only tracked files at or below a
+  reported path and runs the untracked walk only if a reported path is not a tracked file (or is an ignore file, or a
+  tracked name that is now a directory). Anything else (no state, other index, token from another epoch, overflow,
+  restart, no answer within 400 ms, daemon pid gone, odd path, more than 20,000 paths) is a full scan.
+  `vcs watch` (cargo feature `watcher`, off by default, `notify` crate) journals paths to `.vcs/fsmon/journal`; each
+  query drops a probe file in `.vcs/fsmon/probe` and waits for the daemon to journal it, which orders the query after
+  every earlier inotify event. `VCS_NO_FSMONITOR=1` disables it. The token lives in the state file rather than in the
+  index, so index writers need no change: any index rewrite invalidates the state by construction.
+- Tests: `crates/vcs-repo/tests/fsmonitor.rs`. A property test drives random create/edit/remove/rename/mkdir/swap/
+  restore-mtime/old-mtime/add/commit operations against a mock monitor that duplicates and reverses events, reports
+  spurious paths, overflows, restarts and goes dead, and asserts monitored status equals `status_full` after each step
+  (32 cases per run; 150 cases also passed once). With `--features watcher` the same operations run against the real
+  inotify daemon (12 cases), plus directory rename, new-directory race, mtime restored, ignore file and dead-daemon
+  scripts. The property test found one real bug while it was written (a tracked file replaced by a directory hid the
+  untracked names beneath it); fixed.
+- Not run: macOS FSEvents (the `notify` backend compiles in on macOS but was not exercised), network filesystems, and
+  watch-limit exhaustion (`vcs watch` fails to start, or writes `X` and exits, which clients treat as a full scan).
+  Index-decode memory per entry is unchanged (`BTreeMap<String, IndexEntry>`); a path arena was not attempted.

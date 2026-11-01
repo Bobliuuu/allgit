@@ -77,7 +77,7 @@ impl Repo {
             return Err(Error::Msg(format!("commit {} is not in zone {zone:?}", target.short())));
         }
         let mut ix = self.index()?;
-        let st = self.status_inner(StatusOpts::default(), &ix, false)?;
+        let st = self.status_inner(StatusOpts::default(), &ix, false, None)?;
         self.require_clean(zone, &st)?;
         let prefix = zones.path_of(zone).unwrap_or("");
         let old_root = match self.current_head(zone, &ws, &refs) {
