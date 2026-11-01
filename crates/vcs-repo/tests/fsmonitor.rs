@@ -334,11 +334,20 @@ fn removed_directory_over_tracked_name_drops_its_untracked_names() {
     fs::write(p.join("sub"), "s").unwrap();
     m.event("a/b/y.txt");
     assert_same(&r, &m, "file replaced by dir");
-    assert!(r.status_monitored(opts(), &m).unwrap().untracked.contains(&"a/b/y.txt/sub".to_string()));
+    assert!(r
+        .status_monitored(opts(), &m)
+        .unwrap()
+        .untracked
+        .contains(&"a/b/y.txt/sub".to_string()));
     fs::remove_dir_all(&p).unwrap();
     m.event("a/b/y.txt");
     assert_same(&r, &m, "dir removed");
-    assert!(!r.status_monitored(opts(), &m).unwrap().untracked.iter().any(|u| u.starts_with("a/b/y.txt/")));
+    assert!(!r
+        .status_monitored(opts(), &m)
+        .unwrap()
+        .untracked
+        .iter()
+        .any(|u| u.starts_with("a/b/y.txt/")));
 }
 
 #[test]
