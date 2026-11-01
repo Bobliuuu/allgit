@@ -31,7 +31,7 @@ impl Repo {
     }
 
     fn load_cg_file(&self, zone: &str) -> Option<CommitGraphFile> {
-        CommitGraphFile::decode(&fs::read(self.vcs.join(CG_DIR).join(cg_name(zone))).ok()?).ok()
+        CommitGraphFile::decode(&fs::read(self.common.join(CG_DIR).join(cg_name(zone))).ok()?).ok()
     }
 
     /// `(parents, commit time)` of the real commit, the loader for building and verifying.
@@ -96,7 +96,7 @@ impl Repo {
             })
             .ok()?;
         if g.len() != old.len() {
-            let dir = self.vcs.join(CG_DIR);
+            let dir = self.common.join(CG_DIR);
             let _ = fs::create_dir_all(&dir);
             let _ = write_cache_atomic(&dir.join(cg_name(&zone)), &g.encode()); // best effort: it is only a cache
         }
@@ -115,7 +115,7 @@ impl Repo {
 
     /// Check every file under `.vcs/commit-graphs` against the real commits; one message per problem.
     pub(crate) fn fsck_commit_graph(&self, problems: &mut Vec<String>) {
-        let Ok(rd) = fs::read_dir(self.vcs.join(CG_DIR)) else {
+        let Ok(rd) = fs::read_dir(self.common.join(CG_DIR)) else {
             return; // no cache is fine
         };
         let mut files: Vec<_> = rd.flatten().map(|e| e.path()).collect();
