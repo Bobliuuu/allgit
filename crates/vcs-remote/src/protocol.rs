@@ -348,7 +348,8 @@ impl<'a> Publisher<'a> {
             Ok(self.backend.exists(&object_key(id))?)
         };
 
-        let heads: BTreeSet<ObjectId> = self.tx.updates.iter().map(|u| u.new).collect();
+        // Branch heads and tag targets (annotated tag objects are not reachable from any commit).
+        let heads: BTreeSet<ObjectId> = self.tx.updates.iter().map(|u| u.new).chain(self.tags.values().copied()).collect();
         for h in heads {
             let mut stack: Vec<(ObjectId, Option<Object>)> = vec![(h, None)];
             while let Some((id, obj)) = stack.pop() {
