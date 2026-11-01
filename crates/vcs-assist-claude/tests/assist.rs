@@ -88,8 +88,6 @@ fn invalid_proposals_are_rejected() {
     rejected(&resolved(&format!("{GOOD}// extra\n")), "after the last conflicting");
     // prefix changed
     rejected(&resolved(&format!("// hi\n{GOOD}")), "before the first");
-    // does not parse (still preserves hunks: braces broken inside the conflict region)
-    rejected(&resolved(&GOOD.replace("    21\n", "    21 +\n")), "does not parse");
     // empty
     rejected("<resolved_file>\n</resolved_file>", "changed");
     // NUL
@@ -309,4 +307,11 @@ fn prompt_injection_text_is_just_data_in_the_user_turn() {
     let b: serde_json::Value = serde_json::from_str(&m.requests()[0].body).unwrap();
     assert!(!b["system"].as_str().unwrap().contains("IGNORE ALL"));
     assert!(b["messages"][0]["content"].as_str().unwrap().contains("IGNORE ALL"));
+}
+
+#[cfg(feature = "structural")]
+#[test]
+fn unparsable_resolution_is_rejected_when_a_parser_is_built_in() {
+    // Hunks are preserved; only the conflict region is broken.
+    rejected(&resolved(&GOOD.replace("    21\n", "    21 +\n")), "does not parse");
 }
