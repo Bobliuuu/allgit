@@ -244,6 +244,9 @@ enum Cmd {
         /// With --delete: delete even if its commits are not reachable from another branch or snapshot
         #[arg(long, requires = "delete")]
         force: bool,
+        /// Create the branch at this commit (full id or prefix) instead of the checked-out head
+        #[arg(long, value_name = "COMMIT", conflicts_with = "delete")]
+        at: Option<String>,
     },
     /// Set tracked changes aside (push, pop, list, drop); untracked files are left alone
     #[command(subcommand)]
@@ -341,6 +344,18 @@ enum Cmd {
         /// Do not run the assistant even if the `merge.assist` setting is configured
         #[arg(long, conflicts_with = "assist")]
         no_assist: bool,
+        /// Always create a merge commit, even when a fast-forward is possible
+        #[arg(long, conflicts_with_all = ["squash", "ff_only"])]
+        no_ff: bool,
+        /// Stage the merged result without a merge commit; the branch does not move (then `vcs commit`)
+        #[arg(long, conflicts_with = "ff_only")]
+        squash: bool,
+        /// Refuse unless the merge is a fast-forward (or already up to date)
+        #[arg(long)]
+        ff_only: bool,
+        /// Message for the merge commit
+        #[arg(short = 'm', long)]
+        message: Option<String>,
     },
     /// Re-apply the change of one commit onto the checked-out branch
     #[command(name = "cherry-pick")]
@@ -470,6 +485,22 @@ enum Cmd {
         /// First re-upload any object the remote lost beneath objects it still has (checks every reachable object)
         #[arg(long)]
         repair: bool,
+        /// Publish only these branches (default: every checked-out branch)
+        branches: Vec<String>,
+        /// Replace a remote branch that is not an ancestor of yours, but only if it is still the
+        /// head you last fetched (a lease). Needs the branch name(s)
+        #[arg(long)]
+        force: bool,
+        /// Like --force; `=BRANCH` leases that branch, `=BRANCH:ID` leases it against the remote head starting with ID
+        #[arg(long, value_name = "BRANCH[:ID]", num_args = 0..=1, require_equals = true, default_missing_value = "")]
+        force_with_lease: Vec<String>,
+        /// Replace the remote head whatever it is when the publish reads it (still one atomic
+        /// compare-and-swap, but not checked against what you last fetched)
+        #[arg(long)]
+        force_without_lease: bool,
+        /// Delete this remote branch (only if it is the head you last fetched; repeatable)
+        #[arg(long = "delete", value_name = "BRANCH")]
+        delete: Vec<String>,
     },
     /// Lock files on the remote so others cannot publish changes to them
     Lock {
@@ -798,7 +829,7 @@ fn print_pick(zone: &str, out: MergeOutcome, verb: &str) -> Result<(), Error> {
             println!("Inspect with `vcs conflict list|show <path>`; give up with `vcs merge --abort`.");
             return Err(Error::Msg(format!("{verb} has conflicts")));
         }
-        MergeOutcome::UpToDate | MergeOutcome::FastForward { .. } => println!("nothing to do"),
+        MergeOutcome::UpToDate | MergeOutcome::FastForward { .. } | MergeOutcome::Squashed { .. } => println!("nothing to do"),
     }
     Ok(())
 }
@@ -1286,7 +1317,13 @@ fn run(cli: Cli) -> Result<(), Error> {
             }
         }
         Cmd::Gen(g) => generate::run(g, <Cli as clap::CommandFactory>::command())?,
-        Cmd::Branch { name, zone, delete, force } => {
+        Cmd::Branch {
+            name,
+            zone,
+            delete,
+            force,
+            at,
+        } => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
             match name {
@@ -1296,9 +1333,13 @@ fn run(cli: Cli) -> Result<(), Error> {
                 }
                 None if delete => return Err(Error::Msg("--delete needs a branch name".into())),
                 Some(n) => {
-                    let h = repo.create_branch(&zone, &n)?;
+                    let h = match &at {
+                        Some(c) => repo.create_branch_at(&zone, &n, c)?,
+                        None => repo.create_branch(&zone, &n)?,
+                    };
                     println!("created {zone}/{n} at {}", h.short());
                 }
+                None if at.is_some() => return Err(Error::Msg("--at needs a branch name".into())),
                 None => print_branches(&repo, &zone)?,
             }
         }
@@ -1324,6 +1365,10 @@ fn run(cli: Cli) -> Result<(), Error> {
             assist,
             assist_timeout,
             no_assist,
+            no_ff,
+            squash,
+            ff_only,
+            message,
         } => {
             let (mut repo, cwd) = open()?;
             repo.set_structural(!no_structural && config::Config::load()?.structural()?);
@@ -1340,13 +1385,19 @@ fn run(cli: Cli) -> Result<(), Error> {
             };
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
             hooks::fire_simple(&repo, &zone, "pre-merge", std::slice::from_ref(&branch))?;
-            let out = if remote {
-                repo.merge_remote(&zone, &branch, author()?)?
-            } else {
-                repo.merge(&zone, &branch, author()?)?
+            let opts = vcs_repo::MergeOpts {
+                no_ff,
+                squash,
+                ff_only,
+                message,
             };
+            let out = repo.merge_with(&zone, &branch, remote, &opts, author()?)?;
             match out {
                 MergeOutcome::UpToDate => println!("already up to date"),
+                MergeOutcome::Squashed { changed } => {
+                    println!("{zone}: squashed {branch}: {changed} path(s) staged, branch not moved");
+                    println!("Review with `vcs status`, then record one commit with `vcs commit -m <message>`.");
+                }
                 MergeOutcome::FastForward { from, to } => {
                     println!("{zone}: fast-forward {} -> {}", opt_short(from), to.short());
                     hooks::fire_simple(&repo, &zone, "post-merge", std::slice::from_ref(&branch))?;
@@ -1749,7 +1800,9 @@ fn run(cli: Cli) -> Result<(), Error> {
         Cmd::Shelves(a) => shelve_cmd::shelves(&open()?.0, a, &principal())?,
         Cmd::Unshelve(a) => shelve_cmd::unshelve(&open()?.0, a, &principal())?,
         Cmd::P4(a) => p4map::run(&a)?,
-        Cmd::Clone { url, dir, zones, stats, .. } => {
+        Cmd::Clone {
+            url, dir, zones, stats, ..
+        } => {
             if bundle_cmd::try_clone(&url, &dir, &zones, author()?)? {
                 return Ok(());
             }
@@ -1772,7 +1825,15 @@ fn run(cli: Cli) -> Result<(), Error> {
                 println!("  add one later with `vcs zone add <name>` then `vcs fetch --zone <name>`");
             }
         }
-        Cmd::Publish { zones, repair } => {
+        Cmd::Publish {
+            zones,
+            repair,
+            branches,
+            force,
+            force_with_lease,
+            force_without_lease,
+            delete,
+        } => {
             let (repo, _) = open()?;
             let backend = remote::open_backend(&need_remote(&repo)?)?;
             if repair {
@@ -1781,16 +1842,52 @@ fn run(cli: Cli) -> Result<(), Error> {
             let want = (!zones.is_empty()).then_some(zones.as_slice());
             let pending = hooks::publish_lines(&repo, want);
             hooks::fire_with_stdin(&repo, "pre-publish", &pending)?;
-            let rep = repo.publish_as(backend.as_ref(), want, author()?, &principal())?;
+            let mut opts = vcs_repo::PublishOpts {
+                branches,
+                force: None,
+                delete,
+            };
+            if force || force_without_lease || !force_with_lease.is_empty() {
+                let mut spec = vcs_repo::ForceSpec {
+                    without_lease: force_without_lease,
+                    expect: Default::default(),
+                };
+                for l in &force_with_lease {
+                    if l.is_empty() {
+                        continue;
+                    }
+                    let (b, id) = l.split_once(':').unwrap_or((l.as_str(), ""));
+                    if !opts.branches.iter().any(|x| x == b) {
+                        opts.branches.push(b.to_owned());
+                    }
+                    if !id.is_empty() {
+                        spec.expect.insert(b.to_owned(), id.to_owned());
+                    }
+                }
+                opts.force = Some(spec);
+            }
+            let rep = repo.publish_with(backend.as_ref(), want, author()?, &principal(), &opts)?;
             let done: String = rep.updated.iter().map(|(a, b, old, new)| hooks::line(a, b, *old, *new)).collect();
             if !done.is_empty() {
                 hooks::fire_with_stdin(&repo, "post-publish", &done)?;
             }
-            if rep.updated.is_empty() && rep.tags.is_empty() {
+            if rep.updated.is_empty() && rep.tags.is_empty() && rep.deleted.is_empty() {
                 println!("nothing to publish");
             }
             for (a, b, old, new) in &rep.updated {
                 println!("{a}/{b} {} -> {}", opt_short(*old), new.short());
+            }
+            for (z, b, old, new) in &rep.forced {
+                println!("FORCED {z}/{b}: replaced remote head {} with {}", old.short(), new.short());
+                println!("  the old head is kept: it is in the operation log and the remote transaction log.");
+                println!(
+                    "  to get it back: vcs branch {b}-before-force --at {}   (then publish it or merge it)",
+                    old.to_hex()
+                );
+            }
+            for (z, b, old) in &rep.deleted {
+                println!("deleted remote branch {z}/{b} (it was at {})", old.short());
+                println!("  to restore: vcs branch {b} --at {}   then vcs publish {b}", old.to_hex());
             }
             for (z, n) in &rep.tags {
                 println!("tag {z}/{n}");

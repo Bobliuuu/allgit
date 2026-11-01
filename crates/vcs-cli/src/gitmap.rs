@@ -504,20 +504,42 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             let mut p = parse(cmd, rest, &["-m", "--message", "-s", "--strategy", "-X"]);
             let abort = p.take(&["--abort"]);
             let cont = p.take(&["--continue"]);
+            let no_ff = p.take(&["--no-ff"]);
+            let squash = p.take(&["--squash"]);
+            let ff_only = p.take(&["--ff-only"]);
+            let message = p.val(&["-m", "--message"]);
             p.take(&["-q", "--quiet", "--no-edit", "--edit", "-e", "--verbose", "-v", "--stat", "--no-stat", "--ff", "--no-verify"]);
-            p.finish("`vcs merge <branch>` (fast-forward when possible, else a merge commit); no --no-ff/--squash/--ff-only/-s/-m")?;
+            p.finish("`vcs merge [--no-ff|--squash|--ff-only] [-m MSG] <branch>`; no -s/-X, --no-commit")?;
+            if usize::from(no_ff) + usize::from(squash) + usize::from(ff_only) > 1 {
+                return Err(Error::Msg("git merge: --no-ff, --squash and --ff-only are mutually exclusive".into()));
+            }
             if abort {
                 vec![Step::Vcs(v(&["merge", "--abort"]))]
             } else if cont {
                 vec![Step::Vcs(v(&["commit"]))]
             } else {
+                let mut a = v(&["merge"]);
+                for (on, f) in [(no_ff, "--no-ff"), (squash, "--squash"), (ff_only, "--ff-only")] {
+                    if on {
+                        a.push(f.into());
+                    }
+                }
+                if let Some(m) = message {
+                    a.extend(["-m".to_owned(), m]);
+                }
                 match p.pos.as_slice() {
                     [b] => match b.strip_prefix("origin/") {
-                        Some(r) => vec![Step::Vcs(v(&["merge", "--remote", r]))],
-                        None => vec![Step::Vcs(v(&["merge", b]))],
+                        Some(r) => a.extend(["--remote".to_owned(), r.to_owned()]),
+                        None => a.push(b.clone()),
                     },
                     _ => return Err(missing(cmd, "merging several branches", "`vcs merge <branch>` once per branch")),
                 }
+                let mut out = vec![];
+                if squash {
+                    out.push(note("--squash stages the result without committing; run `git commit` (vcs commit) to record it"));
+                }
+                out.push(Step::Vcs(a));
+                out
             }
         }
         "rebase" => {
@@ -606,23 +628,76 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
         }
         "push" => {
             let mut p = parse(cmd, rest, &["--zone", "--receive-pack", "--repo"]);
-            p.take(&["-u", "--set-upstream", "-q", "--quiet", "-v", "--verbose", "--all", "--follow-tags", "--no-verify"]);
+            p.take(&["-u", "--set-upstream", "-q", "--quiet", "-v", "--verbose", "--all", "--follow-tags", "--no-verify", "--force-if-includes", "--no-force-with-lease"]);
             let zones = p.vals(&["--zone"]);
-            if p.take(&["-f", "--force", "--force-with-lease", "--delete", "-d", "--tags", "--mirror", "--prune"]) {
-                return Err(missing(
-                    cmd,
-                    "force/delete/tag pushes",
-                    "`vcs publish` only fast-forwards; delete a remote branch with `vcs branch -d` then publish; tags travel with `vcs publish`",
-                ));
+            let force = p.take(&["-f", "--force"]);
+            let leases = p.vals(&["--force-with-lease"]);
+            let delete = p.take(&["-d", "--delete"]);
+            if p.take(&["--tags", "--mirror", "--prune"]) {
+                return Err(missing(cmd, "tag/mirror/prune pushes", "tags travel with `vcs publish`; delete a remote branch with `vcs publish --delete <branch>`"));
             }
-            p.finish("`vcs publish [--zone Z]`")?;
+            p.finish("`vcs publish [--zone Z] [--force | --force-with-lease[=BRANCH[:ID]]] [--delete BRANCH] [BRANCH...]`")?;
             let mut a = v(&["publish"]);
             for z in zones {
                 a.extend(["--zone".to_owned(), z]);
             }
+            let mut forced = force || !leases.is_empty();
+            if force {
+                a.push("--force".into());
+            }
+            for l in &leases {
+                if l.is_empty() {
+                    a.push("--force-with-lease".into());
+                } else {
+                    a.push(format!("--force-with-lease={l}"));
+                }
+            }
+            // positionals: [remote] then refspecs
+            let mut it = p.pos.iter();
+            let remote = it.next();
+            let mut branches = vec![];
+            let mut deletes = vec![];
+            for r in it {
+                if delete {
+                    deletes.push(r.clone());
+                } else if let Some(b) = r.strip_prefix(':') {
+                    deletes.push(b.to_owned());
+                } else {
+                    let (plus, r) = match r.strip_prefix('+') {
+                        Some(x) => (true, x),
+                        None => (false, r.as_str()),
+                    };
+                    forced |= plus;
+                    let b = match r.split_once(':') {
+                        None => r,
+                        Some((x, y)) if x == y => x,
+                        Some(_) => {
+                            return Err(missing(cmd, "pushing a branch under another name", "`vcs branch` the name you want, then `vcs publish <branch>`"))
+                        }
+                    };
+                    if b != "HEAD" {
+                        branches.push(b.to_owned());
+                    }
+                    if plus && !a.iter().any(|x| x.starts_with("--force")) {
+                        a.push("--force".into());
+                    }
+                }
+            }
+            for d in &deletes {
+                a.extend(["--delete".to_owned(), d.clone()]);
+            }
+            a.extend(branches);
             let mut out = vec![];
-            if p.pos.len() > 1 || p.pos.first().is_some_and(|r| r != "origin") {
-                out.push(note("push publishes ALL checked-out branches atomically; the branch/refspec argument is ignored"));
+            if remote.is_some_and(|r| r != "origin") {
+                out.push(note("the remote name is ignored: vcs has one remote (`vcs remote`)"));
+            }
+            if forced {
+                out.push(note(
+                    "vcs --force is a lease: it only replaces the remote branch if it is still the head you last fetched (use --force-with-lease=BRANCH:ID to name the value; --force-without-lease is native-only); the replaced head is kept in the op log and the audit log",
+                ));
+            }
+            if !deletes.is_empty() {
+                out.push(note("--delete only removes the remote branch if it is still the head you last fetched; the old head is kept in the op log"));
             }
             out.push(Step::Vcs(a));
             out

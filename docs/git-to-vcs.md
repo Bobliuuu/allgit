@@ -34,6 +34,32 @@ None of these detects whether the directory is a vcs or a git repository; they a
 `vcs reset [--soft|--mixed|--hard] [rev] [-- paths]`, `vcs clean -n|-f [-d]`,
 `vcs stash apply`, `vcs switch -c`, and `~N`/`^` revisions for `cherry-pick` and `revert`.
 
+Merge shapes and forced publishes are native first, and the git spellings only rewrite to them:
+
+* `vcs merge --no-ff | --squash | --ff-only [-m MSG] <branch>`. `--squash` stages the merged
+  result (index and files) and leaves the branch where it is; record it with `vcs commit`. A squash
+  that would conflict is refused with nothing changed. `--ff-only` refuses (nothing changed) when
+  the branches have diverged.
+* `vcs publish [BRANCH...] --force | --force-with-lease[=BRANCH[:ID]] | --force-without-lease`
+  and `vcs publish --delete BRANCH`. There is no blind overwrite. A forced publish is one
+  compare-and-swap of the remote branch head inside the same atomic manifest transaction as any
+  other publish. `--force` (and bare `--force-with-lease`) leases against the head you last
+  fetched: if someone moved the remote branch since, the publish fails and nothing changes.
+  `--force-with-lease=BRANCH:ID` leases against a head you name (a prefix of its id is enough).
+  `--force-without-lease` replaces whatever head the remote has when the publish reads it; it is
+  still one atomic swap, only not tied to what you last fetched, and is not reachable from the git
+  spelling. `--delete` is leased the same way.
+* Every forced update and deletion is recorded: in the remote transaction (the replaced head is
+  its `old` value, which remote garbage collection keeps as a root for the retention window), in
+  your operation log (`vcs op log` names the full replaced id), as a local transaction object (a
+  local GC root), and, on `vcs-server`, as `FORCE` / `DELETE-BRANCH` lines in the audit log.
+  To get a replaced head back: `vcs branch rescue --at <id>` (the id is printed by the publish and
+  is in the op log). A head you never fetched (`--force-without-lease`) can only be recovered
+  from the remote's transaction log while it is retained.
+* Server rules still apply to a forced update: `require-signed` checks the commits new to the
+  remote, locks check the paths that change, and the new `protect-branch <zone|*> <glob>` policy
+  rule refuses any non-fast-forward move and any deletion of matching branches.
+
 ## Concepts that differ
 
 * Zones: each zone has its own branch heads, so `reset`, `switch`, `branch`, `log` act on the zone
@@ -42,7 +68,8 @@ None of these detects whether the directory is a vcs or a git repository; they a
   repository: `vcs zone create <name> --path <dir>`, `vcs zone add|remove <name>` to subscribe,
   `vcs clone --zone <name>` to download only some zones (docs/zones.md).
 * One remote, no detached HEAD, no per-branch upstream, no patch files (`format-patch`, `am`,
-  `apply`): exchange commits with `vcs publish`/`vcs fetch` or `vcs bundle`.
+  `apply`): exchange commits with `vcs publish`/`vcs fetch` or `vcs bundle`. `git push --force`
+  is a lease (see above), never a blind overwrite.
 * `vcs log` shows 20 commits by default; `vcs git log` shows all, like git.
 
 ## The table
@@ -56,7 +83,7 @@ Status: exact (same command and flags), renamed (other spelling, same meaning), 
 semantics differ as the notes say), missing (no equivalent; the notes name the native route).
 
 <!-- BEGIN GENERATED TABLE -->
-214 rows: 105 exact, 31 renamed, 22 different, 56 missing.
+222 rows: 111 exact, 31 renamed, 27 different, 53 missing.
 
 | git | vcs | status | notes | test |
 |---|---|---|---|---|
@@ -169,8 +196,10 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git merge --abort` | `vcs merge --abort` | exact |  | `merge` |
 | `git merge --continue` | `vcs commit` | exact |  | translation |
 | `git merge origin/main` | `vcs merge --remote main` | renamed | merges the remote-tracking branch as last fetched | translation |
-| `git merge --no-ff feature` | none | missing | no way to force a merge commit when a fast-forward is possible | translation |
-| `git merge --squash feature` | none | missing | no squash merge | translation |
+| `git merge --no-ff feature` | `vcs merge --no-ff feature` | exact | always a merge commit, even when a fast-forward is possible | `merge-shapes` |
+| `git merge --no-ff -m release feature` | `vcs merge --no-ff -m release feature` | exact |  | `merge-shapes` |
+| `git merge --squash feature` | `vcs merge --squash feature` | exact | stages the merged result; the branch does not move until you commit. A squash that would conflict is refused with nothing changed | `merge-shapes` |
+| `git merge --ff-only feature` | `vcs merge --ff-only feature` | exact | refuses (nothing changed) unless it can fast-forward | `merge-shapes` |
 | `git rebase main` | `vcs rebase main` | exact | keeps each change id | `merge` |
 | `git rebase --continue` | `vcs rebase --continue` | exact |  | translation |
 | `git rebase --abort` | `vcs rebase --abort` | exact |  | `merge` |
@@ -201,8 +230,14 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git pull` | `vcs sync` | different | fetch + fast-forward only; diverged branches are left alone, nothing is merged (`vcs merge --remote <branch>`) | translation |
 | `git pull --rebase` | none | missing | `vcs fetch`, `vcs merge --remote <branch>`, or `vcs sync` then `vcs rebase <branch>` | translation |
 | `git push` | `vcs publish` | different | publishes ALL checked-out branches in one atomic transaction; fast-forward only | translation |
-| `git push -u origin main` | `vcs publish` | different | the branch argument is ignored; no upstream tracking setting | translation |
-| `git push --force` | none | missing | publish is fast-forward only | translation |
+| `git push -u origin main` | `vcs publish main` | different | publishes only the named branch; no upstream tracking setting | translation |
+| `git push --force` | `vcs publish --force` | different | a lease, never a blind overwrite: replaces a diverged remote branch only if it is still the head you last fetched, else refuses with nothing changed. Records the replaced head in the op log and the server audit log | `push-force` |
+| `git push -f origin main` | `vcs publish --force main` | different | same lease as `--force`; `--force-without-lease` is native-only | `push-force` |
+| `git push origin +main` | `vcs publish --force main` | different | the `+` refspec prefix is the same lease | translation |
+| `git push --force-with-lease origin main` | `vcs publish --force-with-lease main` | exact | leased against the remote-tracking head (last fetched) | translation |
+| `git push --force-with-lease=main:abc123 origin` | `vcs publish --force-with-lease=main:abc123` | exact | the id may be a prefix of the remote head you expect | translation |
+| `git push origin --delete feature` | `vcs publish --delete feature` | different | deletes the remote branch only if it is still the head you last fetched; the old head is recoverable with `vcs branch <name> --at <id>` | `push-force` |
+| `git push origin :feature` | `vcs publish --delete feature` | different | same as `--delete` | translation |
 | `git push --tags` | none | missing | tags travel with `vcs publish` | translation |
 | `git blame f.txt` | `vcs blame f.txt` | exact |  | `history` |
 | `git blame -M f.txt` | `vcs blame -M f.txt` | exact |  | `history` |

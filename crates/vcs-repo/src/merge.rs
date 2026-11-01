@@ -120,6 +120,25 @@ pub enum MergeOutcome {
     Conflicted {
         paths: Vec<String>,
     },
+    /// `--squash`: the merged result is staged (index and files); no commit was made and the
+    /// branch did not move. Commit it with `vcs commit` to record a single-parent commit.
+    Squashed {
+        /// Paths whose content or presence changed.
+        changed: usize,
+    },
+}
+
+/// Shape of a merge (`vcs merge --no-ff|--squash|--ff-only|-m`).
+#[derive(Clone, Debug, Default)]
+pub struct MergeOpts {
+    /// Always create a merge commit, even when a fast-forward is possible.
+    pub no_ff: bool,
+    /// Stage the merged result without a merge commit and without moving the branch.
+    pub squash: bool,
+    /// Refuse unless the merge is a fast-forward (or already up to date).
+    pub ff_only: bool,
+    /// Message for the merge commit (default: "Merge branch '<b>' into <current>").
+    pub message: Option<String>,
 }
 
 impl Repo {
@@ -375,27 +394,52 @@ impl Repo {
 
     /// Merge local branch `zone/branch` into the checked-out branch of `zone`.
     pub fn merge(&self, zone: &str, branch: &str, author: Signature) -> Result<MergeOutcome> {
+        self.merge_with(zone, branch, false, &MergeOpts::default(), author)
+    }
+
+    /// Merge a local branch (or, with `remote`, the remote-tracking branch as last fetched) with
+    /// an explicit merge shape.
+    pub fn merge_with(&self, zone: &str, branch: &str, remote: bool, opts: &MergeOpts, author: Signature) -> Result<MergeOutcome> {
+        if usize::from(opts.no_ff) + usize::from(opts.squash) + usize::from(opts.ff_only) > 1 {
+            return msg("--no-ff, --squash and --ff-only are mutually exclusive");
+        }
         let zone = self.resolve_zone(zone)?;
         let zone = zone.as_str();
+        if remote {
+            let Some(theirs) = self.remote_refs()?.head(zone, branch) else {
+                return msg(format!("no remote-tracking branch {zone}/{branch} (run `vcs fetch`)"));
+            };
+            let label = format!("origin/{branch}");
+            return self.merge_commit(
+                zone,
+                theirs,
+                &label,
+                &format!("Merge remote-tracking branch '{label}'"),
+                opts,
+                author,
+            );
+        }
         let refs = self.refs()?;
         let Some(theirs) = refs.head(zone, branch) else {
             return msg(format!("no such branch {zone}/{branch}"));
         };
-        self.merge_commit(zone, theirs, branch, &format!("Merge branch '{branch}'"), author)
+        self.merge_commit(zone, theirs, branch, &format!("Merge branch '{branch}'"), opts, author)
     }
 
     /// Merge the remote-tracking branch `zone/branch` (as last fetched) into `zone`.
     pub fn merge_remote(&self, zone: &str, branch: &str, author: Signature) -> Result<MergeOutcome> {
-        let zone = self.resolve_zone(zone)?;
-        let zone = zone.as_str();
-        let Some(theirs) = self.remote_refs()?.head(zone, branch) else {
-            return msg(format!("no remote-tracking branch {zone}/{branch} (run `vcs fetch`)"));
-        };
-        let label = format!("origin/{branch}");
-        self.merge_commit(zone, theirs, &label, &format!("Merge remote-tracking branch '{label}'"), author)
+        self.merge_with(zone, branch, true, &MergeOpts::default(), author)
     }
 
-    fn merge_commit(&self, zone: &str, theirs: ObjectId, label: &str, msg_prefix: &str, author: Signature) -> Result<MergeOutcome> {
+    fn merge_commit(
+        &self,
+        zone: &str,
+        theirs: ObjectId,
+        label: &str,
+        msg_prefix: &str,
+        opts: &MergeOpts,
+        author: Signature,
+    ) -> Result<MergeOutcome> {
         let _l = self.lock()?;
         self.rebase_guard("merge")?;
         let zones = self.zones()?;
@@ -431,7 +475,26 @@ impl Repo {
                 ))
             }
             [b] if *b == theirs => return Ok(MergeOutcome::UpToDate),
+            [b] if *b == ours && opts.squash => {
+                let their_root = their_commit.root;
+                let diff = treeops::diff_trees(&self.store, Some(ours_root), Some(their_root), &prefix)?;
+                let changed = diff.old.keys().chain(diff.new.keys()).collect::<BTreeSet<_>>().len();
+                self.transition_diff(zone, &zones, &diff, &mut ix)?;
+                self.save_index(&mut ix)?;
+                self.record_op(&format!("merge --squash {label} into {zone}/{branch} (staged, not committed)"), None)?;
+                return Ok(MergeOutcome::Squashed { changed });
+            }
+            [b] if *b == ours && opts.no_ff => {
+                let diff = treeops::diff_trees(&self.store, Some(ours_root), Some(their_commit.root), &prefix)?;
+                let message = opts.message.clone().unwrap_or_else(|| format!("{msg_prefix} into {branch}"));
+                return self.write_merge_commit(zone, &branch, ours, theirs, their_commit.root, message, author, &diff, &mut refs, &mut ix, msg_prefix);
+            }
             [b] if *b == ours => return self.fast_forward(zone, &branch, Some(ours), Some(ours_root), theirs, &mut refs, &mut ix),
+            [_] if opts.ff_only => {
+                return msg(format!(
+                    "cannot fast-forward: {zone}/{branch} and {label} have diverged (--ff-only refuses to create a merge)\n\nOptions:\n  vcs merge {label}      (create a merge commit)\n  vcs rebase {label}     (replay your commits on top)"
+                ))
+            }
             [b] => *b,
             many => {
                 let ids: Vec<String> = many.iter().map(|b| b.short()).collect();
@@ -448,6 +511,14 @@ impl Repo {
             return msg(format!(
                 "{:?} is a file on one side and a directory on the other; file/directory conflicts are not supported yet (nothing was changed)",
                 c.path
+            ));
+        }
+        if opts.squash && !tm.conflicts.is_empty() {
+            let list: Vec<&str> = tm.conflicts.iter().map(|c| c.path.as_str()).collect();
+            return msg(format!(
+                "--squash would conflict in {} path(s): {}\nNothing was changed. Merge without --squash, resolve, then squash with `vcs reset --soft`, or rebase first.",
+                list.len(),
+                list.join(", ")
             ));
         }
         if !tm.conflicts.is_empty() {
@@ -485,37 +556,21 @@ impl Repo {
             });
         }
         let (new_root, diff) = tm.apply(&self.store, Some(ours_root), recs.is_empty())?;
-        if recs.is_empty() {
-            let root = new_root;
-            let message = format!("{msg_prefix} into {branch}");
-            let commit = Commit {
-                zone: zone.to_owned(),
-                parents: vec![ours, theirs],
-                root,
-                change_id: fresh_change_id(zone, &root, Some(&ours), &author),
-                author: author.clone(),
-                message: message.clone(),
-            };
-            let cid = self.store.put(&Object::Commit(commit))?;
-            let update = RefUpdate {
-                zone: zone.into(),
-                branch: branch.clone(),
-                old: Some(ours),
-                new: cid,
-            };
-            self.store.put(&Object::Transaction(Transaction {
-                updates: vec![update.clone()],
-                author,
-                message,
-                lock_ops: vec![],
-            }))?;
+        if recs.is_empty() && opts.squash {
+            let changed = diff.old.keys().chain(diff.new.keys()).collect::<BTreeSet<_>>().len();
             self.transition_diff(zone, &zones, &diff, &mut ix)?;
             self.save_index(&mut ix)?;
-            refs.apply(&[update])?;
-            self.store.sync()?; // merge commit + transaction durable before refs name them
-            write_atomic(&self.common.join("refs"), &refs.encode())?;
-            self.record_op(&format!("{msg_prefix} into {zone}/{branch}"), None)?;
-            return Ok(MergeOutcome::Merged { commit: cid });
+            self.record_op(
+                &format!("merge --squash {label} into {zone}/{branch} (staged, not committed)"),
+                None,
+            )?;
+            return Ok(MergeOutcome::Squashed { changed });
+        }
+        if recs.is_empty() {
+            let message = opts.message.clone().unwrap_or_else(|| format!("{msg_prefix} into {branch}"));
+            return self.write_merge_commit(
+                zone, &branch, ours, theirs, new_root, message, author, &diff, &mut refs, &mut ix, msg_prefix,
+            );
         }
         let touched: BTreeSet<String> = diff
             .old
@@ -544,6 +599,54 @@ impl Repo {
         Ok(MergeOutcome::Conflicted {
             paths: state.conflicts.iter().map(|c| c.path.clone()).collect(),
         })
+    }
+
+    /// Write the two-parent merge commit with root `root`, update the tree/index by `diff`, move
+    /// the branch (compare-and-set from `ours`) and record the operation.
+    #[allow(clippy::too_many_arguments)]
+    fn write_merge_commit(
+        &self,
+        zone: &str,
+        branch: &str,
+        ours: ObjectId,
+        theirs: ObjectId,
+        root: ObjectId,
+        message: String,
+        author: Signature,
+        diff: &treeops::TreeDiff,
+        refs: &mut Refs,
+        ix: &mut Index,
+        msg_prefix: &str,
+    ) -> Result<MergeOutcome> {
+        let zones = self.zones()?;
+        let commit = Commit {
+            zone: zone.to_owned(),
+            parents: vec![ours, theirs],
+            root,
+            change_id: fresh_change_id(zone, &root, Some(&ours), &author),
+            author: author.clone(),
+            message: message.clone(),
+        };
+        let cid = self.store.put(&Object::Commit(commit))?;
+        let update = RefUpdate {
+            zone: zone.into(),
+            branch: branch.to_owned(),
+            old: Some(ours),
+            new: cid,
+        };
+        self.store.put(&Object::Transaction(Transaction {
+            updates: vec![update.clone()],
+            author,
+            message,
+            lock_ops: vec![],
+        }))?;
+        self.transition_diff(zone, &zones, diff, ix)?;
+        self.save_index(ix)?;
+        refs.apply(&[update])?;
+        self.store.sync()?; // merge commit + transaction durable before refs name them
+        write_atomic(&self.common.join("refs"), &refs.encode())?;
+        self.record_op(&format!("{msg_prefix} into {zone}/{branch}"), None)?;
+        Ok(MergeOutcome::Merged { commit: cid })
     }
 
     #[allow(clippy::too_many_arguments)]

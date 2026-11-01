@@ -1539,6 +1539,42 @@ impl Repo {
         Ok(head)
     }
 
+    /// Create `branch` in `zone` at commit `at` (a full or prefix id; the commit must be in this
+    /// repository's store). Used to recover a head a forced publish or a deletion replaced.
+    pub fn create_branch_at(&self, zone: &str, branch: &str, at: &str) -> Result<ObjectId> {
+        let zone = self.resolve_zone(zone)?;
+        let zone = zone.as_str();
+        validate_branch_name(branch)?;
+        let _l = self.lock()?;
+        let mut refs = self.refs()?;
+        if refs.head(zone, branch).is_some() {
+            return msg(format!("branch {zone}/{branch} already exists"));
+        }
+        let want = at.to_ascii_lowercase();
+        let id = if want.len() == 64 {
+            ObjectId::from_hex(&want).map_err(|_| Error::Msg(format!("bad commit id {at:?}")))?
+        } else {
+            self.resolve_commit(zone, &want)?
+        };
+        let c = self.commit_obj(&id).map_err(|_| {
+            Error::Msg(format!(
+                "commit {at} is not in this repository (a forced head you never fetched is only on the remote; `vcs fetch` cannot reach it, ask for the old head from whoever has it)"
+            ))
+        })?;
+        if c.zone != zone {
+            return msg(format!("commit {at} belongs to zone {:?}, not {zone:?}", c.zone));
+        }
+        refs.apply(&[RefUpdate {
+            zone: zone.into(),
+            branch: branch.into(),
+            old: None,
+            new: id,
+        }])?;
+        write_atomic(&self.common.join("refs"), &refs.encode())?;
+        self.record_op(&format!("create branch {zone}/{branch} at {}", id.short()), None)?;
+        Ok(id)
+    }
+
     pub(crate) fn require_clean(&self, zone: &str, st: &Status) -> Result<()> {
         if st.merging.as_ref().is_some_and(|m| m.zone == zone) {
             return msg(format!(
