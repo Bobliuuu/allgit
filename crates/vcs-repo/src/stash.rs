@@ -140,6 +140,12 @@ impl Repo {
                 Err(x) if x.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(source) => return Err(Error::Io { path: abs, source }),
             };
+            if m.file_type().is_symlink() {
+                // a link is stashed as a link (its target bytes), never followed or refused
+                let target = io(&abs, crate::repo::read_link_bytes(&abs))?;
+                flat.insert(p.clone(), (EntryMode::Symlink, self.store.put_blob(&target)?));
+                continue;
+            }
             if !m.is_file() {
                 return msg(format!("cannot stash: {p:?} is no longer a regular file"));
             }

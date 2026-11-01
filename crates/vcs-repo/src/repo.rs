@@ -152,7 +152,7 @@ pub(crate) fn mode_of(m: &fs::Metadata) -> EntryMode {
 }
 
 /// Link target as the bytes stored in a symlink blob.
-fn read_link_bytes(abs: &std::path::Path) -> std::io::Result<Vec<u8>> {
+pub(crate) fn read_link_bytes(abs: &std::path::Path) -> std::io::Result<Vec<u8>> {
     let t = fs::read_link(abs)?;
     #[cfg(unix)]
     {

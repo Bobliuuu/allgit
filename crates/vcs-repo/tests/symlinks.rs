@@ -223,3 +223,31 @@ fn restore_recreates_a_symlink_without_following_it() {
     assert_eq!(fs::read_to_string(&victim).unwrap(), "untouched");
     assert!(clean(&r));
 }
+
+#[test]
+fn stash_saves_and_restores_symlinks_as_links() {
+    let (_d, r) = setup();
+    write(&r, "target.txt", "hello");
+    write(&r, "plain.txt", "one");
+    symlink("target.txt", r.worktree().join("link")).unwrap();
+    r.add(&["".into()]).unwrap();
+    r.commit("with link", sig()).unwrap();
+    // an unmodified tracked link must not make `stash` refuse or treat it as modified
+    write(&r, "plain.txt", "two");
+    r.stash_push(None, sig()).unwrap();
+    assert!(clean(&r));
+    assert_eq!(fs::read_link(r.worktree().join("link")).unwrap().to_str(), Some("target.txt"));
+    r.stash_pop(0).unwrap();
+    assert_eq!(fs::read_to_string(r.worktree().join("plain.txt")).unwrap(), "two");
+    assert!(fs::symlink_metadata(r.worktree().join("link")).unwrap().is_symlink());
+    // a retargeted link is a real change: stashed, reverted, and brought back as a link
+    r.add(&["".into()]).unwrap();
+    r.commit("plain two", sig()).unwrap();
+    fs::remove_file(r.worktree().join("link")).unwrap();
+    symlink("plain.txt", r.worktree().join("link")).unwrap();
+    r.stash_push(None, sig()).unwrap();
+    assert_eq!(fs::read_link(r.worktree().join("link")).unwrap().to_str(), Some("target.txt"));
+    r.stash_pop(0).unwrap();
+    assert_eq!(fs::read_link(r.worktree().join("link")).unwrap().to_str(), Some("plain.txt"));
+    assert!(fs::symlink_metadata(r.worktree().join("link")).unwrap().is_symlink());
+}
