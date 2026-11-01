@@ -256,6 +256,26 @@ certificate, so a complete runner must start local MinIO, run `walgit serve --co
 commands (clone, partial/sparse clone, fetch, push) against `https://127.0.0.1:<port>/<repo>.git` with the CA pinned. That
 setup is not implemented here: the walgit study owns it, and the runner then only needs a `Tool::Walgit` arm in `OpCx::tc`
 that reuses the git commands with a different remote URL. [UNVERIFIED: whether walgit supports `--filter=blob:none`.]
+### 7.6 Smoke run (2026-10-31, lambda-final)
+
+Data: `data/storebench-smoke-warm.json` (+ `-summary.csv`): all 16 workloads, scale `smoke`, tools git+vcs (+walgit stub entry),
+warm, 3 trials, seed 42, 2106 trials. `data/storebench-smoke-cold.json`: `small_source`, `binary_heavy`, `zone_subscription`,
+cold and partial (50%), 3 trials, 834 trials. Commands are in each file's `meta.command_line`. Both JSON files are written
+compact (re-serialised from the harness output, no values changed). Machine: AMD EPYC 7J13, 30 cores visible, Linux, git 2.34.1, vcs built from
+`cd0fd09` + this branch (release). **The box was shared: 1-minute load average was 16 to 23 during the runs**, so absolute numbers are inflated and noisy;
+with n = 3 no confidence interval is reliable (`ci_reliable: false`). This run proves the harness works end to end; it is not a performance claim.
+
+CONFIRMED from these data (warm, medians, noisy box): `vcs clone` of `zone_subscription` (100 zones) took about 3.8 s against git's 0.2 s
+(`clone` row), and sparse clone of 10% of zones about 0.34 s against 0.08 s; `vcs repack` on every fixture was faster than `git repack -a -d`
+(semantics differ: see 7.2). Cold runs are slower than warm for the same operation for both tools (e.g. `status` on `small_source`: git 6 -> 18 ms,
+vcs 11 -> 42 ms), i.e. the cache modes do change the measurement.
+
+NEGATIVE RESULT (bug found by the harness, reproduced by hand outside it): at `cd0fd09`, `vcs restore .`, `vcs blame <file>` and `vcs show <commit>`
+fail with `error: object <id> is corrupt: expected blob` for files stored as chunked large files (4 MiB tensors, textures, 256 KiB random files).
+`fsck` reports the repository ok. These cells show `failed > 0` in the summaries (`checkout_files`, `blame`, `lookup` on `binary_heavy`,
+`game_assets`, `ml_checkpoints`, `incompressible`, `highly_compressible`). The file read path used by those commands does not handle chunk manifests.
+
+Not run: scale `small`/`medium`, 10-trial statistics, cold/partial for the other 13 workloads, walgit.
 
 ## Sources
 
