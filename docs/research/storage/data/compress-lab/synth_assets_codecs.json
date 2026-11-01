@@ -1,0 +1,202 @@
+{
+  "classes": [
+    {
+      "adaptive": [
+        {
+          "physical_bytes": 33554430,
+          "policy": "oracle_min_per_file_all_codecs(ignores time)"
+        },
+        {
+          "physical_bytes": 33554430,
+          "policy": "oracle_min_per_file_among_none,lz4,zstd1,zstd3"
+        },
+        {
+          "files_stored_raw": 3,
+          "physical_bytes": 33554430,
+          "policy": "probe16K_lz4>=0.95?store:zstd3",
+          "probe_MBps": 2471.1915535444946
+        }
+      ],
+      "class": "large_binary",
+      "codecs": [
+        {
+          "codec": "none",
+          "compress_MBps_median": 16885.688663977395,
+          "compress_MBps_min_max": [
+            1985.5615770058894,
+            17074.638121437318
+          ],
+          "compress_peak_rss_delta_KiB": 10916,
+          "decompress_MBps_median": 8115.8617907298385,
+          "decompress_peak_rss_delta_KiB": 10920,
+          "physical_bytes": 33554430,
+          "ratio": 1.0,
+          "reps": 3
+        },
+        {
+          "codec": "lz4",
+          "compress_MBps_median": 1316.8977670835116,
+          "compress_MBps_min_max": [
+            1309.3309570000295,
+            1320.6727906044118
+          ],
+          "compress_peak_rss_delta_KiB": 10784,
+          "decompress_MBps_median": 8200.658654463026,
+          "decompress_peak_rss_delta_KiB": 10792,
+          "physical_bytes": 33686019,
+          "ratio": 0.9960936612901632,
+          "reps": 3
+        },
+        {
+          "codec": "zstd1",
+          "compress_MBps_median": 2413.956162588375,
+          "compress_MBps_min_max": [
+            2254.924275796137,
+            2463.094611086133
+          ],
+          "compress_peak_rss_delta_KiB": 516,
+          "decompress_MBps_median": 15247.806627898579,
+          "decompress_peak_rss_delta_KiB": 10984,
+          "physical_bytes": 33555234,
+          "ratio": 0.9999760395054912,
+          "reps": 3
+        },
+        {
+          "codec": "zstd3",
+          "compress_MBps_median": 2101.2275999102008,
+          "compress_MBps_min_max": [
+            1929.055653295525,
+            2140.443549794082
+          ],
+          "compress_peak_rss_delta_KiB": 576,
+          "decompress_MBps_median": 14833.913054242075,
+          "decompress_peak_rss_delta_KiB": 10924,
+          "physical_bytes": 33555234,
+          "ratio": 0.9999760395054912,
+          "reps": 3
+        },
+        {
+          "codec": "zstd9",
+          "compress_MBps_median": 1115.2774769751368,
+          "compress_MBps_min_max": [
+            915.1801634555085,
+            1127.6989995723377
+          ],
+          "compress_peak_rss_delta_KiB": 9404,
+          "decompress_MBps_median": 14797.801835302587,
+          "decompress_peak_rss_delta_KiB": 10924,
+          "physical_bytes": 33555234,
+          "ratio": 0.9999760395054912,
+          "reps": 3
+        },
+        {
+          "codec": "zstd19",
+          "compress_MBps_median": 5.061934821020583,
+          "compress_MBps_min_max": [
+            5.061934821020583,
+            5.061934821020583
+          ],
+          "compress_peak_rss_delta_KiB": 82612,
+          "decompress_MBps_median": 3502.9120963439855,
+          "decompress_peak_rss_delta_KiB": 10928,
+          "physical_bytes": 33555234,
+          "ratio": 0.9999760395054912,
+          "reps": 1
+        },
+        {
+          "codec": "brotli5",
+          "compress_MBps_median": 145.69369598611894,
+          "compress_MBps_min_max": [
+            128.28442279352151,
+            150.99064709210856
+          ],
+          "compress_peak_rss_delta_KiB": 34936,
+          "decompress_MBps_median": 6300.600947274971,
+          "decompress_peak_rss_delta_KiB": 0,
+          "physical_bytes": 33554539,
+          "ratio": 0.9999967515572186,
+          "reps": 3
+        },
+        {
+          "codec": "brotli9",
+          "compress_MBps_median": 46.37016962768435,
+          "compress_MBps_min_max": [
+            46.37016962768435,
+            46.37016962768435
+          ],
+          "compress_peak_rss_delta_KiB": 51716,
+          "decompress_MBps_median": 2632.883218130803,
+          "decompress_peak_rss_delta_KiB": 10920,
+          "physical_bytes": 33554528,
+          "ratio": 0.999997079380762,
+          "reps": 1
+        },
+        {
+          "codec": "brotli11",
+          "compress_MBps_median": 1.06870712498721,
+          "compress_MBps_min_max": [
+            1.06870712498721,
+            1.06870712498721
+          ],
+          "compress_peak_rss_delta_KiB": 72888,
+          "decompress_MBps_median": 4811.798204769405,
+          "decompress_peak_rss_delta_KiB": 0,
+          "physical_bytes": 33554538,
+          "ratio": 0.99999678135935,
+          "reps": 1
+        }
+      ],
+      "dictionary": null,
+      "sample_bytes": 33554430,
+      "sample_files": 3
+    }
+  ],
+  "dataset": {
+    "by_class": {
+      "large_binary": {
+        "blobs": 3,
+        "bytes": 403862246
+      }
+    },
+    "files_per_rev": [
+      1,
+      1,
+      1
+    ],
+    "logical_bytes_all_revisions": 403862246,
+    "logical_bytes_last_revision": 134654096,
+    "name": "synth_assets",
+    "revisions": 3,
+    "unique_blobs": 3,
+    "unique_bytes": 403862246
+  },
+  "experiment": "codecs",
+  "machine": {
+    "args": [
+      "crates/vcs-compress-lab/target/release/compress-lab",
+      "codecs",
+      "--name",
+      "synth_assets",
+      "--source",
+      "dirrevs:/home/ubuntu/rt/lab_data/synth_assets",
+      "--out",
+      "/home/ubuntu/rt/lab_out/synth_assets_codecs.json"
+    ],
+    "cpu": "AMD EPYC 7J13 64-Core Processor",
+    "crates": {
+      "blake3": "1",
+      "brotli": "9",
+      "fastcdc": "5",
+      "lz4_flex": "0.14",
+      "zstd": "0.14"
+    },
+    "kernel": "6.8.0-1046-nvidia",
+    "loadavg_at_start": "21.06 20.83 16.95 6/727 3290545",
+    "memtotal": "MemTotal:       226763280 kB",
+    "nproc": 30,
+    "zstd": "1.5.7"
+  },
+  "max_file_window": 16777216,
+  "sample_cap_bytes": 67108864,
+  "source_spec": "dirrevs:/home/ubuntu/rt/lab_data/synth_assets"
+}

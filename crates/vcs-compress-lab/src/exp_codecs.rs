@@ -15,8 +15,16 @@ pub struct Opts {
 /// represented by a contiguous window from their middle.
 fn sample<'a>(c: &'a Corpus, class: Class, o: &Opts) -> Vec<(&'a [u8], bool)> {
     // If big files alone would exceed half of the cap, shrink the per-file window (floor 1 MiB) so that every big file is represented.
-    let nbig = c.blobs.iter().filter(|b| b.class == class && b.data.len() > o.max_file_window).count();
-    let window = if nbig * o.max_file_window > o.cap_bytes / 2 && nbig > 0 { (o.cap_bytes / 2 / nbig).max(1 << 20) } else { o.max_file_window };
+    let nbig = c
+        .blobs
+        .iter()
+        .filter(|b| b.class == class && b.data.len() > o.max_file_window)
+        .count();
+    let window = if nbig * o.max_file_window > o.cap_bytes / 2 && nbig > 0 {
+        (o.cap_bytes / 2 / nbig).max(1 << 20)
+    } else {
+        o.max_file_window
+    };
     let files: Vec<(&[u8], bool)> = c
         .blobs
         .iter()
@@ -38,7 +46,12 @@ fn sample<'a>(c: &'a Corpus, class: Class, o: &Opts) -> Vec<(&'a [u8], bool)> {
         return files;
     }
     let stride = (total as f64 / o.cap_bytes as f64).ceil() as usize;
-    files.into_iter().enumerate().filter(|(i, _)| i % stride == 0).map(|(_, f)| f).collect()
+    files
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| i % stride == 0)
+        .map(|(_, f)| f)
+        .collect()
 }
 
 fn mbps(bytes: usize, secs: f64) -> f64 {
@@ -46,9 +59,14 @@ fn mbps(bytes: usize, secs: f64) -> f64 {
 }
 
 pub fn run(c: &Corpus, o: &Opts) -> Value {
-    let codecs: Vec<Codec> = ["none", "lz4", "zstd1", "zstd3", "zstd9", "zstd19", "brotli5", "brotli9", "brotli11"].iter().map(|s| Codec::parse(s)).collect();
+    let base: Vec<&str> = vec!["none", "lz4", "zstd1", "zstd3", "zstd9", "zstd19", "brotli5", "brotli9", "brotli11"];
     let mut classes = Vec::new();
     for class in Class::ALL {
+        let mut names = base.clone();
+        if matches!(class, Class::ModelCkpt | Class::LargeBinary) {
+            names.extend(["shuf2+zstd3", "shuf4+zstd3", "shuf4+zstd9"]);
+        }
+        let codecs: Vec<Codec> = names.iter().map(|s| Codec::parse(s)).collect();
         let sampled = sample(c, class, o);
         if sampled.is_empty() {
             continue;
@@ -117,7 +135,10 @@ pub fn run(c: &Corpus, o: &Opts) -> Value {
         let mut adaptive = Vec::new();
         let oracle: usize = (0..nf).map(|i| sizes.iter().map(|(_, s)| s[i]).min().unwrap()).sum();
         adaptive.push(json!({"policy": "oracle_min_per_file_all_codecs(ignores time)", "physical_bytes": oracle}));
-        let fast: Vec<&(Codec, Vec<usize>)> = sizes.iter().filter(|(c, _)| matches!(c, Codec::None | Codec::Lz4 | Codec::Zstd(1) | Codec::Zstd(3))).collect();
+        let fast: Vec<&(Codec, Vec<usize>)> = sizes
+            .iter()
+            .filter(|(c, _)| matches!(c, Codec::None | Codec::Lz4 | Codec::Zstd(1) | Codec::Zstd(3)))
+            .collect();
         let o2: usize = (0..nf).map(|i| fast.iter().map(|(_, s)| s[i]).min().unwrap()).sum();
         adaptive.push(json!({"policy": "oracle_min_per_file_among_none,lz4,zstd1,zstd3", "physical_bytes": o2}));
         // probe: lz4 on first 16KiB; incompressible (>=0.95) -> store, else zstd3
@@ -143,7 +164,11 @@ pub fn run(c: &Corpus, o: &Opts) -> Value {
         }
         adaptive.push(json!({"policy": "probe16K_lz4>=0.95?store:zstd3", "physical_bytes": probe_total, "files_stored_raw": stored, "probe_MBps": mbps(files.iter().map(|f| f.len().min(16384)).sum(), probe_secs)}));
         // dictionaries
-        let dict = if matches!(class, Class::SourceText | Class::SmallBinary) { dict_experiment(&files, &side) } else { Value::Null };
+        let dict = if matches!(class, Class::SourceText | Class::SmallBinary) {
+            dict_experiment(&files, &side)
+        } else {
+            Value::Null
+        };
         classes.push(json!({"class": class.name(), "sample_files": nf, "sample_bytes": total, "codecs": rows, "adaptive": adaptive, "dictionary": dict}));
     }
     json!({"experiment": "codecs", "dataset": c.summary(), "sample_cap_bytes": o.cap_bytes, "max_file_window": o.max_file_window, "classes": classes})
@@ -151,8 +176,20 @@ pub fn run(c: &Corpus, o: &Opts) -> Value {
 
 /// Train on files whose path hashes to side A, test on side B (no path overlap => no near-duplicate leakage). Buckets by file size.
 fn dict_experiment(files: &[&[u8]], side: &[bool]) -> Value {
-    let train: Vec<&[u8]> = files.iter().enumerate().filter(|(i, _)| side[*i]).map(|(_, f)| &f[..f.len().min(65536)]).take(4000).collect();
-    let test: Vec<&[u8]> = files.iter().enumerate().filter(|(i, _)| !side[*i]).map(|(_, f)| *f).filter(|f| f.len() <= 262144).collect();
+    let train: Vec<&[u8]> = files
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| side[*i])
+        .map(|(_, f)| &f[..f.len().min(65536)])
+        .take(4000)
+        .collect();
+    let test: Vec<&[u8]> = files
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !side[*i])
+        .map(|(_, f)| *f)
+        .filter(|f| f.len() <= 262144)
+        .collect();
     if train.len() < 20 || test.len() < 20 {
         return json!({"skipped": "too few files", "train": train.len(), "test": test.len()});
     }

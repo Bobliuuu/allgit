@@ -1,0 +1,755 @@
+{
+  "compression_after_chunking": "zstd3 per unique chunk",
+  "dataset": {
+    "by_class": {
+      "model_ckpt": {
+        "blobs": 2,
+        "bytes": 268435456
+      }
+    },
+    "files_per_rev": [
+      1,
+      1
+    ],
+    "logical_bytes_all_revisions": 268435456,
+    "logical_bytes_last_revision": 134217728,
+    "name": "synth_sparse",
+    "revisions": 2,
+    "unique_blobs": 2,
+    "unique_bytes": 268435456
+  },
+  "experiment": "chunking",
+  "machine": {
+    "args": [
+      "crates/vcs-compress-lab/target/release/compress-lab",
+      "chunking",
+      "--name",
+      "synth_sparse",
+      "--source",
+      "dirrevs:/home/ubuntu/rt/lab_data/synth_sparse",
+      "--out",
+      "/home/ubuntu/rt/lab_out/synth_sparse_chunking.json"
+    ],
+    "cpu": "AMD EPYC 7J13 64-Core Processor",
+    "crates": {
+      "blake3": "1",
+      "brotli": "9",
+      "fastcdc": "5",
+      "lz4_flex": "0.14",
+      "zstd": "0.14"
+    },
+    "kernel": "6.8.0-1046-nvidia",
+    "loadavg_at_start": "6.58 12.52 16.79 6/690 2846833",
+    "memtotal": "MemTotal:       226763280 kB",
+    "nproc": 30,
+    "zstd": "1.5.7"
+  },
+  "overhead_model": {
+    "index_entry_bytes": 44,
+    "manifest_entry_bytes": 36,
+    "manifest_hdr_bytes": 16
+  },
+  "source_spec": "dirrevs:/home/ubuntu/rt/lab_data/synth_sparse",
+  "strategies": [
+    {
+      "analysis_secs": 0.327362838,
+      "avg_chunk_bytes": 134217728.0,
+      "by_class": {
+        "model_ckpt": {
+          "chunks": 2,
+          "comp": 27043237,
+          "raw": 268435456
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 3659.5505716624493,
+      "chunk_pass_peak_rss_delta_KiB": 0,
+      "cross_revision_dedup_gain_comp_pct": 0.0,
+      "index_bytes_model": 88,
+      "index_memory_bytes_model": 120,
+      "logical_bytes_all_revisions": 268435456,
+      "manifest_bytes_model": 0,
+      "multi_chunk_files": 0,
+      "per_revision": [
+        {
+          "logical": 134217728,
+          "new_comp": 12407067,
+          "new_raw": 134217728,
+          "standalone_unique_comp": 12407067,
+          "standalone_unique_raw": 134217728
+        },
+        {
+          "logical": 134217728,
+          "new_comp": 14636170,
+          "new_raw": 134217728,
+          "standalone_unique_comp": 14636170,
+          "standalone_unique_raw": 134217728
+        }
+      ],
+      "physical_over_logical": 0.10074423626065254,
+      "physical_total_model": 27043325,
+      "strategy": "whole",
+      "sum_of_per_revision_standalone_unique_comp": 27043237,
+      "sum_of_per_revision_standalone_unique_raw": 268435456,
+      "unique_chunks": 2,
+      "unique_comp_bytes_zstd3": 27043237,
+      "unique_raw_bytes": 268435456,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 2,
+        "unique_comp": 27043237,
+        "unique_raw": 268435456
+      }
+    },
+    {
+      "analysis_secs": 0.393909933,
+      "avg_chunk_bytes": 4096.0,
+      "by_class": {
+        "model_ckpt": {
+          "chunks": 13699,
+          "comp": 16407913,
+          "raw": 56111104
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 2338.9818354039053,
+      "chunk_pass_peak_rss_delta_KiB": 252,
+      "cross_revision_dedup_gain_comp_pct": 42.46552050605925,
+      "index_bytes_model": 602756,
+      "index_memory_bytes_model": 493212,
+      "logical_bytes_all_revisions": 268435456,
+      "manifest_bytes_model": 2359328,
+      "multi_chunk_files": 2,
+      "per_revision": [
+        {
+          "logical": 134217728,
+          "new_comp": 13090829,
+          "new_raw": 45760512,
+          "standalone_unique_comp": 13090829,
+          "standalone_unique_raw": 45760512
+        },
+        {
+          "logical": 134217728,
+          "new_comp": 3317084,
+          "new_raw": 10350592,
+          "standalone_unique_comp": 15427571,
+          "standalone_unique_raw": 52703232
+        }
+      ],
+      "physical_over_logical": 0.07215886190533638,
+      "physical_total_model": 19369997,
+      "strategy": "fixed4K",
+      "sum_of_per_revision_standalone_unique_comp": 28518400,
+      "sum_of_per_revision_standalone_unique_raw": 98463744,
+      "unique_chunks": 13699,
+      "unique_comp_bytes_zstd3": 16407913,
+      "unique_raw_bytes": 56111104,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 13699,
+        "unique_comp": 16407913,
+        "unique_raw": 56111104
+      }
+    },
+    {
+      "analysis_secs": 0.278055719,
+      "avg_chunk_bytes": 16384.0,
+      "by_class": {
+        "model_ckpt": {
+          "chunks": 8830,
+          "comp": 18418573,
+          "raw": 144670720
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 3496.3672996283153,
+      "chunk_pass_peak_rss_delta_KiB": 0,
+      "cross_revision_dedup_gain_comp_pct": 33.8057460704539,
+      "index_bytes_model": 388520,
+      "index_memory_bytes_model": 317928,
+      "logical_bytes_all_revisions": 268435456,
+      "manifest_bytes_model": 589856,
+      "multi_chunk_files": 2,
+      "per_revision": [
+        {
+          "logical": 134217728,
+          "new_comp": 12787534,
+          "new_raw": 108265472,
+          "standalone_unique_comp": 12787534,
+          "standalone_unique_raw": 108265472
+        },
+        {
+          "logical": 134217728,
+          "new_comp": 5631039,
+          "new_raw": 36405248,
+          "standalone_unique_comp": 15037499,
+          "standalone_unique_raw": 115933184
+        }
+      ],
+      "physical_over_logical": 0.07225926592946053,
+      "physical_total_model": 19396949,
+      "strategy": "fixed16K",
+      "sum_of_per_revision_standalone_unique_comp": 27825033,
+      "sum_of_per_revision_standalone_unique_raw": 224198656,
+      "unique_chunks": 8830,
+      "unique_comp_bytes_zstd3": 18418573,
+      "unique_raw_bytes": 144670720,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 8830,
+        "unique_comp": 18418573,
+        "unique_raw": 144670720
+      }
+    },
+    {
+      "analysis_secs": 0.249199249,
+      "avg_chunk_bytes": 65536.0,
+      "by_class": {
+        "model_ckpt": {
+          "chunks": 3504,
+          "comp": 23574490,
+          "raw": 229638144
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 3606.8917522208308,
+      "chunk_pass_peak_rss_delta_KiB": 16,
+      "cross_revision_dedup_gain_comp_pct": 13.152089950372392,
+      "index_bytes_model": 154176,
+      "index_memory_bytes_model": 126192,
+      "logical_bytes_all_revisions": 268435456,
+      "manifest_bytes_model": 147488,
+      "multi_chunk_files": 2,
+      "per_revision": [
+        {
+          "logical": 134217728,
+          "new_comp": 12460960,
+          "new_raw": 134217728,
+          "standalone_unique_comp": 12460960,
+          "standalone_unique_raw": 134217728
+        },
+        {
+          "logical": 134217728,
+          "new_comp": 11113530,
+          "new_raw": 95420416,
+          "standalone_unique_comp": 14683608,
+          "standalone_unique_raw": 134217728
+        }
+      ],
+      "physical_over_logical": 0.08894560486078262,
+      "physical_total_model": 23876154,
+      "strategy": "fixed64K",
+      "sum_of_per_revision_standalone_unique_comp": 27144568,
+      "sum_of_per_revision_standalone_unique_raw": 268435456,
+      "unique_chunks": 3504,
+      "unique_comp_bytes_zstd3": 23574490,
+      "unique_raw_bytes": 229638144,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 3504,
+        "unique_comp": 23574490,
+        "unique_raw": 229638144
+      }
+    },
+    {
+      "analysis_secs": 0.493884644,
+      "avg_chunk_bytes": 13003.090732087227,
+      "by_class": {
+        "model_ckpt": {
+          "chunks": 12840,
+          "comp": 19858816,
+          "raw": 166959685
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 1233.9097733297783,
+      "chunk_pass_peak_rss_delta_KiB": 64,
+      "cross_revision_dedup_gain_comp_pct": 29.140167428288766,
+      "index_bytes_model": 564960,
+      "index_memory_bytes_model": 462288,
+      "logical_bytes_all_revisions": 268435456,
+      "manifest_bytes_model": 731912,
+      "multi_chunk_files": 2,
+      "per_revision": [
+        {
+          "logical": 134217728,
+          "new_comp": 12879885,
+          "new_raw": 116572160,
+          "standalone_unique_comp": 12879885,
+          "standalone_unique_raw": 116572160
+        },
+        {
+          "logical": 134217728,
+          "new_comp": 6978931,
+          "new_raw": 50387525,
+          "standalone_unique_comp": 15145606,
+          "standalone_unique_raw": 122634240
+        }
+      ],
+      "physical_over_logical": 0.07881107926368713,
+      "physical_total_model": 21155688,
+      "strategy": "fastcdc4K",
+      "sum_of_per_revision_standalone_unique_comp": 28025491,
+      "sum_of_per_revision_standalone_unique_raw": 239206400,
+      "unique_chunks": 12840,
+      "unique_comp_bytes_zstd3": 19858816,
+      "unique_raw_bytes": 166959685,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 12840,
+        "unique_comp": 19858816,
+        "unique_raw": 166959685
+      }
+    },
+    {
+      "analysis_secs": 0.389414299,
+      "avg_chunk_bytes": 52276.41111362096,
+      "by_class": {
+        "model_ckpt": {
+          "chunks": 4427,
+          "comp": 23617764,
+          "raw": 231427672
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 1350.6220103541893,
+      "chunk_pass_peak_rss_delta_KiB": 0,
+      "cross_revision_dedup_gain_comp_pct": 13.18528638739187,
+      "index_bytes_model": 194788,
+      "index_memory_bytes_model": 159420,
+      "logical_bytes_all_revisions": 268435456,
+      "manifest_bytes_model": 188780,
+      "multi_chunk_files": 2,
+      "per_revision": [
+        {
+          "logical": 134217728,
+          "new_comp": 12488711,
+          "new_raw": 134217728,
+          "standalone_unique_comp": 12488711,
+          "standalone_unique_raw": 134217728
+        },
+        {
+          "logical": 134217728,
+          "new_comp": 11129053,
+          "new_raw": 97209944,
+          "standalone_unique_comp": 14716083,
+          "standalone_unique_raw": 134217728
+        }
+      ],
+      "physical_over_logical": 0.08941192924976349,
+      "physical_total_model": 24001332,
+      "strategy": "fastcdc16K",
+      "sum_of_per_revision_standalone_unique_comp": 27204794,
+      "sum_of_per_revision_standalone_unique_raw": 268435456,
+      "unique_chunks": 4427,
+      "unique_comp_bytes_zstd3": 23617764,
+      "unique_raw_bytes": 231427672,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 4427,
+        "unique_comp": 23617764,
+        "unique_raw": 231427672
+      }
+    },
+    {
+      "analysis_secs": 0.378029978,
+      "avg_chunk_bytes": 208107.2813479624,
+      "by_class": {
+        "model_ckpt": {
+          "chunks": 1276,
+          "comp": 26747556,
+          "raw": 265544891
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 1387.9286691860275,
+      "chunk_pass_peak_rss_delta_KiB": 0,
+      "cross_revision_dedup_gain_comp_pct": 1.0972222900122564,
+      "index_bytes_model": 56144,
+      "index_memory_bytes_model": 45984,
+      "logical_bytes_all_revisions": 268435456,
+      "manifest_bytes_model": 46976,
+      "multi_chunk_files": 2,
+      "per_revision": [
+        {
+          "logical": 134217728,
+          "new_comp": 12407848,
+          "new_raw": 134217728,
+          "standalone_unique_comp": 12407848,
+          "standalone_unique_raw": 134217728
+        },
+        {
+          "logical": 134217728,
+          "new_comp": 14339708,
+          "new_raw": 131327163,
+          "standalone_unique_comp": 14636444,
+          "standalone_unique_raw": 134217728
+        }
+      ],
+      "physical_over_logical": 0.10002656280994415,
+      "physical_total_model": 26850676,
+      "strategy": "fastcdc64K",
+      "sum_of_per_revision_standalone_unique_comp": 27044292,
+      "sum_of_per_revision_standalone_unique_raw": 268435456,
+      "unique_chunks": 1276,
+      "unique_comp_bytes_zstd3": 26747556,
+      "unique_raw_bytes": 265544891,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 1276,
+        "unique_comp": 26747556,
+        "unique_raw": 265544891
+      }
+    },
+    {
+      "analysis_secs": 0.403668159,
+      "avg_chunk_bytes": 789516.0470588235,
+      "by_class": {
+        "model_ckpt": {
+          "chunks": 340,
+          "comp": 27033204,
+          "raw": 268435456
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 1407.4440790781364,
+      "chunk_pass_peak_rss_delta_KiB": 0,
+      "cross_revision_dedup_gain_comp_pct": 0.0,
+      "index_bytes_model": 14960,
+      "index_memory_bytes_model": 12288,
+      "logical_bytes_all_revisions": 268435456,
+      "manifest_bytes_model": 12272,
+      "multi_chunk_files": 2,
+      "per_revision": [
+        {
+          "logical": 134217728,
+          "new_comp": 12402153,
+          "new_raw": 134217728,
+          "standalone_unique_comp": 12402153,
+          "standalone_unique_raw": 134217728
+        },
+        {
+          "logical": 134217728,
+          "new_comp": 14631051,
+          "new_raw": 134217728,
+          "standalone_unique_comp": 14631051,
+          "standalone_unique_raw": 134217728
+        }
+      ],
+      "physical_over_logical": 0.10080797970294952,
+      "physical_total_model": 27060436,
+      "strategy": "fastcdc256K",
+      "sum_of_per_revision_standalone_unique_comp": 27033204,
+      "sum_of_per_revision_standalone_unique_raw": 268435456,
+      "unique_chunks": 340,
+      "unique_comp_bytes_zstd3": 27033204,
+      "unique_raw_bytes": 268435456,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 340,
+        "unique_comp": 27033204,
+        "unique_raw": 268435456
+      }
+    },
+    {
+      "analysis_secs": 1.457745066,
+      "avg_chunk_bytes": 1800.2007451481954,
+      "by_class": {
+        "model_ckpt": {
+          "chunks": 17983,
+          "comp": 17198487,
+          "raw": 32373010
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 244.22451112892907,
+      "chunk_pass_peak_rss_delta_KiB": 804,
+      "cross_revision_dedup_gain_comp_pct": 40.40152047710146,
+      "index_bytes_model": 791252,
+      "index_memory_bytes_model": 647436,
+      "logical_bytes_all_revisions": 268435456,
+      "manifest_bytes_model": 8610332,
+      "multi_chunk_files": 2,
+      "per_revision": [
+        {
+          "logical": 134217728,
+          "new_comp": 13244461,
+          "new_raw": 25257984,
+          "standalone_unique_comp": 13244461,
+          "standalone_unique_raw": 25257984
+        },
+        {
+          "logical": 134217728,
+          "new_comp": 3954026,
+          "new_raw": 7115026,
+          "standalone_unique_comp": 15612797,
+          "standalone_unique_raw": 29535232
+        }
+      ],
+      "physical_over_logical": 0.0990929864346981,
+      "physical_total_model": 26600071,
+      "strategy": "rabin4K",
+      "sum_of_per_revision_standalone_unique_comp": 28857258,
+      "sum_of_per_revision_standalone_unique_raw": 54793216,
+      "unique_chunks": 17983,
+      "unique_comp_bytes_zstd3": 17198487,
+      "unique_raw_bytes": 32373010,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 17983,
+        "unique_comp": 17198487,
+        "unique_raw": 32373010
+      }
+    },
+    {
+      "analysis_secs": 1.232992072,
+      "avg_chunk_bytes": 4410.944976679692,
+      "by_class": {
+        "model_ckpt": {
+          "chunks": 15866,
+          "comp": 19332726,
+          "raw": 69984053
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 289.90118895648015,
+      "chunk_pass_peak_rss_delta_KiB": 0,
+      "cross_revision_dedup_gain_comp_pct": 32.284997441518406,
+      "index_bytes_model": 698104,
+      "index_memory_bytes_model": 571224,
+      "logical_bytes_all_revisions": 268435456,
+      "manifest_bytes_model": 2295248,
+      "multi_chunk_files": 2,
+      "per_revision": [
+        {
+          "logical": 134217728,
+          "new_comp": 13106895,
+          "new_raw": 48345088,
+          "standalone_unique_comp": 13106895,
+          "standalone_unique_raw": 48345088
+        },
+        {
+          "logical": 134217728,
+          "new_comp": 6225831,
+          "new_raw": 21638965,
+          "standalone_unique_comp": 15443242,
+          "standalone_unique_raw": 55582720
+        }
+      ],
+      "physical_over_logical": 0.08317112177610397,
+      "physical_total_model": 22326078,
+      "strategy": "rabin16K",
+      "sum_of_per_revision_standalone_unique_comp": 28550137,
+      "sum_of_per_revision_standalone_unique_raw": 103927808,
+      "unique_chunks": 15866,
+      "unique_comp_bytes_zstd3": 19332726,
+      "unique_raw_bytes": 69984053,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 15866,
+        "unique_comp": 19332726,
+        "unique_raw": 69984053
+      }
+    },
+    {
+      "analysis_secs": 1.1830298479999999,
+      "avg_chunk_bytes": 16526.310562224717,
+      "by_class": {
+        "model_ckpt": {
+          "chunks": 11579,
+          "comp": 23877301,
+          "raw": 191358150
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 302.2343628827023,
+      "chunk_pass_peak_rss_delta_KiB": 0,
+      "cross_revision_dedup_gain_comp_pct": 14.217394030070063,
+      "index_bytes_model": 509476,
+      "index_memory_bytes_model": 416892,
+      "logical_bytes_all_revisions": 268435456,
+      "manifest_bytes_model": 585644,
+      "multi_chunk_files": 2,
+      "per_revision": [
+        {
+          "logical": 134217728,
+          "new_comp": 12792289,
+          "new_raw": 108511232,
+          "standalone_unique_comp": 12792289,
+          "standalone_unique_raw": 108511232
+        },
+        {
+          "logical": 134217728,
+          "new_comp": 11085012,
+          "new_raw": 82846918,
+          "standalone_unique_comp": 15042376,
+          "standalone_unique_raw": 116064256
+        }
+      ],
+      "physical_over_logical": 0.09302951768040657,
+      "physical_total_model": 24972421,
+      "strategy": "rabin64K",
+      "sum_of_per_revision_standalone_unique_comp": 27834665,
+      "sum_of_per_revision_standalone_unique_raw": 224575488,
+      "unique_chunks": 11579,
+      "unique_comp_bytes_zstd3": 23877301,
+      "unique_raw_bytes": 191358150,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 11579,
+        "unique_comp": 23877301,
+        "unique_raw": 191358150
+      }
+    },
+    {
+      "analysis_secs": 0.392983193,
+      "avg_chunk_bytes": 52276.41111362096,
+      "by_class": {
+        "model_ckpt": {
+          "chunks": 4427,
+          "comp": 23617764,
+          "raw": 231427672
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 1325.130045149422,
+      "chunk_pass_peak_rss_delta_KiB": 0,
+      "cross_revision_dedup_gain_comp_pct": 13.18528638739187,
+      "index_bytes_model": 194788,
+      "index_memory_bytes_model": 159420,
+      "logical_bytes_all_revisions": 268435456,
+      "manifest_bytes_model": 188780,
+      "multi_chunk_files": 2,
+      "per_revision": [
+        {
+          "logical": 134217728,
+          "new_comp": 12488711,
+          "new_raw": 134217728,
+          "standalone_unique_comp": 12488711,
+          "standalone_unique_raw": 134217728
+        },
+        {
+          "logical": 134217728,
+          "new_comp": 11129053,
+          "new_raw": 97209944,
+          "standalone_unique_comp": 14716083,
+          "standalone_unique_raw": 134217728
+        }
+      ],
+      "physical_over_logical": 0.08941192924976349,
+      "physical_total_model": 24001332,
+      "strategy": "hybrid_size<=64K->fastcdc16K",
+      "sum_of_per_revision_standalone_unique_comp": 27204794,
+      "sum_of_per_revision_standalone_unique_raw": 268435456,
+      "unique_chunks": 4427,
+      "unique_comp_bytes_zstd3": 23617764,
+      "unique_raw_bytes": 231427672,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 4427,
+        "unique_comp": 23617764,
+        "unique_raw": 231427672
+      }
+    },
+    {
+      "analysis_secs": 0.377031606,
+      "avg_chunk_bytes": 208107.2813479624,
+      "by_class": {
+        "model_ckpt": {
+          "chunks": 1276,
+          "comp": 26747556,
+          "raw": 265544891
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 1393.1692457281322,
+      "chunk_pass_peak_rss_delta_KiB": 0,
+      "cross_revision_dedup_gain_comp_pct": 1.0972222900122564,
+      "index_bytes_model": 56144,
+      "index_memory_bytes_model": 45984,
+      "logical_bytes_all_revisions": 268435456,
+      "manifest_bytes_model": 46976,
+      "multi_chunk_files": 2,
+      "per_revision": [
+        {
+          "logical": 134217728,
+          "new_comp": 12407848,
+          "new_raw": 134217728,
+          "standalone_unique_comp": 12407848,
+          "standalone_unique_raw": 134217728
+        },
+        {
+          "logical": 134217728,
+          "new_comp": 14339708,
+          "new_raw": 131327163,
+          "standalone_unique_comp": 14636444,
+          "standalone_unique_raw": 134217728
+        }
+      ],
+      "physical_over_logical": 0.10002656280994415,
+      "physical_total_model": 26850676,
+      "strategy": "hybrid_size<=256K->fastcdc64K",
+      "sum_of_per_revision_standalone_unique_comp": 27044292,
+      "sum_of_per_revision_standalone_unique_raw": 268435456,
+      "unique_chunks": 1276,
+      "unique_comp_bytes_zstd3": 26747556,
+      "unique_raw_bytes": 265544891,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 1276,
+        "unique_comp": 26747556,
+        "unique_raw": 265544891
+      }
+    },
+    {
+      "analysis_secs": 0.393198909,
+      "avg_chunk_bytes": 789516.0470588235,
+      "by_class": {
+        "model_ckpt": {
+          "chunks": 340,
+          "comp": 27033204,
+          "raw": 268435456
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 1417.5836805325305,
+      "chunk_pass_peak_rss_delta_KiB": 0,
+      "cross_revision_dedup_gain_comp_pct": 0.0,
+      "index_bytes_model": 14960,
+      "index_memory_bytes_model": 12288,
+      "logical_bytes_all_revisions": 268435456,
+      "manifest_bytes_model": 12272,
+      "multi_chunk_files": 2,
+      "per_revision": [
+        {
+          "logical": 134217728,
+          "new_comp": 12402153,
+          "new_raw": 134217728,
+          "standalone_unique_comp": 12402153,
+          "standalone_unique_raw": 134217728
+        },
+        {
+          "logical": 134217728,
+          "new_comp": 14631051,
+          "new_raw": 134217728,
+          "standalone_unique_comp": 14631051,
+          "standalone_unique_raw": 134217728
+        }
+      ],
+      "physical_over_logical": 0.10080797970294952,
+      "physical_total_model": 27060436,
+      "strategy": "hybrid_type(text,smallbin whole; largebin cdc64K; model cdc256K)",
+      "sum_of_per_revision_standalone_unique_comp": 27033204,
+      "sum_of_per_revision_standalone_unique_raw": 268435456,
+      "unique_chunks": 340,
+      "unique_comp_bytes_zstd3": 27033204,
+      "unique_raw_bytes": 268435456,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 340,
+        "unique_comp": 27033204,
+        "unique_raw": 268435456
+      }
+    }
+  ]
+}
