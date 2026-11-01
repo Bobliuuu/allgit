@@ -146,6 +146,43 @@ impl Backend for FsBackend {
         v.sort();
         Ok(v)
     }
+    fn delete(&self, key: &str) -> Result<(), BackendError> {
+        let p = self.path(key)?;
+        // Serialize with CAS so a delete never lands between a CAS's read and its rename.
+        let _l = self.lock()?;
+        match fs::remove_file(&p) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(err(e)),
+        }
+    }
+    fn supports_gc(&self) -> bool {
+        true
+    }
+    fn now_ms(&self) -> Result<u64, BackendError> {
+        Ok(ms(std::time::SystemTime::now()))
+    }
+    fn modified_ms(&self, key: &str) -> Result<Option<u64>, BackendError> {
+        match fs::metadata(self.path(key)?) {
+            Ok(m) => Ok(Some(ms(m.modified().map_err(err)?))),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(err(e)),
+        }
+    }
+    fn touch(&self, key: &str) -> Result<bool, BackendError> {
+        let p = self.path(key)?;
+        let f = match fs::File::options().write(true).open(&p) {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(err(e)),
+        };
+        f.set_modified(std::time::SystemTime::now()).map_err(err)?;
+        Ok(true)
+    }
+}
+
+fn ms(t: std::time::SystemTime) -> u64 {
+    t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -155,6 +192,7 @@ mod tests {
     fn conforms() {
         let d = tempfile::tempdir().unwrap();
         crate::backend::conformance(&FsBackend::open(d.path().join("r")).unwrap());
+        crate::backend::conformance_gc(&FsBackend::open(d.path().join("g")).unwrap());
     }
     #[test]
     fn concurrent_cas_exactly_one_winner() {

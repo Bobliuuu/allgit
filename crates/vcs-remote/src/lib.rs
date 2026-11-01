@@ -6,6 +6,7 @@
 
 pub mod backend;
 pub mod fsbackend;
+pub mod gc;
 pub mod locks;
 pub mod manifest;
 pub mod membackend;
@@ -15,6 +16,7 @@ pub mod stats;
 
 pub use backend::{Backend, BackendError, Versioned};
 pub use fsbackend::FsBackend;
+pub use gc::{remote_gc, GcError, RemoteGcOptions, RemoteGcReport};
 pub use locks::LockFault;
 pub use manifest::{Lock, Manifest};
 pub use membackend::{CasFault, MemBackend};

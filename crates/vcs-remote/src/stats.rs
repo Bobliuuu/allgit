@@ -89,6 +89,24 @@ impl Backend for CountingBackend<'_> {
         self.req();
         self.inner.list(prefix)
     }
+    fn delete(&self, key: &str) -> Result<(), BackendError> {
+        self.req();
+        self.inner.delete(key)
+    }
+    fn supports_gc(&self) -> bool {
+        self.inner.supports_gc()
+    }
+    fn now_ms(&self) -> Result<u64, BackendError> {
+        self.inner.now_ms()
+    }
+    fn modified_ms(&self, key: &str) -> Result<Option<u64>, BackendError> {
+        self.req();
+        self.inner.modified_ms(key)
+    }
+    fn touch(&self, key: &str) -> Result<bool, BackendError> {
+        self.req();
+        self.inner.touch(key)
+    }
 }
 
 #[cfg(test)]

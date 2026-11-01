@@ -21,6 +21,25 @@ struct Inner {
     /// Every successful write of any key in order (key, data): lets tests audit history.
     history: Vec<(String, Vec<u8>)>,
     read_log: Vec<String>,
+    /// key -> last write/touch time (unix ms of the backend clock).
+    mtime: BTreeMap<String, u64>,
+    /// Fixed clock for tests; `None` = real time.
+    clock: Option<u64>,
+    /// Test hook: fail the next `delete` of a key (`Unavailable`), once.
+    fail_delete: Option<String>,
+    /// Opt-in: claim `supports_gc`, which makes publishers run the GC handshake.
+    gc: bool,
+}
+
+impl Inner {
+    fn now(&self) -> u64 {
+        self.clock.unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0)
+        })
+    }
 }
 
 /// In-memory backend with fault injection and request accounting.
@@ -32,6 +51,13 @@ pub struct MemBackend {
 impl MemBackend {
     pub fn new() -> Self {
         Self::default()
+    }
+    /// Opt in to garbage collection: `supports_gc` becomes true, so publishers against this
+    /// backend run the extra GC handshake (extra steps; the schedule-enumerating model tests
+    /// of the plain protocol leave it off) and `remote_gc` accepts it.
+    pub fn with_gc(self) -> Self {
+        self.inner.lock().unwrap().gc = true;
+        self
     }
     pub fn inject_cas_fault(&self, f: CasFault) {
         self.inner.lock().unwrap().fault = Some(f);
@@ -75,12 +101,28 @@ impl MemBackend {
         }
         panic!("tamper_object: {id} not on the remote");
     }
+    /// Pin the backend clock (unix ms) so tests can age objects without sleeping.
+    pub fn set_now_ms(&self, ms: u64) {
+        self.inner.lock().unwrap().clock = Some(ms);
+    }
+    /// Advance a pinned clock (pins it at 0 first if it was not pinned).
+    pub fn advance_ms(&self, d: u64) {
+        let mut g = self.inner.lock().unwrap();
+        let n = g.clock.unwrap_or(0) + d;
+        g.clock = Some(n);
+    }
+    /// Make the next `delete(key)` fail with `Unavailable` (nothing is deleted).
+    pub fn fail_next_delete(&self, key: &str) {
+        self.inner.lock().unwrap().fail_delete = Some(key.to_owned());
+    }
     /// Test hook: overwrite raw bytes (simulate tampering / corruption).
     pub fn tamper(&self, key: &str, data: Vec<u8>) {
         let mut g = self.inner.lock().unwrap();
         let v = g.next_version;
         g.next_version += 1;
         g.objects.insert(key.to_owned(), (data, v));
+        let n = g.now();
+        g.mtime.insert(key.to_owned(), n);
     }
 }
 
@@ -134,6 +176,8 @@ impl Backend for MemBackend {
             let v = g.next_version;
             g.next_version += 1;
             g.objects.insert(key.to_owned(), (data.to_vec(), v));
+            let n = g.now();
+            g.mtime.insert(key.to_owned(), n);
             g.history.push((key.to_owned(), data.to_vec()));
         }
         if fault == Some(CasFault::LostAck) {
@@ -154,6 +198,8 @@ impl Backend for MemBackend {
             let v = g.next_version;
             g.next_version += 1;
             g.objects.insert(key.to_owned(), (data.to_vec(), v));
+            let n = g.now();
+            g.mtime.insert(key.to_owned(), n);
             g.history.push((key.to_owned(), data.to_vec()));
             Some(v.to_string())
         } else {
@@ -169,6 +215,41 @@ impl Backend for MemBackend {
         g.requests += 1;
         Ok(g.objects.keys().filter(|k| k.starts_with(prefix)).cloned().collect())
     }
+    fn delete(&self, key: &str) -> Result<(), BackendError> {
+        validate_key(key)?;
+        let mut g = self.inner.lock().unwrap();
+        g.requests += 1;
+        if g.fail_delete.as_deref() == Some(key) {
+            g.fail_delete = None;
+            return Err(BackendError::Unavailable("injected: delete lost".into()));
+        }
+        g.objects.remove(key);
+        g.mtime.remove(key);
+        Ok(())
+    }
+    fn supports_gc(&self) -> bool {
+        self.inner.lock().unwrap().gc
+    }
+    fn now_ms(&self) -> Result<u64, BackendError> {
+        Ok(self.inner.lock().unwrap().now())
+    }
+    fn modified_ms(&self, key: &str) -> Result<Option<u64>, BackendError> {
+        validate_key(key)?;
+        let mut g = self.inner.lock().unwrap();
+        g.requests += 1;
+        Ok(g.mtime.get(key).copied())
+    }
+    fn touch(&self, key: &str) -> Result<bool, BackendError> {
+        validate_key(key)?;
+        let mut g = self.inner.lock().unwrap();
+        g.requests += 1;
+        if !g.objects.contains_key(key) {
+            return Ok(false);
+        }
+        let n = g.now();
+        g.mtime.insert(key.to_owned(), n);
+        Ok(true)
+    }
 }
 
 #[cfg(test)]
@@ -177,5 +258,6 @@ mod tests {
     #[test]
     fn conforms() {
         crate::backend::conformance(&MemBackend::new());
+        crate::backend::conformance_gc(&MemBackend::new().with_gc());
     }
 }
