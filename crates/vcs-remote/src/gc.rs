@@ -140,6 +140,9 @@ struct View<'a> {
     loose: Vec<ObjectId>,
     /// object -> first pack holding it
     loc: HashMap<ObjectId, String>,
+    /// recently decoded v3 blocks, by (pack stem, block offset)
+    #[allow(clippy::type_complexity)]
+    blocks: std::cell::RefCell<Vec<((String, u64), std::rc::Rc<vcs_store::pack::Block>)>>,
 }
 
 fn parse_key(k: &str) -> Option<ObjectId> {
@@ -169,7 +172,13 @@ impl<'a> View<'a> {
                 loc.entry(id).or_insert_with(|| stem.clone());
             }
         }
-        Ok(View { b, packs, loose, loc })
+        Ok(View {
+            b,
+            packs,
+            loose,
+            loc,
+            blocks: Default::default(),
+        })
     }
 
     fn pack_ids(&self, stem: &str) -> Vec<ObjectId> {
@@ -187,9 +196,34 @@ impl<'a> View<'a> {
                 .ok_or_else(|| GcError::Damaged(format!("{id}: not in {stem}")))?;
             let (off, len) = idx.find(id).ok_or_else(|| GcError::Damaged(format!("{id}: not in {stem}")))?;
             match self.b.get_range(&format!("{stem}.pack"), off, len as u64)? {
-                Some(d) if d.len() == len as usize => vcs_store::pack::decode_payload(idx.version(), &d)
-                    .map_err(|e| GcError::Damaged(format!("{id}: pack {stem}: {e}")))?
-                    .into_owned(),
+                Some(d) if d.len() == len as usize => {
+                    if idx.version() >= 3 {
+                        // a block holds many objects; keep a few decoded so a walk does not refetch it
+                        let key = (stem.clone(), off);
+                        let hit = self.blocks.borrow().iter().find(|(k, _)| *k == key).map(|(_, b)| b.clone());
+                        let blk = match hit {
+                            Some(b) => b,
+                            None => {
+                                let b = std::rc::Rc::new(
+                                    vcs_store::pack::decode_block(&d).map_err(|e| GcError::Damaged(format!("{id}: pack {stem}: {e}")))?,
+                                );
+                                let mut c = self.blocks.borrow_mut();
+                                if c.len() >= 8 {
+                                    c.remove(0);
+                                }
+                                c.push((key, b.clone()));
+                                b
+                            }
+                        };
+                        blk.get(id)
+                            .ok_or_else(|| GcError::Damaged(format!("{id}: not in its block of {stem}")))?
+                            .to_vec()
+                    } else {
+                        idx.decode_entry(id, &d)
+                            .map_err(|e| GcError::Damaged(format!("{id}: pack {stem}: {e}")))?
+                            .into_owned()
+                    }
+                }
                 _ => return Err(GcError::Damaged(format!("{id}: pack {stem} is truncated or missing"))),
             }
         } else {
@@ -291,7 +325,7 @@ fn roots(b: &dyn Backend, quirks: &GcQuirks, now: u64) -> Result<Vec<ObjectId>, 
     Ok(r)
 }
 
-struct LockGuard<'a> {
+pub(crate) struct LockGuard<'a> {
     b: &'a dyn Backend,
     mine: Vec<u8>,
 }
@@ -306,7 +340,7 @@ impl Drop for LockGuard<'_> {
     }
 }
 
-fn acquire<'a>(b: &'a dyn Backend, owner: &str, ttl_ms: u64, now: u64) -> Result<LockGuard<'a>, GcError> {
+pub(crate) fn acquire<'a>(b: &'a dyn Backend, owner: &str, ttl_ms: u64, now: u64) -> Result<LockGuard<'a>, GcError> {
     let mine = format!("{owner} {}", now + ttl_ms).into_bytes();
     if b.put_if_absent(LOCK_KEY, &mine)? {
         return Ok(LockGuard { b, mine });

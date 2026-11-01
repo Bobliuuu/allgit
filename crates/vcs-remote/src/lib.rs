@@ -5,6 +5,7 @@
 //! model-checking test can interleave writers and inject crashes between any two steps.
 
 pub mod backend;
+pub mod compact;
 pub mod fsbackend;
 pub mod gc;
 pub mod locks;
@@ -18,6 +19,7 @@ pub mod shard;
 pub mod stats;
 
 pub use backend::{Backend, BackendError, Conditional, Versioned};
+pub use compact::{compact, CompactOptions, CompactReport};
 pub use fsbackend::FsBackend;
 pub use gc::{remote_gc, GcError, RemoteGcOptions, RemoteGcReport};
 pub use locks::LockFault;

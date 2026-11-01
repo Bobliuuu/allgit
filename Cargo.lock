@@ -1644,6 +1644,7 @@ dependencies = [
  "vcs-server",
  "vcs-store",
  "vcs-store-s3",
+ "zstd",
 ]
 
 [[package]]

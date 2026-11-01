@@ -2,7 +2,17 @@
 //!
 //! Two on-disk versions exist. v1 (`VCSPACK1`/`VCSPIDX1`) stores encoded objects as they are; v2
 //! (`VCSPACK2`/`VCSPIDX2`) prefixes every entry with a codec byte (raw or zstd level 3) and adds a
-//! 256-entry fanout table to the index. Readers accept both forever; writers emit v2 unless told otherwise.
+//! 256-entry fanout table to the index. Readers accept all versions forever; writers emit v2 unless told otherwise.
+//!
+//! A third version, v3 (`VCSPACK3`/`VCSPIDX3`), is written only by compaction (remote
+//! `vcs gc --remote --compact`, or `vcs repack --format v3`). Its pack body is a sequence of
+//! independently compressed *blocks* (about [`BLOCK_TARGET`] of uncompressed objects each) in the
+//! order the compactor chose (commits and trees first, then file content grouped by path), so
+//! related versions of a file share a compression window. The index is the v2 index (same entry
+//! size, fanout, ordering) except that an entry's `(offset, len)` is the BLOCK holding the object:
+//! many ids share one. A block frame is `[u32 len][codec byte][body]`; the decoded body is
+//! `[u32 n][n x (32-byte id, u32 len)][object bytes in table order]`. Pack header count = number
+//! of blocks. Older binaries refuse a v3 index ("bad index header") instead of misreading it.
 
 use crate::{io, StoreError};
 use std::fs;
@@ -18,6 +28,19 @@ pub const IDX_MAGIC_V2: &[u8; 8] = b"VCSPIDX2";
 pub const CODEC_RAW: u8 = 0;
 pub const CODEC_ZSTD: u8 = 1;
 pub const ZSTD_LEVEL: i32 = 3;
+pub const PACK_MAGIC_V3: &[u8; 8] = b"VCSPACK3";
+pub const IDX_MAGIC_V3: &[u8; 8] = b"VCSPIDX3";
+/// v3 block codecs (first byte of a block payload): zstd or raw body, and whether the block holds
+/// only commits and trees (metadata), which lets a reader stream the metadata prefix of a pack
+/// without decompressing file content.
+pub const CODEC_BLOCK_ZSTD_META: u8 = 2;
+pub const CODEC_BLOCK_ZSTD_DATA: u8 = 3;
+pub const CODEC_BLOCK_RAW_META: u8 = 4;
+pub const CODEC_BLOCK_RAW_DATA: u8 = 5;
+/// Uncompressed size a v3 block is filled to (research: 1 to 4 MiB for text).
+pub const BLOCK_TARGET: usize = 4 * 1024 * 1024;
+/// Upper bound on a decoded v3 block (a lying frame header cannot demand more).
+const MAX_BLOCK: u64 = 256 * 1024 * 1024;
 /// Upper bound on one decoded object, so a lying zstd frame header cannot demand more.
 const MAX_DECODED: u64 = u32::MAX as u64;
 const FANOUT_BYTES: usize = 256 * 4;
@@ -37,6 +60,8 @@ pub enum PackFormat {
     V1,
     #[default]
     V2,
+    /// Independently compressed blocks; written by compaction only (see the module docs).
+    V3,
 }
 
 impl PackFormat {
@@ -44,19 +69,32 @@ impl PackFormat {
     pub fn from_env() -> PackFormat {
         match std::env::var("VCS_PACK_FORMAT").as_deref() {
             Ok("v1") | Ok("1") => PackFormat::V1,
+            Ok("v3") | Ok("3") => PackFormat::V3,
             _ => PackFormat::V2,
+        }
+    }
+    /// The format for compaction output: v3 (blocks) unless `VCS_PACK_FORMAT` names another.
+    /// `VCS_PACK_FORMAT=v2` (or v1) is the rollback: compaction still merges and orders, but
+    /// writes per-object entries every released binary reads.
+    pub fn for_compaction() -> PackFormat {
+        match std::env::var("VCS_PACK_FORMAT").as_deref() {
+            Ok("v1") | Ok("1") => PackFormat::V1,
+            Ok("v2") | Ok("2") => PackFormat::V2,
+            _ => PackFormat::V3,
         }
     }
     pub fn version(self) -> u8 {
         match self {
             PackFormat::V1 => 1,
             PackFormat::V2 => 2,
+            PackFormat::V3 => 3,
         }
     }
     pub fn parse(s: &str) -> Option<PackFormat> {
         match s {
             "v1" | "1" => Some(PackFormat::V1),
             "v2" | "2" => Some(PackFormat::V2),
+            "v3" | "3" => Some(PackFormat::V3),
             _ => None,
         }
     }
@@ -68,7 +106,8 @@ impl PackFormat {
 pub fn encode_payload(fmt: PackFormat, enc: &[u8]) -> Vec<u8> {
     match fmt {
         PackFormat::V1 => enc.to_vec(),
-        PackFormat::V2 => {
+        // v3 stores blocks, not entries; a single object is sized as a v2 entry
+        PackFormat::V2 | PackFormat::V3 => {
             if let Ok(c) = zstd::bulk::compress(enc, ZSTD_LEVEL) {
                 if c.len() < enc.len() {
                     let mut out = Vec::with_capacity(c.len() + 1);
@@ -96,6 +135,9 @@ pub fn decode_payload_max(version: u8, payload: &[u8], max: u64) -> Result<std::
     use std::borrow::Cow;
     if version == 1 {
         return Ok(Cow::Borrowed(payload));
+    }
+    if version >= 3 {
+        return Err("a v3 entry is a block: use PackIndex::decode_entry".into());
     }
     match payload.split_first() {
         None => Err("empty entry".into()),
@@ -154,9 +196,10 @@ impl PackIndex {
         let version = match b.get(..8) {
             Some(m) if m == IDX_MAGIC => 1u8,
             Some(m) if m == IDX_MAGIC_V2 => 2u8,
+            Some(m) if m == IDX_MAGIC_V3 => 3u8,
             _ => return Err(bad(label, "bad index header")),
         };
-        let fan = if version == 2 { FANOUT_BYTES } else { 0 };
+        let fan = if version >= 2 { FANOUT_BYTES } else { 0 };
         let base = 8 + 4 + 8 + 32 + fan;
         if b.len() < base + 32 {
             return Err(bad(label, "bad index header"));
@@ -167,7 +210,7 @@ impl PackIndex {
         if count.checked_mul(IDX_ENTRY) != Some(b.len() - base - 32) {
             return Err(bad(label, "index length does not match entry count"));
         }
-        let fanout = if version == 2 {
+        let fanout = if version >= 2 {
             let mut f = Box::new([0u32; 256]);
             for (i, v) in f.iter_mut().enumerate() {
                 *v = u32::from_le_bytes(b[52 + i * 4..56 + i * 4].try_into().unwrap());
@@ -227,12 +270,12 @@ impl PackIndex {
         let end_ok = off
             .checked_add(len as u64)
             .is_some_and(|end| end <= self.pack_len.saturating_sub(32));
-        if off < HEADER + 4 || !end_ok || (self.version == 2 && len == 0) {
+        if off < HEADER + 4 || !end_ok || (self.version >= 2 && len == 0) {
             return Err(());
         }
         Ok(())
     }
-    /// 1 or 2: which pack format this index belongs to.
+    /// 1, 2 or 3: which pack format this index belongs to.
     pub fn version(&self) -> u8 {
         self.version
     }
@@ -287,10 +330,189 @@ impl PackIndex {
     }
 }
 
+/// A decoded v3 block: the objects it holds, by id.
+pub struct Block {
+    data: Vec<u8>,
+    ents: std::collections::HashMap<ObjectId, (usize, usize)>,
+    order: Vec<ObjectId>,
+}
+
+impl Block {
+    /// The encoded bytes of `id`, if this block holds it.
+    pub fn get(&self, id: &ObjectId) -> Option<&[u8]> {
+        self.ents.get(id).map(|&(o, l)| &self.data[o..o + l])
+    }
+    /// Every `(table id, encoded bytes)` in storage order. The table id is the pack's claim;
+    /// callers that trust it must hash the bytes.
+    pub fn iter(&self) -> impl Iterator<Item = (ObjectId, &[u8])> + '_ {
+        self.order.iter().map(|id| {
+            let (o, l) = self.ents[id];
+            (*id, &self.data[o..o + l])
+        })
+    }
+    pub fn len(&self) -> usize {
+        self.order.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.order.is_empty()
+    }
+}
+
+/// True if a v3 block payload holds only commits and trees (read from its codec byte).
+pub fn block_is_metadata(payload: &[u8]) -> bool {
+    matches!(payload.first(), Some(&CODEC_BLOCK_ZSTD_META) | Some(&CODEC_BLOCK_RAW_META))
+}
+
+/// Decode a v3 block payload (`[codec][body]`, without the u32 frame length).
+pub fn decode_block(payload: &[u8]) -> Result<Block, String> {
+    let Some((&codec, body)) = payload.split_first() else {
+        return Err("empty block".into());
+    };
+    let data: Vec<u8> = match codec {
+        CODEC_BLOCK_ZSTD_META | CODEC_BLOCK_ZSTD_DATA => {
+            let n = zstd::zstd_safe::get_frame_content_size(body)
+                .map_err(|_| "bad zstd frame header".to_string())?
+                .ok_or_else(|| "zstd frame without content size".to_string())?;
+            if n > MAX_BLOCK {
+                return Err("zstd frame claims an oversized block".into());
+            }
+            let out = zstd::bulk::decompress(body, n as usize).map_err(|e| format!("zstd: {e}"))?;
+            if out.len() as u64 != n {
+                return Err("zstd frame length mismatch".into());
+            }
+            out
+        }
+        CODEC_BLOCK_RAW_META | CODEC_BLOCK_RAW_DATA => body.to_vec(),
+        c => return Err(format!("unknown block codec {c}")),
+    };
+    let count = data
+        .get(..4)
+        .map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize)
+        .ok_or("block too short")?;
+    let table_end = count
+        .checked_mul(36)
+        .and_then(|t| t.checked_add(4))
+        .filter(|e| *e <= data.len())
+        .ok_or("block table does not fit")?;
+    let mut ents = std::collections::HashMap::with_capacity(count);
+    let mut order = Vec::with_capacity(count);
+    let mut off = table_end;
+    for i in 0..count {
+        let t = 4 + i * 36;
+        let id = ObjectId::from_bytes(data[t..t + 32].try_into().unwrap());
+        let len = u32::from_le_bytes(data[t + 32..t + 36].try_into().unwrap()) as usize;
+        let end = off
+            .checked_add(len)
+            .filter(|e| *e <= data.len())
+            .ok_or("block entry outside block")?;
+        if ents.insert(id, (off, len)).is_some() {
+            return Err("duplicate id in block".into());
+        }
+        order.push(id);
+        off = end;
+    }
+    if off != data.len() {
+        return Err("block has trailing bytes".into());
+    }
+    Ok(Block { data, ents, order })
+}
+
+/// One-block memory for readers that decode many objects of the same block in a row.
+#[derive(Default)]
+pub struct BlockCache(Option<(u64, Block)>);
+
+fn is_meta_kind(enc: &[u8]) -> bool {
+    matches!(enc.first(), Some(2 | 3))
+}
+
+/// Encode one v3 block from `objs` (all metadata, or all not).
+fn encode_block(objs: &[&(ObjectId, Vec<u8>)]) -> Vec<u8> {
+    let meta = objs.first().is_some_and(|o| is_meta_kind(&o.1));
+    let total: usize = objs.iter().map(|o| o.1.len()).sum();
+    let mut raw = Vec::with_capacity(4 + objs.len() * 36 + total);
+    raw.extend_from_slice(&(objs.len() as u32).to_le_bytes());
+    for o in objs {
+        raw.extend_from_slice(o.0.as_bytes());
+        raw.extend_from_slice(&(o.1.len() as u32).to_le_bytes());
+    }
+    for o in objs {
+        raw.extend_from_slice(&o.1);
+    }
+    if let Ok(c) = zstd::bulk::compress(&raw, ZSTD_LEVEL) {
+        if c.len() < raw.len() {
+            let mut out = Vec::with_capacity(c.len() + 1);
+            out.push(if meta { CODEC_BLOCK_ZSTD_META } else { CODEC_BLOCK_ZSTD_DATA });
+            out.extend_from_slice(&c);
+            return out;
+        }
+    }
+    let mut out = Vec::with_capacity(raw.len() + 1);
+    out.push(if meta { CODEC_BLOCK_RAW_META } else { CODEC_BLOCK_RAW_DATA });
+    out.extend_from_slice(&raw);
+    out
+}
+
+/// Split `objects` (already in layout order) into blocks: a block never mixes metadata with file
+/// content, and is closed once adding the next object would pass `target` bytes.
+fn split_blocks(objects: &[(ObjectId, Vec<u8>)], target: usize) -> Vec<Vec<&(ObjectId, Vec<u8>)>> {
+    let mut blocks: Vec<Vec<&(ObjectId, Vec<u8>)>> = Vec::new();
+    let (mut cur, mut size, mut meta) = (Vec::new(), 0usize, true);
+    for o in objects {
+        let m = is_meta_kind(&o.1);
+        if !cur.is_empty() && (m != meta || size + o.1.len() > target) {
+            blocks.push(std::mem::take(&mut cur));
+            size = 0;
+        }
+        meta = m;
+        size += o.1.len();
+        cur.push(o);
+    }
+    if !cur.is_empty() {
+        blocks.push(cur);
+    }
+    blocks
+}
+
+impl PackIndex {
+    /// Recover the encoded object `id` from the byte range [`PackIndex::find`] returned for it.
+    /// v1/v2: the entry itself. v3: the whole block is decompressed and the object cut out.
+    pub fn decode_entry<'a>(&self, id: &ObjectId, payload: &'a [u8]) -> Result<std::borrow::Cow<'a, [u8]>, String> {
+        if self.version < 3 {
+            return decode_payload(self.version, payload);
+        }
+        let blk = decode_block(payload)?;
+        blk.get(id)
+            .map(|b| std::borrow::Cow::Owned(b.to_vec()))
+            .ok_or_else(|| format!("{id} is not in its block"))
+    }
+    /// [`PackIndex::decode_entry`] remembering the last block decoded (`off` is the block's pack
+    /// offset), for loops over objects sorted by offset.
+    pub fn decode_entry_cached<'a>(
+        &self,
+        id: &ObjectId,
+        off: u64,
+        payload: &'a [u8],
+        cache: &mut BlockCache,
+    ) -> Result<std::borrow::Cow<'a, [u8]>, String> {
+        if self.version < 3 {
+            return decode_payload(self.version, payload);
+        }
+        if cache.0.as_ref().map(|c| c.0) != Some(off) {
+            cache.0 = Some((off, decode_block(payload)?));
+        }
+        let blk = &cache.0.as_ref().expect("just set").1;
+        blk.get(id)
+            .map(|b| std::borrow::Cow::Owned(b.to_vec()))
+            .ok_or_else(|| format!("{id} is not in its block"))
+    }
+}
+
 /// One opened pack: its index lives in memory, object bytes are read by range.
 pub struct Pack {
     pub pack_path: PathBuf,
     idx: PackIndex,
+    /// v3: the block read last, so reading neighbours of one file does not decompress it again.
+    block: std::sync::Mutex<Option<(u64, std::sync::Arc<Block>)>>,
 }
 
 impl Pack {
@@ -307,7 +529,11 @@ impl Pack {
                 format!("pack is {actual} bytes, index says {} (truncated?)", idx.pack_len),
             ));
         }
-        Ok(Pack { pack_path, idx })
+        Ok(Pack {
+            pack_path,
+            idx,
+            block: std::sync::Mutex::new(None),
+        })
     }
 
     pub fn version(&self) -> u8 {
@@ -334,6 +560,17 @@ impl Pack {
             Ok(n) if n == len as usize => {}
             _ => return Err(corrupt("pack truncated".into())),
         }
+        if self.idx.version >= 3 {
+            let mut cached = self.block.lock().unwrap();
+            if cached.as_ref().map(|c| c.0) != Some(off) {
+                *cached = Some((off, std::sync::Arc::new(decode_block(&buf).map_err(corrupt)?)));
+            }
+            let blk = cached.as_ref().expect("just set").1.clone();
+            return blk.get(id).map(|b| Some(b.to_vec())).ok_or_else(|| StoreError::Corrupt {
+                id: *id,
+                reason: "not in its block".into(),
+            });
+        }
         decode_payload(self.idx.version, &buf)
             .map(|c| Some(c.into_owned()))
             .map_err(corrupt)
@@ -358,14 +595,22 @@ impl Pack {
                 return out;
             }
         };
-        let magic = if self.idx.version == 2 { PACK_MAGIC_V2 } else { PACK_MAGIC };
+        let magic = match self.idx.version {
+            3 => PACK_MAGIC_V3,
+            2 => PACK_MAGIC_V2,
+            _ => PACK_MAGIC,
+        };
         if bytes.len() as u64 != self.idx.pack_len || bytes.len() < 44 || &bytes[..8] != magic {
             out.push(format!("{name}: bad length or header"));
             return out;
         }
         let (body, trailer) = bytes.split_at(bytes.len() - 32);
-        let entries: Vec<_> = self.idx.iter().collect();
+        let mut entries: Vec<_> = self.idx.iter().collect();
         let version = self.idx.version;
+        if version >= 3 {
+            // many ids share a block: check each block once, and every id against its block
+            entries.sort_by_key(|e| e.1);
+        }
         let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(8);
         let per = entries.len().div_ceil(threads).max(1);
         // The whole-pack checksum and the per-object hashes are independent: run them side by side.
@@ -376,10 +621,27 @@ impl Pack {
                 .map(|part| {
                     sc.spawn(move || {
                         let mut out = Vec::new();
+                        let mut blk: Option<(u64, Result<Block, String>)> = None;
                         for (id, off, len) in part {
                             let (o, l) = (*off as usize, *len as usize);
                             if o < 4 || o + l > body.len() || u32::from_le_bytes(body[o - 4..o].try_into().unwrap()) as usize != l {
                                 out.push(format!("{name}: bad framing for {id}"));
+                                continue;
+                            }
+                            if version >= 3 {
+                                if blk.as_ref().map(|b| b.0) != Some(*off) {
+                                    blk = Some((*off, decode_block(&body[o..o + l])));
+                                }
+                                match &blk.as_ref().expect("just set").1 {
+                                    Err(e) => out.push(format!("{name}: block at {off} undecodable: {e}")),
+                                    Ok(b) => match b.get(id) {
+                                        None => out.push(format!("{name}: {id} is not in its block")),
+                                        Some(enc) if vcs_objects::id_of_encoded(enc) != *id => {
+                                            out.push(format!("{name}: object {id} hash mismatch"))
+                                        }
+                                        Some(_) => {}
+                                    },
+                                }
                                 continue;
                             }
                             match decode_payload(version, &body[o..o + l]) {
@@ -424,27 +686,54 @@ pub fn build_pack(objects: Vec<(ObjectId, Vec<u8>)>) -> BuiltPack {
 /// (duplicate ids keep their first occurrence), so callers may group related objects; the index
 /// is always sorted by id.
 pub fn build_pack_fmt(objects: Vec<(ObjectId, Vec<u8>)>, fmt: PackFormat) -> BuiltPack {
+    build_pack_blocks(objects, fmt, BLOCK_TARGET)
+}
+
+/// [`build_pack_fmt`] with an explicit block size for v3 (ignored for v1/v2).
+pub fn build_pack_blocks(objects: Vec<(ObjectId, Vec<u8>)>, fmt: PackFormat, block_target: usize) -> BuiltPack {
     let mut seen = std::collections::HashSet::new();
     let objects: Vec<_> = objects.into_iter().filter(|o| seen.insert(o.0)).collect();
-    let payloads = encode_all(&objects, fmt);
     let mut pack = Vec::new();
-    pack.extend_from_slice(if fmt == PackFormat::V2 { PACK_MAGIC_V2 } else { PACK_MAGIC });
-    pack.extend_from_slice(&(objects.len() as u32).to_le_bytes());
+    pack.extend_from_slice(match fmt {
+        PackFormat::V3 => PACK_MAGIC_V3,
+        PackFormat::V2 => PACK_MAGIC_V2,
+        PackFormat::V1 => PACK_MAGIC,
+    });
     let mut ents = Vec::new();
-    for ((id, _), pl) in objects.iter().zip(&payloads) {
-        pack.extend_from_slice(&(pl.len() as u32).to_le_bytes());
-        ents.push((*id, pack.len() as u64, pl.len() as u32));
-        pack.extend_from_slice(pl);
+    if fmt == PackFormat::V3 {
+        let blocks = split_blocks(&objects, block_target.max(1));
+        let payloads = encode_blocks(&blocks);
+        pack.extend_from_slice(&(blocks.len() as u32).to_le_bytes());
+        for (blk, pl) in blocks.iter().zip(&payloads) {
+            pack.extend_from_slice(&(pl.len() as u32).to_le_bytes());
+            let off = pack.len() as u64;
+            for o in blk {
+                ents.push((o.0, off, pl.len() as u32));
+            }
+            pack.extend_from_slice(pl);
+        }
+    } else {
+        let payloads = encode_all(&objects, fmt);
+        pack.extend_from_slice(&(objects.len() as u32).to_le_bytes());
+        for ((id, _), pl) in objects.iter().zip(&payloads) {
+            pack.extend_from_slice(&(pl.len() as u32).to_le_bytes());
+            ents.push((*id, pack.len() as u64, pl.len() as u32));
+            pack.extend_from_slice(pl);
+        }
     }
     let sum = *blake3::hash(&pack).as_bytes();
     pack.extend_from_slice(&sum);
     ents.sort_by_key(|e| e.0);
     let mut idx = Vec::new();
-    idx.extend_from_slice(if fmt == PackFormat::V2 { IDX_MAGIC_V2 } else { IDX_MAGIC });
+    idx.extend_from_slice(match fmt {
+        PackFormat::V3 => IDX_MAGIC_V3,
+        PackFormat::V2 => IDX_MAGIC_V2,
+        PackFormat::V1 => IDX_MAGIC,
+    });
     idx.extend_from_slice(&(ents.len() as u32).to_le_bytes());
     idx.extend_from_slice(&(pack.len() as u64).to_le_bytes());
     idx.extend_from_slice(&sum);
-    if fmt == PackFormat::V2 {
+    if fmt != PackFormat::V1 {
         let mut counts = [0u32; 256];
         for e in &ents {
             counts[e.0.as_bytes()[0] as usize] += 1;
@@ -466,6 +755,22 @@ pub fn build_pack_fmt(objects: Vec<(ObjectId, Vec<u8>)>, fmt: PackFormat) -> Bui
         pack,
         idx,
     }
+}
+
+/// Block payloads, compressed on several threads when there is enough to do.
+fn encode_blocks(blocks: &[Vec<&(ObjectId, Vec<u8>)>]) -> Vec<Vec<u8>> {
+    if blocks.len() < 2 {
+        return blocks.iter().map(|b| encode_block(b)).collect();
+    }
+    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(16);
+    let per = blocks.len().div_ceil(threads).max(1);
+    std::thread::scope(|sc| {
+        let parts: Vec<_> = blocks
+            .chunks(per)
+            .map(|c| sc.spawn(move || c.iter().map(|b| encode_block(b)).collect::<Vec<_>>()))
+            .collect();
+        parts.into_iter().flat_map(|p| p.join().unwrap()).collect()
+    })
 }
 
 /// Entry payloads for all objects; v2 compression runs on several threads for large inputs.
@@ -494,6 +799,13 @@ pub fn write_pack(dir: &Path, tmp_dir: &Path, objects: Vec<(ObjectId, Vec<u8>)>)
 /// [`write_pack`] in an explicit format.
 pub fn write_pack_fmt(dir: &Path, tmp_dir: &Path, mut objects: Vec<(ObjectId, Vec<u8>)>, fmt: PackFormat) -> Result<Pack, StoreError> {
     objects.sort_by_key(|o| o.0);
+    write_pack_ordered(dir, tmp_dir, objects, fmt)
+}
+
+/// Like [`write_pack_fmt`] but keeps the order given (the caller chose a layout, see
+/// [`crate::layout::locality_order`]); the pack name is the checksum, so the same set in another
+/// order is another pack.
+pub fn write_pack_ordered(dir: &Path, tmp_dir: &Path, objects: Vec<(ObjectId, Vec<u8>)>, fmt: PackFormat) -> Result<Pack, StoreError> {
     io(dir, fs::create_dir_all(dir))?;
     let built = build_pack_fmt(objects, fmt);
     let name = built.name.strip_prefix("pack-").unwrap_or(&built.name).to_owned();

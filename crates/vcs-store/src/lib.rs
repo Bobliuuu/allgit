@@ -5,7 +5,10 @@
 //! at the network boundary; see docs/architecture.md §Storage.
 
 pub use vcs_objects::chunk;
+mod compact;
+pub mod layout;
 pub mod pack;
+pub use compact::LocalCompaction;
 use pack::Pack;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;

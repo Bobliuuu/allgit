@@ -178,6 +178,34 @@ the magic: `VCSPACK1`/`VCSPIDX1` or `VCSPACK2`/`VCSPIDX2`.
 - Remote: `fetch_from_pack`, `fetch_many`, `RemoteSource` (including read-ahead) and remote GC decode per the pack's
   version, so a remote can mix v1 and v2 packs freely.
 
+### Pack and index format v3: compressed blocks (#249)
+
+Written only by compaction (`vcs gc --remote --compact`; `vcs repack --format v3`), never by a publish. Magic
+`VCSPACK3`/`VCSPIDX3`; v1 and v2 packs are read forever and may sit next to v3 packs. The pack body is a sequence of
+independently compressed **blocks** in the order the compactor chose (`vcs_store::layout::locality_order`): commits
+(parents first), trees (children first), then file content grouped by (zone, directory, file name), oldest version first.
+
+- Block frame: `len: u32`, `codec: u8`, body. Codecs 2 and 3 are zstd level 3 of a metadata-only or a content block, 4 and 5
+  the same raw (used when compression does not shrink the block). A block never mixes commits/trees with file content, so a
+  reader can stream the metadata prefix of a pack by codec byte without decompressing content. Decoded block:
+  `n: u32`, `n x (id: 32 bytes, len: u32)`, then the object bytes in table order. The pack header's count is the number
+  of blocks. A block is filled to 4 MiB of objects by default (`vcs gc --remote --compact --block-kib`); one larger object
+  is a block of its own.
+- Index v3 is the v2 index (same 44-byte entry, fanout, strict id order, BLAKE3 trailer); an entry's `offset`/`len` address the
+  BLOCK that holds the object, so many ids share one range. Object ids are unchanged. Reads fetch the block, decode it,
+  cut out the object and check its hash; a block that is damaged, has a table that does not fit, repeats an id or has trailing
+  bytes is an error, never a wrong object (`decode_block`, tests `hostile_blocks_are_rejected_not_trusted`, the flipped-byte
+  test in `crates/vcs-remote/tests/compact_v3.rs`).
+- Cost: reading ONE object from a v3 pack transfers and decompresses its whole block (see the measurements in docs/gc.md).
+  Readers that walk a pack (`RemoteSource`, `fetch_many`, remote GC) decode each block once and keep the neighbours.
+- Older binaries refuse a v3 index ("bad index header"); they do not misread it.
+
+#### Rollback (v3)
+
+`vcs gc --remote --compact --pack-format v2` (or `VCS_PACK_FORMAT=v2`) writes the merged pack in v2: still merged and
+ordered, but readable by every release. `vcs repack --format v2` rewrites local v3 packs as v2. Nothing converts a remote
+v3 pack back except compacting it again with `--pack-format v2` (`--compact` merges packs of a tier; a lone v3 pack stays).
+
 #### Rollback
 
 `vcs repack --format v1` writes new packs as v1 and rewrites every existing v2 pack as v1 (`--format v2` converts the

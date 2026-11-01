@@ -4,18 +4,21 @@ use crate::backend::{Backend, BackendError};
 use std::collections::HashMap;
 use std::path::Path;
 use vcs_objects::{id_of_encoded, ObjectId};
-use vcs_store::pack::{decode_payload, PackIndex};
+use vcs_store::pack::{block_is_metadata, decode_block, BlockCache, PackIndex};
 
 /// Check the remote pack really ends where its index says: the last 32 bytes (the trailer) must
 /// equal the index's pack checksum and nothing may follow. One 33-byte ranged GET. Ranged object
 /// reads never touch the trailer, so without this a pack cut short by a half-finished upload,
 /// or one with extra bytes, would be accepted.
-fn check_trailer(b: &dyn Backend, stem: &str, idx: &PackIndex) -> Result<(), BackendError> {
+///
+/// `Ok(false)` means the pack file is gone: a compaction or GC removed it after the caller
+/// read its index (see [`RACE_ROUNDS`]).
+fn check_trailer(b: &dyn Backend, stem: &str, idx: &PackIndex) -> Result<bool, BackendError> {
     let bad = |why: &str| BackendError::Other(format!("pack {stem}: {why}"));
     let start = idx.pack_len.checked_sub(32).ok_or_else(|| bad("index pack length too small"))?;
     match b.get_range(&format!("{stem}.pack"), start, 33)? {
-        None => Err(bad("pack file missing")),
-        Some(t) if t.len() == 32 && t[..] == idx.checksum()[..] => Ok(()),
+        None => Ok(false),
+        Some(t) if t.len() == 32 && t[..] == idx.checksum()[..] => Ok(true),
         Some(t) if t.len() < 32 => Err(bad("pack is shorter than its index says (truncated trailer?)")),
         Some(t) if t.len() > 32 => Err(bad("pack is longer than its index says")),
         Some(_) => Err(bad("pack trailer does not match its index")),
@@ -31,14 +34,18 @@ pub fn fetch_from_pack(b: &dyn Backend, stem: &str, id: &ObjectId) -> Result<Opt
     };
     let idx = PackIndex::parse(&idx.data, Path::new(stem)).map_err(|e| BackendError::Other(e.to_string()))?;
     let Some((off, len)) = idx.find(id) else { return Ok(None) };
-    check_trailer(b, stem, &idx)?;
+    if !check_trailer(b, stem, &idx)? {
+        return Ok(None);
+    }
     let Some(bytes) = b.get_range(&format!("{stem}.pack"), off, len as u64)? else {
         return Ok(None);
     };
     if bytes.len() != len as usize {
         return Err(BackendError::Other(format!("pack {stem}: object {id} fails hash verification")));
     }
-    let enc = decode_payload(idx.version(), &bytes).map_err(|e| BackendError::Other(format!("pack {stem}: object {id}: {e}")))?;
+    let enc = idx
+        .decode_entry(id, &bytes)
+        .map_err(|e| BackendError::Other(format!("pack {stem}: object {id}: {e}")))?;
     if id_of_encoded(&enc) != *id {
         return Err(BackendError::Other(format!("pack {stem}: object {id} fails hash verification")));
     }
@@ -48,17 +55,61 @@ pub fn fetch_from_pack(b: &dyn Backend, stem: &str, id: &ObjectId) -> Result<Opt
 /// Key prefix under which a remote keeps packs: `packs/<name>.pack` and `packs/<name>.idx`.
 pub const PACK_PREFIX: &str = "packs/";
 
+/// How many times a read re-lists the packs when what it was told about has vanished. Remote
+/// compaction (and GC) delete a pack's index and then the pack; the objects are by then in a pack
+/// that was uploaded earlier, which a fresh listing shows. One retry covers one compaction that
+/// finishes during the read; more cover several in a row.
+pub const RACE_ROUNDS: usize = 4;
+
 /// Look for `id` in every pack under [`PACK_PREFIX`]. `Ok(None)` if no pack has it.
-/// Cost: one `list`, then per pack one index GET (until found) and one ranged GET.
+/// Cost: one `list`, then per pack one index GET (until found) and one ranged GET. A miss costs
+/// one more `list` to rule out a pack set that changed while we looked.
 pub fn fetch_from_any_pack(b: &dyn Backend, id: &ObjectId) -> Result<Option<Vec<u8>>, BackendError> {
-    for key in b.list(PACK_PREFIX)? {
-        if let Some(stem) = key.strip_suffix(".idx") {
-            if let Some(bytes) = fetch_from_pack(b, stem, id)? {
-                return Ok(Some(bytes));
+    fetch_from_any_pack_retrying(b, id, RACE_ROUNDS)
+}
+
+/// [`fetch_from_any_pack`] with an explicit retry budget (`rounds` = 1: no retry; tests only).
+#[doc(hidden)]
+pub fn fetch_from_any_pack_retrying(b: &dyn Backend, id: &ObjectId, rounds: usize) -> Result<Option<Vec<u8>>, BackendError> {
+    let rounds = rounds.max(1);
+    for round in 0..rounds {
+        let keys = b.list(PACK_PREFIX)?;
+        for key in &keys {
+            if let Some(stem) = key.strip_suffix(".idx") {
+                if let Some(bytes) = fetch_from_pack(b, stem, id)? {
+                    return Ok(Some(bytes));
+                }
             }
+        }
+        if round + 1 == rounds || b.list(PACK_PREFIX)? == keys {
+            return Ok(None);
         }
     }
     Ok(None)
+}
+
+/// Read every pack index, listing again while some index vanished between the LIST and its GET.
+fn load_indexes(b: &dyn Backend, rounds: usize) -> Result<Vec<(String, PackIndex)>, BackendError> {
+    let mut packs = Vec::new();
+    for round in 0..rounds.max(1) {
+        packs.clear();
+        let mut vanished = false;
+        for key in b.list(PACK_PREFIX)? {
+            let Some(stem) = key.strip_suffix(".idx") else { continue };
+            let Some(idx) = b.get(&key)? else {
+                vanished = true;
+                continue;
+            };
+            packs.push((
+                stem.to_owned(),
+                PackIndex::parse(&idx.data, Path::new(stem)).map_err(|e| BackendError::Other(e.to_string()))?,
+            ));
+        }
+        if !vanished || round + 1 == rounds.max(1) {
+            break;
+        }
+    }
+    Ok(packs)
 }
 
 /// Which of `ids` the remote has, without downloading object bodies. Packs are consulted first:
@@ -71,12 +122,7 @@ pub fn probe_kinds(b: &dyn Backend, ids: &[ObjectId]) -> Result<Vec<(ObjectId, O
     if ids.is_empty() {
         return Ok(vec![]); // nothing to probe: do not list and index every pack for it
     }
-    let mut packs = Vec::new();
-    for key in b.list(PACK_PREFIX)? {
-        let Some(stem) = key.strip_suffix(".idx") else { continue };
-        let Some(idx) = b.get(&key)? else { continue };
-        packs.push(PackIndex::parse(&idx.data, Path::new(stem)).map_err(|e| BackendError::Other(e.to_string()))?);
-    }
+    let packs: Vec<PackIndex> = load_indexes(b, RACE_ROUNDS)?.into_iter().map(|p| p.1).collect();
     let mut out = Vec::with_capacity(ids.len());
     for id in ids {
         if packs.iter().any(|p| p.find(id).is_some()) {
@@ -105,59 +151,25 @@ const COALESCE_GAP: u64 = 64 * 1024;
 /// any id is absent everywhere. Compare with calling [`fetch_from_any_pack`] per id, which
 /// repeats the list and index reads every time.
 pub fn fetch_many(b: &dyn Backend, ids: &[ObjectId]) -> Result<Vec<(ObjectId, Vec<u8>)>, BackendError> {
+    fetch_many_retrying(b, ids, RACE_ROUNDS)
+}
+
+/// [`fetch_many`] with an explicit retry budget (`rounds` = 1: no retry; tests only).
+#[doc(hidden)]
+pub fn fetch_many_retrying(b: &dyn Backend, ids: &[ObjectId], rounds: usize) -> Result<Vec<(ObjectId, Vec<u8>)>, BackendError> {
     let mut want: Vec<ObjectId> = ids.to_vec();
     want.sort();
     want.dedup();
     let mut out = Vec::with_capacity(want.len());
     let mut remaining: Vec<ObjectId> = want;
-    if !remaining.is_empty() {
-        for key in b.list(PACK_PREFIX)? {
-            let Some(stem) = key.strip_suffix(".idx") else { continue };
-            if remaining.is_empty() {
-                break;
-            }
-            let Some(idx) = b.get(&key)? else { continue };
-            let idx = PackIndex::parse(&idx.data, Path::new(stem)).map_err(|e| BackendError::Other(e.to_string()))?;
-            let mut hits: Vec<(u64, u32, ObjectId)> = Vec::new();
-            remaining.retain(|id| match idx.find(id) {
-                Some((off, len)) => {
-                    hits.push((off, len, *id));
-                    false
-                }
-                None => true,
-            });
-            hits.sort_by_key(|h| h.0);
-            if !hits.is_empty() {
-                check_trailer(b, stem, &idx)?;
-            }
-            let pack_key = format!("{stem}.pack");
-            let mut i = 0;
-            while i < hits.len() {
-                let start = hits[i].0;
-                let mut end = hits[i].0 + hits[i].1 as u64;
-                let mut j = i + 1;
-                while j < hits.len() && hits[j].0 <= end + COALESCE_GAP {
-                    end = end.max(hits[j].0 + hits[j].1 as u64);
-                    j += 1;
-                }
-                let Some(buf) = b.get_range(&pack_key, start, end - start)? else {
-                    return Err(BackendError::Other(format!("pack {stem}: pack file missing")));
-                };
-                for (off, len, id) in &hits[i..j] {
-                    let s = (off - start) as usize;
-                    let e = s + *len as usize;
-                    let Some(bytes) = buf.get(s..e) else {
-                        return Err(BackendError::Other(format!("pack {stem}: short read for {id}")));
-                    };
-                    let enc =
-                        decode_payload(idx.version(), bytes).map_err(|e| BackendError::Other(format!("pack {stem}: object {id}: {e}")))?;
-                    if id_of_encoded(&enc) != *id {
-                        return Err(BackendError::Other(format!("pack {stem}: object {id} fails hash verification")));
-                    }
-                    out.push((*id, enc.into_owned()));
-                }
-                i = j;
-            }
+    let rounds = rounds.max(1);
+    for round in 0..rounds {
+        if remaining.is_empty() {
+            break;
+        }
+        let raced = scan_packs(b, &mut remaining, &mut out)?;
+        if !raced || round + 1 == rounds {
+            break;
         }
     }
     for id in remaining {
@@ -169,6 +181,70 @@ pub fn fetch_many(b: &dyn Backend, ids: &[ObjectId]) -> Result<Vec<(ObjectId, Ve
         }
     }
     Ok(out)
+}
+
+/// One pass over the listed packs, moving what they hold from `remaining` to `out`. Returns true
+/// if an index or pack vanished under us (the caller may list again and retry).
+fn scan_packs(b: &dyn Backend, remaining: &mut Vec<ObjectId>, out: &mut Vec<(ObjectId, Vec<u8>)>) -> Result<bool, BackendError> {
+    let mut raced = false;
+    for key in b.list(PACK_PREFIX)? {
+        let Some(stem) = key.strip_suffix(".idx") else { continue };
+        if remaining.is_empty() {
+            break;
+        }
+        let Some(idx) = b.get(&key)? else {
+            raced = true;
+            continue;
+        };
+        let idx = PackIndex::parse(&idx.data, Path::new(stem)).map_err(|e| BackendError::Other(e.to_string()))?;
+        let mut hits: Vec<(u64, u32, ObjectId)> = Vec::new();
+        remaining.retain(|id| match idx.find(id) {
+            Some((off, len)) => {
+                hits.push((off, len, *id));
+                false
+            }
+            None => true,
+        });
+        hits.sort_by_key(|h| h.0);
+        if !hits.is_empty() && !check_trailer(b, stem, &idx)? {
+            raced = true;
+            remaining.extend(hits.iter().map(|h| h.2));
+            continue;
+        }
+        let pack_key = format!("{stem}.pack");
+        let mut blocks = BlockCache::default();
+        let mut i = 0;
+        while i < hits.len() {
+            let start = hits[i].0;
+            let mut end = hits[i].0 + hits[i].1 as u64;
+            let mut j = i + 1;
+            while j < hits.len() && hits[j].0 <= end + COALESCE_GAP {
+                end = end.max(hits[j].0 + hits[j].1 as u64);
+                j += 1;
+            }
+            let Some(buf) = b.get_range(&pack_key, start, end - start)? else {
+                raced = true;
+                remaining.extend(hits[i..].iter().map(|h| h.2));
+                break;
+            };
+            for (off, len, id) in &hits[i..j] {
+                let s = (off - start) as usize;
+                let e = s + *len as usize;
+                let Some(bytes) = buf.get(s..e) else {
+                    return Err(BackendError::Other(format!("pack {stem}: short read for {id}")));
+                };
+                let enc = idx
+                    .decode_entry_cached(id, *off, bytes, &mut blocks)
+                    .map_err(|e| BackendError::Other(format!("pack {stem}: object {id}: {e}")))?;
+                if id_of_encoded(&enc) != *id {
+                    return Err(BackendError::Other(format!("pack {stem}: object {id} fails hash verification")));
+                }
+                out.push((*id, enc.into_owned()));
+            }
+            i = j;
+        }
+    }
+    Ok(raced)
 }
 
 /// First ranged GET when streaming the metadata prefix of a pack, then x4 per request up to the
@@ -204,6 +280,10 @@ pub struct RemoteSource<'a> {
     cache: HashMap<ObjectId, Vec<u8>>,
     /// Commits the walk will start from (see [`RemoteSource::with_roots`]).
     roots: Vec<ObjectId>,
+    /// The `packs/` listing `packs` was built from, and whether an index vanished while loading.
+    listing: Vec<String>,
+    vanished: bool,
+    rounds: usize,
 }
 
 impl<'a> RemoteSource<'a> {
@@ -215,7 +295,17 @@ impl<'a> RemoteSource<'a> {
             read_ahead_done: vec![],
             cache: HashMap::new(),
             roots: vec![],
+            listing: vec![],
+            vanished: false,
+            rounds: RACE_ROUNDS,
         }
+    }
+
+    /// Retry budget for packs that vanish mid-read (1 = none; tests only).
+    #[doc(hidden)]
+    pub fn with_race_rounds(mut self, rounds: usize) -> Self {
+        self.rounds = rounds.max(1);
+        self
     }
 
     /// Tell the source which commits the walk starts from. A pack written by [`crate::Publisher`]
@@ -233,9 +323,14 @@ impl<'a> RemoteSource<'a> {
     fn packs(&mut self) -> Result<&[(String, PackIndex)], BackendError> {
         if self.packs.is_none() {
             let mut v = Vec::new();
-            for key in self.b.list(PACK_PREFIX)? {
+            self.listing = self.b.list(PACK_PREFIX)?;
+            self.vanished = false;
+            for key in &self.listing {
                 let Some(stem) = key.strip_suffix(".idx") else { continue };
-                let Some(idx) = self.b.get(&key)? else { continue };
+                let Some(idx) = self.b.get(key)? else {
+                    self.vanished = true;
+                    continue;
+                };
                 let idx = PackIndex::parse(&idx.data, Path::new(stem)).map_err(|e| BackendError::Other(e.to_string()))?;
                 v.push((stem.to_owned(), idx));
             }
@@ -318,9 +413,34 @@ impl<'a> RemoteSource<'a> {
 
     /// The verified encoded bytes of `id`: from read-ahead, else one ranged GET from the pack
     /// that indexes it, else one GET of the loose object. `Ok(None)` if the remote lacks it.
+    /// If a pack or index vanished since the listing (a compaction replaced it), the pack list is
+    /// read again and the lookup retried; the objects are in the pack that replaced it.
     pub fn fetch(&mut self, id: &ObjectId) -> Result<Option<Vec<u8>>, BackendError> {
+        for round in 0..self.rounds {
+            let last = round + 1 == self.rounds;
+            match self.fetch_once(id)? {
+                Fetched::Found(v) => return Ok(Some(v)),
+                Fetched::Raced if last => {
+                    return Err(BackendError::Other(format!(
+                        "object {id}: pack file missing (the remote's packs kept changing; try again)"
+                    )))
+                }
+                Fetched::Raced => {}
+                Fetched::Absent => {
+                    // Not anywhere. Before saying so, rule out a pack set that changed under us.
+                    if last || (!self.vanished && self.b.list(PACK_PREFIX)? == self.listing) {
+                        return Ok(None);
+                    }
+                }
+            }
+            self.packs = None;
+        }
+        Ok(None)
+    }
+
+    fn fetch_once(&mut self, id: &ObjectId) -> Result<Fetched, BackendError> {
         if let Some(v) = self.cache.remove(id) {
-            return Ok(Some(v));
+            return Ok(Fetched::Found(v));
         }
         let hit = self
             .packs()?
@@ -332,26 +452,48 @@ impl<'a> RemoteSource<'a> {
                 self.read_ahead_done[i] = true;
                 self.read_ahead(i, id)?;
                 if let Some(v) = self.cache.remove(id) {
-                    return Ok(Some(v));
+                    return Ok(Fetched::Found(v));
                 }
             }
-            let bytes = self
-                .b
-                .get_range(&key, off, len as u64)?
-                .ok_or_else(|| BackendError::Other(format!("pack {key}: pack file missing")))?;
-            let enc = if bytes.len() == len as usize {
-                decode_payload(version, &bytes).map_err(|e| BackendError::Other(format!("pack {key}: object {id}: {e}")))?
-            } else {
-                return Err(BackendError::Other(format!("object {id} fails hash verification")));
+            let Some(bytes) = self.b.get_range(&key, off, len as u64)? else {
+                return Ok(Fetched::Raced);
             };
+            if bytes.len() != len as usize {
+                return Err(BackendError::Other(format!("object {id} fails hash verification")));
+            }
+            if version >= 3 {
+                // a block holds many objects: keep them all, the walk will ask for its neighbours
+                let blk = decode_block(&bytes).map_err(|e| BackendError::Other(format!("pack {key}: object {id}: {e}")))?;
+                for (_, enc) in blk.iter() {
+                    self.cache.insert(id_of_encoded(enc), enc.to_vec());
+                }
+                return match self.cache.remove(id) {
+                    Some(v) => Ok(Fetched::Found(v)),
+                    None => Err(BackendError::Other(format!("pack {key}: object {id} fails hash verification"))),
+                };
+            }
+            let enc = self.packs.as_ref().expect("packs loaded")[i]
+                .1
+                .decode_entry(id, &bytes)
+                .map_err(|e| BackendError::Other(format!("pack {key}: object {id}: {e}")))?;
             if id_of_encoded(&enc) != *id {
                 return Err(BackendError::Other(format!("object {id} fails hash verification")));
             }
-            return Ok(Some(enc.into_owned()));
+            return Ok(Fetched::Found(enc.into_owned()));
         }
         let h = id.to_hex();
-        Ok(self.b.get(&format!("objects/{}/{}", &h[..2], &h[2..]))?.map(|v| v.data))
+        Ok(match self.b.get(&format!("objects/{}/{}", &h[..2], &h[2..]))? {
+            Some(v) => Fetched::Found(v.data),
+            None => Fetched::Absent,
+        })
     }
+}
+
+enum Fetched {
+    Found(Vec<u8>),
+    /// A pack the index named is gone.
+    Raced,
+    Absent,
 }
 
 /// Parse `[u32 len][entry]` frames (entry decoded per pack `version`) from `buf[from..to]` into
@@ -373,7 +515,20 @@ fn absorb(
         let Some(raw) = p.checked_add(4 + len).filter(|e| *e <= to).map(|e| &buf[p + 4..e]) else {
             break;
         };
-        let Ok(obj) = decode_payload(version, raw) else {
+        if version >= 3 {
+            if meta_only && !block_is_metadata(raw) {
+                return (p - from, true);
+            }
+            let Ok(blk) = decode_block(raw) else { break };
+            for (_, enc) in blk.iter() {
+                let id = id_of_encoded(enc);
+                cache.insert(id, enc.to_vec());
+                fresh.push(id);
+            }
+            p += 4 + len;
+            continue;
+        }
+        let Ok(obj) = vcs_store::pack::decode_payload(version, raw) else {
             break;
         };
         let obj = &obj[..];

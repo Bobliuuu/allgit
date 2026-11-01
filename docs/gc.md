@@ -74,7 +74,7 @@ phase, and all seven model mutations ported as `GcQuirks` switches that must eac
 delete, crashed sweeper's stale tombstones, held and expired lock, damaged remote left untouched, unsafe grace, unsupported
 backend) and pack tests (old orphan pack deleted, young one kept, pack with a live object kept whole, index-less pack).
 
-Still not covered: remote pack compaction/rewriting; sweeper that outlives its lock TTL; readers (fetch/clone) slower than the grace period
+Still not covered: rewriting a pack to drop its garbage (compaction below merges, it does not filter); sweeper that outlives its lock TTL; readers (fetch/clone) slower than the grace period
 can lose objects of a replaced head; clock-rate skew (A1 is assumed, not tested); real S3.
 
 ## Roots
@@ -159,3 +159,94 @@ The remote is S3-like: create-only PUT, CAS on `manifest`, no multi-key transact
 * Reads the store without the repo lock, so numbers can be stale if another process is writing.
 * Object age comes from the file's modification time, which is not preserved by every copy or backup tool.
 * Counts, not bytes: sizes are not reported.
+
+
+## Compaction (issues #248, #249)
+
+`vcs gc --remote --compact [--dry-run | --yes]` merges the remote's many small packs (one per publish) into few, and
+`vcs repack` merges small local packs. Code: `vcs_remote::compact` (remote), `LocalStore::compact_packs` (local), policy and
+object order in `vcs_store::layout`. Compaction saves no bytes by deduplication alone (content addressing); it cuts the
+requests a reader pays (one index GET per pack) and, with v3 blocks, the bytes at rest.
+
+**Policy.** Tiered, not leveled (leveled costs 4x to 15x more PUTs on hash keys, compaction-experiments 1.3). A pack's tier
+is its size in powers of 3 over 4 KiB; three packs in one tier merge, and the plan cascades in memory so each final group is
+written once. Groups over 512 MiB shed their largest members (a pack is built in memory). Local: ratio 4 over 1 MiB.
+`tests/compact_real.rs::a_thousand_publishes_end_with_few_packs_and_bounded_rewrite_cost` runs the real planner after every one
+of 1,000 publishes: at most 12 packs at the end, at most 6.5x the published bytes rewritten (the numbers are printed).
+
+**Pack discovery stays LIST.** Packs are found by listing `packs/`, not named by the manifest. A catalog versioned with the
+manifest CAS would make every compaction a manifest write that conflicts with publishers, and buys nothing the rules below
+do not already give. The decision is model-checked below.
+
+**Rules** (each is a mutation in `CompactQuirks` that the exhaustive search catches):
+
+| Rule | Statement | Mutation that must fail |
+|---|---|---|
+| C1 union | the output holds every object of every input, checked by reading the uploaded index back before any delete | `drop_object` + `skip_verify` (I-LIVE); with the check on, the run aborts and leaves the inputs |
+| C2 output first | new pack, then its index, are durable before the first input is deleted | `delete_before_upload` (I-LIVE) |
+| C2b pack before index | an index never exists without its pack | `idx_before_pack` (I-IDX) |
+| C3 index first | an input is removed by deleting `.idx`, then `.pack` | `delete_pack_before_idx` (I-IDX) |
+| C4 readers retry | a read that finds an index or pack gone lists again and looks again (`packfetch::RACE_ROUNDS`); a miss costs one extra LIST to rule out a changed pack set | reader with one round fails a schedule |
+| C5 one at a time | compaction takes `gc/lock` on a backend with a trusted clock, so a sweeper never sees half a compaction | gc during compaction is refused (`Locked`) |
+
+I-IDX: every `.idx` has its `.pack`. I-LIVE: every object of the head's closure is in some index whose pack exists.
+`tests/compact_real.rs` runs the compactor on its own thread, advanced one phase at a time, against (a) a reader (`fetch_many`,
+`fetch_from_any_pack`, `RemoteSource`) whose k-th request is preceded by `adv[k]` phases for EVERY non-decreasing `adv`, and
+(b) the real publisher step machine for every non-decreasing split of its steps over the phases, checking I-IDX, I-LIVE and
+G-REACH (the head's closure is complete) at every phase; plus a crash after each of the mutating calls (the invariants hold, and
+a rerun converges), a corrupt input (nothing written or deleted), dry-run, and the v1 rollback format.
+
+A publisher needs nothing new: a publish that deduplicated against an input only relies on the object existing, and C1/C2 keep
+it existing. Pack **age is laundered**: the output is young, so garbage inside an input waits one more grace period before a
+sweep can take it. Compaction does not drop garbage.
+
+**Backends.** Compaction needs `list`, `get`, `put_if_absent`, `delete`. It runs on directory remotes and on S3 (RustFS tested,
+below). On a backend without a trusted clock (S3 today) there is no `gc/lock`; there is no sweeper there either (remote GC is
+refused), and two concurrent compactors are harmless (C1 makes a merge idempotent; a compactor whose input vanished aborts before
+deleting anything). When #232 gives S3 a clock and touch, the lock applies automatically. The HTTP server's `DELETE` needs the
+admin token; not tested here.
+
+**Publish hint.** Every 8th remote generation `vcs publish` lists `packs/` (one extra request per 8 publishes) and prints
+`hint: the remote holds N packs ...` when N > 24.
+
+### Pack order and v3 blocks (#249)
+
+Compacted packs are laid out commits (parents first), trees (children first), then file content grouped by (zone, directory,
+file name), oldest version first. Written as v3 (docs/object-model.md), related versions share a compression window. Measured
+by `crates/vcs-cli/tests/compact_measure.rs` (ignored test; machine: the 30-core Linux box, load1 about 19, one run each, all
+numbers are bytes or request counts, not times). History: ripgrep (2,303 commits, 13,710 objects, 122 MB raw) and tokio (4,850
+commits, 49,093 objects, 238 MB raw), imported with `vcs import-git`, published as 60 evenly spaced prefixes (60 packs):
+
+| | ripgrep | tokio |
+|---|---|---|
+| remote after 60 publishes (v2 packs + index) | 49.5 MB, 60 packs | 129.2 MB, 60 packs |
+| union of distinct objects, per-object zstd-3 (the v2 layout) | 34.4 MB | 77.0 MB |
+| after default tiered compaction (v3, 4 MiB blocks, path order) | 5.4 MB, 2 packs | 13.9 MB, 2 packs |
+| after compacting everything into one pack | 4.12 MB, 1 pack | 11.15 MB, 1 pack |
+| `git` pack of the same history (`objects/pack` of the source clone, for context only) | 6.3 MB | 20 MB |
+| full fetch requests (before / tiered / one pack) | 122 / 6 / 4 | 115 / 6 / 4 |
+| full fetch bytes down (before / one pack) | 49.5 MB / 4.13 MB | 123.4 MB / 11.15 MB |
+| compaction cost (tiered): requests, bytes read, bytes written | 253, 50.2 MB, 5.4 MB | 253, 131.7 MB, 13.9 MB |
+
+Block size and order on the union (same objects, bytes at rest; per-object zstd-3 = 1.00x):
+
+| block size | id order (no layout) ripgrep / tokio | path order ripgrep / tokio |
+|---|---|---|
+| 64 KiB | 1.17x / 1.30x | 1.45x / 2.05x |
+| 1 MiB | 2.08x / 2.02x | 8.26x / 8.40x |
+| 4 MiB | 3.01x / 2.56x | 11.17x / 10.44x |
+
+So the blocks win clearly on these two histories (the acceptance bar was 3x), and the order matters: blocks without the path
+order get 2.6x to 3.0x, with it 10.4x to 11.2x. Caveat: these are real git histories imported into allgit, dominated by many
+near-identical versions of the same files; a repository of unrelated binaries would not behave like this (the research measured
+a flat ratio across block sizes for binaries).
+
+**The cost, measured.** Reading ONE object from a v3 pack transfers its whole compressed block. One mid-sized blob by id:
+ripgrep 4 requests and 0.60 MB (tiered) / 0.71 MB (single pack) instead of 7 requests and 59 KB with 60 v2 packs; tokio 4
+requests and 1.8 MB / 2.3 MB instead of 4 requests and 74 KB. A sparse checkout of one small file therefore moves 10x to 30x
+more bytes than before (but in about the same number of requests, and the whole-history fetch moves 12x to 7x fewer).
+`--block-kib 1024` trades bytes at rest (8.3x instead of 11.2x on ripgrep) for smaller single-object reads. Time was not
+measured here; the research's 1.5 ms warm 4 KiB read at 4 MiB blocks is not re-measured.
+
+Not run: moto, MinIO, SeaweedFS (RustFS only; its counts matched the directory remote within 3 requests of LIST paging);
+macOS; the concurrency tests against a real S3; remote compaction of a repository with chunked (large) files or several zones.
