@@ -4,7 +4,7 @@
 use crate::error::{msg, Result};
 use std::collections::HashMap;
 use unicode_normalization::UnicodeNormalization;
-use vcs_objects::names::META_DIR;
+use vcs_objects::names::is_meta_alias;
 
 /// Why a symlink target is refused, or `Ok` if it provably stays inside the worktree.
 ///
@@ -41,7 +41,7 @@ pub fn check_symlink_target(link_path: &str, target: &[u8]) -> std::result::Resu
                 }
             }
             n => {
-                if n.eq_ignore_ascii_case(META_DIR) {
+                if is_meta_alias(n) {
                     return Err("target points into repository metadata".into());
                 }
                 seen_normal = true;
@@ -62,7 +62,16 @@ fn push_folded(out: &mut String, c: &str) {
     if c.is_ascii() {
         out.extend(c.chars().map(|ch| ch.to_ascii_lowercase()));
     } else {
-        out.push_str(&c.nfd().collect::<String>().to_lowercase());
+        // Rust's lowercase is not the filesystems' case folding: APFS/NTFS also fold ß to ss, the
+        // long s to s and final sigma to sigma (probed on APFS: `straße` and `STRASSE` are one file).
+        for ch in c.nfd().collect::<String>().to_lowercase().chars() {
+            match ch {
+                'ß' => out.push_str("ss"),
+                'ſ' => out.push('s'),
+                'ς' => out.push('σ'),
+                ch => out.push(ch),
+            }
+        }
     }
 }
 
@@ -156,6 +165,19 @@ mod tests {
         assert!(check_symlink_target("l", b"").is_err());
         assert!(check_symlink_target("l", b"a//b").is_err());
         assert!(check_symlink_target("l", &[0xff]).is_err());
+    }
+
+    #[test]
+    fn folds_like_apfs_for_sharp_s_and_long_s() {
+        assert!(find_collision(["dir/straße", "dir/STRASSE"]).is_some());
+        assert!(find_collision(["xs", "xſ"]).is_some());
+        assert!(find_collision(["a/.vcs-x", "a/.vcs-y"]).is_none());
+    }
+
+    #[test]
+    fn symlink_targets_into_metadata_aliases_are_refused() {
+        assert!(check_symlink_target("l", ".vcſ/config".as_bytes()).is_err());
+        assert!(check_symlink_target("l", b"x/.vcs./config").is_err());
     }
 
     /// The straightforward algorithm `find_collision` replaced (no prefix skipping).
