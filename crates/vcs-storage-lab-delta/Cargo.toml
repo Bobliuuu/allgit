@@ -1,0 +1,22 @@
+[package]
+name = "vcs-storage-lab-delta"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Delta gate experiment (issues #250, #244): measures delta/solid/zstd storage on real allgit-encoded objects. Not part of the product; own workspace."
+
+# Own workspace root, like vcs-storage-lab-packing: the main workspace and CI do not see this crate.
+[workspace]
+
+[dependencies]
+vcs-objects = { path = "../vcs-objects" }
+vcs-store = { path = "../vcs-store" }
+zstd = "0.13"
+
+[[bin]]
+name = "deltagate"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+debug = false

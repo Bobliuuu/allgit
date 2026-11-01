@@ -1,0 +1,144 @@
+T	ripgrep	BlobText	v2_decode	us_per_object=27.73
+T	ripgrep	BlobText	solid64k	us_per_random_object=83.75	x_v2=3.02	sampled=1714	OK=true
+T	ripgrep	BlobText	solid256k	us_per_random_object=211.27	x_v2=7.62	sampled=1714	OK=true
+T	ripgrep	BlobText	solid1m	us_per_random_object=775.72	x_v2=27.98	sampled=1714	OK=true
+T	ripgrep	BlobText	solid4m	us_per_random_object=2665.12	x_v2=96.12	sampled=1714	OK=true
+T	ripgrep	BlobText	delta_d4	us_per_object=103.16	x_v2=3.72	us_per_head_object=20.37	head_objects=198	MISMATCHES=0
+T	ripgrep	BlobText	delta_d8	us_per_object=145.50	x_v2=5.25	us_per_head_object=28.39	head_objects=198	MISMATCHES=0
+T	ripgrep	BlobText	delta_d16	us_per_object=164.65	x_v2=5.94	us_per_head_object=19.73	head_objects=198	MISMATCHES=0
+T	ripgrep	BlobBin	v2_decode	us_per_object=0.78
+T	ripgrep	BlobBin	solid64k	us_per_random_object=16.75	x_v2=21.35	sampled=7	OK=true
+T	ripgrep	BlobBin	solid256k	us_per_random_object=14.88	x_v2=18.98	sampled=7	OK=true
+T	ripgrep	BlobBin	solid1m	us_per_random_object=13.77	x_v2=17.56	sampled=7	OK=true
+T	ripgrep	BlobBin	solid4m	us_per_random_object=14.66	x_v2=18.69	sampled=7	OK=true
+T	ripgrep	BlobBin	delta_d4	us_per_object=0.76	x_v2=0.97	us_per_head_object=0.72	head_objects=7	MISMATCHES=0
+T	ripgrep	BlobBin	delta_d8	us_per_object=0.73	x_v2=0.93	us_per_head_object=0.70	head_objects=7	MISMATCHES=0
+T	ripgrep	BlobBin	delta_d16	us_per_object=0.70	x_v2=0.89	us_per_head_object=0.69	head_objects=7	MISMATCHES=0
+T	ripgrep	Tree	v2_decode	us_per_object=0.43
+T	ripgrep	Tree	solid64k	us_per_random_object=55.59	x_v2=130.00	sampled=1605	OK=true
+T	ripgrep	Tree	solid256k	us_per_random_object=203.26	x_v2=475.32	sampled=1605	OK=true
+T	ripgrep	Tree	solid1m	us_per_random_object=699.60	x_v2=1636.01	sampled=1605	OK=true
+T	ripgrep	Tree	solid4m	us_per_random_object=2354.43	x_v2=5505.86	sampled=1605	OK=true
+T	ripgrep	Tree	delta_d4	us_per_object=44.02	x_v2=102.95	us_per_head_object=0.25	head_objects=60	MISMATCHES=0
+T	ripgrep	Tree	delta_d8	us_per_object=80.88	x_v2=189.13	us_per_head_object=0.25	head_objects=60	MISMATCHES=0
+T	ripgrep	Tree	delta_d16	us_per_object=163.94	x_v2=383.38	us_per_head_object=0.26	head_objects=60	MISMATCHES=0
+T	ripgrep	Commit	v2_decode	us_per_object=2.03
+T	ripgrep	Commit	solid64k	us_per_random_object=205.72	x_v2=101.53	sampled=2343	OK=true
+T	ripgrep	Commit	solid256k	us_per_random_object=382.93	x_v2=188.98	sampled=2343	OK=true
+T	ripgrep	Commit	solid1m	us_per_random_object=1237.63	x_v2=610.79	sampled=2343	OK=true
+T	ripgrep	Commit	solid4m	us_per_random_object=1073.24	x_v2=529.66	sampled=2343	OK=true
+T	ripgrep	Commit	delta_d4	us_per_object=33.79	x_v2=16.68	us_per_head_object=0.14	head_objects=1	MISMATCHES=0
+T	ripgrep	Commit	delta_d8	us_per_object=56.19	x_v2=27.73	us_per_head_object=0.11	head_objects=1	MISMATCHES=0
+T	ripgrep	Commit	delta_d16	us_per_object=89.42	x_v2=44.13	us_per_head_object=0.13	head_objects=1	MISMATCHES=0
+T	ripgrep	Other	v2_decode	us_per_object=0.41
+T	ripgrep	Other	solid64k	us_per_random_object=60.13	x_v2=146.57	sampled=277	OK=true
+T	ripgrep	Other	solid256k	us_per_random_object=59.91	x_v2=146.02	sampled=277	OK=true
+T	ripgrep	Other	solid1m	us_per_random_object=59.92	x_v2=146.04	sampled=277	OK=true
+T	ripgrep	Other	solid4m	us_per_random_object=59.66	x_v2=145.41	sampled=277	OK=true
+T	ripgrep	Other	delta_d4	us_per_object=45.69	x_v2=111.37	us_per_head_object=45.45	head_objects=277	MISMATCHES=0
+T	ripgrep	Other	delta_d8	us_per_object=81.92	x_v2=199.67	us_per_head_object=82.05	head_objects=277	MISMATCHES=0
+T	ripgrep	Other	delta_d16	us_per_object=144.51	x_v2=352.23	us_per_head_object=144.87	head_objects=277	MISMATCHES=0
+T	ripgrep	ALL	v2_decode	us_per_object=10.59
+T	ripgrep	ALL	solid64k	us_per_random_object=84.94	x_v2=8.02	sampled=1577	OK=true
+T	ripgrep	ALL	solid256k	us_per_random_object=241.33	x_v2=22.78	sampled=1577	OK=true
+T	ripgrep	ALL	solid1m	us_per_random_object=836.11	x_v2=78.92	sampled=1577	OK=true
+T	ripgrep	ALL	solid4m	us_per_random_object=3148.75	x_v2=297.19	sampled=1577	OK=true
+T	ripgrep	ALL	delta_d4	us_per_object=73.27	x_v2=6.92	us_per_head_object=41.47	head_objects=543	MISMATCHES=0
+T	ripgrep	ALL	delta_d8	us_per_object=115.19	x_v2=10.87	us_per_head_object=47.02	head_objects=543	MISMATCHES=0
+T	ripgrep	ALL	delta_d16	us_per_object=129.00	x_v2=12.18	us_per_head_object=76.71	head_objects=543	MISMATCHES=0
+T	flask	BlobText	v2_decode	us_per_object=26.02
+T	flask	BlobText	solid64k	us_per_random_object=81.75	x_v2=3.14	sampled=1548	OK=true
+T	flask	BlobText	solid256k	us_per_random_object=210.27	x_v2=8.08	sampled=1548	OK=true
+T	flask	BlobText	solid1m	us_per_random_object=709.15	x_v2=27.25	sampled=1548	OK=true
+T	flask	BlobText	solid4m	us_per_random_object=2600.90	x_v2=99.95	sampled=1548	OK=true
+T	flask	BlobText	delta_d4	us_per_object=81.55	x_v2=3.13	us_per_head_object=11.76	head_objects=225	MISMATCHES=0
+T	flask	BlobText	delta_d8	us_per_object=112.14	x_v2=4.31	us_per_head_object=11.77	head_objects=225	MISMATCHES=0
+T	flask	BlobText	delta_d16	us_per_object=196.88	x_v2=7.57	us_per_head_object=15.20	head_objects=225	MISMATCHES=0
+T	flask	BlobBin	v2_decode	us_per_object=5.64
+T	flask	BlobBin	solid64k	us_per_random_object=71.59	x_v2=12.69	sampled=38	OK=true
+T	flask	BlobBin	solid256k	us_per_random_object=180.08	x_v2=31.92	sampled=38	OK=true
+T	flask	BlobBin	solid1m	us_per_random_object=613.49	x_v2=108.74	sampled=38	OK=true
+T	flask	BlobBin	solid4m	us_per_random_object=1255.62	x_v2=222.56	sampled=38	OK=true
+T	flask	BlobBin	delta_d4	us_per_object=11.07	x_v2=1.96	us_per_head_object=12.85	head_objects=5	MISMATCHES=0
+T	flask	BlobBin	delta_d8	us_per_object=10.33	x_v2=1.83	us_per_head_object=13.08	head_objects=5	MISMATCHES=0
+T	flask	BlobBin	delta_d16	us_per_object=10.29	x_v2=1.82	us_per_head_object=13.09	head_objects=5	MISMATCHES=0
+T	flask	Tree	v2_decode	us_per_object=1.73
+T	flask	Tree	solid64k	us_per_random_object=86.49	x_v2=49.94	sampled=1634	OK=true
+T	flask	Tree	solid256k	us_per_random_object=233.34	x_v2=134.74	sampled=1634	OK=true
+T	flask	Tree	solid1m	us_per_random_object=861.79	x_v2=497.63	sampled=1634	OK=true
+T	flask	Tree	solid4m	us_per_random_object=3135.48	x_v2=1810.53	sampled=1634	OK=true
+T	flask	Tree	delta_d4	us_per_object=61.33	x_v2=35.41	us_per_head_object=0.68	head_objects=52	MISMATCHES=0
+T	flask	Tree	delta_d8	us_per_object=94.53	x_v2=54.58	us_per_head_object=0.52	head_objects=52	MISMATCHES=0
+T	flask	Tree	delta_d16	us_per_object=148.26	x_v2=85.61	us_per_head_object=0.52	head_objects=52	MISMATCHES=0
+T	flask	Commit	v2_decode	us_per_object=0.48
+T	flask	Commit	solid64k	us_per_random_object=122.98	x_v2=256.12	sampled=1869	OK=true
+T	flask	Commit	solid256k	us_per_random_object=300.40	x_v2=625.60	sampled=1869	OK=true
+T	flask	Commit	solid1m	us_per_random_object=1013.49	x_v2=2110.70	sampled=1869	OK=true
+T	flask	Commit	solid4m	us_per_random_object=1404.98	x_v2=2926.00	sampled=1869	OK=true
+T	flask	Commit	delta_d4	us_per_object=32.89	x_v2=68.49	us_per_head_object=0.13	head_objects=1	MISMATCHES=0
+T	flask	Commit	delta_d8	us_per_object=53.11	x_v2=110.60	us_per_head_object=0.12	head_objects=1	MISMATCHES=0
+T	flask	Commit	delta_d16	us_per_object=91.65	x_v2=190.87	us_per_head_object=0.13	head_objects=1	MISMATCHES=0
+T	flask	Other	v2_decode	us_per_object=0.12
+T	flask	Other	solid64k	us_per_random_object=21.16	x_v2=176.73	sampled=39	OK=true
+T	flask	Other	solid256k	us_per_random_object=20.87	x_v2=174.28	sampled=39	OK=true
+T	flask	Other	solid1m	us_per_random_object=21.26	x_v2=177.59	sampled=39	OK=true
+T	flask	Other	solid4m	us_per_random_object=20.10	x_v2=167.87	sampled=39	OK=true
+T	flask	Other	delta_d4	us_per_object=34.64	x_v2=289.27	us_per_head_object=34.96	head_objects=39	MISMATCHES=0
+T	flask	Other	delta_d8	us_per_object=59.04	x_v2=493.08	us_per_head_object=60.23	head_objects=39	MISMATCHES=0
+T	flask	Other	delta_d16	us_per_object=62.62	x_v2=522.98	us_per_head_object=63.97	head_objects=39	MISMATCHES=0
+T	flask	ALL	v2_decode	us_per_object=9.81
+T	flask	ALL	solid64k	us_per_random_object=81.69	x_v2=8.33	sampled=1554	OK=true
+T	flask	ALL	solid256k	us_per_random_object=219.05	x_v2=22.33	sampled=1554	OK=true
+T	flask	ALL	solid1m	us_per_random_object=764.92	x_v2=77.99	sampled=1554	OK=true
+T	flask	ALL	solid4m	us_per_random_object=2770.49	x_v2=282.46	sampled=1554	OK=true
+T	flask	ALL	delta_d4	us_per_object=63.51	x_v2=6.48	us_per_head_object=12.93	head_objects=322	MISMATCHES=0
+T	flask	ALL	delta_d8	us_per_object=99.13	x_v2=10.11	us_per_head_object=16.04	head_objects=322	MISMATCHES=0
+T	flask	ALL	delta_d16	us_per_object=138.25	x_v2=14.10	us_per_head_object=16.36	head_objects=322	MISMATCHES=0
+T	tokio	BlobText	v2_decode	us_per_object=16.78
+T	tokio	BlobText	solid64k	us_per_random_object=76.25	x_v2=4.54	sampled=1505	OK=true
+T	tokio	BlobText	solid256k	us_per_random_object=221.11	x_v2=13.17	sampled=1505	OK=true
+T	tokio	BlobText	solid1m	us_per_random_object=731.44	x_v2=43.58	sampled=1505	OK=true
+T	tokio	BlobText	solid4m	us_per_random_object=2760.91	x_v2=164.50	sampled=1505	OK=true
+T	tokio	BlobText	delta_d4	us_per_object=55.95	x_v2=3.33	us_per_head_object=11.88	head_objects=883	MISMATCHES=0
+T	tokio	BlobText	delta_d8	us_per_object=75.78	x_v2=4.52	us_per_head_object=11.76	head_objects=883	MISMATCHES=0
+T	tokio	BlobText	delta_d16	us_per_object=106.72	x_v2=6.36	us_per_head_object=12.53	head_objects=883	MISMATCHES=0
+T	tokio	BlobBin	v2_decode	us_per_object=0.08
+T	tokio	BlobBin	solid64k	us_per_random_object=21.56	x_v2=269.50	sampled=1	OK=true
+T	tokio	BlobBin	solid256k	us_per_random_object=17.51	x_v2=218.88	sampled=1	OK=true
+T	tokio	BlobBin	solid1m	us_per_random_object=18.76	x_v2=234.50	sampled=1	OK=true
+T	tokio	BlobBin	solid4m	us_per_random_object=18.60	x_v2=232.50	sampled=1	OK=true
+T	tokio	BlobBin	delta_d4	us_per_object=0.33	x_v2=4.12	us_per_head_object=0.05	head_objects=0	MISMATCHES=0
+T	tokio	BlobBin	delta_d8	us_per_object=0.27	x_v2=3.38	us_per_head_object=0.03	head_objects=0	MISMATCHES=0
+T	tokio	BlobBin	delta_d16	us_per_object=0.26	x_v2=3.25	us_per_head_object=0.03	head_objects=0	MISMATCHES=0
+T	tokio	Tree	v2_decode	us_per_object=1.52
+T	tokio	Tree	solid64k	us_per_random_object=83.24	x_v2=54.92	sampled=1592	OK=true
+T	tokio	Tree	solid256k	us_per_random_object=182.70	x_v2=120.54	sampled=1592	OK=true
+T	tokio	Tree	solid1m	us_per_random_object=705.42	x_v2=465.40	sampled=1592	OK=true
+T	tokio	Tree	solid4m	us_per_random_object=2804.76	x_v2=1850.45	sampled=1592	OK=true
+T	tokio	Tree	delta_d4	us_per_object=51.38	x_v2=33.90	us_per_head_object=1.07	head_objects=119	MISMATCHES=0
+T	tokio	Tree	delta_d8	us_per_object=72.97	x_v2=48.14	us_per_head_object=0.84	head_objects=119	MISMATCHES=0
+T	tokio	Tree	delta_d16	us_per_object=121.64	x_v2=80.25	us_per_head_object=0.92	head_objects=119	MISMATCHES=0
+T	tokio	Commit	v2_decode	us_per_object=1.08
+T	tokio	Commit	solid64k	us_per_random_object=144.44	x_v2=133.24	sampled=1722	OK=true
+T	tokio	Commit	solid256k	us_per_random_object=385.57	x_v2=355.67	sampled=1722	OK=true
+T	tokio	Commit	solid1m	us_per_random_object=1205.18	x_v2=1111.70	sampled=1722	OK=true
+T	tokio	Commit	solid4m	us_per_random_object=2019.27	x_v2=1862.66	sampled=1722	OK=true
+T	tokio	Commit	delta_d4	us_per_object=18.58	x_v2=17.14	us_per_head_object=0.11	head_objects=1	MISMATCHES=0
+T	tokio	Commit	delta_d8	us_per_object=27.72	x_v2=25.57	us_per_head_object=0.12	head_objects=1	MISMATCHES=0
+T	tokio	Commit	delta_d16	us_per_object=37.26	x_v2=34.37	us_per_head_object=0.12	head_objects=1	MISMATCHES=0
+T	tokio	Other	v2_decode	us_per_object=3.99
+T	tokio	Other	solid64k	us_per_random_object=80.66	x_v2=20.22	sampled=16	OK=true
+T	tokio	Other	solid256k	us_per_random_object=80.57	x_v2=20.19	sampled=16	OK=true
+T	tokio	Other	solid1m	us_per_random_object=79.64	x_v2=19.96	sampled=16	OK=true
+T	tokio	Other	solid4m	us_per_random_object=77.71	x_v2=19.48	sampled=16	OK=true
+T	tokio	Other	delta_d4	us_per_object=20.25	x_v2=5.08	us_per_head_object=20.47	head_objects=16	MISMATCHES=0
+T	tokio	Other	delta_d8	us_per_object=20.46	x_v2=5.13	us_per_head_object=19.12	head_objects=16	MISMATCHES=0
+T	tokio	Other	delta_d16	us_per_object=20.43	x_v2=5.12	us_per_head_object=20.74	head_objects=16	MISMATCHES=0
+T	tokio	ALL	v2_decode	us_per_object=7.41
+T	tokio	ALL	solid64k	us_per_random_object=77.65	x_v2=10.48	sampled=1521	OK=true
+T	tokio	ALL	solid256k	us_per_random_object=224.09	x_v2=30.25	sampled=1521	OK=true
+T	tokio	ALL	solid1m	us_per_random_object=782.41	x_v2=105.63	sampled=1521	OK=true
+T	tokio	ALL	solid4m	us_per_random_object=2926.84	x_v2=395.16	sampled=1521	OK=true
+T	tokio	ALL	delta_d4	us_per_object=51.28	x_v2=6.92	us_per_head_object=10.78	head_objects=1019	MISMATCHES=0
+T	tokio	ALL	delta_d8	us_per_object=79.72	x_v2=10.76	us_per_head_object=10.86	head_objects=1019	MISMATCHES=0
+T	tokio	ALL	delta_d16	us_per_object=128.58	x_v2=17.36	us_per_head_object=11.23	head_objects=1019	MISMATCHES=0
