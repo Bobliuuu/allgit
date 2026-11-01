@@ -264,3 +264,89 @@ fn prefetch_subscribed_rejects_a_tampered_blob_and_does_not_store_it() {
         format!("file 0 v2 {}", pad(0, "v2"))
     );
 }
+
+/// Delegates to an inner backend, but once armed every object read (`objects/` or `packs/`) after
+/// the first `allow` succeeds fails with `Unavailable`, as a dropped connection mid-batch would.
+struct DropsMidFetch<'a> {
+    inner: &'a dyn Backend,
+    allow: std::sync::atomic::AtomicI64,
+}
+impl DropsMidFetch<'_> {
+    fn gate(&self, key: &str) -> Result<(), vcs_remote::BackendError> {
+        if (key.starts_with("objects/") || key.starts_with("packs/"))
+            && self.allow.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) <= 0
+        {
+            return Err(vcs_remote::BackendError::Unavailable("connection dropped mid-fetch".into()));
+        }
+        Ok(())
+    }
+}
+impl Backend for DropsMidFetch<'_> {
+    fn get(&self, key: &str) -> Result<Option<vcs_remote::Versioned>, vcs_remote::BackendError> {
+        self.gate(key)?;
+        self.inner.get(key)
+    }
+    fn get_range(&self, key: &str, o: u64, l: u64) -> Result<Option<Vec<u8>>, vcs_remote::BackendError> {
+        self.gate(key)?;
+        self.inner.get_range(key, o, l)
+    }
+    fn exists(&self, key: &str) -> Result<bool, vcs_remote::BackendError> {
+        self.inner.exists(key)
+    }
+    fn put_if_absent(&self, key: &str, d: &[u8]) -> Result<bool, vcs_remote::BackendError> {
+        self.inner.put_if_absent(key, d)
+    }
+    fn put_if_match(&self, key: &str, d: &[u8], t: &str) -> Result<Option<String>, vcs_remote::BackendError> {
+        self.inner.put_if_match(key, d, t)
+    }
+    fn list(&self, p: &str) -> Result<Vec<String>, vcs_remote::BackendError> {
+        self.inner.list(p)
+    }
+}
+
+/// #117: a backend that dies part-way through the head's blob batch must leave the worktree, the
+/// index and the branch ref exactly as they were (the preflight runs before any worktree write),
+/// and the same command must succeed once the backend is back.
+#[test]
+fn backend_failing_mid_fetch_leaves_no_partial_worktree_write_on_sync() {
+    for allow in [0i64, 1] {
+        let d = tempfile::tempdir().unwrap();
+        let remote = MemBackend::new();
+        let a = seeded(&remote, d.path());
+        let b = Repo::clone_from(&remote, "mem", &d.path().join("b"), Some(&["engine".to_string()])).unwrap();
+        for i in 0..20 {
+            write(&a, &format!("engine/f{i}.rs"), &format!("file {i} v3 {}", pad(i, "v3")));
+        }
+        commit_all(&a, "v3");
+        a.publish(&remote, None, sig()).unwrap();
+        b.fetch(&remote, None).unwrap(); // commits and trees are local; the 20 new blobs are not
+        let before: Vec<String> = (0..20)
+            .map(|i| fs::read_to_string(b.worktree().join(format!("engine/f{i}.rs"))).unwrap())
+            .collect();
+        let head_before = b.refs().unwrap().head("engine", "main");
+        let flaky = DropsMidFetch { inner: &remote, allow: std::sync::atomic::AtomicI64::new(allow) };
+        let err = match b.sync(&flaky) {
+            Err(e) => e.to_string(),
+            Ok(r) => panic!("allow={allow}: sync succeeded: {:?}", r.actions),
+        };
+        assert!(err.contains("dropped") || err.contains("unavailable"), "allow={allow}: {err}");
+        for (i, want) in before.iter().enumerate() {
+            let got = fs::read_to_string(b.worktree().join(format!("engine/f{i}.rs"))).unwrap();
+            assert_eq!(&got, want, "allow={allow}: f{i} was touched by a failed sync");
+        }
+        assert_eq!(b.refs().unwrap().head("engine", "main"), head_before, "allow={allow}: ref moved");
+        let st = b.status().unwrap();
+        assert!(
+            st.zones.iter().all(|z| z.staged.is_empty() && z.unstaged.is_empty()),
+            "allow={allow}: a failed sync left the worktree dirty"
+        );
+        // partial progress is only whole, verified blobs in the store; fsck is clean
+        assert!(b.fsck().unwrap().problems.is_empty());
+        // backend back: the same command completes
+        b.sync(&remote).unwrap();
+        assert_eq!(
+            fs::read_to_string(b.worktree().join("engine/f5.rs")).unwrap(),
+            format!("file 5 v3 {}", pad(5, "v3"))
+        );
+    }
+}

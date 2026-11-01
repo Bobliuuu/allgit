@@ -255,7 +255,7 @@ size and 66-67% at 32 KiB, on versioned random binaries with small edits. Implem
 - Decode is strict: at least 2 chunks, `total_len >= threshold`, every chunk length in `1..=64 KiB`, lengths sum to
   `total_len`, no trailing bytes.
 - Reads: `get_content` fetches each chunk (hash-verified like any object), checks its length against the manifest and
-  concatenates. A missing chunk is `NotFound(chunk)`, so lazy fetch pulls just that chunk.
+  concatenates. A missing chunk is `NotFound(chunk)`, so lazy fetch pulls just that chunk. Lazy fetch never writes a partial worktree: the head's blobs and chunks are all fetched and verified before the first worktree write (docs/architecture.md, "Lazy blob fetch").
 - `fsck`: every chunk of a manifest must exist (or be refetchable) and be a Blob of the recorded length. GC reachability
   and sync dependency order (chunks before the manifest) follow manifest entries. Manifests cannot nest because a chunk
   must be a Blob.
