@@ -60,9 +60,9 @@ Environment variables win over the repository, and the repository wins over your
 ```text
 $ echo more >> hello.txt && vcs add hello.txt && VCS_AUTHOR_NAME="Grace Hopper" VCS_AUTHOR_EMAIL=grace@example.com vcs commit -m "env identity" && vcs log --oneline
 staged 1 file(s), 0 removal(s)
-[root/main ee929c055112] env identity
-ee929c055112 env identity
-baa8512c0532 first commit
+[root/main 5b715cf1c9ed] env identity
+5b715cf1c9ed env identity
+4eb8b84d1423 first commit
 ```
 
 If nothing is set, `vcs` stops and tells you what to do:
@@ -106,12 +106,12 @@ zone root: branch main @ (none)
     new file:  hello.txt
     new file:  src/main.rs
 $ vcs commit -m "first commit"
-[root/main baa8512c0532] first commit
+[root/main 4eb8b84d1423] first commit
 $ vcs log
-commit baa8512c05320adae4fec11ae54c28ab97478cf62cdd544c475822fa2fb3f564
-change 87118da8130773bf6c83c10cf6ae899d   zone root
+commit 4eb8b84d1423686b5b9fc5a43f57206fc01803ff56eed48bcd45e302a5162775
+change ce84b55d8b3987f6294825ab177969dc   zone root
 Author: Ada Lovelace <ada@example.com>
-Date:   1793500327
+Date:   1793502248
     first commit
 
 $ ls -a

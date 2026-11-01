@@ -25,9 +25,9 @@ $ vcs remote show
 remote: /home/ubuntu/guide-run/ch05/shared
 no remote-tracking refs yet (run `vcs fetch`)
 $ vcs publish
-assets/main (none) -> 6a18820b3760
-engine/main (none) -> 395adb72449f
-root/main (none) -> c6de1f291712
+assets/main (none) -> 1c683d286516
+engine/main (none) -> ed15cdfa1ffc
+root/main (none) -> cdb9005cbdac
 published atomically (remote generation 1)
 $ ls ../shared
 manifest
@@ -45,7 +45,7 @@ assets         assets               subscribed, on main; 1 branch(es)
 engine         engine               subscribed, on main; 1 branch(es)
 root           (rest of repo)       subscribed, on main; 1 branch(es)
 $ vcs -C bob log --zone engine --oneline
-395adb72449f first playable
+ed15cdfa1ffc first playable
 $ cd ada
 ```
 
@@ -57,26 +57,26 @@ Do not edit it by hand.
 ```text
 $ echo "fn main() { run(); }" > engine/main.rs && vcs add . && vcs commit -m "engine runs"
 staged 3 file(s), 0 removal(s)
-[engine/main 76db1c2f09e4] engine runs
+[engine/main b7d557a53702] engine runs
 $ vcs publish
-engine/main 395adb72449f -> 76db1c2f09e4
+engine/main ed15cdfa1ffc -> b7d557a53702
 published atomically (remote generation 2)
 $ vcs -C ../bob fetch
-fetched assets/main @ 6a18820b3760
-fetched engine/main @ 76db1c2f09e4
-fetched root/main @ c6de1f291712
+fetched assets/main @ 1c683d286516
+fetched engine/main @ b7d557a53702
+fetched root/main @ cdb9005cbdac
 $ vcs -C ../bob status
-zone assets (assets/): branch main @ 6a18820b3760
-zone engine (engine/): branch main @ 395adb72449f
-zone root: branch main @ c6de1f291712
+zone assets (assets/): branch main @ 1c683d286516
+zone engine (engine/): branch main @ ed15cdfa1ffc
+zone root: branch main @ cdb9005cbdac
 clean
 $ vcs -C ../bob sync
 assets/main: up to date
-engine/main: fast-forwarded 395adb72449f -> 76db1c2f09e4
+engine/main: fast-forwarded ed15cdfa1ffc -> b7d557a53702
 root/main: up to date
 $ vcs -C ../bob log --zone engine --oneline
-76db1c2f09e4 engine runs
-395adb72449f first playable
+b7d557a53702 engine runs
+ed15cdfa1ffc first playable
 ```
 
 ## Sparse clones
@@ -86,7 +86,7 @@ Other zones are listed as "not subscribed". Add one later with `vcs zone add`, t
 
 ```text
 $ cd .. && vcs clone shared art-only --zone assets --stats
-requests: 14, downloaded: 2621 bytes, uploaded: 0 bytes
+requests: 14, downloaded: 7748 bytes, uploaded: 0 bytes
 Cloned /home/ubuntu/guide-run/ch05/shared into art-only
 downloaded zones: assets
 skipped zones (not subscribed): engine, root
@@ -94,7 +94,7 @@ skipped zones (not subscribed): engine, root
 $ ls art-only
 assets
 $ vcs -C art-only status
-zone assets (assets/): branch main @ 6a18820b3760
+zone assets (assets/): branch main @ 1c683d286516
 not subscribed (not downloaded/materialized, NOT deleted): engine, root
 clean
 $ vcs -C art-only zone list
@@ -105,9 +105,9 @@ $ vcs -C art-only zone add engine && ls art-only
 subscribed to zone engine
 assets
 $ vcs -C art-only fetch --zone engine && vcs -C art-only sync && ls art-only
-fetched engine/main @ 76db1c2f09e4
+fetched engine/main @ b7d557a53702
 assets/main: up to date
-engine/main: fast-forwarded (none) -> 76db1c2f09e4
+engine/main: fast-forwarded (none) -> b7d557a53702
 assets
 engine
 $ cd ada
@@ -122,20 +122,20 @@ Fetch, merge the remote branch, and publish again. If the changes touch differen
 $ export VCS_AUTHOR_NAME=Bob VCS_AUTHOR_EMAIL=bob@example.com
 $ cd ../bob && echo "// bob" >> engine/main.rs && vcs add . && vcs commit -m "bob edit" && vcs publish
 staged 3 file(s), 0 removal(s)
-[engine/main e94f1909e58c] bob edit
-engine/main 76db1c2f09e4 -> e94f1909e58c
+[engine/main f8ebb78a93b6] bob edit
+engine/main b7d557a53702 -> f8ebb78a93b6
 published atomically (remote generation 3)
 $ unset VCS_AUTHOR_NAME VCS_AUTHOR_EMAIL; cd ../ada
 $ echo "pub fn util() {}" > engine/util.rs && vcs add . && vcs commit -m "ada adds util"
 staged 4 file(s), 0 removal(s)
-[engine/main 25caf51a5e6e] ada adds util
+[engine/main a7402b069f06] ada adds util
 $ vcs publish
 error: Cannot publish engine/main:
 
-Remote branch advanced to e94f1909e58c.
+Remote branch advanced to f8ebb78a93b6.
 
-Your local commit: 25caf51a5e6e
-Remote commit:     e94f1909e58c
+Your local commit: a7402b069f06
+Remote commit:     f8ebb78a93b6
 
 Options:
   vcs sync
@@ -145,20 +145,20 @@ assets/main: up to date
 engine/main: diverged; merge with `vcs merge --remote main --zone engine`
 root/main: up to date
 $ vcs fetch
-fetched assets/main @ 6a18820b3760
-fetched engine/main @ e94f1909e58c
-fetched root/main @ c6de1f291712
+fetched assets/main @ 1c683d286516
+fetched engine/main @ f8ebb78a93b6
+fetched root/main @ cdb9005cbdac
 $ vcs merge --remote main --zone engine
 fetched missing object e380d924a90a
-engine: merged, new commit 6f034f5e7c4d
+engine: merged, new commit a1eabec6b354
 $ vcs log --zone engine --oneline
-6f034f5e7c4d Merge remote-tracking branch 'origin/main' into main
-e94f1909e58c bob edit
-25caf51a5e6e ada adds util
-76db1c2f09e4 engine runs
-395adb72449f first playable
+a1eabec6b354 Merge remote-tracking branch 'origin/main' into main
+f8ebb78a93b6 bob edit
+a7402b069f06 ada adds util
+b7d557a53702 engine runs
+ed15cdfa1ffc first playable
 $ vcs publish
-engine/main e94f1909e58c -> 6f034f5e7c4d
+engine/main f8ebb78a93b6 -> a1eabec6b354
 published atomically (remote generation 4)
 ```
 
@@ -179,8 +179,8 @@ $ export AWS_ACCESS_KEY_ID=testing AWS_SECRET_ACCESS_KEY=testing
 $ vcs remote set 's3://studio-bucket/team/repo?endpoint=http://127.0.0.1:9511&region=us-east-1'
 remote set to s3://studio-bucket/team/repo?endpoint=http://127.0.0.1:9511&region=us-east-1
 $ vcs publish
-assets/main (none) -> e4fead135bcc
-root/main (none) -> 7baed80eaefa
+assets/main (none) -> 8f2f521b95a6
+root/main (none) -> f4dcb4ccf966
 published atomically (remote generation 1)
 $ cd .. && vcs clone 's3://studio-bucket/team/repo?endpoint=http://127.0.0.1:9511' from-s3
 Cloned s3://studio-bucket/team/repo?endpoint=http://127.0.0.1:9511 into from-s3
@@ -219,7 +219,7 @@ ok
 $ vcs init team && cd team && echo "hello" > a.txt && vcs add . && vcs commit -m "hello"
 Initialized empty vcs repository in /home/ubuntu/guide-run/ch05b/team/.vcs
 staged 1 file(s), 0 removal(s)
-[root/main 04ab5a460be8] hello
+[root/main fc6c647fefbb] hello
 ```
 
 Log in once. The token is checked against the server and saved with the credential helper
@@ -241,10 +241,10 @@ remote: http://127.0.0.1:8490
 token: present (from credential helper 'file')
 server: authenticated as ada write *
 $ vcs publish
-root/main (none) -> 04ab5a460be8
+root/main (none) -> fc6c647fefbb
 published atomically (remote generation 1)
 $ cd .. && vcs clone http://127.0.0.1:8490 from-http --stats
-requests: 11, downloaded: 918 bytes, uploaded: 0 bytes
+requests: 11, downloaded: 3993 bytes, uploaded: 0 bytes
 Cloned http://127.0.0.1:8490 into from-http
 downloaded zones: root
 skipped zones (not subscribed): (none)
@@ -256,7 +256,7 @@ token: present (from VCS_TOKEN environment variable)
 server: authenticated as carol read *
 $ echo x > b.txt; vcs add .; vcs commit -m "more"; VCS_TOKEN=carol-token-123 vcs publish
 staged 2 file(s), 0 removal(s)
-[root/main 06ab35a65c70] more
+[root/main ca7bea35e88c] more
 error: backend error: permission denied (403): this token's role or zone scope does not allow the operation (Forbidden: read-only principal). Ask the server admin for a token with the needed role/zones, then `vcs login http://127.0.0.1:8490`
 [exit 1]
 $ VCS_TOKEN=wrong-token vcs fetch
@@ -276,5 +276,13 @@ Things to notice:
 - `vcs logout` forgets the saved token. `vcs auth status` shows who the server thinks you are.
 - Plain `http://` sends the token in clear text. Use loopback, a private network, or a TLS proxy.
   *Not run: a `tls` build and `https://`.*
+
+### https and a private CA
+
+An `https://` server remote needs a `vcs` built with `--features tls`. To trust your own certificate authority,
+pass `--ca-pem FILE` to any remote command or set the config key `remote.cainfo`.
+Certificate and hostname checks are always on. *Not run for this guide: no `tls` build, no `https://`, no `--ca-pem`.*
+
+`vcs publish --repair` is shown in [chapter 11](11-troubleshooting.md#a-remote-that-lost-data-publish---repair).
 
 Next: [chapter 6, large files](06-large-files.md).

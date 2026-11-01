@@ -24,7 +24,7 @@ checked 6 objects
 1 object(s) not cached locally; they are on the remote and will be refetched on demand
 ok
 $ vcs fetch; vcs fsck
-fetched root/main @ 2c03b463c6c5
+fetched root/main @ 351c3924db09
 checked 6 objects
 1 object(s) not cached locally; they are on the remote and will be refetched on demand
 ok
@@ -49,14 +49,11 @@ checked 6 objects
 ok
 $ p=$(ls .vcs/objects/pack/*.pack); head -c 100 /dev/urandom | dd of=$p bs=1 seek=40 conv=notrunc 2>/dev/null; vcs fsck
 checked 6 objects
-PROBLEM: 2c03b463c6c59f426b75b5048cb3711a29f6fcc711fbc20396228db0ffcb4c52: object 2c03b463c6c59f426b75b5048cb3711a29f6fcc711fbc20396228db0ffcb4c52 is corrupt: hash mismatch (content hashes to 26e5b286e20e7120210ec7f5eae7fa33a37f1f494b8bcec9e8341b1cbc344439)
-PROBLEM: 52c0aeedfb9f472cf7e17f8e0fe69eb448b3b00d10240ab4920a02095f40c86b: object 52c0aeedfb9f472cf7e17f8e0fe69eb448b3b00d10240ab4920a02095f40c86b is corrupt: hash mismatch (content hashes to 433ff7eb32bccaf2415d138a432b941b7246f96a90b5b04b88e5d4c782fef153)
-PROBLEM: ref root/main: points to missing/non-commit 2c03b463c6c59f426b75b5048cb3711a29f6fcc711fbc20396228db0ffcb4c52
-PROBLEM: operation 923289641068b6761ef3aaaa326e45b0c6318a560637580529de45afa9e01445: view root/main -> 2c03b463c6c59f426b75b5048cb3711a29f6fcc711fbc20396228db0ffcb4c52 is missing or not a commit of that zone
-PROBLEM: /home/ubuntu/guide-run/ch11/healthy/.vcs/objects/pack/pack-0ff3f29940658684989b597c9cdeb14a605a61c324d4e53fdb44250334feb71e.pack: pack checksum mismatch
-PROBLEM: /home/ubuntu/guide-run/ch11/healthy/.vcs/objects/pack/pack-0ff3f29940658684989b597c9cdeb14a605a61c324d4e53fdb44250334feb71e.pack: object 2c03b463c6c59f426b75b5048cb3711a29f6fcc711fbc20396228db0ffcb4c52 hash mismatch
-PROBLEM: /home/ubuntu/guide-run/ch11/healthy/.vcs/objects/pack/pack-0ff3f29940658684989b597c9cdeb14a605a61c324d4e53fdb44250334feb71e.pack: bad framing for 52c0aeedfb9f472cf7e17f8e0fe69eb448b3b00d10240ab4920a02095f40c86b
-error: 7 problem(s) found
+PROBLEM: 126323ad81a04974e5d79433f0db11edbf29ea13f806140ea8e3bc6c237bea87: object 126323ad81a04974e5d79433f0db11edbf29ea13f806140ea8e3bc6c237bea87 is corrupt: hash mismatch (content hashes to 862b541e174b528324035b2832d2ba2e0c303cfc5456eac20f49fb270dd07a85)
+PROBLEM: operation 126323ad81a04974e5d79433f0db11edbf29ea13f806140ea8e3bc6c237bea87: missing or corrupt: object 126323ad81a04974e5d79433f0db11edbf29ea13f806140ea8e3bc6c237bea87 is corrupt: hash mismatch (content hashes to 862b541e174b528324035b2832d2ba2e0c303cfc5456eac20f49fb270dd07a85)
+PROBLEM: /home/ubuntu/guide-run/ch11/healthy/.vcs/objects/pack/pack-3266f987a8d9698d34185f504b57d05989b9f247fc06aff61939644947b7412d.pack: pack checksum mismatch
+PROBLEM: /home/ubuntu/guide-run/ch11/healthy/.vcs/objects/pack/pack-3266f987a8d9698d34185f504b57d05989b9f247fc06aff61939644947b7412d.pack: object 126323ad81a04974e5d79433f0db11edbf29ea13f806140ea8e3bc6c237bea87 hash mismatch
+error: 4 problem(s) found
 [exit 1]
 ```
 
@@ -73,16 +70,16 @@ checks each object on the remote, and uploads the missing ones. A plain `publish
 $ cd .. && vcs init p2 && cd p2 && echo data > f.txt && vcs add . && vcs commit -m first && mkdir ../remote2 && vcs remote set ../remote2 && vcs publish
 Initialized empty vcs repository in /home/ubuntu/guide-run/ch11/p2/.vcs
 staged 1 file(s), 0 removal(s)
-[root/main cfdec50d89d9] first
+[root/main bb114345c07b] first
 remote set to /home/ubuntu/guide-run/ch11/remote2
-root/main (none) -> cfdec50d89d9
+root/main (none) -> bb114345c07b
 published atomically (remote generation 1)
 $ ls ../remote2/packs | sed "s/[0-9a-f]\{16,\}/<id>/"
 pack-<id>.idx
 pack-<id>.pack
 $ rm ../remote2/packs/*
 $ vcs clone ../remote2 ../c2
-error: remote data invalid: object cfdec50d89d9d76bdf37219900e1848d4ce9d68c75916686583f58b4f1a1f168 missing on remote
+error: remote data invalid: object bb114345c07bc9070080a7db5c894f124f1b3cc351b490def58b74043648e6d5 missing on remote
 [exit 1]
 $ vcs publish
 nothing to publish
@@ -118,7 +115,7 @@ $ vcs switch nope
 error: no such branch root/nope
 [exit 1]
 $ echo dirty >> a.txt; vcs branch other; vcs switch other
-created root/other at 2c03b463c6c5
+created root/other at 351c3924db09
 error: zone "root" has uncommitted changes (0 staged, 1 unstaged); commit or revert them first
 [exit 1]
 $ vcs commit -m "nothing staged"
