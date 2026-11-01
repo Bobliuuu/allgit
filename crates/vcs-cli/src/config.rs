@@ -20,6 +20,11 @@ pub const KEYS: &[(&str, &str, &str)] = &[
         "VCS_REMOTE_DEFAULT",
         "remote URL used when `vcs remote set` was not run",
     ),
+    (
+        "credential.helper",
+        "VCS_CREDENTIAL_HELPER",
+        "token store: file (default), keychain (macOS), !command or /path/to/helper",
+    ),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

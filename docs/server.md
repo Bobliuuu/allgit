@@ -22,6 +22,18 @@ One line per token: `<principal> <read|write|admin> <zones|*> <blake3-hex-of-tok
 stored. Roles: `read` (get/range/exists/list), `write` (plus puts; manifest changes only in the listed zones), `admin`
 (all zones, and may break other principals' locks). The file is read at start; restart to change it.
 
+Token scopes are the role plus the `<zones>` column: a `write` token with `engine,assets` can change the manifest only
+for those zones; `*` means every zone. A request outside the token's scope gets 403 and the client prints how to log in
+with a different token.
+
+## Client side
+
+`vcs login http://host:port` verifies the token with `/v1/whoami` and saves it through the credential helper
+(`credential.helper`: `file` = `~/.config/vcs/credentials` with mode 0600, `keychain` on macOS, `!command`, or a
+program path). `VCS_TOKEN` overrides the helper. `vcs logout` forgets it, `vcs auth status` shows who the server thinks
+you are. The helper protocol (`vcs credential get|store|erase`) is `key=value` lines (`host`, `token`) on stdin/stdout.
+Tokens are never stored in `.vcs/remote` or printed in errors.
+
 ## API
 
 `GET /healthz` (no auth), `GET /v1/whoami`, `GET|HEAD /v1/o/<key>[?offset=&len=]`, `PUT /v1/o/<key>` with

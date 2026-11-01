@@ -57,10 +57,10 @@ pub fn open_backend(url: &str) -> Result<Box<dyn Backend>, Error> {
         None => url.into(),
         Some("file") => url["file://".len()..].into(),
         Some("s3") => return open_s3(url),
-        Some("http") => return open_http(url, std::env::var("VCS_TOKEN").ok()),
+        Some("http") => return open_http(url, crate::auth::token_for(url)?.map(|t| t.expose().to_owned())),
         Some(s) => {
             return Err(Error::Msg(format!(
-                "remote scheme {s}:// is not supported in this build (url: {url})\n\nSupported:\n  a local directory path\n  file:///absolute/path\n  s3://bucket/prefix?endpoint=http://host:port\n  http://host:port (vcs-server; token in VCS_TOKEN, no TLS)"
+                "remote scheme {s}:// is not supported in this build (url: {url})\n\nSupported:\n  a local directory path\n  file:///absolute/path\n  s3://bucket/prefix?endpoint=http://host:port\n  http://host:port (vcs-server; `vcs login` or VCS_TOKEN, no TLS)"
             )))
         }
     };
@@ -68,14 +68,15 @@ pub fn open_backend(url: &str) -> Result<Box<dyn Backend>, Error> {
     Ok(Box::new(b))
 }
 
-/// `http://host:port` = a `vcs-server`. The bearer token comes from `VCS_TOKEN` only (never
+/// `http://host:port` = a `vcs-server`. The bearer token comes from `VCS_TOKEN` or the credential helper (`vcs login`) only (never
 /// the URL, so it is never written to `.vcs/remote`). Set `VCS_PRINCIPAL` to the server-side
 /// principal name so lock holders match. No TLS: use a proxy for anything but a trusted network.
 fn open_http(url: &str, token: Option<String>) -> Result<Box<dyn Backend>, Error> {
     let token = token.filter(|t| !t.is_empty()).ok_or_else(|| {
-        Error::Msg("missing server token: set the VCS_TOKEN environment variable (tokens are never part of the URL)".into())
+        Error::Msg(format!("not logged in to {url}\n\nRun `vcs login {url}` (or set the VCS_TOKEN environment variable). Tokens are never part of the URL."))
     })?;
-    let b = HttpBackend::new(url, &token).map_err(|e| Error::Msg(format!("cannot open remote {url}: {e}")))?;
+    let b = HttpBackend::new(url, &token)
+        .map_err(|e| Error::Msg(format!("cannot open remote {url}: {}", e.to_string().replace(&token, "<redacted>"))))?;
     Ok(Box::new(b))
 }
 
