@@ -9,7 +9,7 @@
 //! State lives in `$GIT_DIR/allgit/<remote>/`:
 //! * `marks`   shared fast-import / fast-export marks file (written by Git, `:<n> <sha>`)
 //! * `pending` `<c|b> <allgit id> :<n>` objects whose Git sha is not yet known (the marks file is
-//!             written after this process may have exited, so it is read on the next run)
+//!   written after this process may have exited, so it is read on the next run)
 //! * `map`     `<c|b> <allgit id> <git sha>` for commits and blobs known to both sides
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -214,7 +214,7 @@ impl Helper {
         for (b, _) in &branches {
             s.push_str(&format!("? refs/heads/{b}\n"));
         }
-        for ((z, n), _) in &refs.tags {
+        for (z, n) in refs.tags.keys() {
             if z == ROOT_ZONE {
                 s.push_str(&format!("? refs/tags/{n}\n"));
             }
@@ -290,12 +290,12 @@ impl Helper {
         let rep = self.repo.import_git_with(input, opts).map_err(|x| format!("push failed: {x}"))?;
         let mut pend = Vec::new();
         for (m, id) in &rep.commit_marks {
-            if let Some(n) = m.trim_start_matches(':').parse::<usize>().ok() {
+            if let Ok(n) = m.trim_start_matches(':').parse::<usize>() {
                 pend.push(('c', *id, n));
             }
         }
         for (m, id) in &rep.blob_marks {
-            if let Some(n) = m.trim_start_matches(':').parse::<usize>().ok() {
+            if let Ok(n) = m.trim_start_matches(':').parse::<usize>() {
                 pend.push(('b', *id, n));
             }
         }
