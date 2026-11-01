@@ -5,7 +5,7 @@ use crate::meta::{frame, unframe};
 use std::collections::BTreeMap;
 use std::ops::Deref;
 use vcs_objects::codec::{Reader, Writer};
-use vcs_objects::names::validate_path;
+use vcs_objects::names::{validate_path, validate_path_after};
 use vcs_objects::{EntryMode, ObjectId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -252,49 +252,60 @@ impl Index {
     /// Serialise as `AGI3`: entries in fixed-size blocks behind a length table, so a reader can
     /// decode the blocks on several threads. `AGI2` and `AGIX` (older layouts) are still read.
     pub fn encode(&self) -> Vec<u8> {
-        let mut blocks: Vec<Vec<u8>> = Vec::with_capacity(self.entries.len() / BLOCK + 1);
-        let mut w = Writer::new();
-        let mut in_block = 0usize;
+        let n = self.entries.len();
+        // All blocks go into one buffer (sized for ~100 bytes an entry; untouched capacity costs
+        // nothing), then the header, which needs their lengths, is put in front.
+        let mut body: Vec<u8> = Vec::with_capacity(n * 100 + 64);
+        let mut lens: Vec<usize> = Vec::with_capacity(n / BLOCK + 1);
+        let (mut in_block, mut block_start) = (0usize, 0usize);
         for (p, e) in &self.entries {
-            w.str(p)
-                .u8(e.mode as u8)
-                .id(&e.id)
-                .varint(e.size)
-                .varint(e.mtime_ns)
-                .varint(e.ctime_ns);
+            put_varint(&mut body, p.len() as u64);
+            body.extend_from_slice(p.as_bytes());
+            body.push(e.mode as u8);
+            body.extend_from_slice(e.id.as_bytes());
+            put_varint(&mut body, e.size);
+            put_varint(&mut body, e.mtime_ns);
+            put_varint(&mut body, e.ctime_ns);
             in_block += 1;
             if in_block == BLOCK {
-                blocks.push(std::mem::replace(&mut w, Writer::new()).finish());
+                lens.push(body.len() - block_start);
+                block_start = body.len();
                 in_block = 0;
             }
         }
         if in_block > 0 {
-            blocks.push(w.finish());
-        }
-        let mut w = Writer::new();
-        w.varint(self.written_ns)
-            .varint(self.entries.len() as u64)
-            .varint(BLOCK as u64)
-            .varint(blocks.len() as u64);
-        for b in &blocks {
-            w.varint(b.len() as u64);
-        }
-        for b in &blocks {
-            w.raw(b);
+            lens.push(body.len() - block_start);
         }
         // Optional cache-tree section (count 0 = absent).
+        let mut tail = Writer::new();
         match (&self.entries.trees_fp, self.entries.trees.is_empty()) {
             (Some(fp), false) => {
-                w.varint(self.entries.trees.len() as u64).id(fp);
+                tail.varint(self.entries.trees.len() as u64).id(fp);
                 for (d, id) in &self.entries.trees {
-                    w.str(d).id(id);
+                    tail.str(d).id(id);
                 }
             }
             _ => {
-                w.varint(0);
+                tail.varint(0);
             }
         }
-        frame(b"AGI3", w.finish())
+        let tail = tail.finish();
+        let mut head = Writer::new();
+        head.varint(self.written_ns)
+            .varint(n as u64)
+            .varint(BLOCK as u64)
+            .varint(lens.len() as u64);
+        for l in &lens {
+            head.varint(*l as u64);
+        }
+        let head = head.finish();
+        let mut out = Vec::with_capacity(5 + head.len() + body.len() + tail.len());
+        out.extend_from_slice(b"AGI3");
+        out.push(crate::meta::STATE_VERSION);
+        out.extend_from_slice(&head);
+        out.extend_from_slice(&body);
+        out.extend_from_slice(&tail);
+        out
     }
 
     /// The legacy `AGI2` encoding (kept for tests and for readers of older repositories).
@@ -364,7 +375,8 @@ impl Index {
         } else {
             list = Vec::with_capacity(n);
             for _ in 0..n {
-                list.push(read_entry(&mut r, legacy)?);
+                let e = read_entry(&mut r, legacy, list.last().map_or("", |l| l.0.as_str()))?;
+                list.push(e);
             }
         }
         // Entries are written in key order, so build the map in one pass and check file/directory
@@ -417,10 +429,12 @@ const BLOCK: usize = 2048;
 /// Below this many entries a decode stays on the calling thread.
 const PAR_MIN: usize = 16 * 1024;
 
-fn read_entry(r: &mut Reader<'_>, legacy: bool) -> Result<(String, IndexEntry)> {
+/// Read one entry. `prev` is the previous (already validated) path of the same block, or "":
+/// path components shared with it are not validated again.
+fn read_entry(r: &mut Reader<'_>, legacy: bool, prev: &str) -> Result<(String, IndexEntry)> {
     let c = |e: vcs_objects::DecodeError| Error::Corrupt(format!("index: {e}"));
     let p = r.str(4096).map_err(c)?;
-    validate_path(&p)?;
+    validate_path_after(prev, &p)?;
     let mode = match r.u8().map_err(c)? {
         1 => EntryMode::File,
         2 => EntryMode::Executable,
@@ -443,11 +457,25 @@ fn read_entry(r: &mut Reader<'_>, legacy: bool) -> Result<(String, IndexEntry)> 
     ))
 }
 
+#[inline]
+fn put_varint(buf: &mut Vec<u8>, mut v: u64) {
+    while v >= 0x80 {
+        buf.push((v & 0x7f) as u8 | 0x80);
+        v >>= 7;
+    }
+    buf.push(v as u8);
+}
+
+/// Worker threads for decoding `n` entries. CPU time is the scarce resource, and every extra
+/// thread costs allocator-arena setup and page faults: on 100k entries (16-core box) one thread
+/// takes 28 ms of CPU, four 31 ms (12 ms wall), eight 35 ms, sixteen 48 ms (10 ms wall). So
+/// roughly one thread per 12.5k entries, at most four.
 fn threads_for(n: usize) -> usize {
     if n < PAR_MIN {
         1
     } else {
-        std::thread::available_parallelism().map_or(1, |t| t.get()).clamp(1, 16)
+        let cores = std::thread::available_parallelism().map_or(1, |t| t.get());
+        (n / 12_500).clamp(1, 4).min(cores)
     }
 }
 
@@ -458,7 +486,8 @@ fn decode_blocks(blocks: &[(&[u8], usize)]) -> Result<Vec<(String, IndexEntry)>>
         let mut r = Reader::new(bytes);
         let mut v = Vec::with_capacity(*cnt);
         for _ in 0..*cnt {
-            v.push(read_entry(&mut r, false)?);
+            let e = read_entry(&mut r, false, v.last().map_or("", |l: &(String, IndexEntry)| l.0.as_str()))?;
+            v.push(e);
         }
         r.finish().map_err(|e| Error::Corrupt(format!("index: {e}")))?;
         Ok(v)
@@ -701,12 +730,92 @@ mod tests {
         }
     }
 
+    /// The pre-optimisation `AGI3` writer, verbatim: the new encoder must produce the same bytes.
+    fn encode_v3_reference(ix: &Index) -> Vec<u8> {
+        let mut blocks: Vec<Vec<u8>> = vec![];
+        let mut w = Writer::new();
+        let mut in_block = 0usize;
+        for (p, e) in &ix.entries {
+            w.str(p)
+                .u8(e.mode as u8)
+                .id(&e.id)
+                .varint(e.size)
+                .varint(e.mtime_ns)
+                .varint(e.ctime_ns);
+            in_block += 1;
+            if in_block == BLOCK {
+                blocks.push(std::mem::replace(&mut w, Writer::new()).finish());
+                in_block = 0;
+            }
+        }
+        if in_block > 0 {
+            blocks.push(w.finish());
+        }
+        let mut w = Writer::new();
+        w.varint(ix.written_ns)
+            .varint(ix.entries.len() as u64)
+            .varint(BLOCK as u64)
+            .varint(blocks.len() as u64);
+        for b in &blocks {
+            w.varint(b.len() as u64);
+        }
+        for b in &blocks {
+            w.raw(b);
+        }
+        match (&ix.entries.trees_fp, ix.entries.trees.is_empty()) {
+            (Some(fp), false) => {
+                w.varint(ix.entries.trees.len() as u64).id(fp);
+                for (d, id) in &ix.entries.trees {
+                    w.str(d).id(id);
+                }
+            }
+            _ => {
+                w.varint(0);
+            }
+        }
+        frame(b"AGI3", w.finish())
+    }
+
+    #[test]
+    fn encode_is_byte_identical_to_the_reference_writer() {
+        for n in [0usize, 1, 2047, 2048, 2049, 5000] {
+            let mut i = Index::default();
+            for k in 0..n as u64 {
+                let mut en = e();
+                en.size = k * k * 1000;
+                en.mtime_ns = 1_790_000_000_000_000_000 + k;
+                en.ctime_ns = if k % 3 == 0 { 0 } else { k };
+                en.mode = [EntryMode::File, EntryMode::Executable, EntryMode::Symlink][(k % 3) as usize];
+                i.insert(&format!("d{}/é{k}.txt", k % 7), en).unwrap();
+            }
+            i.written_ns = 123_456_789_012;
+            assert_eq!(i.encode(), encode_v3_reference(&i), "n={n}");
+            i.entries.store_trees(
+                ObjectId::from_bytes([4; 32]),
+                [
+                    ("".to_string(), ObjectId::from_bytes([5; 32])),
+                    ("d1".to_string(), ObjectId::from_bytes([6; 32])),
+                ]
+                .into_iter()
+                .collect(),
+            );
+            assert_eq!(i.encode(), encode_v3_reference(&i), "n={n} trees");
+            assert_eq!(Index::decode(&i.encode()).unwrap().entries, i.entries);
+        }
+    }
+
     /// Measurement for #112, not a regression test: `cargo test -p vcs-repo --release index_cost -- --ignored --nocapture`.
     #[test]
     #[ignore]
     fn index_cost() {
         use std::io::Write;
         use std::time::Instant;
+        let cpu = || {
+            let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+            unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
+            let t = |x: libc::timeval| x.tv_sec as f64 * 1e3 + x.tv_usec as f64 / 1e3;
+            t(u.ru_utime) + t(u.ru_stime)
+        };
         let med = |mut v: Vec<f64>| {
             v.sort_by(|a, b| a.partial_cmp(b).unwrap());
             v[v.len() / 2]
@@ -728,7 +837,7 @@ mod tests {
                 .unwrap();
             }
             let bytes = ix.encode();
-            let (mut enc, mut dec, mut wr) = (vec![], vec![], vec![]);
+            let (mut enc, mut dec, mut wr, mut deccpu) = (vec![], vec![], vec![], vec![]);
             let dir = std::env::temp_dir().join(format!("ixcost{}", std::process::id()));
             std::fs::create_dir_all(&dir).unwrap();
             for _ in 0..9 {
@@ -736,8 +845,10 @@ mod tests {
                 let b = ix.encode();
                 enc.push(t.elapsed().as_secs_f64() * 1e3);
                 let t = Instant::now();
+                let c0 = cpu();
                 let d = Index::decode(&b).unwrap();
                 dec.push(t.elapsed().as_secs_f64() * 1e3);
+                deccpu.push(cpu() - c0);
                 assert_eq!(d.entries.len(), n);
                 let t = Instant::now();
                 let tmp = dir.join("index.tmp");
@@ -749,10 +860,11 @@ mod tests {
             }
             std::fs::remove_dir_all(&dir).unwrap();
             println!(
-                "entries={n} bytes={} encode_ms={:.2} decode_ms={:.2} write+fsync+rename_ms={:.2}",
+                "entries={n} bytes={} encode_ms={:.2} decode_ms={:.2} decode_cpu_ms={:.2} write+fsync+rename_ms={:.2}",
                 bytes.len(),
                 med(enc),
                 med(dec),
+                med(deccpu),
                 med(wr)
             );
         }
