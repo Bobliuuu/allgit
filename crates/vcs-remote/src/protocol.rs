@@ -117,7 +117,7 @@ pub struct Publisher<'a> {
     zones: BTreeMap<String, String>,
     labels: BTreeMap<String, String>,
     tags: BTreeMap<(String, String), ObjectId>,
-    verify_budget: usize,
+    verify_budget: Option<usize>,
     principal: String,
     clock: Box<dyn Fn() -> u64 + 'a>,
     fault: Option<crate::locks::LockFault>,
@@ -218,6 +218,7 @@ fn find_holes(
     let mut missing = HashSet::new();
     let mut level: Vec<ObjectId> = roots.into_iter().collect();
     let mut expanded_present = 0usize;
+    let mut probed_present = 0usize;
     while !level.is_empty() {
         level.sort();
         level.dedup();
@@ -226,10 +227,16 @@ fn find_holes(
             break;
         }
         let mut next = Vec::new();
+        // never probe more than the budget allows beyond what is certain to be uploaded anyway
+        if budget != usize::MAX {
+            let room = budget.saturating_sub(probed_present).max(1);
+            level.truncate(level.len().min(room + missing.len().min(0)));
+        }
         for (id, kind) in packfetch::probe_kinds(backend, &level)? {
             let present = kind.is_some();
             known.insert(id, present);
             if present {
+                probed_present += 1;
                 if expanded_present >= budget {
                     continue;
                 }
@@ -308,7 +315,7 @@ impl<'a> Publisher<'a> {
             zones: BTreeMap::new(),
             labels: BTreeMap::new(),
             tags: BTreeMap::new(),
-            verify_budget: PUBLISH_VERIFY_BUDGET,
+            verify_budget: None,
             principal: String::new(),
             clock: Box::new(|| {
                 std::time::SystemTime::now()
@@ -366,9 +373,10 @@ impl<'a> Publisher<'a> {
         self
     }
     /// How many already-present objects the upload walk looks beneath before trusting that the
-    /// rest of their closure is present (default [`PUBLISH_VERIFY_BUDGET`]; 0 trusts all).
+    /// rest of their closure is present (0 trusts all). Default: [`PUBLISH_VERIFY_BUDGET`] for loose-object publishes; none for packed
+    /// publishes, whose cost is constant by design (use [`repair_remote`] for those).
     pub fn with_verify_budget(mut self, n: usize) -> Self {
-        self.verify_budget = n;
+        self.verify_budget = Some(n);
         self
     }
     pub fn txid(&self) -> ObjectId {
@@ -539,10 +547,11 @@ impl<'a> Publisher<'a> {
     /// (bounded) beneath those heads and add to `staged` any object the remote lost there.
     fn with_holes(&self, mut staged: Vec<(ObjectId, Vec<u8>)>) -> Result<Vec<(ObjectId, Vec<u8>)>, PublishError> {
         let olds: Vec<ObjectId> = self.tx.updates.iter().filter_map(|u| u.old).collect();
-        if self.verify_budget == 0 || olds.is_empty() {
+        let budget = self.verify_budget.unwrap_or(0);
+        if budget == 0 || olds.is_empty() {
             return Ok(staged);
         }
-        let (missing, known) = find_holes(self.backend, self.local, olds, self.verify_budget)?;
+        let (missing, known) = find_holes(self.backend, self.local, olds, budget)?;
         let have: HashSet<ObjectId> = staged.iter().map(|s| s.0).collect();
         let mut holes = order_holes(self.local, &missing, &known)?;
         holes.retain(|h| !have.contains(&h.0));
@@ -581,7 +590,12 @@ impl<'a> Publisher<'a> {
                 let mut seen = HashSet::new();
                 let heads: BTreeSet<ObjectId> = self.tx.updates.iter().map(|u| u.new).chain(self.tags.values().copied()).collect();
                 let (backend, local) = (self.backend, self.local);
-                let (missing, known) = match find_holes(backend, local, heads.iter().copied(), self.verify_budget) {
+                let (missing, known) = match find_holes(
+                    backend,
+                    local,
+                    heads.iter().copied(),
+                    self.verify_budget.unwrap_or(PUBLISH_VERIFY_BUDGET),
+                ) {
                     Ok(x) => x,
                     Err(PublishError::Backend(e)) => {
                         self.state = State::Collect;

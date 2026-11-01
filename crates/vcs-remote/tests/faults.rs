@@ -334,7 +334,8 @@ fn publish_repairs_a_present_object_whose_descendant_is_gone() {
     assert!(dst.contains(&c2).unwrap());
 }
 
-/// Same through the packed publish path (the default): the new head is written as a pack on
+/// Same through the packed publish path, with verification requested (packed publishes skip it by
+/// default to stay constant-cost): the new head is written as a pack on
 /// top of a legacy loose remote that lost a leaf beneath its old head.
 #[test]
 fn packed_publish_repairs_a_hole_beneath_the_old_head() {
@@ -351,7 +352,10 @@ fn packed_publish_repairs_a_hole_beneath_the_old_head() {
         message: "m".into(),
         lock_ops: vec![],
     };
-    Publisher::new(&damaged, &s, tx).run().unwrap();
+    Publisher::new(&damaged, &s, tx)
+        .with_verify_budget(PUBLISH_VERIFY_BUDGET)
+        .run()
+        .unwrap();
     fetch_heads(&damaged, &MemoryStore::new(), None).expect("closure complete, leaf now in the pack");
     let _ = leaf;
 }
