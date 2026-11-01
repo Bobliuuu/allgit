@@ -33,7 +33,8 @@ export VCS_PRINCIPAL=<principal>    # must equal the server-side principal name 
 vcs remote set http://vcs.internal:8480
 ```
 
-Rotate by replacing the hash and restarting; the file is read at start.
+Rotate by replacing the hash: the file is polled once a second, and `kill -HUP <pid>` reloads tokens, policy and the TLS
+certificate at once (a file that fails to parse is ignored and the old value stays).
 
 ## 3. Path policy and locks
 
@@ -48,7 +49,9 @@ require-lock * art **/*.psd     # change only while holding a lock on that exact
 * Without `--policy` the only zone restriction is the zone list in the tokens file.
 * With a policy, a write principal changes a path only if an `allow` matches and no `deny` does; it also needs an
   `allow` rule for a zone to move its branches or define it. Admins skip allow/deny but not `require-lock`.
-* Reads are by role only (objects are content-addressed, not listable per zone).
+* Reads are by role unless you add read rules: `allow-read rita art **` / `deny-read * secret **` limit a non-admin token
+  to whole zones. This hides object bodies of other zones, not the manifest or object ids; read the threat model in
+  [server.md](server.md#read-policy-zone-level-partial-by-design) before relying on it. Path-level read rules do not exist.
 * Refusals: 403 (policy/role), 428 `LockRequired`, 409 `LockedBy`, 422 invalid (e.g. lease over the cap).
 
 **Lease expiry is server-computed.** The client's `expires_at` only says how long a lease it wants
@@ -92,11 +95,20 @@ private interface only. (The Dockerfile and unit file were written for this docu
 
 The server can terminate TLS itself when built with `cargo build --release -p vcs-server --features tls` and started
 with `--tls-cert <pem> --tls-key <pem>`; otherwise put nginx, Caddy or a load balancer in front and keep the server on
-loopback (`reverse_proxy 127.0.0.1:8480`). **The shipped `vcs` CLI only opens `http://` remotes today**, so an
-`https://` front end is reachable by other HTTP clients but not yet by `vcs remote set`: until client-side HTTPS
-lands, run the CLI against a private network or an SSH/WireGuard tunnel to the plain port, and do not tell users the
-link is encrypted unless it is. Audit log (`--audit-log`, `--audit-key`) and rate limiting (`--rate-limit
-<burst>,<per-sec>`, `--max-connections`) are documented in [server.md](server.md); add them to `ExecStart` as needed.
+loopback (`reverse_proxy 127.0.0.1:8480`). The `vcs` CLI opens `https://` remotes when built with
+`cargo build --release -p vcs-cli --features tls` (opt-in; the default build is plain-HTTP-only and says so):
+
+```sh
+vcs config set --user remote.cainfo /etc/ssl/private-ca.pem   # only for a private CA; omit for a public certificate
+vcs remote set https://vcs.example.com:8480
+```
+
+Certificates are always verified. After renewing the certificate files run `systemctl reload vcs-server` (add
+`ExecReload=/bin/kill -HUP $MAINPID` to the unit) or `kill -HUP`; no restart, no dropped connections. For mutual TLS add
+`--tls-client-ca <pem>` on the server and set `remote.sslcert`/`remote.sslkey` on clients; the token is still required.
+Do not tell users the link is encrypted unless it is: with the default CLI build an `https://` remote is refused.
+Audit log (`--audit-log`, `--audit-key`) and rate limiting (`--rate-limit <burst>,<per-sec>`, `--max-connections`) are
+documented in [server.md](server.md); add them to `ExecStart` as needed.
 
 ## Backups and operations
 

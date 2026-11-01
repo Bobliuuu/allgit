@@ -14,7 +14,7 @@ use vcs_server::audit::{parse_key, verify_file};
 use vcs_server::{auth, backend_url, AuditLog, Config, Policy, RateLimit, Server, TokenTable};
 
 const USAGE: &str = "usage: vcs-server (--root <dir> | --backend <s3://...|dir>) --tokens <file> [--listen host:port] [--audit-log <file> [--audit-key <file>]] \
-[--rate-limit <burst>,<per-sec>] [--max-connections <n>] [--max-body <bytes>] [--policy <file>] [--max-lease-secs N] [--skew-epsilon-ms N] [--tls-cert <pem> --tls-key <pem>]\n       \
+[--rate-limit <burst>,<per-sec>] [--max-connections <n>] [--max-body <bytes>] [--policy <file>] [--max-lease-secs N] [--skew-epsilon-ms N] [--tls-cert <pem> --tls-key <pem> [--tls-client-ca <pem>]]\n       \
 vcs-server hash-token <token>\n       vcs-server audit verify <file> [--key <file>]";
 
 fn die(m: &str) -> ! {
@@ -65,7 +65,7 @@ fn main() {
     }
     let (mut root, mut tokens, mut listen) = (None, None, "127.0.0.1:8480".to_owned());
     let (mut audit_log, mut audit_key, mut rate, mut maxc, mut maxb) = (None, None, None, None, None);
-    let (mut tls_cert, mut tls_key) = (None, None);
+    let (mut tls_cert, mut tls_key, mut tls_client_ca) = (None, None, None);
     let (mut backend_arg, mut policy_path, mut max_lease, mut eps) = (None, None, None, None);
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
@@ -81,6 +81,7 @@ fn main() {
             "--max-body" => maxb = Some(val("--max-body")),
             "--tls-cert" => tls_cert = Some(val("--tls-cert")),
             "--tls-key" => tls_key = Some(val("--tls-key")),
+            "--tls-client-ca" => tls_client_ca = Some(val("--tls-client-ca")),
             "--backend" => backend_arg = Some(val("--backend")),
             "--policy" => policy_path = Some(val("--policy")),
             "--max-lease-secs" => max_lease = Some(val("--max-lease-secs")),
@@ -101,6 +102,8 @@ fn main() {
     }
     let backend = backend_url::open(&backend_url).unwrap_or_else(|e| die(&e));
     let mut cfg = Config::new(table);
+    #[cfg(unix)]
+    let (cfg_tokens, cfg_policy) = (tokens.clone(), policy_path.clone());
     if let Some(p) = policy_path {
         let text = std::fs::read_to_string(&p).unwrap_or_else(|e| die(&format!("cannot read {p}: {e}")));
         cfg.validator.policy = Policy::parse(&text).unwrap_or_else(|e| die(&e));
@@ -138,13 +141,17 @@ fn main() {
     }
     #[allow(unused_mut)]
     let mut scheme = "http";
+    #[cfg(feature = "tls")]
+    let tls_files = tls_cert.clone().zip(tls_key.clone()).map(|(c, k)| (c, k, tls_client_ca.clone()));
+    if tls_client_ca.is_some() && (tls_cert.is_none() || tls_key.is_none()) {
+        die("--tls-client-ca needs --tls-cert and --tls-key");
+    }
     match (tls_cert, tls_key) {
         (None, None) => {}
         #[cfg(feature = "tls")]
-        (Some(c), Some(k)) => {
-            let cert = std::fs::read(&c).unwrap_or_else(|e| die(&format!("cannot read {c}: {e}")));
-            let key = std::fs::read(&k).unwrap_or_else(|e| die(&format!("cannot read {k}: {e}")));
-            cfg.tls = Some(vcs_server::tls::server_config(&cert, &key).unwrap_or_else(|e| die(&e)));
+        (Some(_), Some(_)) => {
+            let (c, k, ca) = tls_files.clone().unwrap_or_else(|| die("internal: tls files"));
+            cfg.tls = Some(build_tls(&c, &k, ca.as_deref()).unwrap_or_else(|e| die(&e)));
             scheme = "https";
         }
         #[cfg(not(feature = "tls"))]
@@ -161,5 +168,103 @@ fn main() {
             ""
         }
     );
+    #[cfg(unix)]
+    {
+        let h = srv.handle();
+        let reload = Reload {
+            tokens: cfg_tokens,
+            policy: cfg_policy,
+            #[cfg(feature = "tls")]
+            tls: tls_files,
+        };
+        sighup::install(move || reload.run(&h));
+    }
     srv.join();
+}
+
+/// Log line on stderr that never panics (a closed stderr must not kill the reload thread).
+#[cfg(unix)]
+fn say(m: &str) {
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr(), "{m}");
+}
+
+/// What SIGHUP re-reads. A file that fails to parse leaves the running value in place.
+#[cfg(unix)]
+struct Reload {
+    tokens: String,
+    policy: Option<String>,
+    #[cfg(feature = "tls")]
+    tls: Option<(String, String, Option<String>)>,
+}
+
+#[cfg(unix)]
+impl Reload {
+    fn run(&self, h: &vcs_server::Handle) {
+        say("vcs-server: SIGHUP: reloading");
+        match std::fs::read_to_string(&self.tokens)
+            .map_err(|e| e.to_string())
+            .and_then(|t| TokenTable::parse(&t))
+        {
+            Ok(t) if !t.is_empty() => {
+                h.reload_tokens(t);
+                say("vcs-server: reloaded tokens");
+            }
+            Ok(_) => say(&format!("vcs-server: keeping old tokens: {} is empty", self.tokens)),
+            Err(e) => say(&format!("vcs-server: keeping old tokens: {e}")),
+        }
+        if let Some(p) = &self.policy {
+            match std::fs::read_to_string(p)
+                .map_err(|e| e.to_string())
+                .and_then(|t| Policy::parse(&t))
+            {
+                Ok(pol) => {
+                    h.reload_policy(pol);
+                    say("vcs-server: reloaded policy");
+                }
+                Err(e) => say(&format!("vcs-server: keeping old policy: {e}")),
+            }
+        }
+        #[cfg(feature = "tls")]
+        if let Some((c, k, ca)) = &self.tls {
+            match build_tls(c, k, ca.as_deref()) {
+                Ok(cfg) => {
+                    h.reload_tls(cfg);
+                    say("vcs-server: reloaded tls certificate");
+                }
+                Err(e) => say(&format!("vcs-server: keeping old certificate: {e}")),
+            }
+        }
+    }
+}
+
+#[cfg(feature = "tls")]
+fn build_tls(cert: &str, key: &str, client_ca: Option<&str>) -> Result<Arc<rustls::ServerConfig>, String> {
+    let rd = |p: &str| std::fs::read(p).map_err(|e| format!("cannot read {p}: {e}"));
+    match client_ca {
+        Some(ca) => vcs_server::tls::server_config_mtls(&rd(cert)?, &rd(key)?, &rd(ca)?),
+        None => vcs_server::tls::server_config(&rd(cert)?, &rd(key)?),
+    }
+}
+
+/// SIGHUP -> run a callback on a helper thread. The handler only sets a flag (async-signal-safe).
+#[cfg(unix)]
+mod sighup {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static FLAG: AtomicBool = AtomicBool::new(false);
+    extern "C" fn on_hup(_: libc::c_int) {
+        FLAG.store(true, Ordering::SeqCst);
+    }
+    pub fn install(f: impl Fn() + Send + 'static) {
+        // SAFETY: `on_hup` only stores to an atomic, which is async-signal-safe.
+        unsafe {
+            libc::signal(libc::SIGHUP, on_hup as extern "C" fn(libc::c_int) as libc::sighandler_t);
+        }
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            if FLAG.swap(false, Ordering::SeqCst) {
+                f();
+            }
+        });
+    }
 }

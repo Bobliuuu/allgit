@@ -57,10 +57,10 @@ pub fn open_backend(url: &str) -> Result<Box<dyn Backend>, Error> {
         None => url.into(),
         Some("file") => url["file://".len()..].into(),
         Some("s3") => return open_s3(url),
-        Some("http") => return open_http(url, crate::auth::token_for(url)?.map(|t| t.expose().to_owned())),
+        Some("http" | "https") => return open_http(url, crate::auth::token_for(url)?.map(|t| t.expose().to_owned())),
         Some(s) => {
             return Err(Error::Msg(format!(
-                "remote scheme {s}:// is not supported in this build (url: {url})\n\nSupported:\n  a local directory path\n  file:///absolute/path\n  s3://bucket/prefix?endpoint=http://host:port\n  http://host:port (vcs-server; `vcs login` or VCS_TOKEN, no TLS)"
+                "remote scheme {s}:// is not supported in this build (url: {url})\n\nSupported:\n  a local directory path\n  file:///absolute/path\n  s3://bucket/prefix?endpoint=http://host:port\n  http://host:port, https://host:port (vcs-server; `vcs login` or VCS_TOKEN; https needs a `--features tls` build)"
             )))
         }
     };
@@ -68,16 +68,54 @@ pub fn open_backend(url: &str) -> Result<Box<dyn Backend>, Error> {
     Ok(Box::new(b))
 }
 
-/// `http://host:port` = a `vcs-server`. The bearer token comes from `VCS_TOKEN` or the credential helper (`vcs login`) only (never
+/// `http(s)://host:port` = a `vcs-server`. The bearer token comes from `VCS_TOKEN` or the credential helper (`vcs login`) only (never
 /// the URL, so it is never written to `.vcs/remote`). Set `VCS_PRINCIPAL` to the server-side
-/// principal name so lock holders match. No TLS: use a proxy for anything but a trusted network.
+/// principal name so lock holders match. `https://` needs the `tls` cargo feature; the server certificate is always
+/// verified (web roots, or exactly the CA bundle named by `remote.cainfo` / `VCS_CAINFO` / `--ca-pem`).
 fn open_http(url: &str, token: Option<String>) -> Result<Box<dyn Backend>, Error> {
     let token = token.filter(|t| !t.is_empty()).ok_or_else(|| {
         Error::Msg(format!("not logged in to {url}\n\nRun `vcs login {url}` (or set the VCS_TOKEN environment variable). Tokens are never part of the URL."))
     })?;
-    let b = HttpBackend::new(url, &token)
-        .map_err(|e| Error::Msg(format!("cannot open remote {url}: {}", e.to_string().replace(&token, "<redacted>"))))?;
+    let b = http_backend(url, &token)?;
     Ok(Box::new(b))
+}
+
+/// An [`HttpBackend`] with the TLS settings from config (see [`tls_material`]).
+pub fn http_backend(url: &str, token: &str) -> Result<HttpBackend, Error> {
+    let (ca, identity) = tls_material(url)?;
+    HttpBackend::with_tls(
+        url,
+        token,
+        ca.as_deref(),
+        identity.as_ref().map(|(c, k)| (c.as_slice(), k.as_slice())),
+    )
+    .map_err(|e| Error::Msg(format!("cannot open remote {url}: {}", e.to_string().replace(token, "<redacted>"))))
+}
+
+/// TLS material for an `https://` remote from config: `remote.cainfo` (env `VCS_CAINFO`, flag `--ca-pem`),
+/// and for mutual TLS `remote.sslcert` + `remote.sslkey` (env `VCS_CLIENT_CERT`, `VCS_CLIENT_KEY`).
+/// Ignored for other schemes so one user config can serve every remote.
+type ClientIdentity = (Vec<u8>, Vec<u8>);
+fn tls_material(url: &str) -> Result<(Option<Vec<u8>>, Option<ClientIdentity>), Error> {
+    if !url.starts_with("https://") {
+        return Ok((None, None));
+    }
+    let cfg = crate::config::Config::load()?;
+    let read = |key: &str| -> Result<Option<Vec<u8>>, Error> {
+        match cfg.get(key) {
+            None => Ok(None),
+            Some(path) => std::fs::read(&path)
+                .map(Some)
+                .map_err(|e| Error::Msg(format!("cannot read {path} ({key}): {e}"))),
+        }
+    };
+    let ca = read("remote.cainfo")?;
+    let identity = match (read("remote.sslcert")?, read("remote.sslkey")?) {
+        (Some(c), Some(k)) => Some((c, k)),
+        (None, None) => None,
+        _ => return Err(Error::Msg("remote.sslcert and remote.sslkey must be set together".into())),
+    };
+    Ok((ca, identity))
 }
 
 fn open_s3(url: &str) -> Result<Box<dyn Backend>, Error> {
@@ -198,6 +236,12 @@ mod tests {
         let e = open_http("http://127.0.0.1:1", None).err().unwrap().to_string();
         assert!(e.contains("VCS_TOKEN"), "{e}");
         assert!(open_http("http://127.0.0.1:1", Some("t".into())).is_ok());
+        #[cfg(not(feature = "tls"))]
+        assert!(open_http("https://127.0.0.1:1", Some("t".into()))
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("tls"));
         assert_eq!(normalize_url("http://h:1", Path::new("/c")), "http://h:1");
     }
     #[test]

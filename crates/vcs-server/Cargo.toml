@@ -27,6 +27,9 @@ thiserror.workspace = true
 ureq = { version = "2", default-features = false }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 vcs-store.workspace = true
 tempfile.workspace = true

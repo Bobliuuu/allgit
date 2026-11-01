@@ -36,6 +36,21 @@ pub const KEYS: &[(&str, &str, &str)] = &[
         "loose-object count above which `vcs add`/`commit` pack old loose objects (default 6700, 0 disables)",
     ),
     (
+        "remote.cainfo",
+        "VCS_CAINFO",
+        "PEM file with the CA certificate(s) to trust for https:// remotes (replaces the web roots; verification is never disabled; also `--ca-pem`)",
+    ),
+    (
+        "remote.sslcert",
+        "VCS_CLIENT_CERT",
+        "PEM client certificate chain for servers that require mutual TLS (needs remote.sslkey and remote.cainfo)",
+    ),
+    (
+        "remote.sslkey",
+        "VCS_CLIENT_KEY",
+        "PEM private key for remote.sslcert",
+    ),
+    (
         "credential.helper",
         "VCS_CREDENTIAL_HELPER",
         "token store: file (default), keychain (macOS), !command or /path/to/helper",
@@ -70,7 +85,7 @@ pub fn validate_value(key: &str, value: &str) -> Result<(), Error> {
         "merge.structural" if !matches!(value, "on" | "off") => msg("merge.structural must be 'on' or 'off'"),
         "log.default-format" if !matches!(value, "full" | "oneline") => msg("log.default-format must be 'full' or 'oneline'"),
         "gc.autoPackLimit" if value.trim().parse::<usize>().is_err() => msg("gc.autoPackLimit must be a non-negative integer"),
-        "user.name" | "user.email" | "core.editor" | "remote.default" | "merge.assist" if value.trim().is_empty() => {
+        "user.name" | "user.email" | "core.editor" | "remote.default" | "remote.cainfo" | "merge.assist" if value.trim().is_empty() => {
             msg(format!("{key} cannot be empty (use `vcs config unset {key}`)"))
         }
         _ => Ok(()),

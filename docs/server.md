@@ -7,7 +7,7 @@ authentication, roles, a per-zone write policy and server-side validation of eve
 
 ```
 vcs-server hash-token <token>                      # prints the hash to put in the tokens file
-vcs-server --root <dir> --tokens <file> [--listen 127.0.0.1:8480] [--tls-cert <pem> --tls-key <pem>]
+vcs-server --root <dir> --tokens <file> [--listen 127.0.0.1:8480] [--tls-cert <pem> --tls-key <pem> [--tls-client-ca <pem>]]
                   [--audit-log <file> [--audit-key <file>]] [--rate-limit <burst>,<per-sec>] [--max-connections <n>]
 vcs-server audit verify <file> [--key <keyfile>]
 vcs-server --backend 's3://bucket/prefix?endpoint=URL' --tokens <file> [--policy <file>] [--max-lease-secs N] [--skew-epsilon-ms N]
@@ -18,13 +18,43 @@ VCS_TOKEN=<token> VCS_PRINCIPAL=<name> vcs clone http://host:port ...
 
 Build with `--features tls` (rustls, ring provider) and pass `--tls-cert <pem> --tls-key <pem>` to serve HTTPS.
 Without the feature the server speaks **plain HTTP**: bearer tokens and data cross the wire in clear text, so use
-loopback, a private network or a TLS-terminating proxy. `HttpBackend::new("https://...")` works only in a `tls`
-build; `HttpBackend::with_ca(url, token, Some(ca_pem))` trusts exactly the given CA bundle, otherwise the built-in web
-roots are used. Certificate and hostname verification are always on; there is no insecure switch. Tested with a
-locally generated self-signed certificate (trusted CA works, other CA fails, wrong hostname fails, plain HTTP to the
-TLS port gets no service, a stalled handshake is cut off). Not done: client certificates (mTLS), certificate reload
-without restart, TLS support in the `vcs` CLI (`vcs` still only opens `http://` remotes; a flag/env for the CA bundle
-and a `tls` feature passthrough are not wired), and the connection-cap refusal on a TLS port just drops the socket.
+loopback, a private network or a TLS-terminating proxy. Certificate and hostname verification are always on on the
+client side; there is no insecure switch.
+
+**CLI.** The `vcs` CLI opens `https://host:port` remotes when it is built with `--features tls` (`cargo build -p vcs-cli
+--features tls`; this also enables `https://` S3 endpoints). It is **opt-in**: the default build has no TLS dependencies
+and builds offline, and the test `s3_https_endpoint_without_tls_feature_names_the_feature` checks that a default build
+says which feature is missing. A default build given an `https://` vcs-server remote fails with the same hint. Trust:
+
+* default: the built-in web roots;
+* a private CA: `vcs --ca-pem ca.pem <command>` (per invocation), env `VCS_CAINFO`, or the config key `remote.cainfo`
+  (`vcs config set remote.cainfo /abs/path/ca.pem`, repo or `--user`). This replaces the web roots with exactly that
+  bundle. There is one remote per repository, so the key is `remote.cainfo`, not per remote name. Note that `vcs clone
+  --ca-pem` applies only to that invocation: set `remote.cainfo` in the new clone for later commands.
+* client certificate (mutual TLS): `remote.sslcert` + `remote.sslkey` (env `VCS_CLIENT_CERT`, `VCS_CLIENT_KEY`); a CA
+  bundle must be configured too.
+
+Credentials are keyed by `host:port` regardless of scheme, so a token saved by `vcs login http://h:1` is also offered to
+`https://h:1`.
+
+**Server.** `HttpBackend::with_ca(url, token, Some(ca_pem))` / `with_tls(.., Some((cert, key)))` is the library entry
+point. Tested with locally generated CAs and leaf certificates (rcgen): trusted CA works, other CA fails, wrong hostname
+fails, plain HTTP to the TLS port gets no service, a stalled handshake is cut off, the real `vcs` binary does clone,
+publish, fetch, lock/unlock and `auth status` against the real `vcs-server` over HTTPS and fails closed with the wrong CA.
+
+**Mutual TLS (optional).** `--tls-client-ca <pem>` makes the server require a client certificate chaining to that CA;
+the handshake is refused otherwise. The certificate only admits the connection: the bearer token is still required and is
+what names the principal (no mapping from certificate subject to principal). There is no "certificate or token" mode and
+no revocation list: to cut off a client certificate, rotate the client CA or the leaf (and reload, below).
+
+**Reload (unix).** `kill -HUP <pid>` re-reads the tokens file, the policy file and the TLS certificate/key (and client
+CA). Each is replaced only if it parses; a broken file keeps the running value and the reason goes to stderr. New TLS
+connections use the new certificate, established connections keep theirs. Tested by sending the signal to the real
+binary (certificate swap, broken policy ignored, policy widened and narrowed, token revoked). Without a signal the tokens
+file is still polled once a second. Windows: no signal handler, restart instead.
+
+Not done: certificate revocation, OCSP, ACME, a TLS version/cipher knob (rustls defaults), and the connection-cap refusal
+on a TLS port just drops the socket.
 
 ## Tokens file
 
@@ -73,6 +103,51 @@ manifest it replaces, using the **authenticated principal** (not `Transaction.au
 Lock-holder names come from the client's publish, so the CLI's `VCS_PRINCIPAL` must equal the server-side principal
 name, otherwise lock acquisition is refused as a holder mismatch.
 
+## Read policy (zone-level, partial by design)
+
+Besides roles, `--policy` accepts `allow-read <principal|*> <zone|*> **` and `deny-read <principal|*> <zone|*> **`
+(the glob must be `**`; path-level read rules are rejected at load). A non-admin principal with any `allow-read` rule can
+read exactly the zones some `allow-read` matches; otherwise it can read every zone except those a `deny-read` names;
+`deny-read` wins. Admins are exempt. Read rules never grant writes.
+
+**How it is enforced.** Objects are content-addressed and shared, so an id carries no zone. The server walks, per zone,
+everything reachable from that zone's branch heads and tags (commits, trees, chunk manifests; plain blobs are leaves,
+checked with a 1-byte ranged read) and keeps the id sets in memory, extending them when the manifest changes. For a
+restricted principal:
+
+* `GET`/`HEAD`/range of `objects/...` is answered `404` (the same answer as for a missing object, so `HEAD` is no
+  existence oracle) when the object is reachable from a zone it may not read and from none it may read. Content shared
+  with a readable zone stays readable: the principal could read those bytes anyway.
+* Only canonical lowercase `objects/<2 hex>/<62 hex>` keys and `manifest` are readable. Packs (they mix zones), `tx/`,
+  `tomb/`, `gc/`, upper-case spellings and any other key are `404`. `GET /v1/list?prefix=packs/` is an empty list; every
+  other `list` is `403`, because a listing enumerates object ids of all zones. Percent-encoded separators, `.`/`..`
+  segments, double slashes and trailing slashes were tested and do not get around this.
+
+**What cannot be hidden (threat model).**
+
+* The manifest is served to everyone who can read at all: it names every zone, branch, tag, lock, zone prefix and the
+  head object ids of the zones a token may not read. Zone existence and head ids are therefore public to any
+  authenticated token. Hiding them would need a per-principal filtered manifest, which would break the compare-and-swap
+  publish of write tokens; not done.
+* Snapshot, transaction and operation objects, and objects not yet reachable from any zone (uploaded but not published),
+  are in no zone set and are readable by id. Their ids are not listable by restricted tokens, and a 256-bit id cannot be
+  guessed, but a snapshot object read by id names the head commits of all zones it covers.
+* Anyone with a write token can probe whether a given content exists by uploading it (`If-None-Match: *` answers `412`
+  for an object that is already there, in any zone). That is inherent in deduplicated storage.
+* Packs are not readable by restricted tokens. A repository whose objects exist only inside remote packs (no loose
+  copies) therefore cannot be cloned by a restricted token.
+* Sizes and timing: no padding, no constant-time lookups.
+* Cost: the first restricted read after a restart walks the whole history of every zone (one request per commit/tree and
+  one 1-byte ranged read per file entry), and the id sets cost 32 bytes per reachable object of RAM. The sets only grow
+  while the process lives, so an object removed from a zone's history stays attributed to that zone until restart. Not
+  measured at scale.
+* This is zone-level access control for a trusted server operator model. It is not a confidentiality boundary against
+  someone who already holds the denied content or the denied ids.
+
+Tested (`crates/vcs-server/tests/readpolicy.rs`, `sighup.rs`): own-zone reads, denied get/head/range, shared content,
+new history published after the index was built, policy reload, admin exemption, and adversarial requests (encoded
+separators, upper-case ids, `..`, trailing slash, `packs/`, `tx/`, list prefixes, half ranges, PUT/DELETE).
+
 ## Hardening
 
 **Object hashes.** A `PUT` to `objects/<2 hex>/<62 hex>` must carry a body whose content id (`id_of_encoded`, the
@@ -109,11 +184,10 @@ guesses, not tuned values; the binary exposes only `--max-connections` and `--ma
 
 ## Not done (known gaps)
 
-mTLS and certificate reload; SIGHUP; the CLI cannot open `https://` remotes yet; a rate-limit class for lock ops;
-`GET /v1/audit`, create-only audit objects and policy hash in audit (#127); the per-zone path-glob policy (#123);
-require-lock policy; lease expiry times are still computed by the client (the server bounds only `time_hw`); one
-request per connection and one thread per connection (bounded by `max_connections`); OIDC; object-level read ACLs.
-`objects/` uploads hash to their key; lease expiry times are still computed by the client (the server bounds only
-`time_hw`); one connection per request, one thread per connection, no concurrency cap; OIDC; object-level read ACLs.
+Certificate revocation and subject-to-principal mapping for mTLS; path-level read rules (impossible on content-addressed
+objects, see Read policy); a filtered manifest per principal; a rate-limit class for lock ops; `GET /v1/audit`,
+create-only audit objects and policy hash in audit (#127); lease expiry times are still computed by the client (the
+server bounds only `time_hw`); one request per connection and one thread per connection (bounded by `max_connections`);
+OIDC; Windows signal reload.
 
 Deployment (systemd, Docker, S3 backend, path policy, require-lock, replicas): see [deploy.md](deploy.md).
