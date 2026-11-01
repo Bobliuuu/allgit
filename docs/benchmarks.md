@@ -588,3 +588,7 @@ divided by the object size. The audit measured 11.3x for 300 B objects and 8.31 
 The object format and the loose layout are deliberately not changed here; `vcs repack` removes the overhead (see the
 loose-vs-packed section above), at the cost of the pack read path measured in the audit (F7). A future automatic repack
 policy is the real fix and belongs to the storage-engine work.
+
+## Remote workflows: walgit vs vcs-server vs plain git (local RustFS)
+
+See [research/walgit-benchmark.md](research/walgit-benchmark.md): push, clone, partial clone, fetch, cold variants, store request counts and server CPU, 10k and 100k files (JSON under `docs/research/data/walgit-bench/`). walgit has no client of its own, so its add/commit/status/log/checkout cost is the git column above.
