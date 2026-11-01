@@ -23,7 +23,9 @@ pub struct CommitGraphFile {
     ids: Vec<ObjectId>,
     time: Vec<u64>,
     gen: Vec<u32>,
-    parents: Vec<Vec<u32>>,
+    /// Parent indexes of all commits back to back; `pend[i]` is where commit `i`'s parents end.
+    pflat: Vec<u32>,
+    pend: Vec<u32>,
 }
 
 fn corrupt<T>(what: &str) -> Result<T, MergeError> {
@@ -31,6 +33,11 @@ fn corrupt<T>(what: &str) -> Result<T, MergeError> {
 }
 
 impl CommitGraphFile {
+    fn par(&self, i: usize) -> &[u32] {
+        let a = if i == 0 { 0 } else { self.pend[i - 1] as usize };
+        &self.pflat[a..self.pend[i] as usize]
+    }
+
     pub fn len(&self) -> usize {
         self.ids.len()
     }
@@ -59,7 +66,7 @@ impl CommitGraphFile {
             let mut todo = vec![start];
             seen[start] = true;
             while let Some(i) = todo.pop() {
-                for &p in &self.parents[i] {
+                for &p in self.par(i) {
                     if !seen[p as usize] {
                         seen[p as usize] = true;
                         todo.push(p as usize);
@@ -77,7 +84,7 @@ impl CommitGraphFile {
             n += 1;
             let mut todo = vec![a];
             while let Some(i) = todo.pop() {
-                for &p in &self.parents[i] {
+                for &p in self.par(i) {
                     if !seen[p as usize] {
                         seen[p as usize] = true;
                         n += 1;
@@ -120,7 +127,7 @@ impl CommitGraphFile {
                 f |= STALE;
                 flags[n] = f;
             }
-            for &p in &self.parents[n] {
+            for &p in self.par(n) {
                 let p = p as usize;
                 let new = flags[p] | (f & (P1 | P2 | STALE));
                 if new != flags[p] {
@@ -145,7 +152,7 @@ impl CommitGraphFile {
                 if !seen_set.insert(c) || self.gen[c] <= self.gen[anc] {
                     continue;
                 }
-                stack.extend(self.parents[c].iter().map(|&p| p as usize));
+                stack.extend(self.par(c).iter().map(|&p| p as usize));
             }
             false
         };
@@ -223,7 +230,7 @@ impl CommitGraphFile {
         // Merge into one id-sorted table and re-index parents.
         let mut all: BTreeMap<ObjectId, (Vec<ObjectId>, u64, u32)> = BTreeMap::new();
         for i in 0..self.ids.len() {
-            let ps = self.parents[i].iter().map(|&p| self.ids[p as usize]).collect();
+            let ps = self.par(i).iter().map(|&p| self.ids[p as usize]).collect();
             all.insert(self.ids[i], (ps, self.time[i], self.gen[i]));
         }
         for (id, (ps, t, g)) in new {
@@ -236,8 +243,8 @@ impl CommitGraphFile {
             out.ids.push(*id);
             out.time.push(*t);
             out.gen.push(*g);
-            out.parents
-                .push(ps.iter().map(|p| ids.binary_search(p).expect("closed") as u32).collect());
+            out.pflat.extend(ps.iter().map(|p| ids.binary_search(p).expect("closed") as u32));
+            out.pend.push(out.pflat.len() as u32);
         }
         Ok(out)
     }
@@ -251,8 +258,8 @@ impl CommitGraphFile {
             v.extend_from_slice(self.ids[i].as_bytes());
             v.extend_from_slice(&self.time[i].to_le_bytes());
             v.extend_from_slice(&self.gen[i].to_le_bytes());
-            v.push(self.parents[i].len() as u8);
-            for p in &self.parents[i] {
+            v.push(self.par(i).len() as u8);
+            for p in self.par(i) {
                 v.extend_from_slice(&p.to_le_bytes());
             }
         }
@@ -284,17 +291,21 @@ impl CommitGraphFile {
             Ok(s)
         };
         let mut g = CommitGraphFile::default();
+        let cap = n.min(body.len() / 45);
+        g.ids.reserve(cap);
+        g.time.reserve(cap);
+        g.gen.reserve(cap);
+        g.pend.reserve(cap);
         for _ in 0..n.min(body.len()) {
-            let id = ObjectId::from_bytes(take(32)?.try_into().unwrap());
-            g.time.push(u64::from_le_bytes(take(8)?.try_into().unwrap()));
-            g.gen.push(u32::from_le_bytes(take(4)?.try_into().unwrap()));
-            let np = take(1)?[0] as usize;
-            let mut ps = Vec::with_capacity(np);
-            for _ in 0..np {
-                ps.push(u32::from_le_bytes(take(4)?.try_into().unwrap()));
+            let head = take(45)?;
+            g.ids.push(ObjectId::from_bytes(head[..32].try_into().unwrap()));
+            g.time.push(u64::from_le_bytes(head[32..40].try_into().unwrap()));
+            g.gen.push(u32::from_le_bytes(head[40..44].try_into().unwrap()));
+            let np = head[44] as usize;
+            for c in take(np * 4)?.chunks_exact(4) {
+                g.pflat.push(u32::from_le_bytes(c.try_into().unwrap()));
             }
-            g.ids.push(id);
-            g.parents.push(ps);
+            g.pend.push(g.pflat.len() as u32);
         }
         if g.ids.len() != n || pos != body.len() {
             return corrupt("entry count or length mismatch");
@@ -304,7 +315,7 @@ impl CommitGraphFile {
         }
         for i in 0..n {
             let mut max = 0u32;
-            for &p in &g.parents[i] {
+            for &p in g.par(i) {
                 if p as usize >= n || p as usize == i {
                     return corrupt("parent index out of range");
                 }
@@ -330,7 +341,7 @@ impl CommitGraphFile {
             match load(id) {
                 Err(e) => problems.push(format!("commit-graph: {id}: cannot load real commit: {e}")),
                 Ok((ps, t)) => {
-                    let mine: Vec<ObjectId> = self.parents[i].iter().map(|&p| self.ids[p as usize]).collect();
+                    let mine: Vec<ObjectId> = self.par(i).iter().map(|&p| self.ids[p as usize]).collect();
                     if mine != ps {
                         problems.push(format!("commit-graph: {id}: parents differ from the commit"));
                     }
@@ -352,7 +363,7 @@ impl CommitGraphFile {
 impl CommitGraph for CommitGraphFile {
     fn parents(&self, id: &ObjectId) -> Result<Vec<ObjectId>, MergeError> {
         let i = self.index_of(id).ok_or(MergeError::Missing(*id))?;
-        Ok(self.parents[i].iter().map(|&p| self.ids[p as usize]).collect())
+        Ok(self.par(i).iter().map(|&p| self.ids[p as usize]).collect())
     }
     fn generation(&self, id: &ObjectId) -> Option<u32> {
         self.index_of(id).map(|i| self.gen[i])
