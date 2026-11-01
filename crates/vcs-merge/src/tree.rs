@@ -56,6 +56,9 @@ pub enum ConflictKind {
     ModeConflict,
     /// A path is a file on one side and a directory (or a different shape) on another.
     FileDirectory,
+    /// Both sides renamed the same base file to different paths. `path` is the base path;
+    /// left/right are the renamed files.
+    RenameRename,
 }
 
 /// Structured conflict. The path is absent from [`TreeMerge::entries`]; all inputs are kept
