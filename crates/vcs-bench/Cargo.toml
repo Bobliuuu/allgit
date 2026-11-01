@@ -16,7 +16,6 @@ vcs-repo.workspace = true
 vcs-remote.workspace = true
 tempfile.workspace = true
 blake3.workspace = true
-vcs-remote.workspace = true
 vcs-store-s3 = { path = "../vcs-store-s3" }
 
 [dev-dependencies]
