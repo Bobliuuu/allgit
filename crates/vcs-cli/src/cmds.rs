@@ -10,10 +10,13 @@ pub enum More {
     /// Binary-search a zone's history for the commit that introduced a bug
     #[command(subcommand)]
     Bisect(crate::bisect::BisectCmd),
+    /// Search tracked files (working tree, or a revision) for a regular expression
+    Grep(crate::grep::GrepArgs),
 }
 
-pub fn dispatch(cmd: &More) -> Result<(), Error> {
+pub fn dispatch(cmd: &More, _json: bool) -> Result<(), Error> {
     match cmd {
         More::Bisect(c) => crate::bisect::run(c),
+        More::Grep(a) => crate::grep::run(a),
     }
 }
