@@ -27,13 +27,28 @@ fn blob_id(s: &str) -> ObjectId {
     Object::Blob(s.as_bytes().to_vec()).id()
 }
 
+/// 2000 incompressible letters, deterministic per (file, version): packs compress with zstd, and the
+/// byte-count tests below assume history blobs are as big as they look.
+fn pad(i: usize, v: &str) -> String {
+    let mut x =
+        0x9E37_79B9_7F4A_7C15u64 ^ (i as u64 + 1).wrapping_mul(0xD6E8_FEB8_6659_FD93) ^ v.bytes().fold(7u64, |a, b| a * 31 + b as u64);
+    (0..2000)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (b'a' + (x % 26) as u8) as char
+        })
+        .collect()
+}
+
 /// Origin with zone `engine`: 20 files at v1, then all rewritten at v2 (so v1 blobs are history).
 fn seeded(remote: &dyn Backend, dir: &std::path::Path) -> Repo {
     let a = Repo::init(&dir.join("a")).unwrap();
     a.create_zone("engine", "engine").unwrap();
     for v in ["v1", "v2"] {
         for i in 0..20 {
-            write(&a, &format!("engine/f{i}.rs"), &format!("file {i} {v} {}", "x".repeat(2000)));
+            write(&a, &format!("engine/f{i}.rs"), &format!("file {i} {v} {}", pad(i, v)));
         }
         commit_all(&a, v);
     }
@@ -41,10 +56,10 @@ fn seeded(remote: &dyn Backend, dir: &std::path::Path) -> Repo {
     a
 }
 fn old_blob(i: usize) -> ObjectId {
-    blob_id(&format!("file {i} v1 {}", "x".repeat(2000)))
+    blob_id(&format!("file {i} v1 {}", pad(i, "v1")))
 }
 fn new_blob(i: usize) -> ObjectId {
-    blob_id(&format!("file {i} v2 {}", "x".repeat(2000)))
+    blob_id(&format!("file {i} v2 {}", pad(i, "v2")))
 }
 
 #[test]
@@ -57,7 +72,7 @@ fn clone_fetches_head_files_but_not_history_blobs() {
     assert!(!b.store().contains(&old_blob(3)).unwrap(), "history blob must stay remote");
     assert_eq!(
         fs::read_to_string(b.worktree().join("engine/f3.rs")).unwrap(),
-        format!("file 3 v2 {}", "x".repeat(2000))
+        format!("file 3 v2 {}", pad(3, "v2"))
     );
     let rep = b.fsck().unwrap();
     assert!(rep.problems.is_empty(), "{:?}", rep.problems);
