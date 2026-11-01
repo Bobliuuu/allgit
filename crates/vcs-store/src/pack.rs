@@ -21,7 +21,7 @@
 
 use crate::{io, StoreError};
 use std::fs;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use vcs_objects::ObjectId;
 
@@ -168,7 +168,23 @@ pub fn decode_payload_max(version: u8, payload: &[u8], max: u64) -> Result<std::
             if n > max.min(MAX_DECODED) {
                 return Err("zstd frame claims an oversized object".into());
             }
-            let out = zstd::bulk::decompress(rest, n as usize).map_err(|e| format!("zstd: {e}"))?;
+            // One decompression context per thread: creating one per object is a visible cost
+            // when a checkout reads 100k small blobs.
+            thread_local! {
+                static DCTX: std::cell::RefCell<Option<zstd::bulk::Decompressor<'static>>> = const { std::cell::RefCell::new(None) };
+            }
+            let out = DCTX
+                .with(|c| {
+                    let mut c = c.borrow_mut();
+                    if c.is_none() {
+                        *c = zstd::bulk::Decompressor::new().ok();
+                    }
+                    match c.as_mut() {
+                        Some(d) => d.decompress(rest, n as usize),
+                        None => zstd::bulk::decompress(rest, n as usize),
+                    }
+                })
+                .map_err(|e| format!("zstd: {e}"))?;
             if out.len() as u64 != n {
                 return Err("zstd frame length mismatch".into());
             }
@@ -588,6 +604,11 @@ pub struct Pack {
     idx: PackIndex,
     /// v3: the block read last, so reading neighbours of one file does not decompress it again.
     block: std::sync::Mutex<Option<(u64, std::sync::Arc<Block>)>>,
+    /// Opened on first read and kept: a read is then one `pread`, not open + seek + read + close.
+    /// A pack replaced by GC after this open stays readable through the old inode, whose entries
+    /// are exactly what `idx` describes.
+    #[cfg(unix)]
+    file: std::sync::OnceLock<fs::File>,
 }
 
 impl Pack {
@@ -608,6 +629,8 @@ impl Pack {
             pack_path,
             idx,
             block: std::sync::Mutex::new(None),
+            #[cfg(unix)]
+            file: std::sync::OnceLock::new(),
         })
     }
 
@@ -620,38 +643,62 @@ impl Pack {
     pub fn contains(&self, id: &ObjectId) -> bool {
         matches!(self.idx.lookup(id), Ok(Some(_)))
     }
+    /// `len` bytes at `off` of the pack file; `None` when the file is shorter (truncated).
+    /// `len` comes from the index, so it is never allocated before it is known to lie inside the
+    /// pack (a lying index on a short pack cannot demand gigabytes).
+    fn read_range(&self, off: u64, len: u64) -> Result<Option<Vec<u8>>, StoreError> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileExt;
+            if off.checked_add(len).is_none_or(|end| end > self.idx.pack_len) {
+                return Ok(None);
+            }
+            let f = match self.file.get() {
+                Some(f) => f,
+                None => {
+                    let f = io(&self.pack_path, fs::File::open(&self.pack_path))?;
+                    self.file.get_or_init(|| f)
+                }
+            };
+            let mut buf = vec![0u8; len as usize];
+            Ok(f.read_exact_at(&mut buf, off).ok().map(|()| buf))
+        }
+        #[cfg(not(unix))]
+        {
+            use std::io::{Read, Seek, SeekFrom};
+            let mut f = io(&self.pack_path, fs::File::open(&self.pack_path))?;
+            io(&self.pack_path, f.seek(SeekFrom::Start(off)))?;
+            let mut buf = Vec::new();
+            Ok(match f.take(len).read_to_end(&mut buf) {
+                Ok(n) if n as u64 == len => Some(buf),
+                _ => None,
+            })
+        }
+    }
     /// Read and decode one object's encoded bytes with a single ranged read (caller verifies the hash).
     pub fn read(&self, id: &ObjectId) -> Result<Option<Vec<u8>>, StoreError> {
         let corrupt = |reason: String| StoreError::Corrupt { id: *id, reason };
         let Some((off, len)) = self.idx.lookup(id).map_err(corrupt)? else {
             return Ok(None);
         };
-        let mut f = io(&self.pack_path, fs::File::open(&self.pack_path))?;
-        io(&self.pack_path, f.seek(SeekFrom::Start(off)))?;
-        // `len` comes from the index; never allocate it up front, so a lying index on a short
-        // pack cannot demand gigabytes (the buffer only grows with bytes actually read).
-        let mut buf = Vec::new();
-        match (&mut f).take(len as u64).read_to_end(&mut buf) {
-            Ok(n) if n == len as usize => {}
-            _ => return Err(corrupt("pack truncated".into())),
-        }
+        let buf = self.read_range(off, len as u64)?.ok_or_else(|| corrupt("pack truncated".into()))?;
         if self.idx.version == 4 && buf.first() == Some(&CODEC_DELTA) {
             let limit = self.idx.pack_len.saturating_sub(32);
             let mut fetch = |o: u64| -> Result<Vec<u8>, String> {
-                let mut len4 = [0u8; 4];
-                f.seek(SeekFrom::Start(o - 4))
-                    .and_then(|_| f.read_exact(&mut len4))
-                    .map_err(|e| format!("base frame: {e}"))?;
-                let l = u32::from_le_bytes(len4) as u64;
+                let len4 = self
+                    .read_range(o.wrapping_sub(4), 4)
+                    .ok()
+                    .flatten()
+                    .ok_or_else(|| "base frame: short read".to_string())?;
+                let l = u32::from_le_bytes([len4[0], len4[1], len4[2], len4[3]]) as u64;
                 let Some(end) = o.checked_add(l) else {
                     return Err("base entry outside pack".into());
                 };
                 if l == 0 || end > limit {
                     return Err("base entry outside pack".into());
                 }
-                let mut b = Vec::new();
-                match (&mut f).take(l).read_to_end(&mut b) {
-                    Ok(n) if n as u64 == l => Ok(b),
+                match self.read_range(o, l) {
+                    Ok(Some(b)) => Ok(b),
                     _ => Err("pack truncated".into()),
                 }
             };

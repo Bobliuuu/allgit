@@ -784,6 +784,14 @@ impl ObjectStore for LocalStore {
             Some(Pend::File(f)) => Some(f.clone()),
             None => None,
         };
+        if pending.is_none() {
+            // Most objects of a settled repository live in packs: look there first (an in-memory
+            // index probe) instead of paying a failed `open` of the loose path for every object.
+            // An unreadable pack entry falls through to the loose copy, if any.
+            if let Ok(Some(b)) = self.packed(id) {
+                return decode_verified(id, &b);
+            }
+        }
         let p = pending.unwrap_or_else(|| self.path_of(id));
         match fs::read(&p) {
             Ok(b) => decode_verified(id, &b),
@@ -890,7 +898,7 @@ impl ObjectStore for LocalStore {
     }
 
     fn contains(&self, id: &ObjectId) -> Result<bool, StoreError> {
-        Ok(self.pending.lock().unwrap().contains_key(id) || self.path_of(id).exists() || self.in_pack(id))
+        Ok(self.pending.lock().unwrap().contains_key(id) || self.in_pack(id) || self.path_of(id).exists())
     }
 
     fn modified(&self, id: &ObjectId) -> Result<Option<std::time::SystemTime>, StoreError> {

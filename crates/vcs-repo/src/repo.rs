@@ -7,7 +7,7 @@ use crate::index::{Index, IndexEntry};
 use crate::meta::{write_atomic, LockGuard, Refs, Workspace, Zones, DEFAULT_BRANCH, ROOT_ZONE};
 use crate::treeops::{self, Flat};
 use crate::worktree_fs::{FileKind, RealFs, WorktreeFs};
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -1074,7 +1074,7 @@ impl Repo {
     /// content was read and found clean (racy entries). The per-file `lstat` (and re-hash of
     /// racy/changed files) is independent per path, so a big list is split across at most 8
     /// threads.
-    fn unstaged_changes(&self, list: &[(&String, &IndexEntry)], written_ns: u64) -> Result<(Vec<Change>, Vec<String>)> {
+    pub(crate) fn unstaged_changes(&self, list: &[(&String, &IndexEntry)], written_ns: u64) -> Result<(Vec<Change>, Vec<String>)> {
         let check = |part: &[(&String, &IndexEntry)]| -> Result<(Vec<Change>, Vec<String>)> {
             let (mut out, mut clean) = (Vec::new(), Vec::new());
             for (p, e) in part {
@@ -1765,6 +1765,7 @@ impl Repo {
 
     pub(crate) fn transition_check_paths_ws(&self, ws: &Workspace, zone: &str, zones: &Zones, old: &Flat, new: &Flat) -> Result<()> {
         let changed: Vec<&String> = new.iter().filter(|(p, v)| old.get(*p) != Some(v)).map(|(p, _)| p).collect();
+        let mut dirs: HashMap<String, DirState> = HashMap::new();
         for p in &changed {
             validate_path(p)?;
             if zones.owner(p) != zone {
@@ -1783,32 +1784,50 @@ impl Repo {
             if ws.skips(zone, p) {
                 continue; // not materialized: nothing is written, so nothing on disk can be in the way
             }
-            if !old.contains_key(*p) && self.wfs.stat(p).is_ok() && !replaces_folded_old_path(&self.worktree, p, old, new) {
+            // Ancestors are judged once per directory, not once per file. A missing ancestor means
+            // nothing can exist at `p`, so a fresh checkout does no per-file stat at all.
+            let parent = p.rsplit_once('/').map_or("", |(d, _)| d);
+            let dir = self.check_dir_state(&mut dirs, parent, p, old, new)?;
+            if dir != DirState::Missing
+                && !old.contains_key(*p)
+                && self.wfs.stat(p).is_ok()
+                && !replaces_folded_old_path(&self.worktree, p, old, new)
+            {
                 return msg(format!("untracked path {p:?} would be overwritten; move or remove it first"));
-            }
-            // no symlinked / file ancestors
-            let mut rel = String::new();
-            let comps: Vec<&str> = p.split('/').collect();
-            for c in &comps[..comps.len() - 1] {
-                if !rel.is_empty() {
-                    rel.push('/');
-                }
-                rel.push_str(c);
-                match self.wfs.stat(&rel) {
-                    Ok(m) if m.kind == FileKind::Symlink => {
-                        return msg(format!(
-                            "refusing to write through symlink at {}",
-                            self.worktree.join(&rel).display()
-                        ))
-                    }
-                    Ok(m) if m.kind == FileKind::File && (!old.contains_key(&rel) || new.contains_key(&rel)) => {
-                        return msg(format!("cannot create {p:?}: {rel:?} is a file"));
-                    }
-                    _ => {}
-                }
             }
         }
         Ok(())
+    }
+
+    /// State of directory `dir` (worktree-relative, "" is the root) as a parent of the new path
+    /// `p`: refuses a symlink or a file in the way, memoizing the verdict per directory.
+    fn check_dir_state(&self, memo: &mut HashMap<String, DirState>, dir: &str, p: &str, old: &Flat, new: &Flat) -> Result<DirState> {
+        if dir.is_empty() {
+            return Ok(DirState::Present);
+        }
+        if let Some(s) = memo.get(dir) {
+            return Ok(*s);
+        }
+        let up = self.check_dir_state(memo, dir.rsplit_once('/').map_or("", |(d, _)| d), p, old, new)?;
+        let state = if up == DirState::Missing {
+            DirState::Missing
+        } else {
+            match self.wfs.stat(dir) {
+                Ok(m) if m.kind == FileKind::Symlink => {
+                    return msg(format!(
+                        "refusing to write through symlink at {}",
+                        self.worktree.join(dir).display()
+                    ))
+                }
+                Ok(m) if m.kind == FileKind::File && (!old.contains_key(dir) || new.contains_key(dir)) => {
+                    return msg(format!("cannot create {p:?}: {dir:?} is a file"));
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => DirState::Missing,
+                _ => DirState::Present,
+            }
+        };
+        memo.insert(dir.to_owned(), state);
+        Ok(state)
     }
 
     fn transition_apply(&self, zone: &str, old: &Flat, new: &Flat, ix: &mut Index) -> Result<()> {
@@ -1851,8 +1870,16 @@ impl Repo {
             let abs = || self.worktree.join(p);
             let m = if mode == EntryMode::Symlink {
                 io(&abs(), self.wfs.symlink(&data, p))?
-            } else {
+            } else if old.contains_key(p) {
                 io(&abs(), self.wfs.write(p, &data, mode))?
+            } else {
+                // Not tracked before, and the preflight saw nothing there: create in place (never
+                // replaces anything). A path that is taken after all (a case-folded old name that
+                // this transition removes) gets the atomic replace.
+                match self.wfs.create_new(p, &data, mode) {
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => io(&abs(), self.wfs.write(p, &data, mode))?,
+                    r => io(&abs(), r)?,
+                }
             };
             Ok(IndexEntry {
                 id,
@@ -2210,6 +2237,12 @@ pub(crate) fn fresh_change_id(zone: &str, root: &ObjectId, parent: Option<&Objec
     ChangeId::from_bytes(b)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DirState {
+    Present,
+    Missing,
+}
+
 /// On a case- or normalization-folding filesystem (APFS, HFS+, NTFS) a path of `new` that is not
 /// in `old` can still find a file on disk: the tracked file this transition removes under a
 /// differently spelled name (`readme` -> `README`). That file is ours to replace, not an
@@ -2220,10 +2253,12 @@ fn replaces_folded_old_path(root: &Path, p: &str, old: &Flat, new: &Flat) -> boo
     use std::os::unix::fs::MetadataExt;
     let fold = |s: &str| s.split('/').map(crate::portable::fold_component).collect::<Vec<_>>().join("/");
     let want = fold(p);
-    let Ok(here) = std::fs::symlink_metadata(root.join(p)) else { return false };
-    old.keys().filter(|k| !new.contains_key(*k) && fold(k) == want).any(|k| {
-        std::fs::symlink_metadata(root.join(k)).is_ok_and(|m| m.dev() == here.dev() && m.ino() == here.ino())
-    })
+    let Ok(here) = std::fs::symlink_metadata(root.join(p)) else {
+        return false;
+    };
+    old.keys()
+        .filter(|k| !new.contains_key(*k) && fold(k) == want)
+        .any(|k| std::fs::symlink_metadata(root.join(k)).is_ok_and(|m| m.dev() == here.dev() && m.ino() == here.ino()))
 }
 
 #[cfg(not(unix))]

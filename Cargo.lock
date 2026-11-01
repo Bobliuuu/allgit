@@ -1701,6 +1701,7 @@ name = "vcs-repo"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "libc",
  "notify",
  "proptest",
  "sha2",

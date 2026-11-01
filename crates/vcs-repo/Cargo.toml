@@ -13,6 +13,7 @@ thiserror.workspace = true
 blake3.workspace = true
 notify = { version = "6", default-features = false, features = ["macos_fsevent"], optional = true }
 unicode-normalization.workspace = true
+libc = "0.2"
 
 [dev-dependencies]
 tempfile.workspace = true
