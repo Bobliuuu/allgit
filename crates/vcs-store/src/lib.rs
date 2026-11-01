@@ -178,6 +178,19 @@ impl ObjectStore for MemoryStore {
     }
 }
 
+/// A written-but-unpublished object: encoded bytes in memory, or a file in `tmp/` once the
+/// in-memory budget is spent.
+enum Pend {
+    Mem(Vec<u8>),
+    File(PathBuf),
+}
+
+/// At most this many bytes of pending objects are kept in memory; the rest spill to `tmp/`.
+const PEND_MEM_CAP: u64 = 256 << 20;
+/// A barrier with at least this many pending objects publishes them as ONE pack (one data file,
+/// one fsync, two renames) instead of one loose file each (a create, fsync and rename per object).
+const PACK_MIN: usize = 256;
+
 /// Loose-object filesystem store: `<dir>/<aa>/<rest-of-hex>`.
 ///
 /// Durability model (batched, see docs/architecture.md "Durability"):
@@ -193,7 +206,9 @@ impl ObjectStore for MemoryStore {
 pub struct LocalStore {
     dir: PathBuf,
     /// id -> tmp file written but not yet published.
-    pending: Mutex<HashMap<ObjectId, PathBuf>>,
+    pending: Mutex<HashMap<ObjectId, Pend>>,
+    /// Bytes held by `Pend::Mem` entries (bounded by [`PEND_MEM_CAP`]).
+    pend_mem: AtomicU64,
     seq: AtomicU64,
     packs: RwLock<Vec<Pack>>,
     /// Dedup hits on objects older than this refresh their age; see [`DEFAULT_TOUCH_AFTER`].
@@ -336,6 +351,7 @@ impl LocalStore {
         Ok(Self {
             dir,
             pending: Mutex::new(HashMap::new()),
+            pend_mem: AtomicU64::new(0),
             seq: AtomicU64::new(0),
             packs: RwLock::new(packs),
             touch_after: DEFAULT_TOUCH_AFTER,
@@ -484,7 +500,13 @@ impl LocalStore {
                 .and_then(|t| now.duration_since(t).ok())
                 .is_some_and(|a| a >= older_than)
         };
-        let pending: BTreeSet<PathBuf> = self.pending.lock().unwrap().values().cloned().collect();
+        let pending: BTreeSet<PathBuf> = self
+            .pending
+            .lock()
+            .unwrap()
+            .values()
+            .filter_map(|p| if let Pend::File(f) = p { Some(f.clone()) } else { None })
+            .collect();
         let tmp = self.dir.join("tmp");
         if let Ok(rd) = fs::read_dir(&tmp) {
             for e in rd.flatten() {
@@ -669,6 +691,20 @@ impl LocalStore {
         if packed_recent == Some(true) {
             return Ok(());
         }
+        let len = (head.len() + tail.len()) as u64;
+        if self.pend_mem.load(Ordering::Relaxed) + len <= PEND_MEM_CAP {
+            let mut v = Vec::with_capacity(len as usize);
+            v.extend_from_slice(head);
+            v.extend_from_slice(tail);
+            self.pend_mem.fetch_add(len, Ordering::Relaxed);
+            self.pending.lock().unwrap().insert(id, Pend::Mem(v));
+            return Ok(());
+        }
+        let tmp = self.write_tmp(&id, head, tail)?;
+        self.pending.lock().unwrap().insert(id, Pend::File(tmp));
+        Ok(())
+    }
+    fn write_tmp(&self, id: &ObjectId, head: &[u8], tail: &[u8]) -> Result<PathBuf, StoreError> {
         let n = self.seq.fetch_add(1, Ordering::Relaxed);
         let tmp = self.dir.join("tmp").join(format!("{}.{}.{n}.tmp", id.to_hex(), std::process::id()));
         {
@@ -678,7 +714,26 @@ impl LocalStore {
             }
             io(&tmp, f.write_all(tail))?;
         }
-        self.pending.lock().unwrap().insert(id, tmp);
+        Ok(tmp)
+    }
+    /// Publish a big batch as one pack: stream every pending object into a single file, fsync it
+    /// once, rename pack then index (a pack without an index is ignored), fsync the directory.
+    fn sync_as_pack(&self, pending: &mut HashMap<ObjectId, Pend>) -> Result<(), StoreError> {
+        let items: Vec<(&ObjectId, &Pend)> = pending.iter().collect();
+        let pack = pack::write_pack_streaming(&self.dir, items.len(), items.iter().map(|(id, p)| {
+            let bytes = match p {
+                Pend::Mem(v) => std::borrow::Cow::Borrowed(v.as_slice()),
+                Pend::File(f) => std::borrow::Cow::Owned(io(f, fs::read(f))?),
+            };
+            Ok((**id, bytes))
+        }))?;
+        self.packs.write().unwrap().push(pack);
+        let files: Vec<&PathBuf> = pending.values().filter_map(|p| if let Pend::File(f) = p { Some(f) } else { None }).collect();
+        // Best effort: a leftover is an orphan in tmp/ that clean_orphans removes.
+        let _ = par_try_each(&files, |f| {
+            let _ = fs::remove_file(f);
+            Ok(())
+        });
         Ok(())
     }
     fn path_of(&self, id: &ObjectId) -> PathBuf {
@@ -689,7 +744,11 @@ impl LocalStore {
 
 impl ObjectStore for LocalStore {
     fn get(&self, id: &ObjectId) -> Result<Object, StoreError> {
-        let pending = self.pending.lock().unwrap().get(id).cloned();
+        let pending = match self.pending.lock().unwrap().get(id) {
+            Some(Pend::Mem(v)) => return decode_verified(id, v),
+            Some(Pend::File(f)) => Some(f.clone()),
+            None => None,
+        };
         let p = pending.unwrap_or_else(|| self.path_of(id));
         match fs::read(&p) {
             Ok(b) => decode_verified(id, &b),
@@ -720,8 +779,22 @@ impl ObjectStore for LocalStore {
         if pending.is_empty() {
             return Ok(());
         }
+        if pending.len() >= PACK_MIN {
+            self.sync_as_pack(&mut pending)?;
+            pending.clear();
+            self.pend_mem.store(0, Ordering::Relaxed);
+            return Ok(());
+        }
+        // Small batch: spill the in-memory objects to tmp files, then publish them as loose files.
+        let mem: Vec<ObjectId> = pending.iter().filter(|(_, p)| matches!(p, Pend::Mem(_))).map(|(i, _)| *i).collect();
+        for id in mem {
+            if let Some(Pend::Mem(v)) = pending.get(&id) {
+                let t = self.write_tmp(&id, &[], v)?;
+                pending.insert(id, Pend::File(t));
+            }
+        }
         // 1. object data to the device, then one hardware flush covering all of it.
-        let tmps: Vec<&PathBuf> = pending.values().collect();
+        let tmps: Vec<&PathBuf> = pending.values().filter_map(|p| if let Pend::File(f) = p { Some(f) } else { None }).collect();
         // Start write-back of every file first (Linux), so the device sees all of it at once and
         // the per-file fsync below mostly waits instead of serialising seeks and journal commits.
         #[cfg(target_os = "linux")]
@@ -743,7 +816,7 @@ impl ObjectStore for LocalStore {
         // 2. publish under final names (data is already durable, so a visible name is complete).
         let mut dirs = BTreeSet::new();
         let mut moves = Vec::with_capacity(pending.len());
-        for (id, tmp) in pending.iter() {
+        for (id, tmp) in pending.iter().filter_map(|(i, p)| if let Pend::File(f) = p { Some((i, f)) } else { None }) {
             let dest = self.path_of(id);
             let parent = dest.parent().expect("object path has parent").to_owned();
             if dirs.insert(parent.clone()) {
@@ -766,6 +839,7 @@ impl ObjectStore for LocalStore {
             io(&self.dir, hardware_flush(&f))?;
         }
         pending.clear();
+        self.pend_mem.store(0, Ordering::Relaxed);
         Ok(())
     }
 
@@ -824,6 +898,30 @@ impl LocalStore {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn big_batch_publishes_as_one_pack_and_survives_reopen() {
+        let d = tempfile::tempdir().unwrap();
+        let s = LocalStore::open(d.path()).unwrap();
+        let mut ids = Vec::new();
+        for i in 0..(PACK_MIN * 3) {
+            ids.push(s.put_blob(format!("blob number {i}").as_bytes()).unwrap());
+        }
+        // readable while pending
+        assert_eq!(s.get_blob(&ids[5]).unwrap(), b"blob number 5");
+        s.sync().unwrap();
+        assert_eq!(fs::read_dir(d.path().join("pack")).unwrap().count(), 2, "one pack + one index");
+        assert!(fs::read_dir(d.path().join("tmp")).unwrap().next().is_none(), "no temp files left");
+        assert!(s.verify_packs().is_empty());
+        let s2 = LocalStore::open(d.path()).unwrap();
+        for (i, id) in ids.iter().enumerate() {
+            assert_eq!(s2.get_blob(id).unwrap(), format!("blob number {i}").as_bytes());
+        }
+        // dedup against the pack writes nothing new
+        s2.put_blob(b"blob number 7").unwrap();
+        s2.sync().unwrap();
+        assert_eq!(fs::read_dir(d.path().join("pack")).unwrap().count(), 2);
+    }
+
     use super::*;
 
     fn exercise(s: &dyn ObjectStore) {
