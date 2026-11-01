@@ -19,7 +19,11 @@ pub const KEYS: &[(&str, &str, &str)] = &[
         "VCS_MERGE_ASSIST",
         "opt-in: command run on conflicts after `vcs merge`/`vcs rebase` to propose resolutions (file contents go to that command; see docs/assist.md)",
     ),
-    ("merge.renames", "VCS_MERGE_RENAMES", "on/off: detect renames in merge/rebase (default off)"),
+    (
+        "merge.renames",
+        "VCS_MERGE_RENAMES",
+        "on/off: detect renames in merge/rebase (default off)",
+    ),
     ("log.default-format", "VCS_LOG_FORMAT", "full or oneline (default full)"),
     (
         "remote.default",
@@ -237,6 +241,8 @@ impl Config {
     /// merge.assist: the opt-in assistant command (unset, empty or `off` means none).
     pub fn assist_command(&self) -> Option<String> {
         self.get("merge.assist").filter(|v| !v.trim().is_empty() && v.trim() != "off")
+    }
+
     /// merge.renames, default off. An invalid value is an error.
     pub fn renames(&self) -> Result<bool, Error> {
         match self.get("merge.renames").as_deref() {

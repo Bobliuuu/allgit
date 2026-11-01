@@ -247,11 +247,13 @@ default-branch heads at clone time (`git clone --bare`).
 | https://github.com/gin-gonic/gin (0f09c3a9b4626d9fe9979cf4d0521d6ae32ab646) | go | 216 | 215 | 194 / 194 / 194 / 194 | 20 / 20 / 20 / 20 |
 | https://github.com/spf13/cobra (adbc8813901bba65827259daa8e22ff94ec1f30e) | go | 114 | 114 | 114 / 114 / 114 / 114 | 0 / 0 / 0 / 0 |
 | https://github.com/typeorm/typeorm (5bdc67882dee5a02d975d5ed140c9c3f91661116) | typescript | 869 | 298 | 276 / 276 / 276 / 276 | 46 / 45 / 45 / 44 |
+| https://github.com/nestjs/nest (8d9dd9d174921cc03882d1b39e91fb7bb1b1ca5a) | typescript | 9275 | 300 | 288 / 289 / 289 / 290 | 82 / 80 / 81 / 79 |
 | https://github.com/sindresorhus/got (6b5aafc1cd538998728be6f45c65b0f80bae01b2) | javascript (no driver) | 73 | 73 | 72 / 72 / 72 / 72 | 0 / 0 / 0 / 0 |
 
 (Conflicted paths include docs and other non-code files; per-language splits are in the script output.) A clean
-result equalled the real merge's tree in every replayed merge except one: gin has 194 clean merges but 193 exact trees,
-identically in all four engines (one merge where the human's result differs from the mechanical merge; not investigated).
+result equalled the real merge's tree in every replayed merge except in two repositories: gin has 194 clean merges but 193 exact trees, and nest has one fewer exact tree than clean
+merges in each engine (288/287, 289/288, 289/288, 290/289), identically across engines (merges where the human's result
+differs from the mechanical merge; not investigated).
 Skipped: 1 merge each in flask, clap and gin and 2 in typeorm (several merge bases).
 
 Per-language file-level numbers (content-merged files / exact / parse ok, all of them from the same runs):
@@ -268,23 +270,26 @@ Per-language file-level numbers (content-merged files / exact / parse ok, all of
 | cobra, go | all four | 0 | 25 | 25 | 25/25 |
 | typeorm, typescript | text / text+ren | 45 / 44 | 96 | 94 | 96/96 |
 | typeorm, typescript | struct / struct+ren | 44 / 43 | 97 | 95 | 97/97 |
+| nest, typescript | text / struct / text+ren / struct+ren | 14 / 12 / 13 / 11 | 15 / 17 / 15 / 17 | 13 / 14 / 13 / 14 | 15/15, 17/17, 15/15, 17/17 |
 
 Every parse-checked output also parsed in the real history (the baseline column of the script output equals parse ok in
-all rows). `exact` below `content-merged` (flask 1, requests 1, clap 2, typeorm 2) means a mechanically merged file
+all rows). `exact` below `content-merged` (flask 1, requests 1, clap 2, typeorm 2, nest 2 of 15 typescript and 11 of 669 other files) means a mechanically merged file
 differs from the file in the real merge commit; these are identical across engines and were not investigated.
 
 What this says, and what it does not:
 
-* Rename-aware merge removed 19 of 79 conflicted paths in flask (python: 41 to 23) and 1 of 46 in typeorm; no change
+* Rename-aware merge removed 19 of 79 conflicted paths in flask (python: 41 to 23), 1 of 46 in typeorm and 1 of 82 in nest; no change
   in the other five repositories (they have few or no rename-versus-edit overlaps in the sampled merges). It never
   produced a conflict that the plain merge did not, and never made a clean merge differ from history (only the one gin merge above differs, in all engines), in the sampled merges.
-* Structural merge gained 1 file in flask and 1 in typeorm over text and nothing elsewhere. It is about 4x slower in
-  total merge time here (flask 245 ms text vs 914 ms struct for 299 merges; rename detection added 245 to 372 ms).
+* Structural merge gained 1 file in flask, 1 in typeorm and 2 in nest over text and nothing elsewhere. It is about 4x
+  slower in total merge time in flask (245 ms text vs 914 ms struct for 299 merges; rename detection added 245 to 372
+  ms); in nest, whose merges touch hundreds of files, 300 merges took 65.6 s text, 66.9 s struct, 68.4 s text+ren, 69.5 s
+  struct+ren (the merge call only; flattening and tree reads are outside the timer).
   The structural driver's benefit on real merges is small in this sample.
-* Sampling is the newest-first even stride of the merge commits, at most 300 per repository; only six or seven
-  repositories, three languages with drivers plus one without; most real merges are trivially clean, so differences are
+* Sampling is the newest-first even stride of the merge commits, at most 300 per repository; only eight
+  repositories, four languages with drivers plus one without; most real merges are trivially clean, so differences are
   concentrated in few merges. Merges with several merge bases were skipped. These numbers do not cover rebase or
   cherry-pick, conflicts that history resolved by hand differently from either side, or large monorepos.
-* Default: unchanged. Rename detection stays opt-in. It was never worse in the data, but it improved only one of seven
-  repositories, so the data does not show a strictly better result across the board; turning it on by default is a
+* Default: unchanged. Rename detection stays opt-in. It was never worse in the data, but it removed a sizeable share of conflicts in only one of eight
+  repositories (flask) and one or two paths in two others, so the data does not show a strictly better result across the board; turning it on by default is a
   one-line change in `Repo` (`renames: true`) if the owner decides the evidence is enough.

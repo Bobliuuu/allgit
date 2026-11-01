@@ -57,7 +57,12 @@ fn lang_of(path: &str) -> &'static str {
 
 #[allow(unused_variables)]
 fn parses(path: &str, data: &[u8]) -> Option<bool> {
-    #[cfg(any(feature = "structural", feature = "structural-python", feature = "structural-typescript", feature = "structural-go"))]
+    #[cfg(any(
+        feature = "structural",
+        feature = "structural-python",
+        feature = "structural-typescript",
+        feature = "structural-go"
+    ))]
     {
         let l = vcs_merge::structural::lang_for_path(path)?;
         return Some(vcs_merge::structural::parses_as(l, data));
@@ -97,16 +102,29 @@ fn main() {
         let (fb, f1, f2) = (root(base), root(&c.parents[0]), root(&c.parents[1]));
         let actual = flatten(store, Some(c.root), "").expect("flatten merged");
         used += 1;
+        #[allow(clippy::needless_range_loop)]
         for vi in 0..VARIANTS.len() {
             let structural = vi % 2 == 1;
             let ren = vi >= 2;
             let t = Instant::now();
             let (tm, nren): (TreeMerge, u64) = if ren {
-                let r = merge_flat_renames(&blobs, Algorithm::Myers, structural, vcs_merge::rename::DEFAULT_THRESHOLD, &fb, &f1, &f2).expect("merge");
+                let r = merge_flat_renames(
+                    &blobs,
+                    Algorithm::Myers,
+                    structural,
+                    vcs_merge::rename::DEFAULT_THRESHOLD,
+                    &fb,
+                    &f1,
+                    &f2,
+                )
+                .expect("merge");
                 let n = (r.left_renames.len() + r.right_renames.len()) as u64;
                 (r.merge, n)
             } else {
-                (merge_flat_with(&blobs, Algorithm::Myers, structural, &fb, &f1, &f2).expect("merge"), 0)
+                (
+                    merge_flat_with(&blobs, Algorithm::Myers, structural, &fb, &f1, &f2).expect("merge"),
+                    0,
+                )
             };
             let s = &mut stats[vi];
             s.micros += t.elapsed().as_micros();
@@ -133,7 +151,15 @@ fn main() {
             }
         }
     }
-    println!("repo={} branch={} total_merge_commits={} sampled={} replayed={} skipped_not_single_base={}", a[0], a[1], total_merges, merges.iter().step_by(stride).take(max).count(), used, skipped_bases);
+    println!(
+        "repo={} branch={} total_merge_commits={} sampled={} replayed={} skipped_not_single_base={}",
+        a[0],
+        a[1],
+        total_merges,
+        merges.iter().step_by(stride).take(max).count(),
+        used,
+        skipped_bases
+    );
     for (vi, name) in VARIANTS.iter().enumerate() {
         let s = &stats[vi];
         println!(
@@ -147,7 +173,10 @@ fn main() {
         );
         for (l, ls) in &s.langs {
             if tsv {
-                println!("LANG\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", name, l, ls.conflicts, ls.merged, ls.exact, ls.parse_total, ls.parse_ok, ls.hist_parse_ok);
+                println!(
+                    "LANG\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    name, l, ls.conflicts, ls.merged, ls.exact, ls.parse_total, ls.parse_ok, ls.hist_parse_ok
+                );
             } else {
                 println!(
                     "  {:<11} conflicts={:<5} content-merged={:<5} exact={:<5} parse_ok={}/{} (history file parses: {})",
