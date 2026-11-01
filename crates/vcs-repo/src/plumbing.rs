@@ -55,7 +55,12 @@ impl Repo {
 
     /// Name of the branch checked out in `zone`.
     pub fn current_branch(&self, zone: &str) -> Result<Option<String>> {
-        Ok(self.workspace()?.subs.get(zone).cloned())
+        Ok(self
+            .workspace()?
+            .subs
+            .get(zone)
+            .filter(|b| *b != vcs_objects::names::DETACHED_BRANCH)
+            .cloned())
     }
 
     /// Point `branch` of `zone` at `target` (creating it) and check it out in the working tree.

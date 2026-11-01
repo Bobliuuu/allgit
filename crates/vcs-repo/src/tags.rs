@@ -216,6 +216,7 @@ impl Repo {
         let p = base.to_ascii_lowercase();
         if p.len() >= 4 && p.bytes().all(|b| b.is_ascii_hexdigit()) {
             let mut roots: Vec<ObjectId> = refs.branches_of(zone).into_iter().map(|(_, h)| h).collect();
+            roots.extend(refs.detached(zone));
             for ((a, _), id) in &refs.tags {
                 if a == zone {
                     roots.push(self.peel(zone, *id)?.0);

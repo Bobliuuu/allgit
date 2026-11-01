@@ -52,13 +52,14 @@ Commands:
   rev-parse      Resolve revisions to commit ids
   ls-files       List tracked files
   cat-file       Show the type, size or content of an object
+  rev-list       List commit ids of a revision range (A..B, A...B, ^A B, --all), newest first
   shortlog       Summarize history by author
   merge-base     Best common ancestor of two revisions
   diff-tree      List the files that differ between two revisions (A/D/M and path)
   reset          Move the checked-out branch of a zone to another commit (--soft, --mixed, --hard); acts on one zone
   clean          Delete untracked files (-n lists, -f deletes)
   git            Run a git command line as its vcs equivalent, e.g. `vcs git log --oneline` (table: docs/git-to-vcs.md; `--map` lists it)
-  switch         Switch branch (in the zone containing cwd, or --zone)
+  switch         Switch branch (in the zone containing cwd, or --zone); `--detach` checks out any revision without a branch
   merge          Merge a branch into the checked-out branch (fast-forward when possible)
   cherry-pick    Re-apply the change of one commit onto the checked-out branch
   revert         Create a commit that undoes one commit
@@ -451,10 +452,11 @@ Options:
 ```text
 Show commit history of a zone branch
 
-Usage: vcs log [OPTIONS] [BRANCH] [-- <PATHS>...]
+Usage: vcs log [OPTIONS] [BRANCH] [REVS]... [-- <PATHS>...]
 
 Arguments:
-  [BRANCH]    Branch (default: the checked-out one)
+  [BRANCH]    Branch or revision range (default: the checked-out branch): `A`, `A..B`, `A...B`, `^A`
+  [REVS]...   More revisions (`vcs log main ^dev`, see also --not and --all)
   [PATHS]...  Only commits that change these paths (after `--`)
 
 Options:
@@ -482,6 +484,10 @@ Options:
   -M, --find-renames                Detect renames in --name-status / --name-only listings
       --find-copies                 Detect copies of modified files too
       --rename-threshold <PERCENT>  Minimum similarity in percent for rename and copy detection (also used by --follow) [default: 50]
+      --all                         Start from every branch and tag of the zone (and a detached HEAD), not only the checked-out branch
+      --all-zones                   Like --all for every zone of the repository; commits of all zones interleave newest first
+      --not <REV>                   Leave out the history of this revision (repeatable; the same as a `^REV` argument)
+      --reverse                     Show the selected commits oldest first (after `-n` picked them)
       --show-signature              Show the signature verdict of each commit (against `signing.allowedSigners`)
   -h, --help                        Print help
 ```
@@ -545,10 +551,11 @@ Options:
 ```text
 List branches of the current zone, or create one (at the checked-out head)
 
-Usage: vcs branch [OPTIONS] [NAME]
+Usage: vcs branch [OPTIONS] [NAME] [START]
 
 Arguments:
-  [NAME]  
+  [NAME]   
+  [START]  Start point (any revision) of the new branch; with -m/-M: the new name
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
@@ -559,6 +566,8 @@ Options:
       --force          With --delete: delete even if its commits are not reachable from another branch or snapshot
       --at <COMMIT>    Create the branch at this commit (full id or prefix) instead of the checked-out head
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -m, --move           Rename a branch: `-m <old> <new>`, or `-m <new>` for the checked-out one
+  -M, --force-move     Like -m but replace an existing branch of that name (never the checked-out one)
   -h, --help           Print help
 ```
 
@@ -1309,6 +1318,30 @@ Options:
   -h, --help           Print help
 ```
 
+## `vcs rev-list`
+
+```text
+List commit ids of a revision range (A..B, A...B, ^A B, --all), newest first
+
+Usage: vcs rev-list [OPTIONS] [REVS]...
+
+Arguments:
+  [REVS]...  Revisions: `A`, `^A`, `A..B`, `A...B` (default: HEAD)
+
+Options:
+      --all            Also start from every branch and tag of the zone (and a detached HEAD)
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --not <REV>      Leave out the history of this revision (repeatable; same as `^REV`)
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --count          Print only the number of commits
+  -n, --max-count <N>  At most this many commits
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+      --reverse        Oldest first (after the limit)
+      --zone <ZONE>    Zone (default: the zone containing the current directory)
+  -h, --help           Print help
+```
+
 ## `vcs shortlog`
 
 ```text
@@ -1317,7 +1350,7 @@ Summarize history by author
 Usage: vcs shortlog [OPTIONS] [BRANCH]
 
 Arguments:
-  [BRANCH]  Branch (default: the checked-out one)
+  [BRANCH]  Branch, or a revision range such as `v1..main` (default: the checked-out branch)
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
@@ -1437,12 +1470,12 @@ Options:
 ## `vcs switch`
 
 ```text
-Switch branch (in the zone containing cwd, or --zone)
+Switch branch (in the zone containing cwd, or --zone); `--detach` checks out any revision without a branch
 
 Usage: vcs switch [OPTIONS] <BRANCH>
 
 Arguments:
-  <BRANCH>  
+  <BRANCH>  Branch (with --detach: any revision: tag, commit id prefix, HEAD~2, branch)
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
@@ -1450,6 +1483,7 @@ Options:
   -c, --create         Create the branch (at the checked-out head) and switch to it
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+  -d, --detach         Check the revision out as a detached HEAD of the zone (commits made there belong to no branch)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```

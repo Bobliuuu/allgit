@@ -19,6 +19,7 @@ mod everyday;
 mod generate;
 mod gitmap;
 mod grep;
+mod histcli;
 mod histcmds;
 mod hooks;
 mod json;
@@ -224,8 +225,10 @@ enum Cmd {
         /// Show the signature verdict of each commit (against `signing.allowedSigners`)
         #[arg(long)]
         show_signature: bool,
-        /// Branch (default: the checked-out one)
+        /// Branch or revision range (default: the checked-out branch): `A`, `A..B`, `A...B`, `^A`
         branch: Option<String>,
+        /// More revisions (`vcs log main ^dev`, see also --not and --all)
+        revs: Vec<String>,
         /// Only commits that change these paths (after `--`)
         #[arg(last = true)]
         paths: Vec<String>,
@@ -236,6 +239,8 @@ enum Cmd {
     /// List branches of the current zone, or create one (at the checked-out head)
     Branch {
         name: Option<String>,
+        /// Start point (any revision) of the new branch; with -m/-M: the new name
+        start: Option<String>,
         #[arg(long)]
         zone: Option<String>,
         /// Delete the named branch instead of creating it (refuses the checked-out branch)
@@ -247,6 +252,12 @@ enum Cmd {
         /// Create the branch at this commit (full id or prefix) instead of the checked-out head
         #[arg(long, value_name = "COMMIT", conflicts_with = "delete")]
         at: Option<String>,
+        /// Rename a branch: `-m <old> <new>`, or `-m <new>` for the checked-out one
+        #[arg(short = 'm', long = "move", conflicts_with_all = ["delete", "force_move"])]
+        rename: bool,
+        /// Like -m but replace an existing branch of that name (never the checked-out one)
+        #[arg(short = 'M', long = "force-move", conflicts_with = "delete")]
+        force_move: bool,
     },
     /// Set tracked changes aside (push, pop, list, drop); untracked files are left alone
     #[command(subcommand)]
@@ -306,14 +317,18 @@ enum Cmd {
     },
     #[command(flatten)]
     More(cmds::More),
-    /// Switch branch (in the zone containing cwd, or --zone)
+    /// Switch branch (in the zone containing cwd, or --zone); `--detach` checks out any revision without a branch
     Switch {
+        /// Branch (with --detach: any revision: tag, commit id prefix, HEAD~2, branch)
         branch: String,
         #[arg(long)]
         zone: Option<String>,
         /// Create the branch (at the checked-out head) and switch to it
         #[arg(short = 'c', long)]
         create: bool,
+        /// Check the revision out as a detached HEAD of the zone (commits made there belong to no branch)
+        #[arg(short = 'd', long, conflicts_with = "create")]
+        detach: bool,
     },
     /// Merge a branch into the checked-out branch (fast-forward when possible)
     Merge {
@@ -989,7 +1004,12 @@ fn run(cli: Cli) -> Result<(), Error> {
             let defs = repo.zones()?;
             for (zone, branch, id) in &rep.commits {
                 let zone = defs.label(zone);
-                println!("[{zone}/{branch} {}] {}", id.short(), message.lines().next().unwrap_or(""));
+                println!(
+                    "[{zone}/{} {}] {}",
+                    histcli::ref_label(branch),
+                    id.short(),
+                    message.lines().next().unwrap_or("")
+                );
             }
             if rep.commits.len() > 1 {
                 println!(
@@ -1019,7 +1039,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                 } else {
                     format!(" ({}/)", a.path)
                 };
-                println!("zone {}{loc}: branch {} @ {}", defs.label(&a.zone), a.branch, opt_short(a.head));
+                println!("zone {}{loc}: {}", defs.label(&a.zone), histcli::head_line(&a.branch, a.head));
                 if !a.staged.is_empty() {
                     println!("  staged:");
                     for c in &a.staged {
@@ -1181,10 +1201,13 @@ fn run(cli: Cli) -> Result<(), Error> {
             x,
             show_signature,
             branch,
+            revs,
             paths,
         } => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
+            let mut x = x;
+            x.revs = revs;
             let oneline = oneline || config::Config::load()?.oneline_log()?;
             let opts = logfmt::Opts {
                 oneline,
@@ -1323,11 +1346,17 @@ fn run(cli: Cli) -> Result<(), Error> {
         Cmd::Gen(g) => generate::run(g, <Cli as clap::CommandFactory>::command())?,
         Cmd::Branch {
             name,
+            start,
             zone,
             delete,
             force,
             at,
+            rename,
+            force_move,
         } => {
+            if histcli::branch_ext(&name, &start, zone.clone(), rename, force_move)? {
+                return Ok(());
+            }
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
             match name {
@@ -1347,18 +1376,12 @@ fn run(cli: Cli) -> Result<(), Error> {
                 None => print_branches(&repo, &zone)?,
             }
         }
-        Cmd::Switch { branch, zone, create } => {
-            let (repo, cwd) = open()?;
-            let zone = zone_of_cwd(&repo, &cwd, zone)?;
-            if create {
-                let h = repo.create_branch(&zone, &branch)?;
-                println!("created {zone}/{branch} at {}", h.short());
-            }
-            let old = hooks::head_arg(&repo, &zone);
-            repo.checkout(&zone, &branch)?;
-            println!("zone {zone}: switched to {branch}");
-            hooks::fire_simple(&repo, &zone, "post-checkout", &[old, hooks::head_arg(&repo, &zone)])?;
-        }
+        Cmd::Switch {
+            branch,
+            zone,
+            create,
+            detach,
+        } => histcli::switch(&branch, zone, create, detach)?,
         Cmd::Merge {
             branch,
             zone,
@@ -2220,10 +2243,7 @@ fn run(cli: Cli) -> Result<(), Error> {
 }
 
 fn print_branches(repo: &Repo, zone: &str) -> Result<(), Error> {
-    for (b, id, cur) in repo.branches(zone)? {
-        println!("{} {zone}/{b:<24} {}", if cur { "*" } else { " " }, opt_short(id));
-    }
-    Ok(())
+    histcli::print_branches(repo, zone)
 }
 
 /// Run the command; if it fails because a cached object was evicted, fetch that one object

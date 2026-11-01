@@ -98,7 +98,9 @@ impl Step {
                 if *stage { " + vcs add" } else { "" },
                 paths.join(" ")
             ),
-            Step::CheckoutAuto { target, .. } => format!("vcs switch {target}  (or vcs restore when it names a file)"),
+            Step::CheckoutAuto { target, .. } => {
+                format!("vcs switch {target}  (or vcs switch --detach for a tag or commit, vcs restore for a file)")
+            }
             Step::Note(_) => String::new(),
         }
     }
@@ -450,13 +452,22 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
         "switch" => {
             let mut p = parse(cmd, rest, &["-c", "-C", "--create", "--force-create", "--orphan"]);
             let create = p.val(&["-c", "--create"]);
+            let detach = p.take(&["-d", "--detach"]);
             p.take(&["-q", "--quiet", "--guess", "--no-guess", "-m", "--merge", "-t", "--track"]);
-            p.finish("`vcs switch [-c] <branch>`; no -C/--detach/--orphan/--discard-changes (vcs has no detached HEAD)")?;
-            if let Some(n) = create {
-                if p.pos.len() > 1 && p.pos[1] != "HEAD" {
-                    return Err(missing(cmd, "a start point other than HEAD", "`vcs switch <start-branch>` then `vcs switch -c <new>`"));
+            p.finish("`vcs switch [-c] [--detach] <branch|rev>`; no -C/--orphan/--discard-changes")?;
+            if detach {
+                match p.pos.as_slice() {
+                    [] => vec![Step::Vcs(v(&["switch", "--detach", "HEAD"]))],
+                    [r] => vec![Step::Vcs(v(&["switch", "--detach", r]))],
+                    _ => return Err(Error::Msg("usage: git switch --detach [<commit>]".into())),
                 }
-                vec![Step::Vcs(v(&["switch", "-c", &n]))]
+            } else if let Some(n) = create {
+                match p.pos.as_slice() {
+                    [] => vec![Step::Vcs(v(&["switch", "-c", &n]))],
+                    [s] if s == "HEAD" => vec![Step::Vcs(v(&["switch", "-c", &n]))],
+                    [s] => vec![Step::Vcs(v(&["branch", &n, s])), Step::Vcs(v(&["switch", &n]))],
+                    _ => return Err(Error::Msg("usage: git switch -c <new> [<start-point>]".into())),
+                }
             } else {
                 match p.pos.as_slice() {
                     [b] if b == "-" => return Err(missing(cmd, "`switch -` (previous branch)", "`vcs op log` shows previous checkouts; `vcs switch <branch>`")),
@@ -952,7 +963,28 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             }
             vec![Step::ShowCurrent]
         }
+        "rev-list" => {
+            let rest = &fold_not(rest);
+            let mut p = parse(cmd, rest, &["-n", "--max-count"]);
+            let mut a = v(&["rev-list"]);
+            if p.take(&["--count"]) {
+                a.push("--count".into());
+            }
+            if p.take(&["--all"]) {
+                a.push("--all".into());
+            }
+            if p.take(&["--reverse"]) {
+                a.push("--reverse".into());
+            }
+            if let Some(n) = p.val(&["-n", "--max-count"]).or_else(|| p.val(&["-N"])) {
+                a.extend(["-n".to_owned(), n]);
+            }
+            p.finish("`vcs rev-list [--count] [--all] [--reverse] [-n N] [revs]` (no --parents, --objects, --since, ...)")?;
+            a.extend(p.all_pos().into_iter().filter(|t| t != "--"));
+            vec![Step::Vcs(a)]
+        }
         "shortlog" => {
+            let rest = &fold_not(rest);
             let mut p = parse(cmd, rest, &[]);
             let mut a = v(&["shortlog"]);
             for (long, fl) in [("-s", &["-s", "--summary"][..]), ("-n", &["-n", "--numbered"][..]), ("-e", &["-e", "--email"][..])] {
@@ -1150,9 +1182,9 @@ fn translate_diff(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
     p.finish("`vcs diff [--staged] [--stat|--name-only|--name-status|-U<n>|-w|-M|--word-diff|...]`; `vcs git diff A B` also works (no --check/--exit-code/--numstat/--shortstat/-R)")?;
     let mut specs: Vec<String> = vec![];
     for s in &p.pos {
-        if let Some((a, b)) = s.split_once("...") {
-            let _ = (a, b);
-            return Err(missing(cmd, "three-dot diff", "`vcs merge-base A B` then `vcs git diff <base> B`"));
+        if s.contains("...") {
+            specs.push(s.clone()); // resolved at run time: merge-base(A, B) against B
+            continue;
         }
         if let Some((a, b)) = s.split_once("..") {
             specs.push(if a.is_empty() { "HEAD".into() } else { a.into() });
@@ -1261,7 +1293,32 @@ fn translate_commit(rest: &[String]) -> Result<Vec<Step>, Error> {
 
 // ---------------------------------------------------------------- log
 
+/// `--not A B` flips every revision after it (up to `--`) into `^A ^B`, as git does.
+fn fold_not(rest: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(rest.len());
+    let (mut not, mut dd) = (false, false);
+    for t in rest {
+        if dd {
+            out.push(t.clone());
+        } else if t == "--" {
+            dd = true;
+            out.push(t.clone());
+        } else if t == "--not" {
+            not = !not;
+        } else if not && !t.starts_with('-') {
+            out.push(match t.strip_prefix('^') {
+                Some(r) => r.to_owned(),
+                None => format!("^{t}"),
+            });
+        } else {
+            out.push(t.clone());
+        }
+    }
+    out
+}
+
 fn translate_log(rest: &[String]) -> Result<Vec<Step>, Error> {
+    let rest = &fold_not(rest);
     let mut p = parse(
         "log",
         rest,
@@ -1304,6 +1361,8 @@ fn translate_log(rest: &[String]) -> Result<Vec<Step>, Error> {
         ("--merges", &["--merges"][..]),
         ("--no-merges", &["--no-merges"][..]),
         ("--first-parent", &["--first-parent"][..]),
+        ("--reverse", &["--reverse"][..]),
+        ("--all", &["--all"][..]),
         ("--follow", &["--follow"][..]),
         ("--name-status", &["--name-status"][..]),
         ("--name-only", &["--name-only"][..]),
@@ -1358,13 +1417,6 @@ fn translate_log(rest: &[String]) -> Result<Vec<Step>, Error> {
             }
         }
     }
-    if p.opts.iter().any(|(k, _)| k == "--all") {
-        return Err(missing(
-            "log --all",
-            "history across every branch",
-            "`vcs log <branch>` per branch, or `vcs log --graph`",
-        ));
-    }
     if p.opts.iter().any(|(k, _)| k == "-G") {
         return Err(missing(
             "log -G",
@@ -1375,28 +1427,20 @@ fn translate_log(rest: &[String]) -> Result<Vec<Step>, Error> {
     p.finish(
         "`vcs log [branch] [-n N] [--oneline|--graph|--author|--since|--until|--grep|-S|--format|--follow|--name-status] [-- paths]`",
     )?;
-    // positionals: a branch, or (heuristically) existing paths without `--`
+    // positionals: revisions (a branch, `A..B`, `A...B`, `^A`), or (heuristically) existing paths without `--`
     let mut paths = p.dd.clone();
-    let mut branch: Option<String> = None;
+    let mut revs: Vec<String> = vec![];
     for t in &p.pos {
-        if t.contains("..") {
-            return Err(missing(
-                "log",
-                "revision ranges (A..B)",
-                "`vcs log <branch>`; compare with `vcs merge-base A B` and `vcs diff-tree A B`",
-            ));
-        }
-        if !p.had_dd && std::path::Path::new(t).exists() && branch.is_some() || (!p.had_dd && std::path::Path::new(t).exists()) {
+        let range = vcs_repo::RevSpec::is_range_token(t);
+        if !p.had_dd && !range && std::path::Path::new(t).exists() {
             paths.push(t.clone());
-        } else if branch.is_none() {
-            branch = Some(t.clone());
         } else {
-            return Err(missing("log", "several starting revisions", "`vcs log <branch>`"));
+            revs.push(t.clone());
         }
     }
     if patch || stat {
         let mut la = a.clone();
-        la.extend(branch);
+        la.extend(revs);
         if !paths.is_empty() {
             la.push("--".into());
             la.extend(paths);
@@ -1406,7 +1450,7 @@ fn translate_log(rest: &[String]) -> Result<Vec<Step>, Error> {
             stat: stat && !patch || stat,
         }]);
     }
-    a.extend(branch);
+    a.extend(revs);
     if !paths.is_empty() {
         a.push("--".into());
         a.extend(paths);
@@ -1438,12 +1482,23 @@ fn translate_branch(rest: &[String]) -> Result<Vec<Step>, Error> {
     }
     let del = p.take(&["-d", "--delete"]);
     let del_force = p.take(&["-D"]);
-    if p.take(&["-m", "-M", "--move", "-c", "-C", "--copy"]) {
+    let rename = p.take(&["-m", "--move"]);
+    let force_rename = p.take(&["-M"]);
+    if p.take(&["-c", "-C", "--copy"]) {
         return Err(missing(
-            "branch -m/-c",
-            "renaming or copying a branch",
-            "`vcs switch -c <new>` (creates at the checked-out head) then `vcs branch -d <old>`",
+            "branch -c",
+            "copying a branch",
+            "`vcs branch <new> <old>` creates a branch at another branch's head",
         ));
+    }
+    if rename || force_rename {
+        p.finish("`vcs branch -m [<old>] <new>` / `vcs branch -M <old> <new>`")?;
+        if p.pos.is_empty() || p.pos.len() > 2 {
+            return Err(Error::Msg("usage: git branch -m [<old>] <new>".into()));
+        }
+        let mut a = v(&["branch", if force_rename { "-M" } else { "-m" }]);
+        a.extend(p.pos.iter().cloned());
+        return Ok(vec![Step::Vcs(a)]);
     }
     if p.take(&["-r", "--remotes"]) {
         return Err(missing(
@@ -1476,11 +1531,8 @@ fn translate_branch(rest: &[String]) -> Result<Vec<Step>, Error> {
         [] => Ok(vec![Step::Vcs(v(&["branch"]))]),
         [n] => Ok(vec![Step::Vcs(v(&["branch", n]))]),
         [n, s] if s == "HEAD" => Ok(vec![Step::Vcs(v(&["branch", n]))]),
-        _ => Err(missing(
-            "branch <name> <start>",
-            "a start point other than HEAD",
-            "`vcs switch <start>` then `vcs branch <name>`",
-        )),
+        [n, s] => Ok(vec![Step::Vcs(v(&["branch", n, s]))]),
+        _ => Err(Error::Msg("usage: git branch <name> [<start-point>]".into())),
     }
 }
 
@@ -1499,22 +1551,26 @@ fn translate_checkout(rest: &[String]) -> Result<Vec<Step>, Error> {
     }
     if let Some(b) = p.val(&["-b"]) {
         p.finish("`vcs switch -c <branch>`")?;
-        if p.pos.len() > 1 || (p.pos.len() == 1 && p.pos[0] != "HEAD") {
-            return Err(missing(
-                "checkout -b <new> <start>",
-                "a start point other than HEAD",
-                "`vcs switch <start>` then `vcs switch -c <new>`",
-            ));
-        }
-        return Ok(vec![Step::Vcs(v(&["switch", "-c", &b]))]);
+        return match p.pos.as_slice() {
+            [] => Ok(vec![Step::Vcs(v(&["switch", "-c", &b]))]),
+            [s] if s == "HEAD" => Ok(vec![Step::Vcs(v(&["switch", "-c", &b]))]),
+            [s] => Ok(vec![Step::Vcs(v(&["branch", &b, s])), Step::Vcs(v(&["switch", &b]))]),
+            _ => Err(Error::Msg("usage: git checkout -b <new> [<start-point>]".into())),
+        };
     }
-    if p.take(&[
-        "-f", "--force", "--detach", "-d", "-B", "--orphan", "-m", "--merge", "-p", "--patch",
-    ]) {
+    if p.take(&["--detach", "-d"]) {
+        p.finish("`vcs switch --detach <rev>`")?;
+        return match p.pos.as_slice() {
+            [] => Ok(vec![Step::Vcs(v(&["switch", "--detach", "HEAD"]))]),
+            [r] => Ok(vec![Step::Vcs(v(&["switch", "--detach", r]))]),
+            _ => Err(Error::Msg("usage: git checkout --detach [<commit>]".into())),
+        };
+    }
+    if p.take(&["-f", "--force", "-B", "--orphan", "-m", "--merge", "-p", "--patch"]) {
         return Err(missing(
             "checkout",
-            "detached HEAD, forced or interactive checkout",
-            "`vcs switch <branch>`; discard changes with `vcs restore .`; to look at an old commit `vcs show <rev>` or `vcs worktree add <dir> <branch>`",
+            "forced, merging, orphan or interactive checkout",
+            "`vcs switch <branch>`; discard changes with `vcs restore .`; `vcs worktree add <dir> <branch>` for a second checkout",
         ));
     }
     p.finish("`vcs switch <branch>` / `vcs restore <paths>`")?;
@@ -1855,6 +1911,7 @@ fn exec(s: &Step, json: bool) -> Result<(), Error> {
             let zone = zone_of_cwd(&repo, &cwd, None)?;
             match repo.current_branch(&zone)? {
                 Some(b) => println!("{b}"),
+                None if repo.detached_head(&zone)?.is_some() => println!("HEAD"),
                 None => return Err(Error::Msg("no branch is checked out in this zone".into())),
             }
             Ok(())
@@ -1990,6 +2047,30 @@ fn diff_specs(staged: bool, specs: &[String], flags: &[String]) -> Result<(), Er
         crate::Cmd::Diff { opts, .. } => opts,
         _ => unreachable!(),
     };
+    // `A...B` is the diff from the merge base of A and B to B
+    let mut expanded: Vec<String> = Vec::with_capacity(specs.len());
+    let mut before_dd = true;
+    for sp in specs {
+        if sp == "--" {
+            before_dd = false;
+        }
+        match sp.split_once("...") {
+            Some((a, b)) if before_dd => {
+                let zone = repo.resolve_zone(&zone_of_cwd(&repo, &cwd, None)?)?;
+                let (a, b) = (if a.is_empty() { "HEAD" } else { a }, if b.is_empty() { "HEAD" } else { b });
+                let (ia, ib) = (repo.resolve_rev(&zone, a)?, repo.resolve_rev(&zone, b)?);
+                let base = repo
+                    .merge_bases(&ia, &ib)?
+                    .first()
+                    .copied()
+                    .ok_or_else(|| Error::Msg(format!("{a}...{b}: no merge base")))?;
+                expanded.push(base.to_hex());
+                expanded.push(ib.to_hex());
+            }
+            _ => expanded.push(sp.clone()),
+        }
+    }
+    let specs: &[String] = &expanded;
     let (revs_part, path_part) = match specs.iter().position(|s| s == "--") {
         Some(i) => (&specs[..i], &specs[i + 1..]),
         None => (specs, &specs[0..0]),
@@ -2065,12 +2146,15 @@ fn log_patch(log_argv: &[String], stat: bool) -> Result<(), Error> {
         author,
         x,
         branch,
+        revs,
         paths,
         ..
     } = crate::Cli::try_parse_from(full).map_err(|e| Error::Msg(e.to_string()))?.cmd
     else {
         unreachable!()
     };
+    let mut x = x;
+    x.revs = revs;
     let (repo, cwd) = open()?;
     let zone = zone_of_cwd(&repo, &cwd, zone)?;
     let opts = crate::logfmt::Opts {
@@ -2135,11 +2219,7 @@ fn checkout_auto(target: &str, _paths: &[String]) -> Result<(), Error> {
         return native(&v(&["restore", target]), false);
     }
     if !is_branch && repo.resolve_rev(&zone, target).is_ok() {
-        return Err(missing(
-            "checkout <rev>",
-            "detached HEAD: vcs always has a branch checked out",
-            &format!("`vcs show {target}` to look, `vcs switch -c <name>` after `vcs reset --hard {target}`, or `vcs worktree add <dir> <branch>`"),
-        ));
+        return native(&v(&["switch", "--detach", target]), false);
     }
     native(&v(&["switch", target]), false)
 }

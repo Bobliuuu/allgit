@@ -1504,7 +1504,7 @@ impl Repo {
         let refs = self.refs()?;
         let cur = ws.subs.get(zone);
         let mut v: BTreeMap<String, Option<ObjectId>> = refs.branches_of(zone).into_iter().map(|(b, i)| (b, Some(i))).collect();
-        if let Some(c) = cur {
+        if let Some(c) = cur.filter(|c| *c != vcs_objects::names::DETACHED_BRANCH) {
             v.entry(c.clone()).or_insert(None);
         }
         Ok(v.into_iter().map(|(b, i)| (b.clone(), i, cur == Some(&b))).collect())
@@ -1628,6 +1628,9 @@ impl Repo {
         ws.subs.insert(zone.into(), branch.into());
         self.save_index(&mut ix)?;
         self.save_ws(&ws)?;
+        if cur == vcs_objects::names::DETACHED_BRANCH {
+            self.drop_detached_ref(zone)?;
+        }
         self.record_op(&format!("checkout {zone}/{branch}"), None)?;
         Ok(())
     }

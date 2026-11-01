@@ -237,7 +237,7 @@ fn commit_text(o: &Object) -> String {
 
 #[derive(Args, Clone)]
 pub struct ShortlogArgs {
-    /// Branch (default: the checked-out one)
+    /// Branch, or a revision range such as `v1..main` (default: the checked-out branch)
     pub branch: Option<String>,
     /// Only the number of commits per author
     #[arg(short = 's', long)]
@@ -255,7 +255,10 @@ pub struct ShortlogArgs {
 pub fn shortlog(a: &ShortlogArgs, json: bool) -> Result<(), Error> {
     let (repo, cwd) = open()?;
     let zone = repo.resolve_zone(&zone_of_cwd(&repo, &cwd, a.zone.clone())?)?;
-    let log = repo.log(&zone, a.branch.as_deref(), usize::MAX)?;
+    let log = match a.branch.as_deref() {
+        Some(b) if vcs_repo::RevSpec::is_range_token(b) => repo.rev_list(&zone, &vcs_repo::RevSpec::parse(&[b])?, usize::MAX)?,
+        b => repo.log(&zone, b, usize::MAX)?,
+    };
     let mut groups: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
     for (_, c) in &log {
         let who = if a.email {

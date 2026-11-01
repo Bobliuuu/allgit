@@ -402,7 +402,12 @@ fn select_heads(repo: &Repo, selectors: &[String]) -> Result<Vec<(String, String
     let refs = repo.refs()?;
     let mut out: BTreeMap<(String, String), ObjectId> = BTreeMap::new();
     if selectors.is_empty() {
-        out.extend(refs.branches.iter().map(|(k, v)| (k.clone(), *v)));
+        out.extend(
+            refs.branches
+                .iter()
+                .filter(|((_, b), _)| b != vcs_objects::names::DETACHED_BRANCH)
+                .map(|(k, v)| (k.clone(), *v)),
+        );
     }
     for s in selectors {
         if let Some((z, b)) = s.split_once('/') {
