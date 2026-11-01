@@ -57,6 +57,38 @@ pub fn fetch_from_any_pack(b: &dyn Backend, id: &ObjectId) -> Result<Option<Vec<
     Ok(None)
 }
 
+/// Which of `ids` the remote has, without downloading object bodies. Packs are consulted first:
+/// one `list` and one index GET per pack, then no request per packed id (a pack is written
+/// atomically, so an id in its index is there). The kind byte of a packed object is NOT read
+/// (it would cost a request each) and is reported as 0. Ids in no pack are probed loose with one
+/// 1-byte ranged GET each, which yields the kind (the first byte of the encoding). `None` means
+/// the remote does not have the id.
+pub fn probe_kinds(b: &dyn Backend, ids: &[ObjectId]) -> Result<Vec<(ObjectId, Option<u8>)>, BackendError> {
+    let mut packs = Vec::new();
+    for key in b.list(PACK_PREFIX)? {
+        let Some(stem) = key.strip_suffix(".idx") else { continue };
+        let Some(idx) = b.get(&key)? else { continue };
+        packs.push(PackIndex::parse(&idx.data, Path::new(stem)).map_err(|e| BackendError::Other(e.to_string()))?);
+    }
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        if packs.iter().any(|p| p.find(id).is_some()) {
+            out.push((*id, Some(0)));
+            continue;
+        }
+        let h = id.to_hex();
+        let key = format!("objects/{}/{}", &h[..2], &h[2..]);
+        out.push((
+            *id,
+            match b.get_range(&key, 0, 1)? {
+                Some(v) if v.len() == 1 => Some(v[0]),
+                _ => None, // absent, or a zero-length (damaged) object file
+            },
+        ));
+    }
+    Ok(out)
+}
+
 /// Maximum unwanted bytes read between two wanted ranges to keep them in one request.
 const COALESCE_GAP: u64 = 64 * 1024;
 
