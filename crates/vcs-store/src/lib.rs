@@ -227,7 +227,16 @@ struct SpillFile {
 const PEND_MEM_CAP: u64 = 256 << 20;
 /// A barrier with at least this many pending objects publishes them as ONE pack (one data file,
 /// one fsync, two renames) instead of one loose file each (a create, fsync and rename per object).
-const PACK_MIN: usize = 256;
+const PACK_MIN: usize = 64;
+/// Barriers stop writing packs once this many packs exist (loose files again): readers consult every pack, so an
+/// unbounded number of small packs would slow reads. `vcs repack` / compaction merges them.
+const MAX_BARRIER_PACKS: usize = 32;
+
+/// Pending-object count from which a barrier writes one pack instead of loose files; `VCS_PACK_MIN` overrides (benchmarks).
+fn pack_min() -> usize {
+    static V: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *V.get_or_init(|| std::env::var("VCS_PACK_MIN").ok().and_then(|v| v.parse().ok()).filter(|n: &usize| *n >= 1).unwrap_or(PACK_MIN))
+}
 
 /// Loose-object filesystem store: `<dir>/<aa>/<rest-of-hex>`.
 ///
@@ -930,7 +939,7 @@ impl ObjectStore for LocalStore {
         if pending.is_empty() {
             return Ok(());
         }
-        if pending.len() >= PACK_MIN {
+        if pending.len() >= pack_min() && self.packs.read().unwrap().len() < MAX_BARRIER_PACKS {
             self.sync_as_pack(&mut pending)?;
             pending.clear();
             self.pend_mem.store(0, Ordering::Relaxed);
@@ -1137,6 +1146,26 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn barrier_packs_are_capped_then_loose_again_and_everything_stays_readable() {
+        let d = tempfile::tempdir().unwrap();
+        let s = LocalStore::open(d.path()).unwrap();
+        let mut ids = Vec::new();
+        for round in 0..(MAX_BARRIER_PACKS + 3) {
+            for i in 0..PACK_MIN {
+                ids.push(s.put_blob(format!("round {round} blob {i}").as_bytes()).unwrap());
+            }
+            s.sync().unwrap();
+        }
+        assert_eq!(s.pack_count(), MAX_BARRIER_PACKS, "no more packs past the cap");
+        let s2 = LocalStore::open(d.path()).unwrap();
+        for id in &ids {
+            assert!(s2.contains(id).unwrap());
+            s2.get_blob(id).unwrap(); // hash-verified read
+        }
+        assert!(s2.verify_packs().is_empty());
+    }
 
     #[test]
     fn spilled_objects_are_readable_published_and_cleaned_up() {
@@ -1518,11 +1547,8 @@ mod tests {
         b.sort();
         assert_eq!(a, b);
         for x in &a {
-            let h = x.to_hex();
-            assert_eq!(
-                std::fs::read(d.path().join("fast").join(&h[..2]).join(&h[2..])).unwrap(),
-                std::fs::read(d.path().join("slow").join(&h[..2]).join(&h[2..])).unwrap()
-            );
+            // (a batch this big is published as a pack, so compare the stored objects, not loose files)
+            assert_eq!(fast.get(x).unwrap().encode(), slow.get(x).unwrap().encode());
         }
         assert_eq!(id, vcs_objects::content_id(&data));
     }

@@ -106,6 +106,7 @@ fn store_roundtrip_reopen_sweep_and_rollback() {
             unreachable!()
         };
         ids.push(s.put_blob(&b).unwrap());
+        s.sync().unwrap(); // one object per barrier: stays loose (a big barrier would already be a pack)
     }
     s.repack_as(PackFormat::V4, false).unwrap();
     let v4_bytes = dir_bytes(&dir);
