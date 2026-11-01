@@ -7,7 +7,6 @@ use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use vcs_objects::*;
-use vcs_remote::protocol::object_key;
 use vcs_remote::*;
 use vcs_server::{Config, HttpBackend, Policy, Principal, Role, Server, TokenTable};
 use vcs_store::{MemoryStore, ObjectStore};
