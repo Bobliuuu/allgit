@@ -938,6 +938,7 @@ fn apply_real(repo: &Repo, op: &Op, serial: u64, sub_ok: bool, op_ids: &[ObjectI
                 Ok(()) => RealOut::Ok(Out::Conflict),
                 Err(x) => RealOut::Err(format!("rebase --abort failed: {x}")),
             },
+            Ok(RebaseOutcome::Stopped { .. }) => RealOut::Err("unexpected rebase stop".into()),
             Err(x) => RealOut::Err(x.to_string()),
         },
         Op::Restore(s) => e(repo.restore(&sp(s), false).map(|_| ())),

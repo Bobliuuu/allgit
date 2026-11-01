@@ -27,7 +27,9 @@ mod lockable_cmd;
 mod logfmt;
 mod logopts;
 mod p4map;
+mod patchcmd;
 mod plumb;
+mod rebase_i;
 mod remote;
 mod shelve_cmd;
 mod signing_cmd;
@@ -294,6 +296,12 @@ enum Cmd {
         #[arg(short = 'd', long)]
         delete: bool,
     },
+    /// Write commits as mail-format patch files (one per commit: author, date, message, diff)
+    FormatPatch(patchcmd::FormatPatchArgs),
+    /// Apply a unified diff (from `vcs diff`, `vcs show`, `vcs format-patch` or git) to the working tree
+    Apply(patchcmd::ApplyArgs),
+    /// Apply mail-format patches as commits, keeping author, date and message
+    Am(patchcmd::AmArgs),
     /// Show a commit (default HEAD) with its diff against the first parent
     Show {
         rev: Option<String>,
@@ -402,6 +410,19 @@ enum Cmd {
         /// Abandon the in-progress rebase and restore the original branch
         #[arg(long)]
         abort: bool,
+        /// Drop the commit the rebase is stopped on (conflicts) and carry on
+        #[arg(long)]
+        skip: bool,
+        /// Edit the todo list (pick/reword/edit/squash/fixup/drop/exec, reorder) in
+        /// $GIT_SEQUENCE_EDITOR / $VCS_SEQUENCE_EDITOR / core.editor / $EDITOR; `onto` may be any revision such as HEAD~3
+        #[arg(short = 'i', long)]
+        interactive: bool,
+        /// With -i: move `fixup! X` / `squash! X` commits next to X and fold them
+        #[arg(long)]
+        autosquash: bool,
+        /// Run this shell command after each replayed commit (repeatable); a failure stops the rebase
+        #[arg(short = 'x', long = "exec", value_name = "COMMAND")]
+        exec: Vec<String>,
         /// Do not use the structural Rust merge (only matters when built with `--features structural`)
         #[arg(long)]
         no_structural: bool,
@@ -824,7 +845,7 @@ fn open() -> Result<(Repo, PathBuf), Error> {
     Ok((Repo::discover(&cwd)?, cwd))
 }
 
-fn zone_of_cwd(repo: &Repo, cwd: &Path, explicit: Option<String>) -> Result<String, Error> {
+pub(crate) fn zone_of_cwd(repo: &Repo, cwd: &Path, explicit: Option<String>) -> Result<String, Error> {
     if let Some(a) = explicit {
         return Ok(a);
     }
@@ -1075,6 +1096,17 @@ fn run(cli: Cli) -> Result<(), Error> {
                     println!("  (fix, `vcs add`, `vcs commit`; or `vcs merge --abort`)");
                 }
             }
+            if let Some(rs) = repo.rebase_state()? {
+                if rs.stop != vcs_repo::Stop::Conflict {
+                    println!(
+                        "rebase of {}/{} onto {} stopped ({} step(s) left): amend or commit, then `vcs rebase --continue`; or `vcs rebase --abort`",
+                        rs.zone,
+                        rs.branch,
+                        rs.onto_label,
+                        rs.todo.len()
+                    );
+                }
+            }
             lockable_cmd::status_section(&repo, &st)?;
             if !st.untracked.is_empty() {
                 println!("untracked:");
@@ -1288,6 +1320,18 @@ fn run(cli: Cli) -> Result<(), Error> {
                 }
             }
         }
+        Cmd::FormatPatch(a) => {
+            let (repo, cwd) = open()?;
+            patchcmd::format_patch(&repo, &cwd, a)?;
+        }
+        Cmd::Apply(a) => {
+            let (repo, _) = open()?;
+            patchcmd::apply(&repo, a)?;
+        }
+        Cmd::Am(a) => {
+            let (repo, _) = open()?;
+            patchcmd::am(&repo, a)?;
+        }
         Cmd::Show { rev, zone, opts } => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
@@ -1464,6 +1508,10 @@ fn run(cli: Cli) -> Result<(), Error> {
             zone,
             cont,
             abort,
+            skip,
+            interactive,
+            autosquash,
+            exec,
             no_structural,
             renames,
             assist,
@@ -1478,8 +1526,22 @@ fn run(cli: Cli) -> Result<(), Error> {
                 println!("rebase aborted; original branch restored");
                 return Ok(());
             }
-            let out = if cont {
-                repo.rebase_continue(author()?)?
+            let out = if cont || skip {
+                rebase_i::resume(&repo, skip, author()?)?
+            } else if interactive || !exec.is_empty() {
+                let Some(onto) = onto else {
+                    return Err(Error::Msg(
+                        "usage: vcs rebase -i <upstream> [--zone A] [--autosquash] [-x CMD]".into(),
+                    ));
+                };
+                let zone = zone_of_cwd(&repo, &cwd, zone)?;
+                hooks::fire_simple(&repo, &zone, "pre-rebase", std::slice::from_ref(&onto))?;
+                let a = rebase_i::Args {
+                    interactive,
+                    autosquash,
+                    exec,
+                };
+                rebase_i::start(&repo, &zone, &onto, &a, author()?)?
             } else {
                 let Some(onto) = onto else {
                     return Err(Error::Msg("usage: vcs rebase <branch> [--zone A] | --continue | --abort".into()));
@@ -1493,6 +1555,16 @@ fn run(cli: Cli) -> Result<(), Error> {
                 RebaseOutcome::Done { from, to, replayed } => {
                     println!("rebased {replayed} commit(s): {} -> {}", from.short(), to.short())
                 }
+                RebaseOutcome::Stopped { commit, detail, .. } if detail.is_empty() => {
+                    println!(
+                        "stopped at {}: amend it (or add commits), then `vcs rebase --continue`; `vcs rebase --abort` to give up",
+                        commit.short()
+                    );
+                }
+                RebaseOutcome::Stopped { commit, detail, .. } => {
+                    println!("rebase stopped at {}", commit.short());
+                    return Err(Error::Msg(detail));
+                }
                 RebaseOutcome::Conflicted { commit, paths } => {
                     println!("rebase stopped at {}: {} conflict(s)", commit.short(), paths.len());
                     for p in &paths {
@@ -1501,7 +1573,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                     if let Some(cmd) = effective_assist(assist.as_deref(), no_assist)? {
                         run_assist(&repo, &cmd, assist_timeout)?;
                     }
-                    println!("\nResolve the files, `vcs add` each one, then `vcs rebase --continue`.");
+                    println!("\nResolve the files, `vcs add` each one, then `vcs rebase --continue` (or `--skip` to drop this commit).");
                     println!("Inspect with `vcs conflict list|show <path>`; give up with `vcs rebase --abort`.");
                     return Err(Error::Msg("rebase has conflicts".into()));
                 }

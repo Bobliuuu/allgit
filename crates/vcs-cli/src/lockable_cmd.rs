@@ -29,6 +29,8 @@ pub fn refresh_target(cmd: &crate::Cmd) -> Option<PathBuf> {
         | CherryPick { .. }
         | Revert { .. }
         | Rebase { .. }
+        | Apply(_)
+        | Am(_)
         | Resolve { .. }
         | Zone(_)
         | Worktree(_)

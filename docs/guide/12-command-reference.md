@@ -42,6 +42,9 @@ Commands:
   p4             Run a Perforce command in its vcs form, one to one (`vcs p4 --list` shows the map, `--explain` the translation; docs/p4-to-vcs.md)
   sparse         Materialize only some paths of a zone (set, add, remove, list, disable); the rest stays tracked, not deleted
   tag            List tags of the current zone, create one (lightweight, or annotated with -m), or delete one with -d
+  format-patch   Write commits as mail-format patch files (one per commit: author, date, message, diff)
+  apply          Apply a unified diff (from `vcs diff`, `vcs show`, `vcs format-patch` or git) to the working tree
+  am             Apply mail-format patches as commits, keeping author, date and message
   show           Show a commit (default HEAD) with its diff against the first parent
   blame          Attribute each line of a file to a commit, following first parents
   hook           List, install or run client-side hooks (.vcs/hooks/, see docs/hooks.md)
@@ -930,6 +933,78 @@ Options:
   -h, --help                   Print help
 ```
 
+## `vcs format-patch`
+
+```text
+Write commits as mail-format patch files (one per commit: author, date, message, diff)
+
+Usage: vcs format-patch [OPTIONS] [REV]
+
+Arguments:
+  [REV]  Commits to turn into patches: `A..B` (commits of B not in A), or a revision (commits on the branch not in it)
+
+Options:
+  -C <DIR>                      Run as if vcs was started in <DIR> (applied before repository discovery)
+  -n, --count <N>               The last N commits of the branch instead
+      --json                    Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --root                    Include root commits (all history up to the branch tip)
+      --ca-pem <FILE>           PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+  -o, --output-directory <DIR>  Directory for the patch files (default: the current directory)
+      --no-hooks                Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+      --stdout                  Write all patches to standard output as one mailbox
+      --start-number <N>        Number the first patch from N (default 1) [default: 1]
+      --no-numbered             Never put `n/m` in the subject
+      --subject-prefix <TEXT>   Subject prefix inside the brackets (default PATCH) [default: PATCH]
+      --zone <ZONE>             Zone (default: the zone containing the current directory)
+  -h, --help                    Print help
+```
+
+## `vcs apply`
+
+```text
+Apply a unified diff (from `vcs diff`, `vcs show`, `vcs format-patch` or git) to the working tree
+
+Usage: vcs apply [OPTIONS] [FILES]...
+
+Arguments:
+  [FILES]...  Patch files (default: standard input; `-` is standard input)
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --check          Check that the patch applies; change nothing
+      --index          Also stage the changes (the files must match the index)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+  -R, --reverse        Apply the patch backwards
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -p <N>               Strip N leading path components (default 1)
+  -3, --3way           Three-way application is not supported (refused)
+  -v, --verbose        Print the files that were (or would be) changed
+  -h, --help           Print help
+```
+
+## `vcs am`
+
+```text
+Apply mail-format patches as commits, keeping author, date and message
+
+Usage: vcs am [OPTIONS] [FILES]...
+
+Arguments:
+  [FILES]...  Mailbox files, such as those `format-patch` wrote (default: standard input)
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --continue       Commit the files you fixed and staged for the stopped patch, then go on
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --skip           Drop the stopped patch and go on
+      --abort          Go back to the branch heads from before `vcs am`
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+  -3, --3way           Three-way application is not supported (refused)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
 ## `vcs show`
 
 ```text
@@ -1598,6 +1673,14 @@ Options:
           PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks
           Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+      --skip
+          Drop the commit the rebase is stopped on (conflicts) and carry on
+  -i, --interactive
+          Edit the todo list (pick/reword/edit/squash/fixup/drop/exec, reorder) in $GIT_SEQUENCE_EDITOR / $VCS_SEQUENCE_EDITOR / core.editor / $EDITOR; `onto` may be any revision such as HEAD~3
+      --autosquash
+          With -i: move `fixup! X` / `squash! X` commits next to X and fold them
+  -x, --exec <COMMAND>
+          Run this shell command after each replayed commit (repeatable); a failure stops the rebase
       --no-structural
           Do not use the structural Rust merge (only matters when built with `--features structural`)
       --renames

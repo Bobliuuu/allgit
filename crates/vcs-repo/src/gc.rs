@@ -168,7 +168,7 @@ impl Repo {
         // Read the raw files even when `rebase_state` would call them stale: keeping is free.
         if let Some(rs) = self.rebase_state_raw()? {
             roots.extend([rs.orig, rs.cursor, rs.current]);
-            roots.extend(rs.todo.iter().copied());
+            roots.extend(rs.todo_ids());
         }
         if let Some((_, src)) = self.pick_marker()? {
             roots.push(src);

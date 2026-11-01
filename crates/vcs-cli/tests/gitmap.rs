@@ -101,6 +101,7 @@ impl Side {
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .env("GIT_EDITOR", "true")
+            .env("GIT_SEQUENCE_EDITOR", "true")
             .env("EDITOR", "true")
             .output()
             .unwrap()
@@ -260,6 +261,9 @@ enum Op {
     T(u64),
     /// Run in both; the output lines must be equal in the same order (merge subjects normalised).
     O(&'static str),
+    /// Run the line (a `format-patch --stdout`) on the given tool's side only and save its output as
+    /// `x.patch` in both working directories, so the next lines apply a patch made by that tool.
+    Mk(Kind, &'static str),
 }
 
 struct Run {
@@ -334,6 +338,19 @@ fn run_scenario(name: &str, ops: &[Op], git_on: bool, fails: &mut Vec<String>) -
                 }
             }
             Op::T(t) => CLOCK.store(*t, std::sync::atomic::Ordering::SeqCst),
+            Op::Mk(kind, line) => {
+                run.done.push(line);
+                // without real git the "git-made" patch comes from vcs, so the rest still runs
+                let side = if *kind == Kind::Git && git_on { &g } else { &v };
+                let o = side.cmd(&side.dir, line);
+                if !o.status.success() {
+                    fail(format!("`{line}` failed:\n{}", String::from_utf8_lossy(&o.stderr)));
+                    continue;
+                }
+                for s in [&v, &g] {
+                    std::fs::write(s.dir.join("x.patch"), &o.stdout).unwrap();
+                }
+            }
             Op::BF(line) => {
                 run.done.push(line);
                 for s in [&v, &g].into_iter().filter(|s| s.kind == Kind::Vcs || git_on) {
@@ -764,6 +781,63 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
                 G("git switch left"),
                 Op::BF("git rebase main"),
                 G("git rebase --abort"),
+                // and again, this time dropping the conflicting commit
+                Op::BF("git rebase main"),
+                G("git rebase --skip"),
+            ],
+        ),
+        (
+            "rebase_i",
+            vec![
+                W("f.txt", "base\n"),
+                G("git add f.txt"),
+                commit(),
+                G("git switch -c feature"),
+                W("a.txt", "a\n"),
+                G("git add a.txt"),
+                G(r#"git commit -m "add a""#),
+                W("b.txt", "b\n"),
+                G("git add b.txt"),
+                G(r#"git commit -m "add b""#),
+                W("a.txt", "a fixed\n"),
+                G("git add a.txt"),
+                G(r#"git commit -m "fixup! add a""#),
+                G("git rebase -i HEAD~3"),
+                G("git rebase -i --autosquash HEAD~3"),
+                G("git switch main"),
+                W("h.txt", "h\n"),
+                G("git add h.txt"),
+                commit(),
+                G("git switch feature"),
+                G(r#"git rebase -x "test -f f.txt" main"#),
+            ],
+        ),
+        (
+            "patch",
+            vec![
+                W("f.txt", "1\n2\n3\n4\n5\n6\n7\n8\n"),
+                G("git add ."),
+                commit(),
+                W("f.txt", "1\n2\n3\n4\nfive\n6\n7\n8\n"),
+                W("new.txt", "n\n"),
+                G("git add ."),
+                G(r#"git commit -m "second""#),
+                // a patch made by git, applied by vcs and by git
+                Mk(Kind::Git, "git format-patch -1 --stdout"),
+                G("git reset --hard HEAD~1"),
+                G("git apply --check x.patch"),
+                G("git apply x.patch"),
+                G("git apply -R x.patch"),
+                G("git apply --index x.patch"),
+                G("git reset --hard HEAD"),
+                G("git am x.patch"),
+                // a patch made by vcs, applied by vcs and by git
+                Mk(Kind::Vcs, "git format-patch -1 --stdout"),
+                G("git reset --hard HEAD~1"),
+                G("git apply --check x.patch"),
+                G("git apply --index x.patch"),
+                G("git reset --hard HEAD"),
+                G("git am x.patch"),
             ],
         ),
         (
