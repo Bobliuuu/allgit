@@ -14,7 +14,7 @@ use vcs_objects::{ObjectId, RefUpdate};
 
 pub const ROOT_ZONE: &str = "root";
 pub const DEFAULT_BRANCH: &str = "main";
-const STATE_VERSION: u8 = 1;
+pub(crate) const STATE_VERSION: u8 = 1;
 
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     write_atomic_inner(path, bytes, true)
