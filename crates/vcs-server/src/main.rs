@@ -116,6 +116,7 @@ fn main() {
     } else if audit_key.is_some() {
         die("--audit-key needs --audit-log");
     }
+    #[allow(unused_mut)]
     let mut scheme = "http";
     match (tls_cert, tls_key) {
         (None, None) => {}
