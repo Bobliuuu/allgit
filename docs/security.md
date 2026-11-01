@@ -46,7 +46,8 @@ user's own `.vcs` directory and are treated as trusted-but-possibly-corrupt, not
   round-trip and never-panic properties plus a deterministic mutation loop for each decoder. Each fixed crash has its own
   regression test named after the failure.
 * `fuzz/` contains cargo-fuzz targets (`object_decode`, `manifest_decode`, `pack_index`, `pack_data`, `import_git`,
-  `s3_list`). It is its own cargo workspace, so `cargo build --workspace` never builds it. Run, from `fuzz/`:
+  `s3_list`, `p4_marshal`, `import_p4`, `remote_helper`, `http_request`, `audit_verify`, `config_parse`, `ignore_parse`,
+  `index_decode`, `pack_fetch`, `commit_graph`, `state_files`, `policy_tokens`, `assist_response`). It is its own cargo workspace, so `cargo build --workspace` never builds it. Run, from `fuzz/`:
   `cargo +nightly fuzz run <target> -- -max_total_time=60`.
 
 ## Fuzz results
@@ -64,8 +65,56 @@ an empty corpus (the `import_git` run used `fuzz/seeds/import_git`; note libFuzz
 | `import_git` | 61 s | 2,003 | no crash |
 | `s3_list` | 61 s | 1,366,787 | no crash |
 
-`pack_data` and `import_git` are slow per execution because each one builds files or a repository in a temp dir. These
-are minute-long smoke runs, not a claim of coverage saturation; run longer before relying on them.
+### Campaign (20 minutes per target)
+
+Same box (30 cores, shared, load average about 40 during the run), rustc nightly, cargo-fuzz 0.13.2, ASan. Eight
+single-process runs at a time (at most 8 workers), each started from a corpus seeded with real files (objects, index,
+commit-graph, conflicts/rebase/stash/zones/refs/workspace files, manifest, pack and idx written by the CLI and
+`vcs publish`; `git fast-export` streams; the p4 fixtures; an audit log written by `vcs-server`; sample S3 pages;
+the repository `.gitignore`; example token and policy files). Command, per target:
+`<target> -max_total_time=1200 -timeout=5 -rss_limit_mb=4096 -max_len=<4096, or 65536 for object_decode, pack_index,
+pack_fetch, import_git, import_p4, remote_helper, audit_verify> -report_slow_units=1 corpus/<target>`. Release builds
+with debug assertions and overflow checks (cargo-fuzz default).
+`cov` is libFuzzer edge coverage, `ft` features, as printed at the end of the run.
+
+| Target | Executions | cov | ft | Corpus | Result |
+|---|---|---|---|---|---|
+| `object_decode` | 52,834,447 | 1422 | 3440 | 788 | no crash |
+| `manifest_decode` | 42,187,900 | 1040 | 2647 | 573 | no crash |
+| `pack_index` | 49,019,784 | 204 | 510 | 74 | no crash |
+| `pack_data` | 64,874 | 1003 | 2885 | 251 | no crash |
+| `import_git` | 20,904 | 5105 | 13464 | 489 | no crash |
+| `s3_list` | 4,011,716 | 205 | 1066 | 268 | no crash |
+| `p4_marshal` | 37,774,280 | 231 | 1419 | 391 | no crash |
+| `import_p4` | 52,472 | 2127 | 3769 | 397 | no crash |
+| `remote_helper` | 18,989 | 4610 | 11732 | 473 | no crash |
+| `http_request` | 22,782,259 | 571 | 2101 | 601 | no crash |
+| `audit_verify` | 2,062,612 | 462 | 861 | 192 | no crash |
+| `config_parse` | 12,907,837 | 413 | 1822 | 650 | no crash |
+| `ignore_parse` | 2,119,730 | 508 | 3331 | 890 | no crash |
+| `index_decode` (AGI2 and AGIX) | 36,951,440 | 770 | 2157 | 372 | no crash |
+| `pack_fetch` (pack v1 index and trailer) | 22,618,501 | 573 | 814 | 51 | no crash |
+| `commit_graph` | 11,594,658 | 364 | 1045 | 92 | no crash |
+| `state_files` (conflicts, rebase, stash, zones, refs, workspace) | 154,996 | 1927 | 2835 | 353 | no crash |
+| `policy_tokens` | 5,168,682 (after the fix; 3,866,021 before it crashed) | 938 | 4789 | 1133 | 1 finding, fixed |
+| `assist_response` | 6,316,399 | 2941 | 12527 | 2511 | no crash |
+
+Finding: `policy_tokens` hit a libFuzzer timeout on a policy line whose glob was about 60 repeated `*` (and the same
+shape with many `**` segments): the recursive glob matcher was exponential. Fixed with an iterative matcher and a
+dynamic-programming segment match, regression test `many_wildcards_do_not_blow_up` in `crates/vcs-server/src/glob.rs`.
+`import_git`, `import_p4`, `pack_data`, `remote_helper` and `state_files` reported "slow units" of about 1 s; re-run alone
+each took 0.1 to 0.9 s wall time including process start and the temp-repository setup the target does on every input, so
+they are load and disk noise on the shared box, not a slow parser (no fix made).
+
+`cargo fuzz -s undefined` does not exist in cargo-fuzz 0.13.2 (sanitizers: address, leak, memory, thread, none). Instead
+`import_git` and `pack_fetch` were run a second time with `--careful -s none` (std built with debug assertions and extra
+UB checks, 20 minutes each, same flags): `import_git` 32,555 executions (cov 4317), `pack_fetch` 83,892,258 executions
+(cov 417), no crash. The memory and thread sanitizers were not run.
+
+Not covered by the above: the `tls` feature of `vcs-server` (the HTTP request parser was fuzzed without it), signature
+and live-network paths of the Claude assistant (only the pure response parsing and validation), and a 20-minute run is
+still not a saturation claim (`pack_data`, `import_git`, `import_p4`, `remote_helper` and `state_files` run below 200
+executions per second).
 
 Findings fixed while doing this work, each with a regression test: pack index offset overflow (`off + len` wrapped), a
 panic on a git identity line with `>` before `<`, unbounded line and `data` buffering in the import parser, import
@@ -87,5 +136,5 @@ last one found by the `manifest_decode` fuzz target on its first run: `AGMF 02 0
 * **Timing and side channels**, and denial of service on the remote by a valid but abusive client.
 * **Local state files** are checked for structure but not for quadratic work: a zones file with hundreds of thousands of
   entries makes the overlap check slow.
-* Decoders not listed in the table above (merge-state files, the lock protocol messages) were reviewed for panics and
-  unbounded allocation only by reading, not by fuzzing.
+* Decoders not fuzzed (the lock protocol messages, the TLS path) were reviewed for panics and unbounded allocation only
+  by reading.
