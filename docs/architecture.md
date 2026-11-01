@@ -22,6 +22,20 @@ Outside the cargo workspace (research only, not built by CI): `vcs-storage-lab`,
 `vcs-compress-lab`. `fuzz/` is its own cargo-fuzz project (decoders, pack, import, S3 list parsing).
 Crates are only created when a real boundary exists. The core never depends on Tokio or any S3 SDK.
 
+## Lazy blob fetch [impl]
+
+`fetch` and `clone` store commits and trees eagerly and leave file blobs (and chunks) on the remote. A blob is pulled the
+first time something reads it: `Repo::prefetch_zone_files` collects the missing blob ids reachable from the head tree
+(restricted to the sparse set, if any), downloads them in one batch (`fetch_many`; one ranged read per remote pack, not
+one request per object) and hash-verifies every object before it is stored. Order of effects for `sync`, `zone add` and
+clone checkout: (1) fetch commits and trees, (2) prefetch the head's blobs, (3) only then rewrite the worktree and index,
+(4) move the ref last. A backend that fails or serves a tampered blob during step 2 therefore leaves worktree, index and
+ref untouched (`backend_failing_mid_fetch_leaves_no_partial_worktree_write_on_sync`,
+`tampered_head_blob_fails_the_batch_prefetch_and_the_clone` in `crates/vcs-repo/tests/lazyfetch.rs`); blobs already
+verified stay in the store and the rerun fetches only the rest. `vcs prefetch [--zone Z]` runs step 2 alone. `fsck`
+reports a blob that is merely not cached locally as "refetched on demand", not as a problem. History blobs (not in any
+subscribed head) are fetched on first use, one object at a time.
+
 ## Local repository layout [impl]
 
 ```
