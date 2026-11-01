@@ -6,13 +6,15 @@
 use crate::{ObjectStore, StoreError};
 use std::fs::File;
 use std::io;
-use vcs_objects::chunk::{self, large_candidates, large_next_cut, par_map, Cand, LARGE_WARM};
+use vcs_objects::chunk::{large_candidates, large_next_cut, par_map, par_map_with, Cand, LARGE_WARM};
 use vcs_objects::{blob_id, ChunkRef, ChunkedBlob, Object, ObjectId, LARGE_THRESHOLD};
 
 /// Bytes read per round by [`put_file`]; peak memory is about this plus one maximal chunk.
 pub const WINDOW: usize = 64 << 20;
 /// Work unit for parallel verification and checkout: consecutive chunks totalling at least this much.
 const GROUP_BYTES: u64 = 4 << 20;
+/// Threads that write one file in parallel.
+const WRITERS: usize = 4;
 
 fn ioerr(path: &str, source: io::Error) -> StoreError {
     StoreError::Io { path: path.into(), source }
@@ -444,13 +446,16 @@ pub fn write_manifest_to<S: ObjectStore + ?Sized>(store: &S, id: &ObjectId, m: &
     preallocate(f, m.total_len).map_err(|e| ioerr("<file>", e))?;
     let offs = m.offsets();
     let g = groups(m, 0, m.chunks.len());
-    let res = par_map(g.len(), |k| -> Result<(), StoreError> {
+    // Writers to one file serialise on its inode lock and the waiters spin: more than a few threads only burn CPU
+    // (measured: 16 threads 4.6 s system time for a 1 GiB checkout, 4 threads 0.9 s at the same wall time).
+    let res = par_map_with(WRITERS, g.len(), |k| -> Result<(), StoreError> {
         let (a, b) = g[k];
-        let mut buf = Vec::with_capacity((GROUP_BYTES as usize).saturating_add(chunk::LARGE_MAX).min(64 << 20));
+        // one pwrite per chunk straight from the verified chunk: no group buffer, no second copy
         for i in a..b {
-            buf.extend_from_slice(&fetch_chunk(store, id, &m.chunks[i])?);
+            let chunk = fetch_chunk(store, id, &m.chunks[i])?;
+            write_all_at(f, &chunk, offs[i]).map_err(|e| ioerr("<file>", e))?;
         }
-        write_all_at(f, &buf, offs[a]).map_err(|e| ioerr("<file>", e))
+        Ok(())
     });
     res.into_iter().collect()
 }

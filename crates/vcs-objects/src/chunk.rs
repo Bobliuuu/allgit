@@ -168,7 +168,12 @@ pub fn workers() -> usize {
 
 /// `f(0..n)` evaluated on up to [`workers`] threads, results in index order.
 pub fn par_map<T: Send>(n: usize, f: impl Fn(usize) -> T + Sync) -> Vec<T> {
-    let t = workers().min(n);
+    par_map_with(workers(), n, f)
+}
+
+/// [`par_map`] on at most `threads` threads.
+pub fn par_map_with<T: Send>(threads: usize, n: usize, f: impl Fn(usize) -> T + Sync) -> Vec<T> {
+    let t = threads.min(n);
     if t <= 1 {
         return (0..n).map(&f).collect();
     }
