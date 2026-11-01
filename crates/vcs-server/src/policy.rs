@@ -11,7 +11,14 @@
 //! wins over `allow`. A principal also needs at least one `allow` rule for a zone to move a
 //! branch head or define that zone at all. Admins bypass `allow`/`deny` (they can already break
 //! locks and write every zone) but not `require-lock`. Read access is by role only: objects are
-//! content-addressed and not enumerable per zone, so reads are not path-filtered.
+//! content-addressed and shared between zones, so reads cannot be filtered by path (see below).
+//!
+//! **Read rules** (`allow-read` / `deny-read`, glob must be `**`: whole zones only) restrict what a
+//! non-admin principal may read of the objects reachable only from other zones. A principal with
+//! at least one `allow-read` rule may read exactly the zones some `allow-read` matches; without
+//! any it may read every zone except those a `deny-read` names. `deny-read` always wins. The
+//! server enforces this on object GET/HEAD/range and list (docs/server.md "Read policy" states
+//! what this cannot hide: the manifest and object ids stay visible).
 //!
 //! `require-lock`: a change to a path matching the glob is refused unless the writer holds a
 //! live lock on exactly that path in the resulting manifest, so binary assets cannot be
@@ -25,6 +32,8 @@ pub enum Effect {
     Allow,
     Deny,
     RequireLock,
+    AllowRead,
+    DenyRead,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,14 +76,23 @@ impl Policy {
             let f: Vec<&str> = line.split_whitespace().collect();
             let err = |m: &str| format!("policy line {}: {m}", n + 1);
             if f.len() != 4 {
-                return Err(err("expected `<allow|deny|require-lock> <principal|*> <zone|*> <glob>`"));
+                return Err(err(
+                    "expected `<allow|deny|require-lock|allow-read|deny-read> <principal|*> <zone|*> <glob>`",
+                ));
             }
             let effect = match f[0] {
                 "allow" => Effect::Allow,
                 "deny" => Effect::Deny,
                 "require-lock" => Effect::RequireLock,
-                _ => return Err(err("effect must be allow, deny or require-lock")),
+                "allow-read" => Effect::AllowRead,
+                "deny-read" => Effect::DenyRead,
+                _ => return Err(err("effect must be allow, deny, require-lock, allow-read or deny-read")),
             };
+            if matches!(effect, Effect::AllowRead | Effect::DenyRead) && f[3] != "**" {
+                return Err(err(
+                    "read rules apply to whole zones: the glob must be `**` (objects are content-addressed, so reads cannot be limited to paths)",
+                ));
+            }
             if f[3].starts_with('/') || f[3].is_empty() {
                 return Err(err("glob must be a zone-relative path pattern (no leading /)"));
             }
@@ -88,8 +106,30 @@ impl Policy {
         Ok(Policy { rules })
     }
 
+    /// True when there is no write-side rule (`allow`, `deny`, `require-lock`). Read rules alone do
+    /// not switch writes to deny-by-default.
     pub fn is_empty(&self) -> bool {
-        self.rules.is_empty()
+        self.rules.iter().all(|r| matches!(r.effect, Effect::AllowRead | Effect::DenyRead))
+    }
+
+    /// Does any read rule name this principal (or `*`)? Only then are its reads checked at all.
+    pub fn read_restricted(&self, principal: &str) -> bool {
+        self.rules
+            .iter()
+            .any(|r| matches!(r.effect, Effect::AllowRead | Effect::DenyRead) && (r.principal == "*" || r.principal == principal))
+    }
+
+    /// May a non-admin `principal` read objects of `zone`? Admins are never asked.
+    pub fn read_zone_allowed(&self, principal: &str, zone: &str) -> bool {
+        let hit = |e: Effect| self.rules.iter().any(|r| r.effect == e && r.applies(principal, zone));
+        if hit(Effect::DenyRead) {
+            return false;
+        }
+        let has_allow = self
+            .rules
+            .iter()
+            .any(|r| r.effect == Effect::AllowRead && (r.principal == "*" || r.principal == principal));
+        !has_allow || hit(Effect::AllowRead)
     }
 
     /// May `principal` touch zone-level state (branch heads, zone definition) in `zone`?
@@ -169,6 +209,27 @@ mod tests {
         assert!(!p.zone_access("carol", "art"));
         assert!(p.zone_access("carol", "code"));
         assert!(!Policy::default().zone_access("alice", "art"));
+    }
+
+    #[test]
+    fn read_rules() {
+        let p = Policy::parse("allow-read rita art **\ndeny-read * secret **\ndeny-read bob code **\n").unwrap();
+        // rita has an allow-read: only art
+        assert!(p.read_restricted("rita"));
+        assert!(p.read_zone_allowed("rita", "art"));
+        assert!(!p.read_zone_allowed("rita", "code"));
+        assert!(!p.read_zone_allowed("rita", "secret"));
+        // bob: everything but code and secret
+        assert!(p.read_zone_allowed("bob", "art"));
+        assert!(!p.read_zone_allowed("bob", "code"));
+        assert!(!p.read_zone_allowed("bob", "secret"));
+        assert!(!Policy::parse("allow alice art **").unwrap().read_restricted("alice"));
+        assert!(Policy::parse("allow-read rita art src/**").is_err());
+        // read rules do not grant write access
+        assert!(!p.zone_access("rita", "art"));
+        // a policy with read rules only leaves write behaviour alone
+        assert!(p.is_empty());
+        assert!(!Policy::parse("allow-read a z **\nallow a z **").unwrap().is_empty());
     }
 
     #[test]

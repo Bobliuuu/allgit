@@ -1,6 +1,6 @@
 # vcs-server path policy (--policy). One rule per line, `#` starts a comment:
 #
-#   <allow|deny|require-lock> <principal|*> <zone|*> <glob>
+#   <allow|deny|require-lock|allow-read|deny-read> <principal|*> <zone|*> <glob>
 #
 # Deny by default: once this file is loaded, a write principal may change a path only if an
 # `allow` rule matches and no `deny` rule does. A principal needs at least one `allow` rule
@@ -14,3 +14,8 @@ deny  *      *    secrets/**
 # Binary assets can only change while the writer holds a lock on that exact path.
 require-lock * art **/*.psd
 require-lock * art **/*.blend
+# Read rules limit what non-admin tokens can read of other zones' objects (whole zones only: glob `**`).
+# They do not hide the manifest or object ids; see docs/server.md "Read policy". A policy with only
+# read rules leaves write behaviour unchanged.
+# allow-read rita art **       # rita can read zone art only
+# deny-read  *    secret **    # nobody but admins reads zone secret's objects

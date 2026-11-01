@@ -69,6 +69,9 @@ struct Cli {
     /// Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
     #[arg(long, global = true)]
     json: bool,
+    /// PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+    #[arg(long, global = true, value_name = "FILE")]
+    ca_pem: Option<PathBuf>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -1835,6 +1838,11 @@ fn run_lazy(cli: Cli) -> Result<(), Error> {
 fn main() -> ExitCode {
     let _ = ROOT_ZONE;
     let cli = Cli::parse();
+    if let Some(ca) = &cli.ca_pem {
+        // Resolved before `-C`; the config machinery reads it back as `remote.cainfo` (env VCS_CAINFO).
+        let abs = std::fs::canonicalize(ca).unwrap_or_else(|_| ca.clone());
+        std::env::set_var("VCS_CAINFO", abs);
+    }
     if let Some(dir) = &cli.chdir {
         if let Err(e) = std::env::set_current_dir(dir) {
             eprintln!("error: cannot change to directory {}: {e}", dir.display());

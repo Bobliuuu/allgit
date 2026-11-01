@@ -29,7 +29,7 @@ fn start(c: &Cert) -> (Server, u16) {
         "t-alice",
         Principal {
             name: "alice".into(),
-            role: Role::Write,
+            role: Role::Admin,
             zones: None::<BTreeSet<String>>,
         },
     )]));
@@ -45,8 +45,8 @@ fn https_roundtrip_with_trusted_ca_passes_conformance() {
     let c = cert(&["localhost"]);
     let (_s, port) = start(&c);
     let b = HttpBackend::with_ca(&format!("https://localhost:{port}"), "t-alice", Some(c.cert_pem.as_bytes())).unwrap();
-    assert_eq!(b.whoami().unwrap(), "alice write *");
-    conformance(&b);
+    assert_eq!(b.whoami().unwrap(), "alice admin *");
+    conformance(&b); // admin: the conformance suite deletes
 }
 
 #[test]
@@ -103,4 +103,115 @@ fn client_config_validation() {
     );
     assert!(HttpBackend::new("ftp://h", "t").is_err());
     assert!(server_config(b"junk", b"junk").is_err());
+}
+
+// ---- mutual TLS and certificate reload ----
+
+use rcgen::{BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, KeyPair};
+
+struct Ca {
+    cert: rcgen::Certificate,
+    key: KeyPair,
+}
+fn make_ca(name: &str) -> Ca {
+    let mut p = CertificateParams::new(vec![]).unwrap();
+    p.distinguished_name.push(rcgen::DnType::CommonName, name);
+    p.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    let key = KeyPair::generate().unwrap();
+    Ca {
+        cert: p.self_signed(&key).unwrap(),
+        key,
+    }
+}
+fn leaf(ca: &Ca, names: &[&str], client: bool) -> Cert {
+    let mut p = CertificateParams::new(names.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap();
+    p.extended_key_usages = vec![if client {
+        ExtendedKeyUsagePurpose::ClientAuth
+    } else {
+        ExtendedKeyUsagePurpose::ServerAuth
+    }];
+    let key = KeyPair::generate().unwrap();
+    let c = p.signed_by(&key, &ca.cert, &ca.key).unwrap();
+    Cert {
+        cert_pem: c.pem(),
+        key_pem: key.serialize_pem(),
+    }
+}
+
+fn start_cfg(cfg_tls: Arc<rustls::ServerConfig>) -> (Server, u16) {
+    let mut cfg = Config::new(TokenTable::from_entries(vec![(
+        "t-alice",
+        Principal {
+            name: "alice".into(),
+            role: Role::Write,
+            zones: None::<BTreeSet<String>>,
+        },
+    )]));
+    cfg.tls = Some(cfg_tls);
+    cfg.header_timeout = Duration::from_secs(2);
+    let srv = Server::start(Arc::new(MemBackend::new()), cfg, "127.0.0.1:0").unwrap();
+    let port = srv.local_addr().port();
+    (srv, port)
+}
+
+#[test]
+fn mtls_requires_a_client_certificate_from_the_configured_ca() {
+    let ca = make_ca("test ca");
+    let server = leaf(&ca, &["localhost"], false);
+    let client = leaf(&ca, &["alice"], true);
+    let other_ca = make_ca("other ca");
+    let rogue = leaf(&other_ca, &["alice"], true);
+    let ca_pem = ca.cert.pem();
+    let (_s, port) =
+        start_cfg(vcs_server::tls::server_config_mtls(server.cert_pem.as_bytes(), server.key_pem.as_bytes(), ca_pem.as_bytes()).unwrap());
+    let url = format!("https://localhost:{port}");
+    // with a certificate signed by the client CA: works, and the bearer token is still checked
+    let b = HttpBackend::with_tls(
+        &url,
+        "t-alice",
+        Some(ca_pem.as_bytes()),
+        Some((client.cert_pem.as_bytes(), client.key_pem.as_bytes())),
+    )
+    .unwrap();
+    assert_eq!(b.whoami().unwrap(), "alice write *");
+    let bad = HttpBackend::with_tls(
+        &url,
+        "wrong-token",
+        Some(ca_pem.as_bytes()),
+        Some((client.cert_pem.as_bytes(), client.key_pem.as_bytes())),
+    )
+    .unwrap();
+    assert!(bad.whoami().unwrap_err().to_string().contains("401"));
+    // no client certificate: the handshake is refused even with a valid token
+    let none = HttpBackend::with_ca(&url, "t-alice", Some(ca_pem.as_bytes())).unwrap();
+    assert!(none.whoami().is_err());
+    // a certificate from another CA is refused
+    let r = HttpBackend::with_tls(
+        &url,
+        "t-alice",
+        Some(ca_pem.as_bytes()),
+        Some((rogue.cert_pem.as_bytes(), rogue.key_pem.as_bytes())),
+    )
+    .unwrap();
+    assert!(r.whoami().is_err());
+    // a client certificate without a CA bundle is a configuration error, not silently web roots
+    assert!(HttpBackend::with_tls(&url, "t", None, Some((client.cert_pem.as_bytes(), client.key_pem.as_bytes()))).is_err());
+}
+
+#[test]
+fn reloaded_certificate_serves_new_connections() {
+    let ca1 = make_ca("ca one");
+    let ca2 = make_ca("ca two");
+    let s1 = leaf(&ca1, &["localhost"], false);
+    let s2 = leaf(&ca2, &["localhost"], false);
+    let (srv, port) = start_cfg(server_config(s1.cert_pem.as_bytes(), s1.key_pem.as_bytes()).unwrap());
+    let url = format!("https://localhost:{port}");
+    let (pem1, pem2) = (ca1.cert.pem(), ca2.cert.pem());
+    let c1 = || HttpBackend::with_ca(&url, "t-alice", Some(pem1.as_bytes())).unwrap();
+    let c2 = || HttpBackend::with_ca(&url, "t-alice", Some(pem2.as_bytes())).unwrap();
+    assert!(c1().whoami().is_ok());
+    assert!(c2().whoami().is_err());
+    srv.reload_tls(server_config(s2.cert_pem.as_bytes(), s2.key_pem.as_bytes()).unwrap());
+    assert!(c2().whoami().is_ok(), "new certificate is served after reload");
+    assert!(c1().whoami().is_err(), "old certificate is gone");
 }

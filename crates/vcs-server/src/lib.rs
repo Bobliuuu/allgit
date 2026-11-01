@@ -16,6 +16,7 @@ pub mod glob;
 pub mod http;
 pub mod policy;
 pub mod ratelimit;
+pub mod readguard;
 pub mod server;
 #[cfg(feature = "tls")]
 pub mod tls;
@@ -26,5 +27,5 @@ pub use auth::{Principal, Role, TokenTable};
 pub use client::HttpBackend;
 pub use policy::Policy;
 pub use ratelimit::RateLimit;
-pub use server::{Config, Server};
+pub use server::{Config, Handle, Server};
 pub use validate::ValidatorConfig;

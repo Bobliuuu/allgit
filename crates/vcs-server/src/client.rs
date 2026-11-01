@@ -33,24 +33,46 @@ impl HttpBackend {
 
     /// Like [`new`](Self::new); for `https://`, `ca_pem` (if given) is the only trust root.
     pub fn with_ca(base: &str, token: &str, ca_pem: Option<&[u8]>) -> Result<Self, BackendError> {
+        Self::with_tls(base, token, ca_pem, None)
+    }
+
+    /// Like [`with_ca`](Self::with_ca), additionally presenting `(cert_pem, key_pem)` as the client
+    /// certificate (mutual TLS). A client certificate requires `ca_pem`.
+    pub fn with_tls(base: &str, token: &str, ca_pem: Option<&[u8]>, identity: Option<(&[u8], &[u8])>) -> Result<Self, BackendError> {
         let base = base.trim_end_matches('/');
         #[allow(unused_mut)]
         let mut b = ureq::AgentBuilder::new().timeout(Duration::from_secs(60)).max_idle_connections(0);
         if base.starts_with("https://") {
             #[cfg(feature = "tls")]
-            if let Some(pem) = ca_pem {
-                b = b.tls_config(crate::tls::client_config(pem).map_err(|e| BackendError::Other(format!("invalid ca bundle: {e}")))?);
+            match (ca_pem, identity) {
+                (Some(pem), Some((c, k))) => {
+                    b = b.tls_config(
+                        crate::tls::client_config_with_identity(pem, c, k)
+                            .map_err(|e| BackendError::Other(format!("invalid ca bundle or client certificate: {e}")))?,
+                    );
+                }
+                (None, Some(_)) => {
+                    return Err(BackendError::Other(
+                        "a client certificate needs a CA bundle too (remote.cainfo): the server certificate is always verified".into(),
+                    ))
+                }
+                (Some(pem), None) => {
+                    b = b.tls_config(crate::tls::client_config(pem).map_err(|e| BackendError::Other(format!("invalid ca bundle: {e}")))?);
+                }
+                (None, None) => {}
             }
             #[cfg(not(feature = "tls"))]
             {
-                let _ = ca_pem;
+                let _ = (ca_pem, identity);
                 return Err(BackendError::Other(
                     "https:// needs vcs-server built with the `tls` feature (or use a TLS proxy and http://)".into(),
                 ));
             }
         } else if base.starts_with("http://") {
-            if ca_pem.is_some() {
-                return Err(BackendError::Other("a CA bundle only applies to https:// URLs".into()));
+            if ca_pem.is_some() || identity.is_some() {
+                return Err(BackendError::Other(
+                    "a CA bundle or client certificate only applies to https:// URLs".into(),
+                ));
             }
         } else {
             return Err(BackendError::Other(

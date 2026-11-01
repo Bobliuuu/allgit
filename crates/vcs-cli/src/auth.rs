@@ -58,11 +58,11 @@ impl std::fmt::Display for Token {
     }
 }
 
-/// `http://Host:8480/x` -> `host:8480`. Only `http://` remotes carry tokens.
+/// `http(s)://Host:8480/x` -> `host:8480` (the scheme is not part of the key). Only vcs-server remotes carry tokens.
 pub fn host_key(url: &str) -> Result<String, Error> {
-    let Some(rest) = url.strip_prefix("http://") else {
+    let Some(rest) = url.strip_prefix("http://").or_else(|| url.strip_prefix("https://")) else {
         return msg(format!(
-            "{url}: only http:// (vcs-server) remotes use tokens; local, file:// and s3:// remotes need no `vcs login`"
+            "{url}: only http:// and https:// (vcs-server) remotes use tokens; local, file:// and s3:// remotes need no `vcs login`"
         ));
     };
     let host = rest.split(['/', '?', '#']).next().unwrap_or("");
@@ -462,7 +462,7 @@ impl<R: std::io::BufRead> ReadLineAll for R {
 }
 
 fn ask_whoami(url: &str, t: &Token) -> Result<String, Error> {
-    let b = vcs_server::HttpBackend::new(url, t.expose()).map_err(|e| Error::Msg(t.scrub(&e.to_string())))?;
+    let b = crate::remote::http_backend(url, t.expose()).map_err(|e| Error::Msg(t.scrub(&e.to_string())))?;
     b.whoami().map_err(|e| Error::Msg(t.scrub(&e.to_string())))
 }
 
