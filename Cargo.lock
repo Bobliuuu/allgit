@@ -1420,6 +1420,7 @@ dependencies = [
  "blake3",
  "proptest",
  "thiserror",
+ "unicode-normalization",
 ]
 
 [[package]]
