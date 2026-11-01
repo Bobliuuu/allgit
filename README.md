@@ -267,6 +267,19 @@ jj pays a large one-time cost to snapshot 100k files (2 to 7 minutes, single-thr
 
 What this says: Sapling's Git store has the cheapest `add` of the three on random binary data, but `commit` of 100k files takes about 31 s because it writes every Git object loose (git and vcs: under 1 s), its local store stays unpacked (818 MB vs 415 / 421 MB on binary, `du`), and every Sapling command pays about 0.3 s of start-up (`log` 298 ms vs 5 and 11 ms). Not measured: Sapling's native store, EdenFS, Watchman, remotes, cold cache, merges; one machine, one build of each. Wall times on flat and deep are disk-contended and noisy (single runs vary up to 10x). Method, raw runs, verification and caveats: [sapling-benchmark.md](docs/research/sapling-benchmark.md).
 
+**Mercurial, Subversion, Fossil, Breezy, Pijul and git variants** (Lambda box, 30 cores, git 2.56.0, hg 7.1.2, svn 1.15.0, Fossil 2.28, Breezy 3.3.17, Pijul 1.0.0-beta.26; same 100k-file datasets; runs interleaved round-robin over the tools, median of 5, 3 or 1 for very slow cells; wall ms). Add, commit and clone ran at load1 3.5 to 37 with three layouts at once, so absolute times are inflated; status, log and checkout are from a second pass at load1 1 to 15. Flat layout (deep and binary, CPU times, disk use and raw runs: [other-vcs-benchmark.md](docs/research/other-vcs-benchmark.md)):
+
+| flat, 100k files | vcs | git | git + fsmonitor | Mercurial | Subversion | Fossil | Breezy | Pijul |
+|---|---|---|---|---|---|---|---|---|
+| add + commit (sum of medians, s) | 2.3 | 25.0 | 27.3 | 59.6 | 446 | 999 | 53.1 | 16.6 |
+| status, clean | 146 | 108 | 28 | 271 | 560 | 560 | 834 | 3,498 |
+| status, 1% modified | 136 | 114 | 36 | 282 | 651 | 590 | 893 | 3,556 |
+| log, 50 entries | 13 | 7 | 7 | 258 | 11 | 7 | 174 | 153 |
+| checkout, 1% differ | 441 | 350 | 347 | 748 | 2,459 | 12,228 | 12,033 | no equivalent |
+| full clone | 3,966 | 6,269 | n/a | 54,406 | 56,716 | 17,895 | 879,512 (1 run) | 22,925 |
+
+What this says: for committing 100k files vcs and git are far ahead of everything else (Subversion 5 to 15 minutes, Fossil about 17); for `status` git with its built-in fsmonitor is the fastest of all (28 ms), plain git and vcs are next, and Pijul is slowest (3.5 s, 25 s of CPU). Mercurial, Fossil, Breezy and Pijul hash files at `commit`, not `add`, so compare the sum. Not measured: Git LFS, tuned Mercurial or Subversion setups, remote servers. Breezy did not finish a deep-layout clone in 30 minutes.
+
 ## 🛡️ Why you can trust it
 
 - **Integrity:** every read re-hashes the data; each object has exactly one valid encoding.
