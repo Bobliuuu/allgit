@@ -26,3 +26,4 @@ Scripts: `scripts/storage_cost_model.py`, `scripts/storage_score.py` (tests: `sc
 
 Lab code for #184: `crates/vcs-storage-lab` (own workspace; table generator `tools/tables.py`). Data: `data/packing/`.
 - [s3-aws-results.md](s3-aws-results.md): measured AWS S3 contract checks and latency (2026-11-01), including the ETag A-B-A finding.
+- [delta-gate.md](delta-gate.md): #250 and #244: the delta gate re-run on real allgit-encoded objects (ripgrep, tokio, cargo, flask via `vcs import-git`): per-class sizes for loose, pack v1/v2, solid blocks and deltas at depth 4/8/16, reconstruction reads, tree compressibility and front coding; gate passes for text blobs and trees. Lab `crates/vcs-storage-lab-delta`, data `data/deltagate/`.
