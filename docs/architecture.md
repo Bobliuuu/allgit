@@ -206,7 +206,7 @@ cherry-pick creates a new id (records the source in metadata); two live commits 
 - GC: S3 and HTTP remotes are not supported; remote packs are never rewritten or compacted, so pack count grows with publishes.
 - Locks: enforced only through `vcs-server`; `unlock --break` is unrestricted; no clock-skew margin without `--skew-epsilon-ms` ([locks.md](locks.md)).
 - Server: plain HTTP unless built with `--features tls`; TLS never tested against a real cloud endpoint or public CA.
-- Git: import and an incremental export; the remote helper is lightly tested. Perforce: fixture-tested import only.
+- Git: import and an incremental export; the remote helper is new. Perforce: fixture-tested import only.
 - Windows is compile-checked in CI, never run. Symlink handling on Windows is untested.
 - S3 numbers come from one run from one residential connection; no in-region measurement.
 - No filesystem monitor; a coarse repo lock is the only local concurrency control; `log` shows first-parent history per zone branch; `status` on 100k-file flat repos is slower than git.
