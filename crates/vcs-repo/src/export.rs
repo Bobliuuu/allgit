@@ -165,7 +165,7 @@ impl Repo {
             .head(zone, branch)
             .ok_or_else(|| Error::Msg(format!("no such branch {zone}/{branch}")))?;
         let read = |name: &str| -> Result<String> {
-            let p = self.vcs.join(name);
+            let p = self.state_path(name);
             match std::fs::read_to_string(&p) {
                 Ok(t) => Ok(t),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
@@ -318,7 +318,7 @@ impl Repo {
             for (id, k) in &table {
                 t.push_str(&format!("{} {k}\n", id.to_hex()));
             }
-            write_atomic(&self.vcs.join(EXPORT_MAP), t.as_bytes())?;
+            write_atomic(&self.common.join(EXPORT_MAP), t.as_bytes())?;
         }
         Ok(rep)
     }

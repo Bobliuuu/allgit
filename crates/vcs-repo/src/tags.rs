@@ -102,7 +102,7 @@ impl Repo {
         };
         refs.tags.insert(key, target);
         self.store.sync()?;
-        write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+        write_atomic(&self.common.join("refs"), &refs.encode())?;
         let kind = if target == commit { "" } else { " (annotated)" };
         self.record_op(&format!("tag create {zone}/{name}{kind} at {}", commit.short()), None)?;
         Ok(commit)
@@ -118,7 +118,7 @@ impl Repo {
             return msg(format!("no such tag {zone}/{name}"));
         };
         let (commit, _) = self.peel(&zone, id)?;
-        write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+        write_atomic(&self.common.join("refs"), &refs.encode())?;
         self.record_op(&format!("tag delete {zone}/{name} (was {})", commit.short()), None)?;
         Ok(commit)
     }

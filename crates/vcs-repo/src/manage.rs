@@ -78,6 +78,7 @@ impl Repo {
                 }
                 _ => {}
             }
+            self.require_branch_free(a, &target_branch)?;
             plan.push((a.clone(), *c));
         }
         if !plan.is_empty() {
@@ -111,7 +112,7 @@ impl Repo {
             rep.switched.push((a.clone(), target_branch.clone(), *c));
         }
         self.save_index(&mut ix)?;
-        write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+        write_atomic(&self.common.join("refs"), &refs.encode())?;
         self.save_ws(&ws)?;
         self.record_op(&format!("snapshot checkout {name}"), None)?;
         Ok(rep)
@@ -136,7 +137,7 @@ impl Repo {
             let st = self.status()?;
             self.require_clean(&id, &st)?;
         }
-        write_atomic(&self.vcs.join("zones"), &zones.encode())?;
+        write_atomic(&self.common.join("zones"), &zones.encode())?;
         self.record_op(&format!("zone rename {old} {new}"), None)?;
         Ok(())
     }
@@ -184,8 +185,8 @@ impl Repo {
         refs.tags.retain(|(a, _), _| a != zone);
         ws.subs.remove(zone);
         ws.sparse.remove(zone);
-        write_atomic(&self.vcs.join("refs"), &refs.encode())?;
-        write_atomic(&self.vcs.join("zones"), &zones.encode())?;
+        write_atomic(&self.common.join("refs"), &refs.encode())?;
+        write_atomic(&self.common.join("zones"), &zones.encode())?;
         self.save_ws(&ws)?;
         self.record_op(&format!("zone delete {zone}"), None)?;
         Ok(())
@@ -210,6 +211,12 @@ impl Repo {
         };
         if ws.subs.get(zone).map(String::as_str) == Some(branch) {
             return msg(format!("cannot delete {zone}/{branch}: it is the checked-out branch; switch first"));
+        }
+        if let Some(wt) = self.branch_holder(zone, branch)? {
+            return msg(format!(
+                "cannot delete {zone}/{branch}: it is checked out in the worktree {}",
+                wt.display()
+            ));
         }
         if self.merge_state()?.is_some_and(|m| m.zone == zone) {
             return msg(format!(
@@ -244,7 +251,7 @@ impl Repo {
             }
         }
         refs.branches.remove(&(zone.to_owned(), branch.to_owned()));
-        write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+        write_atomic(&self.common.join("refs"), &refs.encode())?;
         self.record_op(&format!("delete branch {zone}/{branch}"), None)?;
         Ok(head)
     }

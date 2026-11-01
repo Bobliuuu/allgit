@@ -16,8 +16,8 @@ use vcs_objects::names::{validate_branch_name, validate_component, validate_path
 use vcs_objects::{ChangeId, Commit, EntryMode, Object, ObjectId, RefUpdate, Signature, Snapshot, Transaction};
 use vcs_store::{LocalStore, ObjectStore};
 
-const FORMAT_FILE: &str = "format";
-const FORMAT_TEXT: &str = "all-git repository format 1\n";
+pub(crate) const FORMAT_FILE: &str = "format";
+pub(crate) const FORMAT_TEXT: &str = "all-git repository format 1\n";
 const RACY_NS: u64 = 2_000_000_000;
 
 #[derive(Default)]
@@ -61,7 +61,11 @@ impl Default for StatusOpts {
 
 pub struct Repo {
     pub(crate) worktree: PathBuf,
+    /// Per-worktree state directory (`<worktree>/.vcs`): index, workspace, merge/rebase state, stash.
     pub(crate) vcs: PathBuf,
+    /// Shared state directory: objects, refs, zones, remote, op log, lock. Equal to `vcs` for the
+    /// main worktree and for every repository that predates linked worktrees (docs/worktrees.md).
+    pub(crate) common: PathBuf,
     pub(crate) store: LocalStore,
     pub(crate) structural: bool,
     pub(crate) renames: bool,
@@ -265,6 +269,7 @@ impl Repo {
         let r = Repo {
             wfs: Arc::new(RealFs::new(worktree.clone())),
             worktree,
+            common: vcs.clone(),
             vcs,
             store,
             structural: true,
@@ -294,11 +299,13 @@ impl Repo {
                 if f != FORMAT_TEXT {
                     return msg(format!("unsupported repository format: {:?}", f.trim()));
                 }
-                let store = LocalStore::open(vcs.join("objects"))?;
+                let common = crate::worktree::resolve_common(&vcs)?;
+                let store = LocalStore::open(common.join("objects"))?;
                 return Ok(Repo {
                     wfs: Arc::new(RealFs::new(cur.clone())),
                     worktree: cur,
                     vcs,
+                    common,
                     store,
                     structural: true,
                     renames: false,
@@ -368,10 +375,21 @@ impl Repo {
     // ---------- state ----------
 
     pub(crate) fn lock(&self) -> Result<LockGuard> {
-        LockGuard::acquire(self.vcs.join("lock"))
+        LockGuard::acquire(self.common.join("lock"))
+    }
+    /// Path of a state file: shared files live in the common directory, the rest per worktree.
+    pub(crate) fn state_path(&self, name: &str) -> PathBuf {
+        if matches!(
+            name,
+            "refs" | "zones" | "remote" | "remote-refs" | "remote-manifest" | "op_head" | "git-export" | "git-import" | "p4-import"
+        ) {
+            self.common.join(name)
+        } else {
+            self.vcs.join(name)
+        }
     }
     pub(crate) fn rd(&self, name: &str) -> Result<Vec<u8>> {
-        let p = self.vcs.join(name);
+        let p = self.state_path(name);
         io(&p, fs::read(&p))
     }
     /// Map a user-supplied zone name (display name or original id) to the zone id used by
@@ -416,6 +434,14 @@ impl Repo {
         write_atomic(&self.vcs.join("index"), &ix.encode())
     }
     pub(crate) fn save_ws(&self, ws: &Workspace) -> Result<()> {
+        // Backstop for every path that changes a subscription: a branch of a zone is checked out
+        // in at most one worktree. (Callers that move files check earlier, before touching any.)
+        let old = self.workspace().unwrap_or_default();
+        for (z, b) in &ws.subs {
+            if old.subs.get(z) != Some(b) {
+                self.require_branch_free(z, b)?;
+            }
+        }
         write_atomic(&self.vcs.join("workspace"), &ws.encode())
     }
 
@@ -1270,10 +1296,10 @@ impl Repo {
         refs.apply(&updates)?;
         // Durability barrier: trees, commits and the transaction are durable before refs name them.
         self.store.sync()?;
-        write_atomic(&self.vcs.join("refs"), &refs.encode())?; // linearization point
-                                                               // Remember the tree ids just computed so the next commit/status can skip unchanged
-                                                               // directories. `written_ns` is deliberately untouched: no entry was re-verified. Best
-                                                               // effort: a lost cache write only costs time.
+        write_atomic(&self.common.join("refs"), &refs.encode())?; // linearization point
+                                                                  // Remember the tree ids just computed so the next commit/status can skip unchanged
+                                                                  // directories. `written_ns` is deliberately untouched: no entry was re-verified. Best
+                                                                  // effort: a lost cache write only costs time.
         if !fresh_trees.is_empty() {
             ix.entries.store_trees(fp, fresh_trees);
             let _ = crate::meta::write_cache_atomic(&self.vcs.join("index"), &ix.encode());
@@ -1381,7 +1407,7 @@ impl Repo {
             old: None,
             new: head,
         }])?;
-        write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+        write_atomic(&self.common.join("refs"), &refs.encode())?;
         self.record_op(&format!("create branch {zone}/{branch}"), None)?;
         Ok(head)
     }
@@ -1418,6 +1444,7 @@ impl Repo {
         if cur == branch {
             return Ok(());
         }
+        self.require_branch_free(zone, branch)?;
         self.adopt_tracking(&mut refs, zone, branch)?;
         let Some(target) = refs.head(zone, branch) else {
             return msg(format!("no such branch {zone}/{branch}"));
@@ -1462,7 +1489,7 @@ impl Repo {
         if root_flat.keys().any(|k| k == path || k.starts_with(&format!("{path}/"))) {
             return msg(format!("cannot create zone at {path:?}: committed root-zone content exists there"));
         }
-        write_atomic(&self.vcs.join("zones"), &zones.encode())?;
+        write_atomic(&self.common.join("zones"), &zones.encode())?;
         ws.subs.insert(name.into(), DEFAULT_BRANCH.into());
         self.save_ws(&ws)?;
         self.record_op(&format!("create zone {name} at {path}"), None)?;
@@ -1471,9 +1498,14 @@ impl Repo {
 
     /// Subscribe to an existing zone and materialize it (sparse checkout by zone).
     pub fn zone_add(&self, zone: &str, branch: Option<&str>) -> Result<()> {
+        let _l = self.lock()?;
+        self.zone_add_locked(zone, branch)
+    }
+
+    /// [`Repo::zone_add`] for a caller that already holds the repository lock.
+    pub(crate) fn zone_add_locked(&self, zone: &str, branch: Option<&str>) -> Result<()> {
         let zone = self.resolve_zone(zone)?;
         let zone = zone.as_str();
-        let _l = self.lock()?;
         let zones = self.zones()?;
         let mut ws = self.workspace()?;
         let mut refs = self.refs()?;
@@ -1485,6 +1517,7 @@ impl Repo {
         }
         let branch = branch.unwrap_or(DEFAULT_BRANCH);
         validate_branch_name(branch)?;
+        self.require_branch_free(zone, branch)?;
         self.adopt_tracking(&mut refs, zone, branch)?;
         let head = refs.head(zone, branch);
         if head.is_none() && branch != DEFAULT_BRANCH {
@@ -1742,7 +1775,7 @@ impl Repo {
         }))?;
         refs.snapshots.insert(name.to_owned(), id);
         self.store.sync()?;
-        write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+        write_atomic(&self.common.join("refs"), &refs.encode())?;
         self.record_op(&format!("snapshot create {name}"), None)?;
         Ok(id)
     }
@@ -1900,9 +1933,18 @@ impl Repo {
                 }
             }
         }
-        // The index must never name a blob that is not in the store.
-        for (p, e) in &self.index()?.entries {
-            missing(self, &e.id, format!("index {p}: missing blob {}", e.id), &mut rep.problems)?;
+        // No index of any worktree may name a blob that is not in the store.
+        let indexes = self.fsck_worktrees(&mut rep.problems);
+        let linked = indexes.len() > 1;
+        for (wt, ix) in &indexes {
+            for (p, e) in &ix.entries {
+                let what = if linked {
+                    format!("index {p} (worktree {wt}): missing blob {}", e.id)
+                } else {
+                    format!("index {p}: missing blob {}", e.id)
+                };
+                missing(self, &e.id, what, &mut rep.problems)?;
+            }
         }
         let refs = self.refs()?;
         for ((a, b), h) in &refs.branches {

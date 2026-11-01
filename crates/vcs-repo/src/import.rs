@@ -724,7 +724,7 @@ impl Repo {
     /// `import_git` with `ImportOptions`.
     pub fn import_git_with(&self, input: impl BufRead, opts: ImportOptions) -> Result<ImportReport> {
         let _l = self.lock()?;
-        let mp = self.vcs.join(MAP_FILE);
+        let mp = self.common.join(MAP_FILE);
         let map = match fs::read_to_string(&mp) {
             Ok(t) => load_map(&t)?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
@@ -896,7 +896,7 @@ impl Repo {
         }
         if tags_changed && updates.is_empty() {
             let message = format!("import git tags ({})", report.tags_imported);
-            write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+            write_atomic(&self.common.join("refs"), &refs.encode())?;
             self.record_op(&message, None)?;
         }
         if !updates.is_empty() {
@@ -923,7 +923,7 @@ impl Repo {
             if let Some(mut i) = ix {
                 self.save_index(&mut i)?;
             }
-            write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+            write_atomic(&self.common.join("refs"), &refs.encode())?;
             self.record_op(&message, Some(author))?;
             report.branches_updated = updates.iter().map(|u| (u.branch.clone(), u.new)).collect();
         }
