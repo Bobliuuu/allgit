@@ -55,6 +55,13 @@ pub trait ObjectStore: Send + Sync {
         Ok(())
     }
     fn contains(&self, id: &ObjectId) -> Result<bool, StoreError>;
+    /// Like [`ObjectStore::contains`] but a `false` may be stale for an object another process
+    /// wrote after this store first looked (only ever a loose object in a fan-out dir that did
+    /// not exist then). For "what do I still need to download" scans, where a false miss costs
+    /// one redundant, idempotent download instead of one failed stat per object.
+    fn contains_hint(&self, id: &ObjectId) -> Result<bool, StoreError> {
+        self.contains(id)
+    }
     /// Enumerate all stored ids (fsck / GC mark phase). Not for hot paths.
     fn list(&self) -> Result<Vec<ObjectId>, StoreError>;
     /// When the object was written, if the store can tell. `None` means unknown, and callers
@@ -266,6 +273,10 @@ pub struct LocalStore {
     touch_after: std::time::Duration,
     /// Test hook: simulate a crash at a point of [`LocalStore::sweep`].
     sweep_crash: Mutex<Option<SweepCrash>>,
+    /// Which of the 256 fan-out dirs existed when first asked (lazily read once). A loose object
+    /// can only be older than this store's view if its dir was already there, so the dedup probe
+    /// of an id in a missing dir skips the failing stat.
+    fan_at_open: std::sync::OnceLock<Vec<std::sync::atomic::AtomicBool>>,
 }
 
 /// Where a simulated crash interrupts [`LocalStore::sweep`] (test support; see `gc` tests).
@@ -427,6 +438,7 @@ impl LocalStore {
             packs: RwLock::new(packs),
             touch_after: DEFAULT_TOUCH_AFTER,
             sweep_crash: Mutex::new(None),
+            fan_at_open: std::sync::OnceLock::new(),
         })
     }
     /// Lower the in-memory budget for unsynced objects (test support: forces the spill path).
@@ -746,6 +758,25 @@ impl LocalStore {
         self.packs.read().unwrap().iter().flat_map(|p| p.verify()).collect()
     }
     /// Write `head || tail` (already identified as `id`) as a pending loose object unless it exists.
+    /// Fan-out dirs seen at first use plus those this instance created since (see `fan_at_open`).
+    fn fan_at_open(&self) -> &Vec<std::sync::atomic::AtomicBool> {
+        self.fan_at_open.get_or_init(|| {
+            let v: Vec<_> = (0..256).map(|_| std::sync::atomic::AtomicBool::new(false)).collect();
+            if let Ok(rd) = fs::read_dir(&self.dir) {
+                for e in rd.flatten() {
+                    if let Some(b) = e
+                        .file_name()
+                        .to_str()
+                        .filter(|n| n.len() == 2)
+                        .and_then(|n| u8::from_str_radix(n, 16).ok())
+                    {
+                        v[b as usize].store(true, Ordering::Relaxed);
+                    }
+                }
+            }
+            v
+        })
+    }
     fn store_encoded(&self, id: &ObjectId, head: &[u8], tail: &[u8]) -> Result<(), StoreError> {
         let id = *id;
         // Existing objects are never rewritten. A pending object is brand new already. A published
@@ -756,7 +787,15 @@ impl LocalStore {
             return Ok(());
         }
         let loose = self.path_of(&id);
-        match fs::metadata(&loose) {
+        // A fan-out dir that did not exist at first use holds only objects written since, which
+        // are young: nothing to dedup against or touch, and no stat to waste.
+        let fan = self.fan_at_open();
+        let probe = if fan[id.as_bytes()[0] as usize].load(Ordering::Relaxed) {
+            fs::metadata(&loose)
+        } else {
+            Err(std::io::ErrorKind::NotFound.into())
+        };
+        match probe {
             Ok(m) => {
                 if self.is_stale(m.modified().ok()) {
                     touch(&loose)?;
@@ -998,6 +1037,9 @@ impl ObjectStore for LocalStore {
             let parent = dest.parent().expect("object path has parent").to_owned();
             if dirs.insert(parent.clone()) {
                 io(&parent, fs::create_dir_all(&parent))?;
+                if let Some(b) = id.as_bytes().first() {
+                    self.fan_at_open()[*b as usize].store(true, Ordering::Relaxed);
+                }
             }
             moves.push((tmp, dest));
         }
@@ -1024,6 +1066,13 @@ impl ObjectStore for LocalStore {
 
     fn contains(&self, id: &ObjectId) -> Result<bool, StoreError> {
         Ok(self.pending.lock().unwrap().contains_key(id) || self.in_pack(id) || self.path_of(id).exists())
+    }
+
+    fn contains_hint(&self, id: &ObjectId) -> Result<bool, StoreError> {
+        if self.pending.lock().unwrap().contains_key(id) || self.in_pack(id) {
+            return Ok(true);
+        }
+        Ok(self.fan_at_open()[id.as_bytes()[0] as usize].load(Ordering::Relaxed) && self.path_of(id).exists())
     }
 
     fn modified(&self, id: &ObjectId) -> Result<Option<std::time::SystemTime>, StoreError> {
@@ -1077,6 +1126,37 @@ impl LocalStore {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn fan_out_snapshot_skips_probes_but_never_changes_contains() {
+        let d = tempfile::tempdir().unwrap();
+        let a = LocalStore::open(d.path()).unwrap();
+        let first = a.put_blob(b"one").unwrap();
+        a.sync().unwrap();
+        assert!(a.contains_hint(&first).unwrap() && a.contains(&first).unwrap());
+        // a second handle writes an object in a fan-out dir `a` has not seen
+        let b = LocalStore::open(d.path()).unwrap();
+        let mut late = None;
+        for i in 0..400 {
+            let id = vcs_objects::blob_id(format!("late {i}").as_bytes());
+            if !d.path().join(&id.to_hex()[..2]).exists() {
+                b.put_blob(format!("late {i}").as_bytes()).unwrap();
+                late = Some(id);
+                break;
+            }
+        }
+        let late = late.expect("a fresh fan-out dir exists among 400 ids");
+        b.sync().unwrap();
+        assert!(a.contains(&late).unwrap(), "contains is always exact");
+        assert!(
+            !a.contains_hint(&late).unwrap(),
+            "the hint may be stale for a dir created after first use"
+        );
+        // re-putting it through `a` is harmless
+        a.put_blob(&format!("late {}", 0).into_bytes()).unwrap();
+        a.sync().unwrap();
+        assert!(LocalStore::open(d.path()).unwrap().contains(&first).unwrap());
+    }
+
     #[test]
     fn small_batch_sync_flushes_concurrently_and_survives_reopen() {
         let d = tempfile::tempdir().unwrap();
