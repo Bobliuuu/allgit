@@ -162,7 +162,7 @@ def start_vcs(prefix, use_proxy):
     tok = sh("vcs-server hash-token tok1").stdout.strip()
     open(f"{WB}/cfg/tokens", "w").write(f"bench write * {tok}\n")
     S.start("vcs", ["vcs-server", "--backend", f"s3://vcs/{prefix}?endpoint={endpoint(use_proxy)}", "--tokens", f"{WB}/cfg/tokens",
-                    "--listen", f"127.0.0.1:{P_VCS}"], f"http://127.0.0.1:{P_VCS}/healthz")
+                    "--listen", f"127.0.0.1:{P_VCS}"] + (["--max-body", os.environ["WB_VCS_MAX_BODY"]] if os.environ.get("WB_VCS_MAX_BODY") else []), f"http://127.0.0.1:{P_VCS}/healthz")
 
 
 def med(xs):
