@@ -130,6 +130,16 @@ impl Repo {
         }
     }
 
+    /// The rebase file regardless of whether a matching merge state is live (GC roots).
+    pub(crate) fn rebase_state_raw(&self) -> Result<Option<RebaseState>> {
+        let p = self.vcs.join(FILE);
+        match fs::read(&p) {
+            Ok(b) => Ok(Some(RebaseState::decode(&b)?)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(source) => Err(Error::Io { path: p, source }),
+        }
+    }
+
     fn clear_rebase_state(&self) -> Result<()> {
         let p = self.vcs.join(FILE);
         match fs::remove_file(&p) {

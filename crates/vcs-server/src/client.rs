@@ -199,4 +199,13 @@ impl Backend for HttpBackend {
         let r = self.send(self.req("GET", &format!("/v1/list?prefix={}", pct_encode(prefix, false))), None)?;
         Ok(r.0.lines().filter(|l| !l.is_empty()).map(str::to_owned).collect())
     }
+
+    /// `DELETE /v1/o/<key>`: needs an admin token. Idempotent. `supports_gc` stays false: the
+    /// server does not expose touch, object ages or its clock, so remote GC refuses HTTP.
+    fn delete(&self, key: &str) -> Result<(), BackendError> {
+        match self.send_raw(self.req("DELETE", &Self::key_path(key)?), None)? {
+            Ok(_) | Err((404, _)) => Ok(()),
+            Err((c, m)) => Err(BackendError::Other(format!("server returned {c}: {}", m.trim()))),
+        }
+    }
 }

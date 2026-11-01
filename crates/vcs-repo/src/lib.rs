@@ -31,7 +31,7 @@ pub mod treeops;
 pub use assist::{AssistResult, ProposalInfo};
 pub use error::{Error, Result};
 pub use export::{ExportExt, ExportOptions, ExportReport};
-pub use gc::GcReport;
+pub use gc::{GcOptions, GcReport, GcRun};
 pub use import::{ImportOptions, ImportReport};
 pub use import_p4::{P4Report, P4View};
 pub use manage::SnapshotCheckoutReport;

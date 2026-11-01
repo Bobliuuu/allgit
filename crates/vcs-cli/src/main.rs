@@ -404,14 +404,28 @@ enum Cmd {
     Fsck,
     /// Move loose objects into a pack (one pack + index under .vcs/objects/pack)
     Repack,
-    /// Report unreachable objects that garbage collection would delete (deletes nothing)
+    /// Garbage collection. DESTRUCTIVE unless --dry-run: permanently deletes unreachable
+    /// objects older than the grace period (local), or with --remote --yes on the remote
     Gc {
-        /// Required: destructive GC is not implemented, see docs/gc.md
+        /// Report what would be deleted; delete nothing
         #[arg(long)]
         dry_run: bool,
-        /// Keep unreachable objects younger than this many seconds (default 14 days)
+        /// Keep unreachable objects younger than this many seconds (default 14 days).
+        /// A real sweep refuses values below the touch-on-dedup threshold (3.5 days)
         #[arg(long, default_value_t = 14 * 24 * 3600)]
         grace_secs: u64,
+        /// Collect the REMOTE (protocol G1, docs/gc.md) instead of the local store.
+        /// Needs --yes unless --dry-run. Directory (`path` / `file://`) remotes only: S3 and HTTP
+        /// lack the touch / object-age / clock operations the protocol needs
+        #[arg(long)]
+        remote: bool,
+        /// Confirm a destructive REMOTE sweep (never needed for --dry-run or local gc)
+        #[arg(long)]
+        yes: bool,
+        /// Remote only: the publishers' maximum hold time in seconds. The grace period must
+        /// exceed twice this (default 1 hour)
+        #[arg(long, default_value_t = 3600)]
+        hold_secs: u64,
     },
     /// Operation log: inspect, undo, restore (local branches and workspace only)
     #[command(subcommand)]
@@ -1611,27 +1625,125 @@ fn run(cli: Cli) -> Result<(), Error> {
                 }
             }
         }
-        Cmd::Gc { dry_run, grace_secs } => {
-            if !dry_run {
+        Cmd::Gc {
+            dry_run,
+            grace_secs,
+            remote: false,
+            yes: _,
+            hold_secs: _,
+        } => {
+            let (repo, _) = open()?;
+            let grace = std::time::Duration::from_secs(grace_secs);
+            if dry_run {
+                let r = repo.gc_plan(grace)?;
+                println!("{} objects: {} reachable", r.total, r.reachable);
+                println!(
+                    "{} unreachable but younger than the {grace_secs}s grace period (kept)",
+                    r.kept_young.len()
+                );
+                if r.missing_referenced > 0 {
+                    println!("{} referenced objects are missing (run `vcs fsck`)", r.missing_referenced);
+                }
+                println!("{} unreachable and old enough: would delete", r.would_delete.len());
+                for (id, kind) in &r.would_delete {
+                    println!("  would delete {} {kind:?}", id.short());
+                }
+                println!("dry run: nothing was deleted");
+            } else {
+                println!("DESTRUCTIVE: deleting unreachable local objects older than {grace_secs}s (holding the repository lock)");
+                let run = repo.gc_sweep(vcs_repo::GcOptions::new(grace))?;
+                for (id, kind) in &run.deleted {
+                    println!("  deleted {} {kind:?}", id.short());
+                }
+                println!(
+                    "deleted {} object(s) ({} loose files, {} dropped from packs; {} pack(s) rewritten, {} removed)",
+                    run.deleted.len(),
+                    run.sweep.loose_removed,
+                    run.sweep.packed_dropped,
+                    run.sweep.packs_rewritten,
+                    run.sweep.packs_removed
+                );
+                if run.rechecked_out > 0 {
+                    println!(
+                        "{} candidate(s) became reachable or young during the run and were kept",
+                        run.rechecked_out
+                    );
+                }
+                if run.orphans.tmp_files + run.orphans.packs_without_index > 0 {
+                    println!(
+                        "removed {} stale temp file(s) and {} pack file(s) without an index",
+                        run.orphans.tmp_files, run.orphans.packs_without_index
+                    );
+                }
+                println!(
+                    "{} unreachable object(s) younger than the grace period were kept",
+                    run.plan.kept_young.len()
+                );
+            }
+        }
+        Cmd::Gc {
+            dry_run,
+            grace_secs,
+            remote: true,
+            yes,
+            hold_secs,
+        } => {
+            let (repo, _) = open()?;
+            if !dry_run && !yes {
                 return Err(Error::Msg(
-                    "only `vcs gc --dry-run` is implemented; nothing is ever deleted (see docs/gc.md)".into(),
+                    "`vcs gc --remote` PERMANENTLY DELETES objects on the remote and affects every clone that shares it;\n\
+                     run with --dry-run first, then re-run with --yes (see docs/gc.md)"
+                        .into(),
                 ));
             }
-            let (repo, _) = open()?;
-            let r = repo.gc_plan(std::time::Duration::from_secs(grace_secs))?;
-            println!("{} objects: {} reachable", r.total, r.reachable);
+            let url = repo
+                .remote_url()?
+                .ok_or_else(|| Error::Msg("no remote configured (use `vcs remote set <url>`)".into()))?;
+            let backend = remote::open_backend(&url)?;
+            let opts = vcs_remote::RemoteGcOptions {
+                grace_ms: grace_secs.saturating_mul(1000),
+                hold_ms: hold_secs.saturating_mul(1000),
+                dry_run,
+                owner: format!("vcs-gc pid {}", std::process::id()),
+                ..Default::default()
+            };
+            if !dry_run {
+                println!("DESTRUCTIVE: deleting unreachable objects older than {grace_secs}s on {url}");
+            }
+            let r = vcs_remote::remote_gc(backend.as_ref(), &opts).map_err(|e| Error::Msg(format!("remote gc: {e}")))?;
             println!(
-                "{} unreachable but younger than the {grace_secs}s grace period (kept)",
-                r.kept_young.len()
+                "{} remote object(s) in {} pack(s): {} reachable; {} unreachable unit(s) younger than the grace period; {} old and unreachable at first look",
+                r.objects, r.packs, r.reachable, r.kept_young, r.candidates
             );
-            if r.missing_referenced > 0 {
-                println!("{} referenced objects are missing (run `vcs fsck`)", r.missing_referenced);
+            if dry_run {
+                println!(
+                    "{} would be deleted (upper bound; the real run re-checks after writing tombstones)",
+                    r.deleted.len()
+                );
+                println!("dry run: nothing was deleted");
+            } else {
+                for id in &r.deleted {
+                    println!("  deleted {}", id.short());
+                }
+                for p in &r.deleted_packs {
+                    println!("  deleted pack {p}");
+                }
+                println!(
+                    "deleted {} object(s) including {} whole pack(s); {} unit(s) saved by the re-check",
+                    r.deleted.len(),
+                    r.deleted_packs.len(),
+                    r.saved_by_remark
+                );
+                if r.stale_tombs_cleared > 0 {
+                    println!("cleared {} stale tombstone(s) from a crashed collector", r.stale_tombs_cleared);
+                }
             }
-            println!("{} unreachable and old enough: would delete", r.would_delete.len());
-            for (id, kind) in &r.would_delete {
-                println!("  would delete {} {kind:?}", id.short());
+            if r.packs_with_garbage_kept > 0 {
+                println!(
+                    "{} pack(s) hold some unreachable objects but were kept whole (remote pack rewriting is not implemented)",
+                    r.packs_with_garbage_kept
+                );
             }
-            println!("dry run: nothing was deleted");
         }
         Cmd::Repack => {
             let (repo, _) = open()?;

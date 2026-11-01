@@ -369,6 +369,20 @@ impl Backend for S3Backend {
         out.sort();
         Ok(out)
     }
+
+    /// `DeleteObject`. Unconditional: S3 has no `If-Match` on DELETE, so the GC handshake
+    /// (docs/gc.md, G1) is what makes this safe, not the request. S3 answers 204 whether or
+    /// not the key existed.
+    fn delete(&self, key: &str) -> Result<(), BackendError> {
+        let k = self.full_key(key)?;
+        match self.send("DELETE", &k, &[], &[], b"")? {
+            Resp::Ok { .. } | Resp::Status(404, _) => Ok(()),
+            Resp::Status(c, m) => Err(Self::unexpected("delete", c, m)),
+        }
+    }
+    // `supports_gc` stays false: the S3 touch (server-side copy-to-self with
+    // `x-amz-metadata-directive: REPLACE`), HEAD `Last-Modified` and a server clock (`Date`
+    // header) are designed in docs/gc.md but not implemented, so remote GC refuses S3.
 }
 
 /// Largest ListObjectsV2 page body we parse (S3 pages hold at most 1000 keys of <= 1024 bytes).

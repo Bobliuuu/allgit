@@ -78,12 +78,18 @@ enum Op {
     Rebase(String, String),
     Restore(String),
     Unstage(String),
-    Rm { cached: bool, force: bool, spec: String },
+    Rm {
+        cached: bool,
+        force: bool,
+        spec: String,
+    },
     Undo,
     GoTo(usize),
     ZoneCreate(String, String),
     ZoneRemove(String),
     ZoneAdd(String, String),
+    /// Destructive local GC (after dropping an orphan in, and on odd serials after a repack).
+    Gc,
 }
 
 fn show_spec(s: &str) -> &str {
@@ -126,6 +132,7 @@ impl Op {
             Op::ZoneCreate(n, p) => format!("zone-create {n} {p}"),
             Op::ZoneRemove(z) => format!("zone-remove {z}"),
             Op::ZoneAdd(z, b) => format!("zone-add {z} {b}"),
+            Op::Gc => "gc".into(),
         }
     }
 
@@ -153,13 +160,14 @@ impl Op {
             "zone-create" => Op::ZoneCreate(s(1)?, s(2)?),
             "zone-remove" => Op::ZoneRemove(s(1)?),
             "zone-add" => Op::ZoneAdd(s(1)?, s(2)?),
+            "gc" => Op::Gc,
             _ => return None,
         })
     }
 
     /// Operations that change repository state files (candidates for crash points).
     fn crash_candidate(&self) -> bool {
-        !matches!(self, Op::Write(..) | Op::Delete(_) | Op::Rebase(..))
+        !matches!(self, Op::Write(..) | Op::Delete(_) | Op::Rebase(..) | Op::Gc)
     }
 }
 
@@ -216,7 +224,8 @@ fn generate(seed: u64, steps: usize) -> Vec<Op> {
                 Op::ZoneCreate(n.into(), p.into())
             }
             95..=97 => Op::ZoneRemove(r.pick(&ZONES[3..]).into()),
-            _ => Op::ZoneAdd(r.pick(&ZONES[3..]).into(), r.pick(BRANCHES).into()),
+            98 => Op::ZoneAdd(r.pick(&ZONES[3..]).into(), r.pick(BRANCHES).into()),
+            _ => Op::Gc,
         };
         out.push(op);
     }
@@ -411,6 +420,8 @@ impl Model {
 
     fn apply(&mut self, op: &Op, serial: u64) -> R<Out> {
         match op {
+            // GC must be invisible to every observable the model tracks.
+            Op::Gc => Ok(Out::Done),
             Op::Write(p, v) => {
                 if self.subscribed(&self.owner(p)) {
                     self.wt.insert(p.clone(), content(*v));
@@ -931,7 +942,60 @@ fn apply_real(repo: &Repo, op: &Op, serial: u64, sub_ok: bool, op_ids: &[ObjectI
         Op::ZoneCreate(n, p) => e(repo.create_zone(n, p)),
         Op::ZoneRemove(z) => e(repo.zone_remove(z)),
         Op::ZoneAdd(z, b) => e(repo.zone_add(z, Some(b))),
+        Op::Gc => {
+            // Pretend 60 days passed so every unreachable object is past the 14-day grace.
+            let now = std::time::SystemTime::now() + std::time::Duration::from_secs(60 * 86400);
+            let orphan = repo
+                .store()
+                .put_blob(format!("orphan {serial}").as_bytes())
+                .and_then(|_| repo.store().sync());
+            if let Err(x) = orphan {
+                return RealOut::Err(x.to_string());
+            }
+            if serial.is_multiple_of(2) {
+                if let Err(x) = repo.repack() {
+                    return RealOut::Err(x.to_string());
+                }
+            }
+            match repo.gc_sweep_at(now, vcs_repo::GcOptions::new(std::time::Duration::from_secs(14 * 86400))) {
+                Ok(run) => {
+                    GC_DELETED.fetch_add(run.deleted.len(), std::sync::atomic::Ordering::Relaxed);
+                    RealOut::Ok(Out::Done)
+                }
+                Err(x) => RealOut::Err(x.to_string()),
+            }
+        }
     }
+}
+
+/// Objects deleted by GC steps across the whole test binary (proves the steps are not vacuous).
+static GC_DELETED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Independent reachability walk for the "nothing reachable is ever deleted" check: every
+/// model-bound commit with its parents and trees, every file blob, and every logged operation.
+fn must_survive(h: &Harness) -> BTreeSet<ObjectId> {
+    use vcs_objects::Object;
+    let mut seen = BTreeSet::new();
+    let mut stack: Vec<ObjectId> = h.oid.values().copied().chain(h.op_ids.iter().copied()).collect();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        match h.repo.store().get(&id).unwrap_or_else(|e| panic!("reachable {id} unreadable: {e}")) {
+            Object::Commit(c) => {
+                stack.extend(c.parents.iter().copied());
+                stack.push(c.root);
+            }
+            Object::Tree(t) => stack.extend(t.entries().iter().map(|e| e.id)),
+            Object::Chunked(m) => stack.extend(m.chunks.iter().map(|c| c.id)),
+            Object::Operation(op) => {
+                stack.extend(op.parents.iter().copied());
+                stack.extend(op.view.branches.values().copied());
+            }
+            _ => {}
+        }
+    }
+    seen
 }
 
 fn op_chain_ids(repo: &Repo) -> Vec<ObjectId> {
@@ -1165,6 +1229,7 @@ impl Harness {
         } else {
             None
         };
+        let survivors = if matches!(op, Op::Gc) { Some(must_survive(self)) } else { None };
         vcs_repo::failpoint::reset();
         let real = apply_real(&self.repo, op, serial, sub_ok, &self.op_ids);
         let writes = vcs_repo::failpoint::writes();
@@ -1187,6 +1252,17 @@ impl Harness {
             self.op_ids.push(head);
         } else if head != self.op_ids[self.model.head] {
             return Err(format!("step {i} `{}`: repo recorded an operation the model did not", op.line()));
+        }
+        if let Some(keep) = survivors {
+            for id in keep {
+                if !self.repo.store().contains(&id).map_err(|e| e.to_string())? {
+                    return Err(format!("step {i} `gc`: reachable object {id} was deleted"));
+                }
+            }
+            let rep = self.repo.fsck().map_err(|e| e.to_string())?;
+            if !rep.problems.is_empty() {
+                return Err(format!("step {i} `gc`: fsck after gc: {:?}", rep.problems));
+            }
         }
         self.check_state().map_err(|e| format!("step {i} `{}`: {e}", op.line()))?;
         if let Some(snap) = snap {
@@ -1382,7 +1458,9 @@ fn fixed_seeds_match_the_model() {
         trials += check(&format!("seed {seed}"), generate(seed, steps), true);
     }
     assert!(trials > 0, "no crash points were exercised");
-    eprintln!("crash points exercised: {trials}");
+    let deleted = GC_DELETED.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(deleted > 0, "gc steps never deleted anything: the gc check is vacuous");
+    eprintln!("crash points exercised: {trials}; objects deleted by gc steps: {deleted}");
 }
 
 #[test]

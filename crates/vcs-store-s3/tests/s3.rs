@@ -310,6 +310,57 @@ fn minio_concurrent_cas_has_exactly_one_winner_per_round() {
     assert_eq!(hs.into_iter().filter(|_| true).map(|h| h.join().unwrap()).filter(|w| *w).count(), 1);
 }
 
+/// Records "METHOD path" of each request and answers `status_line`.
+fn recording_server(status_line: &'static str) -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    std::thread::spawn(move || {
+        for s in l.incoming() {
+            let Ok(mut s) = s else { continue };
+            let log = log.clone();
+            std::thread::spawn(move || {
+                let mut data = Vec::new();
+                let mut buf = [0u8; 8192];
+                while !String::from_utf8_lossy(&data).contains("\r\n\r\n") {
+                    match s.read(&mut buf) {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => data.extend_from_slice(&buf[..n]),
+                    }
+                }
+                let text = String::from_utf8_lossy(&data).to_string();
+                let mut it = text.lines().next().unwrap_or("").split(' ');
+                log.lock()
+                    .unwrap()
+                    .push(format!("{} {}", it.next().unwrap_or(""), it.next().unwrap_or("")));
+                let r = format!("HTTP/1.1 {status_line}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                let _ = s.write_all(r.as_bytes());
+            });
+        }
+    });
+    (format!("http://{addr}"), seen)
+}
+
+#[test]
+fn delete_sends_a_signed_unconditional_delete_and_tolerates_404() {
+    for status in ["204 No Content", "404 Not Found"] {
+        let (ep, seen) = recording_server(status);
+        let b = S3Backend::new_unchecked(cfg(&ep)).unwrap();
+        b.delete("objects/ab/cdef").unwrap();
+        assert_eq!(*seen.lock().unwrap(), vec!["DELETE /b/objects/ab/cdef"]);
+        assert!(!b.supports_gc(), "S3 touch/age/clock are not implemented: remote GC must refuse it");
+    }
+    let (ep, _) = recording_server("403 Forbidden");
+    assert!(S3Backend::new_unchecked(cfg(&ep)).unwrap().delete("k/x").is_err());
+    let (ep, _) = recording_server("503 Service Unavailable");
+    assert!(matches!(
+        S3Backend::new_unchecked(cfg(&ep)).unwrap().delete("k/x"),
+        Err(BackendError::Unavailable(_))
+    ));
+    assert!(S3Backend::new_unchecked(cfg(&ep)).unwrap().delete("../x").is_err());
+}
+
 /// Serves one object honoring `Range`; records the Range header of each request.
 fn range_server(obj: Vec<u8>) -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
