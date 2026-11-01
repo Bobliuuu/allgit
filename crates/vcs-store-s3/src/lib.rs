@@ -21,6 +21,8 @@
 //! * [`S3Backend::connect`] probes the endpoint and refuses providers that ignore
 //!   conditional writes.
 
+mod admin;
+pub use admin::ManifestWriteProbe;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicU64, Ordering};
