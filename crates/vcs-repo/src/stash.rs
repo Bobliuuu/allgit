@@ -133,7 +133,12 @@ impl Repo {
     /// Working-tree content of every tracked path of `zone` (deleted files are absent).
     fn work_flat(&self, zone: &str, zones: &crate::meta::Zones, ix: &crate::index::Index) -> Result<Flat> {
         let mut flat = Flat::new();
+        let ws = self.workspace()?;
         for (p, e) in ix.entries.iter().filter(|(p, _)| zones.owner(p) == zone) {
+            if ws.skips(zone, p) {
+                flat.insert(p.clone(), (e.mode, e.id)); // not materialized: unchanged by definition
+                continue;
+            }
             let abs = self.worktree.join(p);
             let m = match fs::symlink_metadata(&abs) {
                 Ok(m) => m,
@@ -320,6 +325,7 @@ impl Repo {
                     return Err(Error::Corrupt("merged blob id mismatch".into()));
                 }
             }
+            self.require_changes_materialized(&z.zone, &ours, &theirs, "stash pop")?;
             let mut new = tm.entries.clone();
             let labels = MarkerLabels {
                 left: "Updated upstream",

@@ -54,24 +54,17 @@ pub(crate) struct DirCache {
     pub dirs: HashMap<String, Listing>,
 }
 
-/// Stamp of a directory, or `None` when the platform cannot provide a trustworthy one.
-#[cfg(unix)]
-pub(crate) fn stamp_of(m: &fs::Metadata) -> Option<Stamp> {
-    use std::os::unix::fs::MetadataExt;
-    if !m.is_dir() {
+/// Stamp of a directory, or `None` when the platform (or the filesystem) cannot provide a
+/// trustworthy one: only a directory with a real identity (`ino != 0`) has a stamp.
+pub(crate) fn stamp_of(m: &crate::worktree_fs::FsStat) -> Option<Stamp> {
+    if m.kind != crate::worktree_fs::FileKind::Dir || m.ino == 0 || !cfg!(unix) {
         return None;
     }
-    let ns = |s: i64, n: i64| (s.max(0) as u64).saturating_mul(1_000_000_000).saturating_add(n.max(0) as u64);
     Some(Stamp {
-        ino: m.ino(),
-        mtime_ns: ns(m.mtime(), m.mtime_nsec()),
-        ctime_ns: ns(m.ctime(), m.ctime_nsec()),
+        ino: m.ino,
+        mtime_ns: m.mtime_ns,
+        ctime_ns: m.ctime_ns,
     })
-}
-
-#[cfg(not(unix))]
-pub(crate) fn stamp_of(_m: &fs::Metadata) -> Option<Stamp> {
-    None
 }
 
 impl Stamp {

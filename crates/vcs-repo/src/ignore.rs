@@ -16,7 +16,7 @@
 //! enforced by the callers (this module only answers "do the patterns match").
 
 use crate::error::{Error, Result};
-use std::fs;
+use crate::worktree_fs::{FileKind, WorktreeFs};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -226,18 +226,25 @@ pub struct IgnoreStack {
 
 impl IgnoreStack {
     /// The stack for directory `dir` (repo-relative, "" = root) given its parent's stack.
-    pub fn descend(&self, worktree: &Path, dir: &str) -> Result<IgnoreStack> {
-        let p = if dir.is_empty() {
-            worktree.join(IGNORE_FILE)
+    pub fn descend(&self, wfs: &dyn WorktreeFs, worktree: &Path, dir: &str) -> Result<IgnoreStack> {
+        let rel = if dir.is_empty() {
+            IGNORE_FILE.to_owned()
         } else {
-            worktree.join(dir).join(IGNORE_FILE)
+            format!("{dir}/{IGNORE_FILE}")
         };
-        let text = match fs::read(&p) {
+        let text = match wfs.read(&rel) {
             Ok(b) => String::from_utf8_lossy(&b).into_owned(),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(self.clone()),
             // a directory (or unreadable path) named .vcsignore is simply not an ignore file
-            Err(e) if p.is_dir() || e.kind() == std::io::ErrorKind::PermissionDenied => return Ok(self.clone()),
-            Err(source) => return Err(Error::Io { path: p, source }),
+            Err(e) if wfs.stat(&rel).is_ok_and(|m| m.kind == FileKind::Dir) || e.kind() == std::io::ErrorKind::PermissionDenied => {
+                return Ok(self.clone())
+            }
+            Err(source) => {
+                return Err(Error::Io {
+                    path: worktree.join(&rel),
+                    source,
+                })
+            }
         };
         let mut s = self.clone();
         s.files.push(Arc::new(IgnoreFile::parse(dir, &text)));

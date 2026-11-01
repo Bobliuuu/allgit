@@ -451,6 +451,7 @@ impl Repo {
                 c.path
             ));
         }
+        self.require_conflicts_materialized(zone, tm.conflicts.iter().map(|c| c.path.as_str()), "merge")?;
         for (id, data) in &tm.new_blobs {
             let got = self.store.put_content(data)?;
             if got != *id {
