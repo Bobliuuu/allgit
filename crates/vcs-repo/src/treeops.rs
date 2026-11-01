@@ -51,6 +51,14 @@ pub struct TreeDiff {
     pub old: Flat,
     pub new: Flat,
     pub new_dir_names: Vec<Vec<String>>,
+    /// Directory path -> tree id on the `new` side, for every directory pair that was read (not
+    /// collected in lean mode). With an index that equalled the old tree, these are the cache-tree
+    /// ids of the index after moving to the new tree.
+    pub new_trees: Vec<(String, ObjectId)>,
+    /// Collect `new_dir_names` only for directories whose set of names differs from the old
+    /// side's. Sound for a checkout, where the old tree is the one on disk (its names passed the
+    /// same check when it was checked out or added).
+    trust_old_names: bool,
     /// Do not collect `new_dir_names` (callers that only want the changed files).
     lean: bool,
 }
@@ -59,18 +67,32 @@ pub struct TreeDiff {
 /// changed directories rather than tracked files. The result's `old`/`new` maps are exactly
 /// `flatten(old)`/`flatten(new)` with every path whose entry is equal on both sides removed.
 pub fn diff_trees(store: &dyn ObjectStore, old: Option<ObjectId>, new: Option<ObjectId>, prefix: &str) -> Result<TreeDiff> {
-    diff_trees_with(store, old, new, prefix, false)
+    diff_trees_with(store, old, new, prefix, false, false)
 }
 
 /// [`diff_trees`] for callers that only look at `old` and `new`: `new_dir_names` stays empty, which
 /// saves cloning every entry name of every changed directory.
 pub fn diff_trees_files(store: &dyn ObjectStore, old: Option<ObjectId>, new: Option<ObjectId>, prefix: &str) -> Result<TreeDiff> {
-    diff_trees_with(store, old, new, prefix, true)
+    diff_trees_with(store, old, new, prefix, true, false)
 }
 
-fn diff_trees_with(store: &dyn ObjectStore, old: Option<ObjectId>, new: Option<ObjectId>, prefix: &str, lean: bool) -> Result<TreeDiff> {
+/// [`diff_trees`] for moving the working tree from `old` (what is on disk) to `new`: the
+/// case-folding name lists are kept only for directories whose names changed.
+pub fn diff_trees_checkout(store: &dyn ObjectStore, old: Option<ObjectId>, new: Option<ObjectId>, prefix: &str) -> Result<TreeDiff> {
+    diff_trees_with(store, old, new, prefix, false, true)
+}
+
+fn diff_trees_with(
+    store: &dyn ObjectStore,
+    old: Option<ObjectId>,
+    new: Option<ObjectId>,
+    prefix: &str,
+    lean: bool,
+    trust_old_names: bool,
+) -> Result<TreeDiff> {
     let mut d = TreeDiff {
         lean,
+        trust_old_names,
         ..Default::default()
     };
     if old != new {
@@ -127,7 +149,7 @@ fn read_tree(store: &dyn ObjectStore, id: Option<ObjectId>) -> Result<Vec<TreeEn
     match id {
         None => Ok(Vec::new()),
         Some(id) => match store.get(&id)? {
-            Object::Tree(t) => Ok(t.entries().to_vec()),
+            Object::Tree(t) => Ok(t.into_entries()),
             _ => Err(Error::Corrupt(format!("object {id} is not a tree"))),
         },
     }
@@ -160,7 +182,11 @@ fn walk_names(store: &dyn ObjectStore, tree: ObjectId, prefix: &str, out: &mut F
 fn diff_pair(store: &dyn ObjectStore, old: Option<ObjectId>, new: Option<ObjectId>, prefix: &str, d: &mut TreeDiff) -> Result<()> {
     let lean = d.lean;
     let (oe, ne) = (read_tree(store, old)?, read_tree(store, new)?);
-    if new.is_some() && !d.lean {
+    if let (Some(n), false) = (new, d.lean) {
+        d.new_trees.push((prefix.to_owned(), n));
+    }
+    let same_names = d.trust_old_names && old.is_some() && oe.len() == ne.len() && oe.iter().zip(&ne).all(|(a, b)| a.name == b.name);
+    if new.is_some() && !d.lean && !same_names {
         d.new_dir_names.push(ne.iter().map(|e| e.name.clone()).collect());
     }
     let (mut i, mut j) = (0, 0);
@@ -178,7 +204,13 @@ fn diff_pair(store: &dyn ObjectStore, old: Option<ObjectId>, new: Option<ObjectI
             }
             std::cmp::Ordering::Greater => {
                 let b = &ne[j];
-                add_side(store, b, join(prefix, &b.name), &mut d.new, if lean { None } else { Some(&mut d.new_dir_names) })?;
+                add_side(
+                    store,
+                    b,
+                    join(prefix, &b.name),
+                    &mut d.new,
+                    if lean { None } else { Some(&mut d.new_dir_names) },
+                )?;
                 j += 1;
             }
             std::cmp::Ordering::Equal => {

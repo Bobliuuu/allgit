@@ -498,15 +498,30 @@ fn decode_blocks(blocks: &[(&[u8], usize)]) -> Result<Vec<(String, IndexEntry)>>
 /// `list` is strictly sorted: fail if some key has an ancestor directory that is itself a key.
 fn check_no_conflicts(list: &[(String, IndexEntry)]) -> Result<()> {
     let check = |part: &[(String, IndexEntry)]| -> Result<()> {
+        // Sorted keys cluster by directory: the ancestors of a key that are also ancestors of
+        // the previous key were already looked up, so only the new ones are searched.
+        let mut prev_dir: &str = "";
         for (k, _) in part {
+            let Some(dir_end) = k.rfind('/') else {
+                prev_dir = "";
+                continue;
+            };
+            let dir = &k[..dir_end];
+            if dir == prev_dir {
+                continue;
+            }
             let mut pos = 0;
             while let Some(i) = k[pos..].find('/') {
                 let anc = &k[..pos + i];
-                if list.binary_search_by(|(p, _)| p.as_str().cmp(anc)).is_ok() {
+                pos += i + 1;
+                let seen = prev_dir.len() >= anc.len()
+                    && prev_dir.as_bytes().starts_with(anc.as_bytes())
+                    && (prev_dir.len() == anc.len() || prev_dir.as_bytes()[anc.len()] == b'/');
+                if !seen && list.binary_search_by(|(p, _)| p.as_str().cmp(anc)).is_ok() {
                     return Err(Error::Msg(format!("cannot track {k:?}: {anc:?} is tracked as a file")));
                 }
-                pos += i + 1;
             }
+            prev_dir = dir;
         }
         Ok(())
     };
@@ -545,6 +560,31 @@ mod tests {
         i.insert("a/c", e()).unwrap();
         i.insert("a0", e()).unwrap(); // sorts right after "a/": must not confuse range logic
         assert_eq!(i.under("a"), vec!["a/b", "a/c"]);
+    }
+    #[test]
+    fn conflict_check_matches_a_naive_scan() {
+        // Directory-clustered keys, so the "already checked ancestor" shortcut is exercised.
+        let naive = |keys: &[&str]| {
+            keys.iter().any(|k| {
+                let mut pos = 0;
+                while let Some(i) = k[pos..].find('/') {
+                    if keys.contains(&&k[..pos + i]) {
+                        return true;
+                    }
+                    pos += i + 1;
+                }
+                false
+            })
+        };
+        let names = [
+            "a", "a-x", "a.b", "a/b", "a/b/c", "a/b/d", "a/c", "a0", "b/c", "b/c/d/e", "b/d", "b",
+        ];
+        for mask in 0u32..(1 << names.len()) {
+            let mut keys: Vec<&str> = (0..names.len()).filter(|i| mask >> i & 1 == 1).map(|i| names[i]).collect();
+            keys.sort_unstable();
+            let list: Vec<(String, IndexEntry)> = keys.iter().map(|k| (k.to_string(), e())).collect();
+            assert_eq!(check_no_conflicts(&list).is_err(), naive(&keys), "{keys:?}");
+        }
     }
     #[test]
     fn roundtrip() {
