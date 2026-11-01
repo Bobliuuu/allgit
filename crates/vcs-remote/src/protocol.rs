@@ -119,6 +119,7 @@ pub struct Publisher<'a> {
     principal: String,
     clock: Box<dyn Fn() -> u64 + 'a>,
     fault: Option<crate::locks::LockFault>,
+    skew_eps: u64,
 }
 
 /// Dependencies of an object (what must exist remotely before it may).
@@ -218,6 +219,7 @@ impl<'a> Publisher<'a> {
                     .unwrap_or(0)
             }),
             fault: None,
+            skew_eps: 0,
         }
     }
     /// Write every object as its own key (`objects/xx/...`, one HEAD per dependency) instead of
@@ -234,6 +236,12 @@ impl<'a> Publisher<'a> {
     /// Validator clock in unix ms (injectable for tests and the model checker).
     pub fn with_clock(mut self, c: impl Fn() -> u64 + 'a) -> Self {
         self.clock = Box::new(c);
+        self
+    }
+    /// Replica clock-skew allowance in ms (default 0): locks stay live this long past
+    /// `expires_at` (docs/locks.md, "Clock handling").
+    pub fn with_skew_epsilon(mut self, eps_ms: u64) -> Self {
+        self.skew_eps = eps_ms;
         self
     }
     #[doc(hidden)]
@@ -579,10 +587,19 @@ impl<'a> Publisher<'a> {
                 }
                 if !self.tx.lock_ops.is_empty() || cur.has_lock_state() {
                     let (backend, now) = (self.backend, (self.clock)());
-                    let r = crate::locks::apply(&cur, &mut new, &self.tx, &self.principal, now, self.fault, &mut |i| {
-                        let u = &self.tx.updates[i];
-                        changed_paths(backend, u.old, u.new)
-                    });
+                    let r = crate::locks::apply(
+                        &cur,
+                        &mut new,
+                        &self.tx,
+                        &self.principal,
+                        now,
+                        self.skew_eps,
+                        self.fault,
+                        &mut |i| {
+                            let u = &self.tx.updates[i];
+                            changed_paths(backend, u.old, u.new)
+                        },
+                    );
                     match r {
                         Ok(()) => {}
                         Err(PublishError::Backend(e)) => {

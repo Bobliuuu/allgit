@@ -1,20 +1,20 @@
-//! `vcs-server --root <dir> --tokens <file> [--listen 127.0.0.1:8480] [options]`
+//! `vcs-server (--root <dir> | --backend <s3://bucket/prefix?endpoint=URL|dir>) --tokens <file> [--listen 127.0.0.1:8480] [options]`
 //!
 //! * `vcs-server hash-token <token>` prints the hash to put in the tokens file.
 //! * `vcs-server audit verify <file> [--key <keyfile>]` checks an audit log's hash chain (exit 0 ok, 1 tampered).
 //!
 //! Options: `--audit-log <file> [--audit-key <keyfile>]`, `--rate-limit <burst>,<per-sec>`,
 //! `--max-connections <n>`, `--max-body <bytes>`, and with the `tls` feature `--tls-cert <pem> --tls-key <pem>`.
+//! Policy options: `--policy <file> [--max-lease-secs N] [--skew-epsilon-ms N]` (docs/deploy.md).
 //! Without TLS the server speaks plain HTTP (docs/server.md).
 
 use std::path::Path;
 use std::sync::Arc;
-use vcs_remote::FsBackend;
 use vcs_server::audit::{parse_key, verify_file};
-use vcs_server::{auth, AuditLog, Config, RateLimit, Server, TokenTable};
+use vcs_server::{auth, backend_url, AuditLog, Config, Policy, RateLimit, Server, TokenTable};
 
-const USAGE: &str = "usage: vcs-server --root <dir> --tokens <file> [--listen host:port] [--audit-log <file> [--audit-key <file>]] \
-[--rate-limit <burst>,<per-sec>] [--max-connections <n>] [--max-body <bytes>] [--tls-cert <pem> --tls-key <pem>]\n       \
+const USAGE: &str = "usage: vcs-server (--root <dir> | --backend <s3://...|dir>) --tokens <file> [--listen host:port] [--audit-log <file> [--audit-key <file>]] \
+[--rate-limit <burst>,<per-sec>] [--max-connections <n>] [--max-body <bytes>] [--policy <file>] [--max-lease-secs N] [--skew-epsilon-ms N] [--tls-cert <pem> --tls-key <pem>]\n       \
 vcs-server hash-token <token>\n       vcs-server audit verify <file> [--key <file>]";
 
 fn die(m: &str) -> ! {
@@ -66,6 +66,7 @@ fn main() {
     let (mut root, mut tokens, mut listen) = (None, None, "127.0.0.1:8480".to_owned());
     let (mut audit_log, mut audit_key, mut rate, mut maxc, mut maxb) = (None, None, None, None, None);
     let (mut tls_cert, mut tls_key) = (None, None);
+    let (mut backend_arg, mut policy_path, mut max_lease, mut eps) = (None, None, None, None);
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         let mut val = |n: &str| it.next().unwrap_or_else(|| die(&format!("{n} needs a value")));
@@ -80,18 +81,37 @@ fn main() {
             "--max-body" => maxb = Some(val("--max-body")),
             "--tls-cert" => tls_cert = Some(val("--tls-cert")),
             "--tls-key" => tls_key = Some(val("--tls-key")),
+            "--backend" => backend_arg = Some(val("--backend")),
+            "--policy" => policy_path = Some(val("--policy")),
+            "--max-lease-secs" => max_lease = Some(val("--max-lease-secs")),
+            "--skew-epsilon-ms" => eps = Some(val("--skew-epsilon-ms")),
             _ => die(USAGE),
         }
     }
-    let root = root.unwrap_or_else(|| die("--root is required"));
+    let backend_url = match (root, backend_arg) {
+        (Some(_), Some(_)) => die("give either --root or --backend, not both"),
+        (Some(r), None) | (None, Some(r)) => r,
+        (None, None) => die("--root or --backend is required"),
+    };
     let tokens = tokens.unwrap_or_else(|| die("--tokens is required"));
     let text = std::fs::read_to_string(&tokens).unwrap_or_else(|e| die(&format!("cannot read {tokens}: {e}")));
     let table = TokenTable::parse(&text).unwrap_or_else(|e| die(&e));
     if table.is_empty() {
         die("tokens file has no entries");
     }
-    let backend = FsBackend::open(&root).unwrap_or_else(|e| die(&format!("cannot open {root}: {e}")));
+    let backend = backend_url::open(&backend_url).unwrap_or_else(|e| die(&e));
     let mut cfg = Config::new(table);
+    if let Some(p) = policy_path {
+        let text = std::fs::read_to_string(&p).unwrap_or_else(|e| die(&format!("cannot read {p}: {e}")));
+        cfg.validator.policy = Policy::parse(&text).unwrap_or_else(|e| die(&e));
+    }
+    let num = |n: &str, v: Option<String>| v.map(|v| v.parse::<u64>().unwrap_or_else(|_| die(&format!("{n} must be a number"))));
+    if let Some(s) = num("--max-lease-secs", max_lease) {
+        cfg.validator.max_lease_ms = s.saturating_mul(1000);
+    }
+    if let Some(ms) = num("--skew-epsilon-ms", eps) {
+        cfg.validator.skew_epsilon_ms = ms;
+    }
     cfg.tokens_file = Some(tokens.into());
     if let Some(r) = rate {
         let parsed = r.split_once(',').and_then(|(b, p)| {
@@ -131,7 +151,7 @@ fn main() {
         (Some(_), Some(_)) => die("this build has no TLS support: rebuild with `--features tls`"),
         _ => die("--tls-cert and --tls-key must be given together"),
     }
-    let srv = Server::start(Arc::new(backend), cfg, &listen).unwrap_or_else(|e| die(&format!("cannot listen on {listen}: {e}")));
+    let srv = Server::start(backend, cfg, &listen).unwrap_or_else(|e| die(&format!("cannot listen on {listen}: {e}")));
     eprintln!(
         "vcs-server listening on {scheme}://{}{}",
         srv.local_addr(),

@@ -12,7 +12,7 @@ use crate::audit::AuditLog;
 use crate::auth::{AuthError, Principal, Role, TokenTable};
 use crate::http::{pct_decode, read_request, write_response, Limits, ParseError, Request, Response};
 use crate::ratelimit::{Limiter, RateLimit};
-use crate::validate::{validate_manifest_write, Reject};
+use crate::validate::{validate_and_normalize, Reject, ValidatorConfig};
 use std::io::{BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
@@ -32,6 +32,8 @@ pub struct Config {
     /// Request line plus headers, in bytes (431 beyond).
     pub max_header_bytes: usize,
     /// Per read/write timeout on a connection.
+    /// Path policy, lease cap and clock-skew allowance for manifest writes.
+    pub validator: ValidatorConfig,
     pub io_timeout: Duration,
     /// Total time allowed to deliver the request line and headers (also covers the TLS handshake).
     pub header_timeout: Duration,
@@ -60,6 +62,7 @@ impl Config {
             max_body: 256 * 1024 * 1024,
             max_manifest_body: 32 * 1024 * 1024,
             max_header_bytes: 32 * 1024,
+            validator: ValidatorConfig::default(),
             io_timeout: Duration::from_secs(30),
             header_timeout: Duration::from_secs(10),
             body_timeout: Duration::from_secs(600),
@@ -482,6 +485,10 @@ fn reject_response(r: Reject) -> Response {
             409,
             &format!("LockedBy: {path} in zone {zone} is locked by {holder} until {expires_at} (unix ms)"),
         ),
+        Reject::LockRequired { zone, path } => text(
+            428,
+            &format!("LockRequired: {path} in zone {zone} may only be changed while you hold a lock on it (vcs lock)"),
+        ),
         Reject::Invalid(m) => text(422, &format!("Invalid: {m}")),
         Reject::Unavailable(m) => text(503, &format!("backend unavailable: {m}")),
     }
@@ -502,6 +509,7 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str) -> Respons
         }
     }
     let is_manifest = key == manifest::KEY;
+    let mut body = std::borrow::Cow::Borrowed(req.body.as_slice());
     // Read the manifest we are about to replace; validate against exactly that version.
     let mut cur = Manifest::default();
     if is_manifest {
@@ -525,22 +533,24 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str) -> Respons
                 Err(e) => return text(500, &format!("stored manifest invalid: {e}")),
             };
         }
-        let new = match Manifest::decode(&req.body) {
+        let mut new = match Manifest::decode(&req.body) {
             Ok(m) => m,
             Err(e) => return text(422, &format!("Invalid: {e}")),
         };
-        if let Err(r) = validate_manifest_write(sh.backend.as_ref(), &cur, &new, who, (sh.cfg.clock)()) {
+        if let Err(r) = validate_and_normalize(sh.backend.as_ref(), &cur, &mut new, who, (sh.cfg.clock)(), &sh.cfg.validator) {
             return reject_response(r);
         }
+        // the server may have rewritten lock times: store its version, not the client's bytes
+        body = std::borrow::Cow::Owned(new.encode());
     }
     if if_none {
-        match sh.backend.put_if_absent(key, &req.body) {
+        match sh.backend.put_if_absent(key, &body) {
             Ok(true) => Response::new(201, ""),
             Ok(false) => Response::new(412, ""),
             Err(e) => backend_err(e),
         }
     } else {
-        match sh.backend.put_if_match(key, &req.body, &if_match.unwrap_or_default()) {
+        match sh.backend.put_if_match(key, &body, &if_match.unwrap_or_default()) {
             Ok(Some(t)) => Response::new(200, "").with("ETag", etag(&t)),
             Ok(None) => Response::new(412, ""),
             Err(e) => backend_err(e),
