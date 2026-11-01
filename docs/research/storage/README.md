@@ -18,6 +18,9 @@ Index of documents under `docs/research/storage/`. Add new documents here, one l
 | [compaction-experiments.md](compaction-experiments.md) | #184 | Experiments F, G: LSM write buffers, tiered vs leveled compaction, hot/cold tiering (GC sections: meta agent) |
 | [compression-experiments.md](compression-experiments.md) | #183 | Codecs, dictionaries, adaptive choice, independently compressed blocks, random-access cost |
 | [chunking-experiments.md](chunking-experiments.md) | #183 | Whole-file, fixed, FastCDC, Rabin, hybrid chunking; dedup across revisions and zones; manifest/index overhead |
+| [architecture-decision.md](architecture-decision.md) | #188 | Decision: keep the baseline plus targeted changes; audit findings already fixed on main with PRs; ten architectures compared from this folder's evidence, where each is worse than Git or walgit, candidate changes verified, cost view, migration and rollback, what remains unmeasured |
+| [results.md](results.md) | #188 | Consolidated results with a pointer to each datum (document, section, data file, status, machine), grouped by axis for Pareto reading |
+| [implementation-roadmap.md](implementation-roadmap.md) | #189 | Staged plan, roadmap issues with measurable success criteria, regression tests, deferred items and their triggers |
 
 Scripts: `scripts/storage_cost_model.py`, `scripts/storage_score.py` (tests: `scripts/test_storage_*.py`). Data: `data/`.
 
