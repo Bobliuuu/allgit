@@ -16,13 +16,25 @@ pub enum More {
     Describe(crate::describe::DescribeArgs),
     /// Write the files of a revision as a .tar or .zip archive
     Archive(crate::archive::ArchiveArgs),
+    /// Resolve revisions to commit ids
+    RevParse(crate::plumb::RevParseArgs),
+    /// List tracked files
+    LsFiles(crate::plumb::LsFilesArgs),
+    /// Show the type, size or content of an object
+    CatFile(crate::plumb::CatFileArgs),
+    /// Summarize history by author
+    Shortlog(crate::plumb::ShortlogArgs),
 }
 
-pub fn dispatch(cmd: &More, _json: bool) -> Result<(), Error> {
+pub fn dispatch(cmd: &More, json: bool) -> Result<(), Error> {
     match cmd {
         More::Bisect(c) => crate::bisect::run(c),
         More::Grep(a) => crate::grep::run(a),
         More::Describe(a) => crate::describe::run(a),
         More::Archive(a) => crate::archive::run(a),
+        More::RevParse(a) => crate::plumb::rev_parse(a, json),
+        More::LsFiles(a) => crate::plumb::ls_files(a, json),
+        More::CatFile(a) => crate::plumb::cat_file(a, json),
+        More::Shortlog(a) => crate::plumb::shortlog(a, json),
     }
 }

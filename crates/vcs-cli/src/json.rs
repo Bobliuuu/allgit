@@ -82,7 +82,7 @@ impl J {
     }
 }
 
-fn doc(command: &'static str, mut fields: Vec<(&'static str, J)>) -> J {
+pub fn doc(command: &'static str, mut fields: Vec<(&'static str, J)>) -> J {
     let mut v = vec![("version", J::Num(SCHEMA_VERSION.into())), ("command", J::s(command))];
     v.append(&mut fields);
     J::Obj(v)
