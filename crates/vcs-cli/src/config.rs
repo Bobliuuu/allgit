@@ -19,6 +19,7 @@ pub const KEYS: &[(&str, &str, &str)] = &[
         "VCS_MERGE_ASSIST",
         "opt-in: command run on conflicts after `vcs merge`/`vcs rebase` to propose resolutions (file contents go to that command; see docs/assist.md)",
     ),
+    ("merge.renames", "VCS_MERGE_RENAMES", "on/off: detect renames in merge/rebase (default off)"),
     ("log.default-format", "VCS_LOG_FORMAT", "full or oneline (default full)"),
     (
         "remote.default",
@@ -56,6 +57,7 @@ pub fn validate_value(key: &str, value: &str) -> Result<(), Error> {
         return msg("config values cannot contain newlines");
     }
     match key {
+        "merge.renames" if !matches!(value, "on" | "off") => msg("merge.renames must be 'on' or 'off'"),
         "merge.structural" if !matches!(value, "on" | "off") => msg("merge.structural must be 'on' or 'off'"),
         "log.default-format" if !matches!(value, "full" | "oneline") => msg("log.default-format must be 'full' or 'oneline'"),
         "user.name" | "user.email" | "core.editor" | "remote.default" | "merge.assist" if value.trim().is_empty() => {
@@ -235,6 +237,13 @@ impl Config {
     /// merge.assist: the opt-in assistant command (unset, empty or `off` means none).
     pub fn assist_command(&self) -> Option<String> {
         self.get("merge.assist").filter(|v| !v.trim().is_empty() && v.trim() != "off")
+    /// merge.renames, default off. An invalid value is an error.
+    pub fn renames(&self) -> Result<bool, Error> {
+        match self.get("merge.renames").as_deref() {
+            None | Some("off") => Ok(false),
+            Some("on") => Ok(true),
+            Some(o) => msg(format!("merge.renames must be 'on' or 'off', got '{o}'")),
+        }
     }
 
     pub fn oneline_log(&self) -> Result<bool, Error> {

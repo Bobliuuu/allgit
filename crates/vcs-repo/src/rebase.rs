@@ -24,7 +24,7 @@ use crate::repo::Repo;
 use crate::treeops::{self, Flat};
 use std::collections::BTreeSet;
 use std::fs;
-use vcs_merge::{merge_flat_with, Algorithm, ConflictKind, MarkerLabels, StoreBlobs};
+use vcs_merge::{ConflictKind, MarkerLabels};
 use vcs_objects::codec::{Reader, Writer};
 use vcs_objects::{Commit, EntryMode, Object, ObjectId, RefUpdate, Signature, Transaction};
 use vcs_store::ObjectStore;
@@ -328,7 +328,7 @@ impl Repo {
                 .ok_or_else(|| Error::Corrupt("rebase: root commit in range".into()))?;
             let fb = treeops::flatten(&self.store, Some(self.commit_obj(&parent)?.root), &prefix)?;
             let ft = treeops::flatten(&self.store, Some(pc.root), &prefix)?;
-            let tm = merge_flat_with(&StoreBlobs(&self.store), Algorithm::Myers, self.structural, &fb, &cursor_flat, &ft).map_err(me)?;
+            let tm = self.tree3(&fb, &cursor_flat, &ft).map_err(me)?;
             if let Some(c) = tm.conflicts.iter().find(|c| c.kind == ConflictKind::FileDirectory) {
                 return msg(format!(
                     "{:?} is a file on one side and a directory on the other while replaying {}; file/directory conflicts are not supported yet (the working tree was not changed)",

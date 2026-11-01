@@ -16,7 +16,7 @@ use crate::repo::{fresh_change_id, Repo};
 use crate::treeops::{self, Flat};
 use std::collections::BTreeSet;
 use std::fs;
-use vcs_merge::{merge3, merge_flat_with, render_markers, Algorithm, Conflict, ConflictKind, MarkerLabels, StoreBlobs, TextMerge};
+use vcs_merge::{merge3, merge_flat_renames, merge_flat_with, render_markers, Algorithm, Conflict, ConflictKind, MarkerLabels, StoreBlobs, TextMerge};
 use vcs_objects::codec::{Reader, Writer};
 use vcs_objects::names::validate_path;
 use vcs_objects::{Commit, EntryMode, Object, ObjectId, RefUpdate, Signature, Transaction};
@@ -120,6 +120,17 @@ pub enum MergeOutcome {
     },
 }
 
+impl Repo {
+    /// Three-way tree merge honouring the structural and rename-detection settings.
+    pub(crate) fn tree3(&self, base: &Flat, ours: &Flat, theirs: &Flat) -> std::result::Result<vcs_merge::TreeMerge, vcs_merge::MergeError> {
+        let blobs = StoreBlobs(&self.store);
+        if self.renames {
+            return Ok(merge_flat_renames(&blobs, Algorithm::Myers, self.structural, vcs_merge::rename::DEFAULT_THRESHOLD, base, ours, theirs)?.merge);
+        }
+        merge_flat_with(&blobs, Algorithm::Myers, self.structural, base, ours, theirs)
+    }
+}
+
 fn kind_u8(k: ConflictKind) -> u8 {
     match k {
         ConflictKind::AddAdd => 0,
@@ -127,6 +138,7 @@ fn kind_u8(k: ConflictKind) -> u8 {
         ConflictKind::DeleteModify => 2,
         ConflictKind::ModeConflict => 3,
         ConflictKind::FileDirectory => 4,
+        ConflictKind::RenameRename => 5,
     }
 }
 fn kind_from(b: u8) -> Result<ConflictKind> {
@@ -136,6 +148,7 @@ fn kind_from(b: u8) -> Result<ConflictKind> {
         2 => ConflictKind::DeleteModify,
         3 => ConflictKind::ModeConflict,
         4 => ConflictKind::FileDirectory,
+        5 => ConflictKind::RenameRename,
         _ => return Err(Error::Corrupt("conflicts: bad kind".into())),
     })
 }
@@ -146,6 +159,7 @@ pub fn kind_name(k: ConflictKind) -> &'static str {
         ConflictKind::DeleteModify => "delete/modify",
         ConflictKind::ModeConflict => "mode",
         ConflictKind::FileDirectory => "file/directory",
+        ConflictKind::RenameRename => "rename/rename",
     }
 }
 fn mode_u8(m: Option<EntryMode>) -> u8 {
@@ -414,7 +428,7 @@ impl Repo {
         };
         let root_of = |id: &ObjectId| -> Result<Flat> { treeops::flatten(&self.store, Some(self.commit_obj(id)?.root), &prefix) };
         let (fb, fr) = (root_of(&base)?, root_of(&theirs)?);
-        let tm = merge_flat_with(&StoreBlobs(&self.store), Algorithm::Myers, self.structural, &fb, &old, &fr).map_err(me)?;
+        let tm = self.tree3(&fb, &old, &fr).map_err(me)?;
         if let Some(c) = tm.conflicts.iter().find(|c| c.kind == ConflictKind::FileDirectory) {
             return msg(format!(
                 "{:?} is a file on one side and a directory on the other; file/directory conflicts are not supported yet (nothing was changed)",
