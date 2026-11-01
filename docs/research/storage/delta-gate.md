@@ -141,9 +141,17 @@ id share also bounds per-object tree compression at 1.33x to 1.44x of raw whatev
 stay whole. Solid blocks compress better but cost 27x to 165x per read at the sizes where they win, so they are not a fit
 for the read paths allgit cares about; deltas keep the HEAD path at v2 speed.
 
-What shipped (separate PR): pack v3 in `vcs-store`, a codec byte 2 for delta entries, opt-in via `vcs repack --format v3`
-or `VCS_PACK_FORMAT=v3`, local packs only, path-free sketch ordering, depth 8, window 8, readers accept chains up to 50
-and verify the object hash. v2 stays the default; rollback is `vcs repack --format v2`.
+Relation to pack v3 (#249, landed while this ran): v3 is the solid-block variant measured here as `solid`, used by
+compaction with 4 MiB blocks. Its size win (10x to 13x) is larger than deltas (6x to 8x) and this data agrees with that
+choice for cold, scan-style packs; its random-read cost (27x to 165x a v2 read at 1 to 4 MiB, without a block cache) is
+why deltas are still interesting for local hot packs. The two are not stacked: a v3 block has no per-object entry to
+delta against.
+
+What shipped (separate PR): pack **v4** in `vcs-store` (v3 was taken by blocks), a codec byte 2 for delta entries on
+per-object entries like v2, opt-in via `vcs repack --format v4` or `VCS_PACK_FORMAT=v4`, local packs only, path-free
+sketch ordering, depth 8, window 8, readers accept chains up to 50 and verify the object hash. v2 stays the default;
+rollback is `vcs repack --format v2`. Whether to make v4 the default for local packs, or to keep v3 blocks as the only
+space-saving format, is a product decision this data informs but does not make.
 
 ## Not measured, caveats
 
