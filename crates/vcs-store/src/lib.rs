@@ -242,7 +242,13 @@ const MAX_BARRIER_PACKS: usize = 32;
 /// Pending-object count from which a barrier writes one pack instead of loose files; `VCS_PACK_MIN` overrides (benchmarks).
 fn pack_min() -> usize {
     static V: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var("VCS_PACK_MIN").ok().and_then(|v| v.parse().ok()).filter(|n: &usize| *n >= 1).unwrap_or(PACK_MIN))
+    *V.get_or_init(|| {
+        std::env::var("VCS_PACK_MIN")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|n: &usize| *n >= 1)
+            .unwrap_or(PACK_MIN)
+    })
 }
 
 /// Loose-object filesystem store: `<dir>/<aa>/<rest-of-hex>`.

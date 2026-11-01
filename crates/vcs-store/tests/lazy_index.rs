@@ -47,7 +47,12 @@ fn file_backed_index_still_rejects_damage() {
     let dir = tempfile::tempdir().unwrap();
     let p = dir.path().join("a.idx");
     // truncated or padded: refused when opened
-    for bad in [built.idx[..built.idx.len() - 1].to_vec(), [built.idx.clone(), vec![0]].concat(), built.idx[..40].to_vec(), Vec::new()] {
+    for bad in [
+        built.idx[..built.idx.len() - 1].to_vec(),
+        [built.idx.clone(), vec![0]].concat(),
+        built.idx[..40].to_vec(),
+        Vec::new(),
+    ] {
         std::fs::write(&p, &bad).unwrap();
         assert!(PackIndex::open_lazy(&p).is_err());
     }
