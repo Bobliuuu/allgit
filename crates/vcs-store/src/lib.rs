@@ -208,7 +208,10 @@ enum Pend {
     /// Bytes `[off, off+len)` of the shared spill file (unix): one file for all objects past the
     /// memory budget instead of a create/write/read/unlink per object.
     #[cfg(unix)]
-    Spill { off: u64, len: u64 },
+    Spill {
+        off: u64,
+        len: u64,
+    },
 }
 
 /// One append-only scratch file in `tmp/` that holds every pending object past the memory budget.
@@ -332,6 +335,23 @@ fn hardware_flush(f: &fs::File) -> std::io::Result<()> {
 }
 
 const SYNC_THREADS: usize = 32;
+
+/// Like [`par_try_each`] for fsync-bound work: even two items run concurrently (their journal
+/// commits coalesce instead of queuing behind each other), on no more threads than items.
+fn par_sync_each<T: Sync>(items: &[T], f: impl Fn(&T) -> Result<(), StoreError> + Sync) -> Result<(), StoreError> {
+    if items.len() < 2 || items.len() >= 64 {
+        return par_try_each(items, f);
+    }
+    let errs: Vec<Option<StoreError>> = std::thread::scope(|sc| {
+        let f = &f;
+        let hs: Vec<_> = items.iter().map(|it| sc.spawn(move || f(it).err())).collect();
+        hs.into_iter().map(|h| h.join().expect("sync worker panicked")).collect()
+    });
+    match errs.into_iter().flatten().next() {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
 
 /// Run `f` over `items` on up to `SYNC_THREADS` threads (inline for small inputs); first error wins.
 fn par_try_each<T: Sync>(items: &[T], f: impl Fn(&T) -> Result<(), StoreError> + Sync) -> Result<(), StoreError> {
@@ -919,7 +939,11 @@ impl ObjectStore for LocalStore {
             return Ok(());
         }
         // Small batch: spill the in-memory objects to tmp files, then publish them as loose files.
-        let mem: Vec<ObjectId> = pending.iter().filter(|(_, p)| !matches!(p, Pend::File(_))).map(|(i, _)| *i).collect();
+        let mem: Vec<ObjectId> = pending
+            .iter()
+            .filter(|(_, p)| !matches!(p, Pend::File(_)))
+            .map(|(i, _)| *i)
+            .collect();
         for id in mem {
             let t = match pending.get(&id) {
                 Some(Pend::Mem(v)) => self.write_tmp(&id, &[], v)?,
@@ -946,7 +970,7 @@ impl ObjectStore for LocalStore {
             unsafe { libc::sync_file_range(f.as_raw_fd(), 0, 0, libc::SYNC_FILE_RANGE_WRITE) };
             Ok(())
         })?;
-        par_try_each(&tmps, |tmp| {
+        par_sync_each(&tmps, |tmp| {
             let f = io(tmp, fs::File::open(tmp))?;
             io(tmp, flush_file(&f))
         })?;
@@ -971,10 +995,12 @@ impl ObjectStore for LocalStore {
         // rename over an existing identical object is atomic and harmless (another writer won).
         par_try_each(&moves, |(tmp, dest)| io(dest, fs::rename(tmp, dest)))?;
         // 3. directory entries (renames, new fan-out dirs) durable before anything refers to them.
+        // The object dir is always flushed (a fan-out dir may have been created by anyone, and its
+        // entry must be durable before a ref names the object). tmp/ only lost entries: a surviving
+        // tmp name is an orphan that clean_orphans removes, so it needs no flush.
         dirs.insert(self.dir.clone());
-        dirs.insert(self.dir.join("tmp"));
         let dirs: Vec<PathBuf> = dirs.into_iter().collect();
-        par_try_each(&dirs, |d| {
+        par_sync_each(&dirs, |d| {
             let f = io(d, fs::File::open(d))?;
             io(d, flush_file(&f))
         })?;
@@ -1043,6 +1069,50 @@ impl LocalStore {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn small_batch_sync_flushes_concurrently_and_survives_reopen() {
+        let d = tempfile::tempdir().unwrap();
+        let s = LocalStore::open(d.path()).unwrap();
+        // fewer than PACK_MIN objects: loose path with several fan-out dirs, flushed in parallel
+        let ids: Vec<_> = (0..40).map(|i| s.put_blob(format!("small {i}").as_bytes()).unwrap()).collect();
+        s.sync().unwrap();
+        assert!(fs::read_dir(d.path().join("tmp")).unwrap().next().is_none(), "no temp files left");
+        let s2 = LocalStore::open(d.path()).unwrap();
+        for (i, id) in ids.iter().enumerate() {
+            assert_eq!(s2.get_blob(id).unwrap(), format!("small {i}").as_bytes());
+            assert!(d.path().join(&id.to_hex()[..2]).is_dir());
+        }
+        // second batch into already existing fan-out dirs
+        let more: Vec<_> = (40..80).map(|i| s2.put_blob(format!("small {i}").as_bytes()).unwrap()).collect();
+        s2.sync().unwrap();
+        let s3 = LocalStore::open(d.path()).unwrap();
+        for id in more {
+            s3.get_blob(&id).unwrap();
+        }
+    }
+
+    #[test]
+    fn par_sync_each_runs_all_and_reports_first_error() {
+        let n = AtomicUsize::new(0);
+        let items = [1, 2, 3, 4];
+        par_sync_each(&items, |_| {
+            n.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(n.load(Ordering::SeqCst), 4);
+        let r = par_sync_each(&items, |&i| {
+            if i == 3 {
+                Err(StoreError::NotFound(ObjectId::from_hex(&"0".repeat(64)).unwrap()))
+            } else {
+                Ok(())
+            }
+        });
+        assert!(r.is_err());
+        par_sync_each(&[] as &[u8], |_| Ok(())).unwrap();
+        par_sync_each(&[1u8], |_| Ok(())).unwrap();
+    }
+
+    #[test]
     fn big_batch_publishes_as_one_pack_and_survives_reopen() {
         let d = tempfile::tempdir().unwrap();
         let s = LocalStore::open(d.path()).unwrap();
@@ -1075,14 +1145,20 @@ mod tests {
             let s = LocalStore::open(d.path()).unwrap();
             s.set_pending_mem_cap(0); // everything goes through the spill file
             let ids: Vec<_> = (0..n).map(|i| s.put_blob(format!("spilled {i}").as_bytes()).unwrap()).collect();
-            assert!(fs::read_dir(d.path().join("tmp")).unwrap().count() <= 1, "one spill file, not one per object");
+            assert!(
+                fs::read_dir(d.path().join("tmp")).unwrap().count() <= 1,
+                "one spill file, not one per object"
+            );
             for (i, id) in ids.iter().enumerate() {
                 assert_eq!(s.get_blob(id).unwrap(), format!("spilled {i}").as_bytes());
                 assert!(s.contains(id).unwrap());
             }
             s.put_blob(b"spilled 0").unwrap(); // dedup against a pending spilled object
             s.sync().unwrap();
-            assert!(fs::read_dir(d.path().join("tmp")).unwrap().next().is_none(), "spill file removed (n={n})");
+            assert!(
+                fs::read_dir(d.path().join("tmp")).unwrap().next().is_none(),
+                "spill file removed (n={n})"
+            );
             let s2 = LocalStore::open(d.path()).unwrap();
             for (i, id) in ids.iter().enumerate() {
                 assert_eq!(s2.get_blob(id).unwrap(), format!("spilled {i}").as_bytes());
@@ -1097,7 +1173,9 @@ mod tests {
         let ids: Vec<_> = {
             let s = LocalStore::open(d.path()).unwrap();
             s.set_pending_mem_cap(0);
-            (0..(PACK_MIN + 3)).map(|i| s.put_blob(format!("lost {i}").as_bytes()).unwrap()).collect()
+            (0..(PACK_MIN + 3))
+                .map(|i| s.put_blob(format!("lost {i}").as_bytes()).unwrap())
+                .collect()
             // "crash": dropped without sync()
         };
         let s = LocalStore::open(d.path()).unwrap();
