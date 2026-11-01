@@ -406,7 +406,11 @@ enum Cmd {
     /// Verify all objects and graph invariants
     Fsck,
     /// Move loose objects into a pack (one pack + index under .vcs/objects/pack)
-    Repack,
+    Repack {
+        /// Only if loose objects exceed gc.autoPackLimit, and only those older than the grace period
+        #[arg(long)]
+        auto: bool,
+    },
     /// Garbage collection. DESTRUCTIVE unless --dry-run: permanently deletes unreachable
     /// objects older than the grace period (local), or with --remote --yes on the remote
     Gc {
@@ -702,6 +706,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                 eprintln!("warning: skipped {s}");
             }
             println!("staged {} file(s), {} removal(s)", rep.staged, rep.removed);
+            maybe_auto_repack(&repo);
         }
         Cmd::Restore { paths, staged } => {
             let (repo, cwd) = open()?;
@@ -772,6 +777,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                     rep.commits.len()
                 );
             }
+            maybe_auto_repack(&repo);
         }
         Cmd::Status => {
             let (repo, _) = open()?;
@@ -1751,10 +1757,18 @@ fn run(cli: Cli) -> Result<(), Error> {
                 );
             }
         }
-        Cmd::Repack => {
+        Cmd::Repack { auto } => {
             let (repo, _) = open()?;
-            let n = repo.repack()?;
-            println!("packed {n} object(s)");
+            if auto {
+                let limit = config::Config::load()?.auto_pack_limit()?;
+                match repo.auto_repack(limit, vcs_repo::Repo::AUTO_REPACK_GRACE)? {
+                    Some(n) => println!("packed {n} object(s)"),
+                    None => println!("nothing to do (loose objects within gc.autoPackLimit, or repository busy)"),
+                }
+            } else {
+                let n = repo.repack()?;
+                println!("packed {n} object(s)");
+            }
         }
         Cmd::Fsck => {
             let (repo, _) = open()?;
@@ -1821,5 +1835,18 @@ fn main() -> ExitCode {
             eprintln!("error: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// After add/commit: pack old loose objects when over `gc.autoPackLimit`. Best effort: any
+/// failure here never fails the command that already succeeded.
+fn maybe_auto_repack(repo: &vcs_repo::Repo) {
+    let Ok(limit) = config::Config::load().and_then(|c| c.auto_pack_limit()) else {
+        return;
+    };
+    match repo.auto_repack(limit, vcs_repo::Repo::AUTO_REPACK_GRACE) {
+        Ok(Some(n)) if n > 0 => eprintln!("auto repack: packed {n} loose object(s)"),
+        Ok(_) => {}
+        Err(e) => eprintln!("warning: auto repack failed: {e}"),
     }
 }

@@ -1852,6 +1852,32 @@ impl Repo {
         Ok(rep)
     }
 
+    /// Default minimum age of a loose object before an automatic repack packs it.
+    pub const AUTO_REPACK_GRACE: std::time::Duration = std::time::Duration::from_secs(3600);
+    /// Default `gc.autoPackLimit`, as git's `gc.auto`.
+    pub const AUTO_PACK_LIMIT: usize = 6700;
+
+    /// Automatic repack: if the loose-object estimate exceeds `limit` (0 disables), pack loose
+    /// objects older than `grace` into one pack under the repository lock. `force` skips the
+    /// threshold (`vcs repack --auto` still honours it; tests use `force`). Returns the number
+    /// packed, or `None` when nothing was due or another process holds the lock (try again later).
+    pub fn auto_repack_at(&self, now: std::time::SystemTime, limit: usize, grace: std::time::Duration, force: bool) -> Result<Option<usize>> {
+        if !force && (limit == 0 || self.store.loose_estimate() <= limit) {
+            return Ok(None);
+        }
+        let _lock = match self.lock() {
+            Ok(l) => l,
+            Err(Error::Locked(_)) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        Ok(Some(self.store.repack_older_than(now, grace)?))
+    }
+
+    /// [`Repo::auto_repack_at`] as of now.
+    pub fn auto_repack(&self, limit: usize, grace: std::time::Duration) -> Result<Option<usize>> {
+        self.auto_repack_at(std::time::SystemTime::now(), limit, grace, false)
+    }
+
     /// Move all loose objects into a new pack. Returns how many were packed.
     pub fn repack(&self) -> Result<usize> {
         Ok(self.store.repack()?)

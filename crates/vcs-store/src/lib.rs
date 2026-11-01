@@ -532,6 +532,58 @@ impl LocalStore {
         }
         Ok(loose.len())
     }
+    /// Estimated number of loose objects, from the fan-out directory `17` alone (as git's
+    /// `gc.auto` does): ids are uniform, so that directory holds about 1/256 of them.
+    pub fn loose_estimate(&self) -> usize {
+        let d = self.dir.join("17");
+        fs::read_dir(d).map(|rd| rd.flatten().count() * 256).unwrap_or(0)
+    }
+
+    /// Pack the loose objects last modified at least `grace` before `now` into one new pack,
+    /// then delete exactly those loose files. Returns the number packed (no pack when 0).
+    ///
+    /// Crash safe: the pack and its index are durable (index last) before any loose file is
+    /// unlinked, and only objects that were read back, verified and written into that pack are
+    /// ever unlinked. A crash leaves duplicates (loose + packed), never a missing object.
+    /// Objects not yet published by this handle (`sync` runs first) are never touched. The
+    /// caller holds the repository lock so two repacks do not race.
+    pub fn repack_older_than(&self, now: std::time::SystemTime, grace: std::time::Duration) -> Result<usize, StoreError> {
+        self.sync()?;
+        let mut objs = Vec::new();
+        let mut ids = Vec::new();
+        for id in self.list_loose()? {
+            let p = self.path_of(&id);
+            let old = fs::metadata(&p)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| now.duration_since(t).ok())
+                .is_some_and(|a| a >= grace);
+            if !old {
+                continue;
+            }
+            let b = match fs::read(&p) {
+                Ok(b) => b,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue, // removed meanwhile
+                Err(source) => return Err(StoreError::Io { path: p, source }),
+            };
+            decode_verified(&id, &b)?;
+            objs.push((id, b));
+            ids.push(id);
+        }
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let pack = pack::write_pack(&self.dir.join("pack"), &self.dir.join("tmp"), objs)?;
+        self.packs.write().unwrap().push(pack);
+        for id in &ids {
+            let p = self.path_of(id);
+            let _ = fs::remove_file(&p);
+            if let Some(d) = p.parent() {
+                let _ = fs::remove_dir(d); // only succeeds when empty
+            }
+        }
+        Ok(ids.len())
+    }
     /// Whole-pack verification for fsck (checksums, framing, every object hash).
     pub fn verify_packs(&self) -> Vec<String> {
         self.packs.read().unwrap().iter().flat_map(|p| p.verify()).collect()

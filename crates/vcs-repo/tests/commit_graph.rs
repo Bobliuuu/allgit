@@ -37,8 +37,24 @@ fn refresh(r: &Repo) {
     r.merge_bases(&h, &h).unwrap();
 }
 
+fn cg_dir(r: &Repo) -> std::path::PathBuf {
+    r.worktree().join(".vcs/commit-graphs")
+}
+
+/// Graph files present (temp files of crashed writes excluded), sorted.
+fn cg_files(r: &Repo) -> Vec<std::path::PathBuf> {
+    let mut v: Vec<_> = fs::read_dir(cg_dir(r))
+        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| !p.file_name().unwrap().to_string_lossy().contains('.')).collect())
+        .unwrap_or_default();
+    v.sort();
+    v
+}
+
+/// The graph file of a repository that has a single zone.
 fn cg_path(r: &Repo) -> std::path::PathBuf {
-    r.worktree().join(".vcs/commit-graph")
+    let f = cg_files(r);
+    assert!(f.len() <= 1, "{f:?}");
+    f.into_iter().next().unwrap_or_else(|| cg_dir(r).join("none"))
 }
 
 /// Everything the graph can influence, computed through `r`.
@@ -74,9 +90,9 @@ fn without_graph(r: &Repo) -> Repo {
 #[test]
 fn graph_is_written_and_fsck_clean() {
     let (_d, r) = linear(20);
-    assert!(!cg_path(&r).exists());
+    assert!(cg_files(&r).is_empty());
     refresh(&r);
-    assert!(cg_path(&r).exists());
+    assert_eq!(cg_files(&r).len(), 1);
     assert!(r.fsck().unwrap().problems.is_empty());
 }
 
@@ -87,7 +103,7 @@ fn disabled_graph_writes_nothing() {
     let h = heads(&o)[0];
     o.merge_bases(&h, &h).unwrap();
     o.is_ancestor(h, h).unwrap();
-    assert!(!cg_path(&r).exists());
+    assert!(cg_files(&r).is_empty());
 }
 
 #[test]
@@ -145,6 +161,89 @@ fn fsck_catches_a_well_formed_graph_that_lies() {
     assert!(p.iter().any(|m| m.contains("parents differ")), "{p:?}");
 }
 
+fn zone_commit(r: &Repo, zone: &str, name: &str, ts: u64) {
+    fs::write(r.worktree().join(zone).join(name), name).unwrap();
+    r.add(&[format!("{zone}/{name}")]).unwrap();
+    r.commit(name, sig(ts)).unwrap();
+}
+
+fn zone_head(r: &Repo, zone: &str) -> ObjectId {
+    r.branches(zone).unwrap().into_iter().find_map(|(_, h, _)| h).unwrap()
+}
+
+fn multi_zone(zones: usize, commits: usize) -> (tempfile::TempDir, Repo, Vec<String>) {
+    let d = tempfile::tempdir().unwrap();
+    let r = Repo::init(&d.path().join("r")).unwrap();
+    let names: Vec<String> = (0..zones).map(|i| format!("z{i}")).collect();
+    for z in &names {
+        fs::create_dir_all(r.worktree().join(z)).unwrap();
+        r.create_zone(z, z).unwrap();
+    }
+    for i in 0..commits {
+        for z in &names {
+            zone_commit(&r, z, &format!("f{i}"), 100 + i as u64);
+        }
+    }
+    (d, r, names)
+}
+
+fn touch_all(r: &Repo, names: &[String]) {
+    for z in names {
+        let h = zone_head(r, z);
+        r.merge_bases(&h, &h).unwrap();
+    }
+}
+
+#[test]
+fn one_file_per_zone_and_a_commit_rewrites_only_its_zone() {
+    let (_d, r, names) = multi_zone(4, 5);
+    touch_all(&r, &names);
+    let files = cg_files(&r);
+    assert_eq!(files.len(), 4);
+    let before: Vec<Vec<u8>> = files.iter().map(|f| fs::read(f).unwrap()).collect();
+    zone_commit(&r, "z2", "extra", 900);
+    touch_all(&r, &names);
+    let after: Vec<Vec<u8>> = files.iter().map(|f| fs::read(f).unwrap()).collect();
+    let changed = before.iter().zip(&after).filter(|(a, b)| a != b).count();
+    assert_eq!(changed, 1, "only the touched zone's file changes");
+    assert!(r.fsck().unwrap().problems.is_empty());
+    // a query across two zones falls back to walking and still answers (same as no graph)
+    let (a, b) = (zone_head(&r, "z0"), zone_head(&r, "z1"));
+    assert_eq!(r.merge_bases(&a, &b).unwrap(), without_graph(&r).merge_bases(&a, &b).unwrap());
+}
+
+#[test]
+fn fsck_flags_a_graph_file_holding_another_zones_commits() {
+    let (_d, r, names) = multi_zone(2, 3);
+    touch_all(&r, &names);
+    let files = cg_files(&r);
+    fs::copy(&files[0], &files[1]).unwrap();
+    let p = r.fsck().unwrap().problems;
+    assert!(p.iter().any(|m| m.contains("another zone")), "{p:?}");
+    touch_all(&r, &names); // rebuilt/ignored without error
+    let off = without_graph(&r);
+    for z in &names {
+        let h = zone_head(&r, z);
+        assert_eq!(r.merge_bases(&h, &h).unwrap(), off.merge_bases(&h, &h).unwrap());
+    }
+}
+
+#[test]
+fn per_zone_files_are_cache_only() {
+    let (_d, r, names) = multi_zone(3, 4);
+    let expect: Vec<_> = names.iter().map(|z| (z.clone(), zone_head(&r, z))).collect();
+    touch_all(&r, &names);
+    for f in cg_files(&r) {
+        fs::write(f, b"junk").unwrap();
+    }
+    assert!(!r.fsck().unwrap().problems.is_empty());
+    touch_all(&r, &names);
+    assert!(r.fsck().unwrap().problems.is_empty());
+    for (z, h) in expect {
+        assert_eq!(zone_head(&r, &z), h);
+    }
+}
+
 #[derive(Clone, Debug)]
 enum Op {
     Commit,
@@ -189,6 +288,29 @@ proptest! {
         }
         let off = without_graph(&r);
         prop_assert_eq!(observe(&r), observe(&off));
+        prop_assert!(r.fsck().unwrap().problems.is_empty());
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(16))]
+    #[test]
+    fn identical_with_and_without_per_zone_graphs(picks in proptest::collection::vec((0usize..3, any::<bool>()), 1..30)) {
+        let (_d, r, names) = multi_zone(3, 1);
+        for (n, (z, warm)) in picks.into_iter().enumerate() {
+            zone_commit(&r, &names[z], &format!("p{n}"), 200 + (n as u64 * 5) % 17);
+            if warm {
+                let h = zone_head(&r, &names[z]);
+                r.merge_bases(&h, &h).unwrap();
+            }
+        }
+        let off = without_graph(&r);
+        for z in &names {
+            let h = zone_head(&r, z);
+            let root = r.log(z, None, usize::MAX).unwrap().last().unwrap().0;
+            prop_assert_eq!(r.merge_bases(&h, &root).unwrap(), off.merge_bases(&h, &root).unwrap());
+            prop_assert_eq!(r.is_ancestor(root, h).unwrap(), off.is_ancestor(root, h).unwrap());
+        }
         prop_assert!(r.fsck().unwrap().problems.is_empty());
     }
 }
