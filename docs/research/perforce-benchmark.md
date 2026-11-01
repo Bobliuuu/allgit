@@ -145,7 +145,7 @@ submitted changelists match, except for the two discrepancies below (the test sk
 | # | discrepancy | cause | status |
 |---|---|---|---|
 | 1 | depot paths with `@ # % *` stay percent-escaped (`we%40ird%23na%25me%2A.txt`); `p4 sync` writes `we@ird#na%me*.txt` | `describe` output uses p4's escapes; the importer used them as zone paths | fixed in a separate PR (failing test first) |
-| 2 | `utf16` file: `p4 print -q` returns UTF-8 text (3 bytes), `p4 sync` writes the UTF-16 file (8 bytes with BOM); the importer stores the print output | print converts for the client charset; the importer only warns about the type | open, tracked in an issue; needs a raw-content capture path |
+| 2 | `utf16` file: `p4 print -q` returns UTF-8 text (3 bytes), `p4 sync` writes the UTF-16 file (8 bytes with BOM); the importer stores the print output | print converts for the client charset; the importer only warns about the type | open, tracked in issue #302; needs a raw-content capture path |
 
 Format findings that needed no change: `p4 -G` output is Python-marshalled dictionaries with byte-string keys and values
 (handled); the change `time` field is epoch seconds (UTC); the text describe header is `Change N by user@client on
