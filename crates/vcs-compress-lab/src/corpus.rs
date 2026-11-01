@@ -40,7 +40,9 @@ pub struct Corpus {
 }
 
 const TEXT_EXT: &[&str] = &[
-    "rs", "c", "h", "cc", "cpp", "hpp", "py", "js", "ts", "tsx", "jsx", "go", "java", "kt", "rb", "sh", "md", "txt", "toml", "yaml", "yml", "json", "xml", "html", "css", "cfg", "ini", "lock", "S", "rst", "tex", "gd", "tscn", "tres", "godot", "cs", "glsl", "shader", "csv", "sql", "svg", "mk", "cmake", "in", "dts", "dtsi", "kconfig",
+    "rs", "c", "h", "cc", "cpp", "hpp", "py", "js", "ts", "tsx", "jsx", "go", "java", "kt", "rb", "sh", "md", "txt", "toml", "yaml", "yml",
+    "json", "xml", "html", "css", "cfg", "ini", "lock", "S", "rst", "tex", "gd", "tscn", "tres", "godot", "cs", "glsl", "shader", "csv",
+    "sql", "svg", "mk", "cmake", "in", "dts", "dtsi", "kconfig",
 ];
 const MODEL_EXT: &[&str] = &["safetensors", "gguf", "ckpt", "pt", "pth", "onnx", "npz", "npy", "bin_model"];
 
@@ -73,7 +75,11 @@ impl Builder {
             return i;
         }
         let class = classify(path, &data);
-        self.blobs.push(Blob { data, class, path: path.to_string() });
+        self.blobs.push(Blob {
+            data,
+            class,
+            path: path.to_string(),
+        });
         let i = self.blobs.len() - 1;
         self.by_hash.insert(h, i);
         i
@@ -130,7 +136,9 @@ fn load_git(b: &mut Builder, repo: &str, nrev: usize, prefix: Option<&str>, max_
     let list = String::from_utf8(git(repo, &["rev-list", "--first-parent", "HEAD"])).unwrap();
     let all: Vec<&str> = list.lines().collect(); // newest first
     let n = all.len();
-    let mut picks: Vec<usize> = (0..nrev.min(n)).map(|i| if nrev <= 1 { 0 } else { (i * (n - 1)) / (nrev - 1) }).collect();
+    let mut picks: Vec<usize> = (0..nrev.min(n))
+        .map(|i| if nrev <= 1 { 0 } else { (i * (n - 1)) / (nrev - 1) })
+        .collect();
     picks.dedup();
     picks.reverse(); // oldest first
     let revs_sel: Vec<String> = picks.iter().map(|&i| all[i].to_string()).collect();
@@ -171,7 +179,14 @@ fn load_git(b: &mut Builder, repo: &str, nrev: usize, prefix: Option<&str>, max_
         per_rev.push(ents);
     }
     // fetch blobs
-    let mut child = Command::new("git").arg("-C").arg(repo).args(["cat-file", "--batch"]).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().expect("git cat-file");
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["cat-file", "--batch"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("git cat-file");
     let mut stdin = child.stdin.take().unwrap();
     let w2 = wanted.clone();
     let writer = std::thread::spawn(move || {
@@ -201,18 +216,36 @@ fn load_git(b: &mut Builder, repo: &str, nrev: usize, prefix: Option<&str>, max_
     }
     writer.join().unwrap();
     let _ = child.wait();
-    let revs = per_rev.into_iter().map(|ents| ents.into_iter().map(|(o, p)| Entry { path: p, blob: oid_blob[&o] }).collect()).collect();
+    let revs = per_rev
+        .into_iter()
+        .map(|ents| {
+            ents.into_iter()
+                .map(|(o, p)| Entry {
+                    path: p,
+                    blob: oid_blob[&o],
+                })
+                .collect()
+        })
+        .collect();
     (revs, revs_sel)
 }
 
 /// SPEC: dir:PATH | dirrevs:PATH | git:PATH[:NREV[:SUBPATH]] | list:FILE
 pub fn load(name: &str, spec: &str, max_blob: usize) -> Corpus {
-    let mut b = Builder { blobs: Vec::new(), by_hash: HashMap::new() };
+    let mut b = Builder {
+        blobs: Vec::new(),
+        by_hash: HashMap::new(),
+    };
     let (kind, rest) = spec.split_once(':').expect("spec kind:arg");
     let revs: Vec<Vec<Entry>> = match kind {
         "dir" => vec![load_dir_rev(&mut b, Path::new(rest))],
         "dirrevs" => {
-            let mut subs: Vec<_> = std::fs::read_dir(rest).unwrap().filter_map(|e| e.ok()).filter(|e| e.path().is_dir()).map(|e| e.path()).collect();
+            let mut subs: Vec<_> = std::fs::read_dir(rest)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().is_dir())
+                .map(|e| e.path())
+                .collect();
             subs.sort();
             subs.iter().map(|d| load_dir_rev(&mut b, d)).collect()
         }
@@ -238,15 +271,21 @@ pub fn load(name: &str, spec: &str, max_blob: usize) -> Corpus {
         }
         _ => panic!("unknown source kind {kind}"),
     };
-    Corpus { name: name.to_string(), revs, blobs: b.blobs }
+    Corpus {
+        name: name.to_string(),
+        revs,
+        blobs: b.blobs,
+    }
 }
 
 impl Corpus {
-    pub fn zone_of(path: &str) -> &str {
-        match path.split_once('/') {
-            Some((z, _)) => z,
-            None => ".",
+    /// Zone = first `depth` directory components of the path ("." for files that sit above that depth).
+    pub fn zone_of(path: &str, depth: usize) -> String {
+        let parts: Vec<&str> = path.split('/').collect();
+        if parts.len() <= depth {
+            return ".".to_string();
         }
+        parts[..depth].join("/")
     }
     pub fn summary(&self) -> serde_json::Value {
         let mut by: HashMap<&str, (usize, u64)> = HashMap::new();
@@ -255,8 +294,16 @@ impl Corpus {
             e.0 += 1;
             e.1 += bl.data.len() as u64;
         }
-        let logical: u64 = self.revs.iter().map(|r| r.iter().map(|e| self.blobs[e.blob].data.len() as u64).sum::<u64>()).sum();
-        let last: u64 = self.revs.last().map(|r| r.iter().map(|e| self.blobs[e.blob].data.len() as u64).sum()).unwrap_or(0);
+        let logical: u64 = self
+            .revs
+            .iter()
+            .map(|r| r.iter().map(|e| self.blobs[e.blob].data.len() as u64).sum::<u64>())
+            .sum();
+        let last: u64 = self
+            .revs
+            .last()
+            .map(|r| r.iter().map(|e| self.blobs[e.blob].data.len() as u64).sum())
+            .unwrap_or(0);
         serde_json::json!({
             "name": self.name, "revisions": self.revs.len(),
             "files_per_rev": self.revs.iter().map(|r| r.len()).collect::<Vec<_>>(),

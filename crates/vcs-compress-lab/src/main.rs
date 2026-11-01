@@ -2,7 +2,7 @@
 //! usage:
 //!   compress-lab synth <ml|sparse|assets> <out-dir> <MiB> [seed]
 //!   compress-lab <codecs|chunking|blocks|info> --name N --source SPEC --out FILE.json [--reps 3] [--cap-mb 64] [--window-mb 16]
-//!                [--threads 8] [--stream-cap-mb 256] [--tmp DIR] [--order path|first-seen] [--max-blob-mb 512]
+//!                [--threads 8] [--stream-cap-mb 256] [--tmp DIR] [--zone-depth 1] [--order path|first-seen] [--max-blob-mb 512]
 //!   SPEC: dir:PATH | dirrevs:PATH | git:PATH[:NREV[:SUBPATH]] | list:FILE
 mod codec;
 mod corpus;
@@ -35,11 +35,26 @@ fn main() {
     eprintln!("loaded in {:.1}s: {}", t.elapsed().as_secs_f64(), c.summary());
     let body = match a[1].as_str() {
         "info" => c.summary(),
-        "codecs" => exp_codecs::run(&c, &exp_codecs::Opts { reps: num("--reps", 3), cap_bytes: num("--cap-mb", 64) << 20, max_file_window: num("--window-mb", 16) << 20 }),
-        "chunking" => exp_chunk::run(&c, num("--reps", 3), num("--threads", 8)),
+        "codecs" => exp_codecs::run(
+            &c,
+            &exp_codecs::Opts {
+                reps: num("--reps", 3),
+                cap_bytes: num("--cap-mb", 64) << 20,
+                max_file_window: num("--window-mb", 16) << 20,
+            },
+        ),
+        "chunking" => exp_chunk::run(&c, num("--reps", 3), num("--threads", 8), num("--zone-depth", 1)),
         "blocks" => {
             let tmp = flag("--tmp").unwrap_or_else(|| std::env::temp_dir().to_string_lossy().to_string());
-            exp_blocks::run(&c, &exp_blocks::Opts { reps: num("--reps", 3), stream_cap: num("--stream-cap-mb", 256) << 20, tmp, order_by_path: flag("--order").as_deref() != Some("first-seen") })
+            exp_blocks::run(
+                &c,
+                &exp_blocks::Opts {
+                    reps: num("--reps", 3),
+                    stream_cap: num("--stream-cap-mb", 256) << 20,
+                    tmp,
+                    order_by_path: flag("--order").as_deref() != Some("first-seen"),
+                },
+            )
         }
         x => panic!("unknown subcommand {x}"),
     };

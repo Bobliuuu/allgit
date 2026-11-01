@@ -119,7 +119,13 @@ fn one(data: &[u8], cd: Codec, bs: usize, solid: bool, o: &Opts) -> Value {
         "compress_peak_rss_delta_KiB": cpeak, "decompress_peak_rss_delta_KiB": dpeak,
     });
     // random access: warm (memory) and cold-ish (file, fadvise DONTNEED)
-    let nrd = if solid { 3 } else if bs >= 4 << 20 { 300 } else { 2000 };
+    let nrd = if solid {
+        3
+    } else if bs >= 4 << 20 {
+        300
+    } else {
+        2000
+    };
     let mut rng = Rng(0xC0FFEE ^ bs as u64);
     let mut e = Engine::new(cd);
     for (label, len, count) in [("read4K", 4096usize, nrd), ("read1M", 1 << 20, (nrd / 10).max(3))] {
@@ -176,7 +182,8 @@ fn one(data: &[u8], cd: Codec, bs: usize, solid: bool, o: &Opts) -> Value {
                 buf.resize(comps[bi].len(), 0);
                 f.read_exact_at(&mut buf, offs[bi]).unwrap();
                 let d = e.decompress(&buf, blocks[bi].len());
-                let s0 = off - bi * bs; std::hint::black_box(&d[s0..(s0 + 4096).min(d.len())]);
+                let s0 = off - bi * bs;
+                std::hint::black_box(&d[s0..(s0 + 4096).min(d.len())]);
                 lat.push(t.elapsed().as_secs_f64() * 1e6);
             }
             row["read4K_file_cold_us_median"] = json!(median(&mut lat.clone()));

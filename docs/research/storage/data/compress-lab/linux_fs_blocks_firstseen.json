@@ -1,0 +1,587 @@
+{
+  "classes": [
+    {
+      "class": "source_text",
+      "rows": [
+        {
+          "block_bytes": 65536,
+          "block_index_bytes_model": 49152,
+          "blocks": 4096,
+          "codec": "lz4",
+          "compress_MBps_median": 262.7297749315139,
+          "compress_peak_rss_delta_KiB": 102428,
+          "decompress_MBps_median": 1465.8801913465231,
+          "decompress_peak_rss_delta_KiB": 0,
+          "physical_bytes": 108839918,
+          "ratio": 2.4662969426345946,
+          "read1M": {
+            "compressed_bytes_fetched_mean": 452467.85,
+            "read_amplification_vs_requested": 0.43150696754455564,
+            "reads": 200,
+            "warm_us_median": 794.187,
+            "warm_us_p99": 1112.154
+          },
+          "read4K": {
+            "compressed_bytes_fetched_mean": 28497.6045,
+            "read_amplification_vs_requested": 6.957422973632813,
+            "reads": 2000,
+            "warm_us_median": 45.271,
+            "warm_us_p99": 93.383
+          },
+          "read4K_file_cold_us_median": 133.053,
+          "read4K_file_cold_us_p99": 197.813,
+          "reps": 3
+        },
+        {
+          "block_bytes": 262144,
+          "block_index_bytes_model": 12288,
+          "blocks": 1024,
+          "codec": "lz4",
+          "compress_MBps_median": 258.638113862833,
+          "compress_peak_rss_delta_KiB": 0,
+          "decompress_MBps_median": 887.4719120802549,
+          "decompress_peak_rss_delta_KiB": 0,
+          "physical_bytes": 104721489,
+          "ratio": 2.56329010944449,
+          "read1M": {
+            "compressed_bytes_fetched_mean": 510942.45,
+            "read_amplification_vs_requested": 0.4872726917266846,
+            "reads": 200,
+            "warm_us_median": 956.109,
+            "warm_us_p99": 4176.108
+          },
+          "read4K": {
+            "compressed_bytes_fetched_mean": 104051.031,
+            "read_amplification_vs_requested": 25.403083740234376,
+            "reads": 2000,
+            "warm_us_median": 179.543,
+            "warm_us_p99": 357.647
+          },
+          "read4K_file_cold_us_median": 337.307,
+          "read4K_file_cold_us_p99": 516.721,
+          "reps": 3
+        },
+        {
+          "block_bytes": 1048576,
+          "block_index_bytes_model": 3072,
+          "blocks": 256,
+          "codec": "lz4",
+          "compress_MBps_median": 213.6935400211734,
+          "compress_peak_rss_delta_KiB": 0,
+          "decompress_MBps_median": 1394.9567153309015,
+          "decompress_peak_rss_delta_KiB": 0,
+          "physical_bytes": 103684322,
+          "ratio": 2.5889310150477716,
+          "read1M": {
+            "compressed_bytes_fetched_mean": 808849.03,
+            "read_amplification_vs_requested": 0.7713785457611084,
+            "reads": 200,
+            "warm_us_median": 1516.962,
+            "warm_us_p99": 1833.129
+          },
+          "read4K": {
+            "compressed_bytes_fetched_mean": 405970.5295,
+            "read_amplification_vs_requested": 99.11389880371094,
+            "reads": 2000,
+            "warm_us_median": 729.224,
+            "warm_us_p99": 882.498
+          },
+          "read4K_file_cold_us_median": 1037.4920000000002,
+          "read4K_file_cold_us_p99": 1623.4450000000002,
+          "reps": 3
+        },
+        {
+          "block_bytes": 4194304,
+          "block_index_bytes_model": 768,
+          "blocks": 64,
+          "codec": "lz4",
+          "compress_MBps_median": 171.91420873523467,
+          "compress_peak_rss_delta_KiB": 3160,
+          "decompress_MBps_median": 1413.7266803073499,
+          "decompress_peak_rss_delta_KiB": 0,
+          "physical_bytes": 103438118,
+          "ratio": 2.595093203455229,
+          "read1M": {
+            "compressed_bytes_fetched_mean": 2012034.4333333333,
+            "read_amplification_vs_requested": 1.9188255627950033,
+            "reads": 30,
+            "warm_us_median": 3047.984,
+            "warm_us_p99": 6909.026000000001
+          },
+          "read4K": {
+            "compressed_bytes_fetched_mean": 1611926.2533333334,
+            "read_amplification_vs_requested": 393.53668294270835,
+            "reads": 300,
+            "warm_us_median": 2916.622,
+            "warm_us_p99": 3076.965
+          },
+          "read4K_file_cold_us_median": 4699.739,
+          "read4K_file_cold_us_p99": 5852.834000000001,
+          "reps": 3
+        },
+        {
+          "block_bytes": 16777216,
+          "block_index_bytes_model": 192,
+          "blocks": 16,
+          "codec": "lz4",
+          "compress_MBps_median": 258.23780207882663,
+          "compress_peak_rss_delta_KiB": 12948,
+          "decompress_MBps_median": 1384.8166749223128,
+          "decompress_peak_rss_delta_KiB": 16256,
+          "physical_bytes": 103377619,
+          "ratio": 2.5966119126810225,
+          "read1M": {
+            "compressed_bytes_fetched_mean": 7299984.266666667,
+            "read_amplification_vs_requested": 6.9618075052897135,
+            "reads": 30,
+            "warm_us_median": 11695.707,
+            "warm_us_p99": 23605.346999999998
+          },
+          "read4K": {
+            "compressed_bytes_fetched_mean": 6466395.74,
+            "read_amplification_vs_requested": 1578.7098974609376,
+            "reads": 300,
+            "warm_us_median": 11659.655999999999,
+            "warm_us_p99": 13817.421999999999
+          },
+          "read4K_file_cold_us_median": 15606.578,
+          "read4K_file_cold_us_p99": 18472.461,
+          "reps": 3
+        },
+        {
+          "block_bytes": "solid",
+          "block_index_bytes_model": 12,
+          "blocks": 1,
+          "codec": "lz4",
+          "compress_MBps_median": 259.22649192969106,
+          "compress_peak_rss_delta_KiB": 100940,
+          "decompress_MBps_median": 764.7300060209141,
+          "decompress_peak_rss_delta_KiB": 261460,
+          "physical_bytes": 103358622,
+          "ratio": 2.5970891620439756,
+          "read1M": {
+            "compressed_bytes_fetched_mean": 103358622.0,
+            "read_amplification_vs_requested": 98.57046318054199,
+            "reads": 3,
+            "warm_us_median": 352672.663,
+            "warm_us_p99": 358082.91799999995
+          },
+          "read4K": {
+            "compressed_bytes_fetched_mean": 103358622.0,
+            "read_amplification_vs_requested": 25234.03857421875,
+            "reads": 3,
+            "warm_us_median": 357330.39300000004,
+            "warm_us_p99": 358121.85000000003
+          },
+          "reps": 3
+        },
+        {
+          "block_bytes": 65536,
+          "block_index_bytes_model": 49152,
+          "blocks": 4096,
+          "codec": "zstd3",
+          "compress_MBps_median": 139.4348091854613,
+          "compress_peak_rss_delta_KiB": 47172,
+          "decompress_MBps_median": 863.1745883878432,
+          "decompress_peak_rss_delta_KiB": 136,
+          "physical_bytes": 72470478,
+          "ratio": 3.7040125083761692,
+          "read1M": {
+            "compressed_bytes_fetched_mean": 302171.72,
+            "read_amplification_vs_requested": 0.28817340850830075,
+            "reads": 200,
+            "warm_us_median": 1288.567,
+            "warm_us_p99": 1916.29
+          },
+          "read4K": {
+            "compressed_bytes_fetched_mean": 18984.617,
+            "read_amplification_vs_requested": 4.634916259765625,
+            "reads": 2000,
+            "warm_us_median": 74.912,
+            "warm_us_p99": 160.062
+          },
+          "read4K_file_cold_us_median": 164.104,
+          "read4K_file_cold_us_p99": 243.986,
+          "reps": 3
+        },
+        {
+          "block_bytes": 262144,
+          "block_index_bytes_model": 12288,
+          "blocks": 1024,
+          "codec": "zstd3",
+          "compress_MBps_median": 133.58720002752807,
+          "compress_peak_rss_delta_KiB": 42184,
+          "decompress_MBps_median": 860.5752772740757,
+          "decompress_peak_rss_delta_KiB": 0,
+          "physical_bytes": 67171400,
+          "ratio": 3.996217988608247,
+          "read1M": {
+            "compressed_bytes_fetched_mean": 327926.105,
+            "read_amplification_vs_requested": 0.31273470401763914,
+            "reads": 200,
+            "warm_us_median": 1522.952,
+            "warm_us_p99": 1657.795
+          },
+          "read4K": {
+            "compressed_bytes_fetched_mean": 66741.99,
+            "read_amplification_vs_requested": 16.29443115234375,
+            "reads": 2000,
+            "warm_us_median": 301.06600000000003,
+            "warm_us_p99": 597.802
+          },
+          "read4K_file_cold_us_median": 420.12899999999996,
+          "read4K_file_cold_us_p99": 478.56899999999996,
+          "reps": 3
+        },
+        {
+          "block_bytes": 1048576,
+          "block_index_bytes_model": 3072,
+          "blocks": 256,
+          "codec": "zstd3",
+          "compress_MBps_median": 141.83220807004403,
+          "compress_peak_rss_delta_KiB": 38528,
+          "decompress_MBps_median": 992.9412874333327,
+          "decompress_peak_rss_delta_KiB": 0,
+          "physical_bytes": 63682174,
+          "ratio": 4.215175772736653,
+          "read1M": {
+            "compressed_bytes_fetched_mean": 494219.325,
+            "read_amplification_vs_requested": 0.4713242769241333,
+            "reads": 200,
+            "warm_us_median": 2216.167,
+            "warm_us_p99": 3484.153
+          },
+          "read4K": {
+            "compressed_bytes_fetched_mean": 249504.7375,
+            "read_amplification_vs_requested": 60.914242553710935,
+            "reads": 2000,
+            "warm_us_median": 1064.903,
+            "warm_us_p99": 1640.785
+          },
+          "read4K_file_cold_us_median": 1338.278,
+          "read4K_file_cold_us_p99": 6342.833,
+          "reps": 3
+        },
+        {
+          "block_bytes": 4194304,
+          "block_index_bytes_model": 768,
+          "blocks": 64,
+          "codec": "zstd3",
+          "compress_MBps_median": 140.04820029050168,
+          "compress_peak_rss_delta_KiB": 38540,
+          "decompress_MBps_median": 1003.8569115901018,
+          "decompress_peak_rss_delta_KiB": 3968,
+          "physical_bytes": 62294609,
+          "ratio": 4.309065604697832,
+          "read1M": {
+            "compressed_bytes_fetched_mean": 1191348.5666666667,
+            "read_amplification_vs_requested": 1.136158529917399,
+            "reads": 30,
+            "warm_us_median": 4270.841,
+            "warm_us_p99": 8689.314
+          },
+          "read4K": {
+            "compressed_bytes_fetched_mean": 970293.2566666667,
+            "read_amplification_vs_requested": 236.88800211588543,
+            "reads": 300,
+            "warm_us_median": 4180.528,
+            "warm_us_p99": 4645.038
+          },
+          "read4K_file_cold_us_median": 4876.063,
+          "read4K_file_cold_us_p99": 6716.912,
+          "reps": 3
+        },
+        {
+          "block_bytes": 16777216,
+          "block_index_bytes_model": 192,
+          "blocks": 16,
+          "codec": "zstd3",
+          "compress_MBps_median": 141.33742752853288,
+          "compress_peak_rss_delta_KiB": 38412,
+          "decompress_MBps_median": 982.3613528030226,
+          "decompress_peak_rss_delta_KiB": 16256,
+          "physical_bytes": 62018163,
+          "ratio": 4.328273267300742,
+          "read1M": {
+            "compressed_bytes_fetched_mean": 4377339.833333333,
+            "read_amplification_vs_requested": 4.174556573232015,
+            "reads": 30,
+            "warm_us_median": 17169.831,
+            "warm_us_p99": 34600.449
+          },
+          "read4K": {
+            "compressed_bytes_fetched_mean": 3878707.9833333334,
+            "read_amplification_vs_requested": 946.9501912434896,
+            "reads": 300,
+            "warm_us_median": 17060.199,
+            "warm_us_p99": 20581.135000000002
+          },
+          "read4K_file_cold_us_median": 20021.602,
+          "read4K_file_cold_us_p99": 21201.247,
+          "reps": 3
+        },
+        {
+          "block_bytes": "solid",
+          "block_index_bytes_model": 12,
+          "blocks": 1,
+          "codec": "zstd3",
+          "compress_MBps_median": 140.87606527151465,
+          "compress_peak_rss_delta_KiB": 60428,
+          "decompress_MBps_median": 599.7026892248058,
+          "decompress_peak_rss_delta_KiB": 261112,
+          "physical_bytes": 61874446,
+          "ratio": 4.338326633259876,
+          "read1M": {
+            "compressed_bytes_fetched_mean": 61874446.0,
+            "read_amplification_vs_requested": 59.00806999206543,
+            "reads": 3,
+            "warm_us_median": 466259.529,
+            "warm_us_p99": 468179.12
+          },
+          "read4K": {
+            "compressed_bytes_fetched_mean": 61874446.0,
+            "read_amplification_vs_requested": 15106.06591796875,
+            "reads": 3,
+            "warm_us_median": 469065.098,
+            "warm_us_p99": 474558.834
+          },
+          "reps": 3
+        },
+        {
+          "block_bytes": 65536,
+          "block_index_bytes_model": 49152,
+          "blocks": 4096,
+          "codec": "zstd9",
+          "compress_MBps_median": 36.98216089165025,
+          "compress_peak_rss_delta_KiB": 41092,
+          "decompress_MBps_median": 930.7286307057163,
+          "decompress_peak_rss_delta_KiB": 0,
+          "physical_bytes": 65036721,
+          "ratio": 4.127384543264412,
+          "read1M": {
+            "compressed_bytes_fetched_mean": 271338.785,
+            "read_amplification_vs_requested": 0.2587688302993774,
+            "reads": 200,
+            "warm_us_median": 1236.736,
+            "warm_us_p99": 1334.598
+          },
+          "read4K": {
+            "compressed_bytes_fetched_mean": 17043.2675,
+            "read_amplification_vs_requested": 4.160953979492188,
+            "reads": 2000,
+            "warm_us_median": 71.67099999999999,
+            "warm_us_p99": 150.494
+          },
+          "read4K_file_cold_us_median": 152.274,
+          "read4K_file_cold_us_p99": 331.02799999999996,
+          "reps": 1
+        },
+        {
+          "block_bytes": 262144,
+          "block_index_bytes_model": 12288,
+          "blocks": 1024,
+          "codec": "zstd9",
+          "compress_MBps_median": 38.20935960171642,
+          "compress_peak_rss_delta_KiB": 37668,
+          "decompress_MBps_median": 1053.0405397307718,
+          "decompress_peak_rss_delta_KiB": 0,
+          "physical_bytes": 58665554,
+          "ratio": 4.575624684290887,
+          "read1M": {
+            "compressed_bytes_fetched_mean": 286430.785,
+            "read_amplification_vs_requested": 0.27316168308258054,
+            "reads": 200,
+            "warm_us_median": 1287.1270000000002,
+            "warm_us_p99": 1391.9089999999999
+          },
+          "read4K": {
+            "compressed_bytes_fetched_mean": 58310.613,
+            "read_amplification_vs_requested": 14.235989501953124,
+            "reads": 2000,
+            "warm_us_median": 251.89500000000004,
+            "warm_us_p99": 494.62
+          },
+          "read4K_file_cold_us_median": 383.398,
+          "read4K_file_cold_us_p99": 460.87899999999996,
+          "reps": 1
+        },
+        {
+          "block_bytes": 1048576,
+          "block_index_bytes_model": 3072,
+          "blocks": 256,
+          "codec": "zstd9",
+          "compress_MBps_median": 40.02444129929048,
+          "compress_peak_rss_delta_KiB": 35340,
+          "decompress_MBps_median": 1022.2477296277335,
+          "decompress_peak_rss_delta_KiB": 0,
+          "physical_bytes": 55091470,
+          "ratio": 4.872470402405309,
+          "read1M": {
+            "compressed_bytes_fetched_mean": 427325.415,
+            "read_amplification_vs_requested": 0.40752927303314207,
+            "reads": 200,
+            "warm_us_median": 1972.9019999999998,
+            "warm_us_p99": 4163.689
+          },
+          "read4K": {
+            "compressed_bytes_fetched_mean": 215771.359,
+            "read_amplification_vs_requested": 52.678554443359374,
+            "reads": 2000,
+            "warm_us_median": 950.9,
+            "warm_us_p99": 2339.8289999999997
+          },
+          "read4K_file_cold_us_median": 1235.8670000000002,
+          "read4K_file_cold_us_p99": 20770.167999999998,
+          "reps": 1
+        },
+        {
+          "block_bytes": 4194304,
+          "block_index_bytes_model": 768,
+          "blocks": 64,
+          "codec": "zstd9",
+          "compress_MBps_median": 40.265653138999674,
+          "compress_peak_rss_delta_KiB": 34176,
+          "decompress_MBps_median": 1049.6678369777976,
+          "decompress_peak_rss_delta_KiB": 0,
+          "physical_bytes": 52729814,
+          "ratio": 5.090697968325851,
+          "read1M": {
+            "compressed_bytes_fetched_mean": 1007117.6,
+            "read_amplification_vs_requested": 0.9604621887207031,
+            "reads": 30,
+            "warm_us_median": 3780.77,
+            "warm_us_p99": 7740.3330000000005
+          },
+          "read4K": {
+            "compressed_bytes_fetched_mean": 821009.3333333334,
+            "read_amplification_vs_requested": 200.44173177083334,
+            "reads": 300,
+            "warm_us_median": 3771.2000000000003,
+            "warm_us_p99": 10017.051000000001
+          },
+          "read4K_file_cold_us_median": 4357.072,
+          "read4K_file_cold_us_p99": 5372.3820000000005,
+          "reps": 1
+        },
+        {
+          "block_bytes": 16777216,
+          "block_index_bytes_model": 192,
+          "blocks": 16,
+          "codec": "zstd9",
+          "compress_MBps_median": 42.24007345242905,
+          "compress_peak_rss_delta_KiB": 35216,
+          "decompress_MBps_median": 1091.4386399687326,
+          "decompress_peak_rss_delta_KiB": 16384,
+          "physical_bytes": 51970744,
+          "ratio": 5.165051264226658,
+          "read1M": {
+            "compressed_bytes_fetched_mean": 3667890.6,
+            "read_amplification_vs_requested": 3.4979730606079102,
+            "reads": 30,
+            "warm_us_median": 15375.874,
+            "warm_us_p99": 32069.516
+          },
+          "read4K": {
+            "compressed_bytes_fetched_mean": 3251082.0433333335,
+            "read_amplification_vs_requested": 793.7212019856771,
+            "reads": 300,
+            "warm_us_median": 15058.458,
+            "warm_us_p99": 18329.707000000002
+          },
+          "read4K_file_cold_us_median": 18128.563000000002,
+          "read4K_file_cold_us_p99": 21544.604,
+          "reps": 1
+        },
+        {
+          "block_bytes": "solid",
+          "block_index_bytes_model": 12,
+          "blocks": 1,
+          "codec": "zstd9",
+          "compress_MBps_median": 38.25251321184345,
+          "compress_peak_rss_delta_KiB": 50452,
+          "decompress_MBps_median": 650.3423825759588,
+          "decompress_peak_rss_delta_KiB": 259936,
+          "physical_bytes": 51659360,
+          "ratio": 5.196184331358344,
+          "read1M": {
+            "compressed_bytes_fetched_mean": 51659360.0,
+            "read_amplification_vs_requested": 49.266204833984375,
+            "reads": 3,
+            "warm_us_median": 407814.87700000004,
+            "warm_us_p99": 409014.032
+          },
+          "read4K": {
+            "compressed_bytes_fetched_mean": 51659360.0,
+            "read_amplification_vs_requested": 12612.1484375,
+            "reads": 3,
+            "warm_us_median": 407208.86299999995,
+            "warm_us_p99": 408436.01
+          },
+          "reps": 1
+        }
+      ],
+      "stream_bytes": 268431557
+    }
+  ],
+  "dataset": {
+    "by_class": {
+      "source_text": {
+        "blobs": 16267,
+        "bytes": 330319171
+      }
+    },
+    "files_per_rev": [
+      978,
+      1137,
+      1289,
+      1293,
+      1480,
+      1674,
+      1679,
+      1775,
+      1869,
+      2107,
+      2453,
+      2365
+    ],
+    "logical_bytes_all_revisions": 370775907,
+    "logical_bytes_last_revision": 48376238,
+    "name": "linux_fs",
+    "revisions": 12,
+    "unique_blobs": 16267,
+    "unique_bytes": 330319171
+  },
+  "experiment": "blocks",
+  "machine": {
+    "args": [
+      "crates/vcs-compress-lab/target/release/compress-lab",
+      "blocks",
+      "--name",
+      "linux_fs",
+      "--source",
+      "git:/home/ubuntu/rt/lab_data/repos/linux:12:fs",
+      "--order",
+      "first-seen",
+      "--tmp",
+      "/tmp",
+      "--out",
+      "/home/ubuntu/rt/lab_out/linux_fs_blocks_firstseen.json"
+    ],
+    "cpu": "AMD EPYC 7J13 64-Core Processor",
+    "crates": {
+      "blake3": "1",
+      "brotli": "9",
+      "fastcdc": "5",
+      "lz4_flex": "0.14",
+      "zstd": "0.14"
+    },
+    "kernel": "6.8.0-1046-nvidia",
+    "loadavg_at_start": "26.13 21.95 16.43 17/744 3219085",
+    "memtotal": "MemTotal:       226763280 kB",
+    "nproc": 30,
+    "zstd": "1.5.7"
+  },
+  "metadata_model": "12 bytes per block (u64 offset + u32 length)",
+  "source_spec": "git:/home/ubuntu/rt/lab_data/repos/linux:12:fs",
+  "stream_order": "first-seen (revision order)"
+}
