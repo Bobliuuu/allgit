@@ -38,6 +38,7 @@ Commands:
   tag          List tags of the current zone, create one (lightweight, or annotated with -m), or delete one with -d
   show         Show a commit (default HEAD) with its diff against the first parent
   blame        Attribute each line of a file to a commit, following first parents
+  hook         List, install or run client-side hooks (.vcs/hooks/, see docs/hooks.md)
   bisect       Binary-search a zone's history for the commit that introduced a bug
   grep         Search tracked files (working tree, or a revision) for a regular expression
   describe     Name a commit after the nearest tag behind it
@@ -79,6 +80,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
   -V, --version        Print version
 ```
@@ -97,6 +99,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -114,6 +117,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -132,6 +136,7 @@ Options:
       --staged         Restore the index from HEAD instead of the working tree from the index
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -151,6 +156,7 @@ Options:
   -f, --force          Remove even files with uncommitted changes
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -170,6 +176,7 @@ Options:
   -f, --force          Overwrite an existing destination
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -185,6 +192,7 @@ Options:
   -m, --message <MESSAGE>  Commit message (omit to write it in core.editor / $EDITOR)
       --json               Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>      PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks           Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help               Print help
 ```
 
@@ -206,6 +214,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -223,6 +232,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -242,6 +252,7 @@ Options:
       --user           
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -260,6 +271,7 @@ Options:
       --user           
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -274,6 +286,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -288,6 +301,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -304,6 +318,7 @@ Options:
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --stat           Per-file added/deleted line counts instead of the patch
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -321,6 +336,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -340,6 +356,7 @@ Options:
       --branch <BRANCH>  Branch of the root zone to import onto [default: main]
       --json             Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>    PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks         Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help             Print help
 ```
 
@@ -360,6 +377,7 @@ Options:
   -o, --output <OUTPUT>  
       --ca-pem <FILE>    PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --full             Export the whole branch again and reset the export table (default: only commits not yet exported)
+      --no-hooks         Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
       --onto-origin      Reference commits that came from import-git by their original Git SHA (target = the origin repo)
   -h, --help             Print help
 ```
@@ -383,6 +401,7 @@ Options:
       --ca-pem <FILE>    PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --oneline          One line per commit: short id and subject
       --graph            Draw the commit graph with ASCII lanes
+      --no-hooks         Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
       --author <AUTHOR>  Only commits whose author name or email contains this text (case-insensitive)
       --color <COLOR>    When to colour output [default: auto] [possible values: auto, always, never]
   -h, --help             Print help
@@ -404,6 +423,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -421,6 +441,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -436,6 +457,7 @@ Options:
       --dir <DIR>      Write vcs.1 and vcs-<command>.1 into this directory instead of printing
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -456,6 +478,7 @@ Options:
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --force          With --delete: delete even if its commits are not reachable from another branch or snapshot
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -477,6 +500,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -492,6 +516,7 @@ Options:
   -m, --message <MESSAGE>  
       --json               Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>      PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks           Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help               Print help
 ```
 
@@ -509,6 +534,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -523,6 +549,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -540,6 +567,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -562,6 +590,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -580,6 +609,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -598,6 +628,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -616,6 +647,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -630,6 +662,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -647,6 +680,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -669,6 +703,7 @@ Options:
       --ca-pem <FILE>          PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --signature <SIGNATURE>  Opaque signature text stored in an annotated tag (not verified)
   -d, --delete                 Delete the named tag
+      --no-hooks               Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help                   Print help
 ```
 
@@ -687,6 +722,7 @@ Options:
       --zone <ZONE>    
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -705,6 +741,82 @@ Options:
       --rev <REV>      Revision to blame at (default: HEAD of the file's zone)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+## `vcs hook`
+
+```text
+List, install or run client-side hooks (.vcs/hooks/, see docs/hooks.md)
+
+Usage: vcs hook [OPTIONS] <COMMAND>
+
+Commands:
+  list     Show which hooks are installed and whether they would run
+  run      Run a hook by hand with the documented environment (ignores --no-hooks); extra arguments are passed through
+  install  Copy an executable into .vcs/hooks/<name> (mode 755)
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+### `vcs hook list`
+
+```text
+Show which hooks are installed and whether they would run
+
+Usage: vcs hook list [OPTIONS]
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+#### `vcs hook run`
+
+```text
+Run a hook by hand with the documented environment (ignores --no-hooks); extra arguments are passed through
+
+Usage: vcs hook run [OPTIONS] <NAME> [ARGS]...
+
+Arguments:
+  <NAME>     
+  [ARGS]...  
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+##### `vcs hook install`
+
+```text
+Copy an executable into .vcs/hooks/<name> (mode 755)
+
+Usage: vcs hook install [OPTIONS] <NAME> <FILE>
+
+Arguments:
+  <NAME>  
+  <FILE>  
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+  -f, --force          Replace an installed hook
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -728,6 +840,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -746,6 +859,7 @@ Options:
       --zone <ZONE>    
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -763,6 +877,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -780,6 +895,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -797,6 +913,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -811,6 +928,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -828,6 +946,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -851,6 +970,7 @@ Options:
       --ca-pem <FILE>       PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
   -w, --word                Match whole words only
   -l, --files-with-matches  Print only the names of files with a match
+      --no-hooks            Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -c, --count               Print only the number of matching lines per file
   -F, --fixed               Treat the pattern as a literal string
   -h, --help                Print help
@@ -873,6 +993,7 @@ Options:
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --zone <ZONE>    
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -893,6 +1014,7 @@ Options:
       --json             Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>    PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --prefix <PREFIX>  Prepend this directory prefix to every path (e.g. `proj-1.0/`)
+      --no-hooks         Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help             Print help
 ```
 
@@ -913,6 +1035,7 @@ Options:
       --show-toplevel  Print the absolute path of the working tree root instead
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --zone <ZONE>    Zone (default: the zone containing the current directory)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -932,6 +1055,7 @@ Options:
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --rev <REV>      List the files of this revision instead of the working tree's tracked files
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -952,6 +1076,7 @@ Options:
   -s                   Print the object's size in bytes
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
   -p                   Print the content (file bytes; for a commit its header and message)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
       --zone <ZONE>    
   -h, --help           Print help
 ```
@@ -973,6 +1098,7 @@ Options:
   -n, --numbered       Sort by number of commits instead of by name
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
   -e, --email          Show the author's email
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
       --zone <ZONE>    
   -h, --help           Print help
 ```
@@ -992,6 +1118,7 @@ Options:
       --zone <ZONE>    
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1018,6 +1145,8 @@ Options:
           Abandon the in-progress merge and restore the pre-merge state
       --ca-pem <FILE>
           PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks
+          Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
       --no-structural
           Do not use the structural Rust merge (only matters when built with `--features structural`)
       --renames
@@ -1047,6 +1176,7 @@ Options:
       --zone <ZONE>    Zone (default: the zone containing the current directory)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1065,6 +1195,7 @@ Options:
       --zone <ZONE>    Zone (default: the zone containing the current directory)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1091,6 +1222,8 @@ Options:
           Abandon the in-progress rebase and restore the original branch
       --ca-pem <FILE>
           PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks
+          Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
       --no-structural
           Do not use the structural Rust merge (only matters when built with `--features structural`)
       --renames
@@ -1122,6 +1255,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1136,6 +1270,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1150,6 +1285,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1167,6 +1303,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1188,6 +1325,7 @@ Options:
       --base           Take the common ancestor's version
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --file <FILE>    Take the content of this file
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
       --mark           Accept the hand-edited working-tree file
       --proposal       Apply the assistant's saved proposal for this path (see `vcs merge --assist`)
       --check          Fail while conflicts are unresolved or conflict markers remain in resolved files
@@ -1218,6 +1356,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1236,6 +1375,7 @@ Options:
       --path <PATH>    
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1248,6 +1388,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1263,6 +1404,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1278,6 +1420,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1296,6 +1439,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1314,6 +1458,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1332,6 +1477,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1349,6 +1495,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1367,6 +1514,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1385,6 +1533,7 @@ Options:
       --force          
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1405,6 +1554,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1423,6 +1573,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1437,6 +1588,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1455,6 +1607,7 @@ Options:
       --force          
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1476,6 +1629,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1492,6 +1646,7 @@ Options:
   -m, --message <MESSAGE>  [default: ""]
       --json               Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>      PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks           Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help               Print help
 ```
 
@@ -1507,6 +1662,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1519,6 +1675,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1536,6 +1693,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1555,6 +1713,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1572,6 +1731,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1586,6 +1746,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1604,6 +1765,7 @@ Options:
       --token-stdin    Read the token from stdin instead of prompting
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1621,6 +1783,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1639,6 +1802,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1656,6 +1820,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1676,6 +1841,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1690,6 +1856,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1704,6 +1871,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1718,6 +1886,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1737,6 +1906,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1756,6 +1926,7 @@ Options:
       --since <SINCE>  Leave out everything reachable from this revision; it becomes a prerequisite
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1773,6 +1944,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1793,6 +1965,7 @@ Options:
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --stats          Print the number of remote requests and bytes transferred
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1809,6 +1982,7 @@ Options:
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --repair         First re-upload any object the remote lost beneath objects it still has (checks every reachable object)
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1828,6 +2002,7 @@ Options:
       --json                     Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --reason <REASON>          [default: ""]
       --ca-pem <FILE>            PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks                 Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help                     Print help
 ```
 
@@ -1846,6 +2021,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1860,6 +2036,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1879,6 +2056,7 @@ Options:
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --stats          Print the number of remote requests and bytes transferred
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1893,6 +2071,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1907,6 +2086,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1923,6 +2103,7 @@ Options:
       --format <FORMAT>  Pack format: v2 (zstd, fanout index; the default for new packs) or v1 (rollback for older binaries)
       --json             Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>    PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks         Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help             Print help
 ```
 
@@ -1940,6 +2121,7 @@ Options:
       --json                     Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>            PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --remote                   Collect the REMOTE (protocol G1, docs/gc.md) instead of the local store. Needs --yes unless --dry-run. Directory (`path` / `file://`) remotes only: S3 and HTTP lack the touch / object-age / clock operations the protocol needs
+      --no-hooks                 Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
       --yes                      Confirm a destructive REMOTE sweep (never needed for --dry-run or local gc)
       --hold-secs <HOLD_SECS>    Remote only: the publishers' maximum hold time in seconds. The grace period must exceed twice this (default 1 hour) [default: 3600]
   -h, --help                     Print help
@@ -1963,6 +2145,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1978,6 +2161,7 @@ Options:
   -n, --limit <LIMIT>  [default: 20]
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -1995,6 +2179,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -2009,6 +2194,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
@@ -2026,5 +2212,6 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```

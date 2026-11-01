@@ -306,3 +306,10 @@ $ vcs status --json
 ```
 
 Next: [chapter 3, branches, merging and undo](03-branches-merging-undo.md).
+
+## Hooks
+
+Put checks in `.vcs/hooks/` (`vcs hook install pre-commit ./lint.sh`): `pre-commit`, `commit-msg`, `post-commit`,
+`pre-publish`, `post-publish`, `pre-merge`, `post-merge`, `post-checkout`, `pre-rebase`. A failing `pre-*` hook aborts
+the command and shows its stderr; `--no-hooks` skips them. Hooks are local, never cloned, run with a scrubbed
+environment and a 60 s timeout. Details: [hooks.md](../hooks.md).
