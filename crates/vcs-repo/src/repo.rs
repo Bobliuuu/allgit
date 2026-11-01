@@ -1375,6 +1375,12 @@ impl Repo {
     /// Commit staged changes in every subscribed zone that has any, as ONE atomic
     /// transaction: all zone branch heads advance together or not at all.
     pub fn commit(&self, message: &str, author: Signature) -> Result<CommitReport> {
+        self.commit_signed(message, author, None)
+    }
+
+    /// Like [`Repo::commit`]; with `signer`, every commit object is passed through it (it returns
+    /// the signed commit, see `vcs_objects::signing::sign_commit`) before it is stored.
+    pub fn commit_signed(&self, message: &str, author: Signature, signer: Option<&dyn Fn(&Commit) -> Commit>) -> Result<CommitReport> {
         if message.trim().is_empty() {
             return msg("empty commit message");
         }
@@ -1424,6 +1430,10 @@ impl Repo {
                 change_id,
                 author: author.clone(),
                 message: message.to_owned(),
+            };
+            let c = match signer {
+                Some(f) => f(&c),
+                None => c,
             };
             let cid = self.store.put(&Object::Commit(c))?;
             updates.push(RefUpdate {

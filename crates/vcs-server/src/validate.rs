@@ -5,7 +5,9 @@
 use crate::auth::{Principal, Role};
 use crate::policy::{Policy, Verdict};
 use std::collections::BTreeSet;
-use vcs_remote::{changed_paths, Backend, Manifest, PublishError};
+use vcs_objects::signing::{self, SigStatus, Trust};
+use vcs_objects::{Object, ObjectId};
+use vcs_remote::{changed_paths, fetch_object, Backend, Manifest, PublishError};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Reject {
@@ -46,6 +48,8 @@ pub struct ValidatorConfig {
     /// Replica clock-skew allowance (ms): locks stay live this long past `expires_at`.
     /// Set to at least twice the largest clock offset between server replicas on one backend.
     pub skew_epsilon_ms: u64,
+    /// Allowed and revoked signing keys, for `require-signed` rules (docs/signing.md).
+    pub signers: Trust,
 }
 
 impl Default for ValidatorConfig {
@@ -54,6 +58,7 @@ impl Default for ValidatorConfig {
             policy: Policy::default(),
             max_lease_ms: DEFAULT_MAX_LEASE_MS,
             skew_epsilon_ms: 0,
+            signers: Trust::default(),
         }
     }
 }
@@ -146,7 +151,7 @@ pub fn validate_and_normalize(
             }
             policy_zone(cfg, who, &k.0)?;
             if let Some(n) = n {
-                changed_heads.push((k.0.clone(), o, n));
+                changed_heads.push((k.0.clone(), k.1.clone(), o, n));
             }
         }
     }
@@ -202,7 +207,10 @@ pub fn validate_and_normalize(
     }
 
     // Net changed paths vs. the locks that will be in force after this write.
-    for (zone, old, newh) in changed_heads {
+    for (zone, branch, old, newh) in changed_heads {
+        if cfg.policy.requires_signed(&zone, &branch) {
+            check_signed(backend, &cfg.signers, &zone, &branch, old, newh)?;
+        }
         let zone_locked = new.locks.iter().any(|((z, _), l)| *z == zone && live(l.expires_at, now));
         if !zone_locked && cfg.policy.is_empty() {
             continue;
@@ -261,4 +269,70 @@ fn policy_zone(cfg: &ValidatorConfig, who: &Principal, zone: &str) -> Result<(),
         "policy: principal {} has no allow rule for zone {zone} (deny-by-default)",
         who.name
     )))
+}
+
+/// Most commits walked on either side while checking signatures; beyond it the publish is refused
+/// rather than letting one request make the server read an unbounded history.
+const MAX_SIGNED_WALK: usize = 100_000;
+
+fn commit_of(backend: &dyn Backend, id: &ObjectId) -> Result<vcs_objects::Commit, Reject> {
+    match fetch_object(backend, id) {
+        Ok(Object::Commit(c)) => Ok(c),
+        Ok(_) => Err(Reject::Invalid(format!("{id} is not a commit"))),
+        Err(PublishError::Backend(b)) => Err(Reject::Unavailable(b.to_string())),
+        Err(e) => Err(Reject::Invalid(format!("cannot read commit {id}: {e}"))),
+    }
+}
+
+/// `require-signed`: every commit reachable from `new` but not from `old` must be validly signed by
+/// an allowed, unrevoked key. Runs inside the manifest CAS validator, so no unsigned history can
+/// become a branch head through this server.
+fn check_signed(
+    backend: &dyn Backend,
+    trust: &Trust,
+    zone: &str,
+    branch: &str,
+    old: Option<ObjectId>,
+    new: ObjectId,
+) -> Result<(), Reject> {
+    let mut have: BTreeSet<ObjectId> = BTreeSet::new();
+    let mut stack: Vec<ObjectId> = old.into_iter().collect();
+    while let Some(id) = stack.pop() {
+        if !have.insert(id) {
+            continue;
+        }
+        if have.len() > MAX_SIGNED_WALK {
+            return Err(Reject::Invalid("require-signed: existing history too large to check".into()));
+        }
+        stack.extend(commit_of(backend, &id)?.parents);
+    }
+    let mut seen: BTreeSet<ObjectId> = BTreeSet::new();
+    let mut stack = vec![new];
+    while let Some(id) = stack.pop() {
+        if have.contains(&id) || !seen.insert(id) {
+            continue;
+        }
+        if seen.len() > MAX_SIGNED_WALK {
+            return Err(Reject::Invalid("require-signed: too many new commits to check".into()));
+        }
+        let c = commit_of(backend, &id)?;
+        match signing::verify_commit(&c, trust) {
+            SigStatus::Good { .. } => {}
+            other => {
+                let why = match other {
+                    SigStatus::Unsigned => "is not signed".to_owned(),
+                    SigStatus::Bad(w) => format!("has an invalid signature ({w})"),
+                    SigStatus::UnknownKey { fingerprint } => format!("is signed by a key that is not allowed ({fingerprint})"),
+                    SigStatus::Revoked { fingerprint } => format!("is signed by a revoked key ({fingerprint})"),
+                    SigStatus::Good { .. } => unreachable!(),
+                };
+                return Err(Reject::Forbidden(format!(
+                    "policy require-signed: commit {} {why}; {zone}/{branch} only accepts commits signed by an allowed signer",
+                    id.short()
+                )));
+            }
+        }
+        stack.extend(c.parents);
+    }
+    Ok(())
 }

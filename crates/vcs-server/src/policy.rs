@@ -20,6 +20,12 @@
 //! server enforces this on object GET/HEAD/range and list (docs/server.md "Read policy" states
 //! what this cannot hide: the manifest and object ids stay visible).
 //!
+//! **Signed branches**: `require-signed <zone|*> <branch-glob>` (three fields). A publish that moves
+//! a matching branch head is refused unless every commit new to the remote (not an ancestor of the
+//! branch's current head) carries a valid Ed25519 signature by a key in the server's allowed-signers
+//! file and not in its revoked list (docs/signing.md). It applies to everyone, admins included, and
+//! does not switch writes to deny-by-default.
+//!
 //! `require-lock`: a change to a path matching the glob is refused unless the writer holds a
 //! live lock on exactly that path in the resulting manifest, so binary assets cannot be
 //! overwritten blind. Locks are validated by the existing lock logic; this rule only demands
@@ -36,6 +42,8 @@ pub enum Effect {
     DenyRead,
     /// `shelve-read <reader|*> <owner|*> **`: the reader may read the owner's shelves.
     ShelveRead,
+    /// `require-signed <zone> <branch-glob>`: stored with principal `*`, glob = branch glob.
+    RequireSigned,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,6 +85,18 @@ impl Policy {
             }
             let f: Vec<&str> = line.split_whitespace().collect();
             let err = |m: &str| format!("policy line {}: {m}", n + 1);
+            if f.first() == Some(&"require-signed") {
+                if f.len() != 3 || f[2].is_empty() {
+                    return Err(err("expected `require-signed <zone|*> <branch-glob>`"));
+                }
+                rules.push(Rule {
+                    effect: Effect::RequireSigned,
+                    principal: "*".into(),
+                    zone: f[1].to_owned(),
+                    glob: f[2].to_owned(),
+                });
+                continue;
+            }
             if f.len() != 4 {
                 return Err(err(
                     "expected `<allow|deny|require-lock|allow-read|deny-read|shelve-read> <principal|*> <zone|*> <glob>`",
@@ -118,7 +138,14 @@ impl Policy {
     pub fn is_empty(&self) -> bool {
         self.rules
             .iter()
-            .all(|r| matches!(r.effect, Effect::AllowRead | Effect::DenyRead | Effect::ShelveRead))
+            .all(|r| matches!(r.effect, Effect::AllowRead | Effect::DenyRead | Effect::ShelveRead | Effect::RequireSigned))
+    }
+
+    /// Must new commits published to `zone`/`branch` be signed?
+    pub fn requires_signed(&self, zone: &str, branch: &str) -> bool {
+        self.rules
+            .iter()
+            .any(|r| r.effect == Effect::RequireSigned && (r.zone == "*" || r.zone == zone) && glob_match(&r.glob, branch))
     }
 
     /// Does any read rule name this principal (or `*`)? Only then are its reads checked at all.
@@ -262,6 +289,18 @@ mod tests {
         assert!(p.is_empty());
         assert!(!p.read_restricted("bob"));
         assert!(Policy::parse("shelve-read bob alice src/**").is_err());
+    }
+
+    #[test]
+    fn require_signed_rules() {
+        let p = Policy::parse("require-signed code main\nrequire-signed * release/*\n").unwrap();
+        assert!(p.requires_signed("code", "main"));
+        assert!(!p.requires_signed("art", "main"));
+        assert!(p.requires_signed("art", "release/1"));
+        assert!(!p.requires_signed("code", "dev"));
+        assert!(p.is_empty(), "require-signed alone does not make writes deny-by-default");
+        assert!(Policy::parse("require-signed code").is_err());
+        assert!(Policy::parse("require-signed code main extra").is_err());
     }
 
     #[test]
