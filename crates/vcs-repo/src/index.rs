@@ -86,6 +86,11 @@ impl Index {
         let c = |e: vcs_objects::DecodeError| Error::Corrupt(format!("index: {e}"));
         let written_ns = r.varint().map_err(c)?;
         let n = r.count(36).map_err(c)?;
+        // The file is written in key order, so the common case is a strictly increasing run that
+        // can be validated in one pass and bulk-built. Anything else takes the checked `insert`.
+        let mut sorted: Vec<(String, IndexEntry)> = Vec::with_capacity(n);
+        let mut in_order = true;
+        let mut checked_dir = String::new(); // parent dir whose ancestors are known not to be files
         let mut idx = Index {
             entries: BTreeMap::new(),
             written_ns,
@@ -102,7 +107,32 @@ impl Index {
             let id = r.id().map_err(c)?;
             let size = r.varint().map_err(c)?;
             let mtime_ns = r.varint().map_err(c)?;
-            idx.insert(&p, IndexEntry { id, mode, size, mtime_ns })?;
+            let e = IndexEntry { id, mode, size, mtime_ns };
+            if in_order && sorted.last().is_none_or(|(last, _)| last.as_str() < p.as_str()) {
+                // Any file that is an ancestor of `p` sorts before it, so it is already in `sorted`.
+                let dir = p.rfind('/').map_or("", |i| &p[..i]);
+                if dir != checked_dir {
+                    let mut pos = 0;
+                    while let Some(i) = p[pos..].find('/') {
+                        let anc = &p[..pos + i];
+                        if sorted.binary_search_by(|(k, _)| k.as_str().cmp(anc)).is_ok() {
+                            return Err(Error::Msg(format!("cannot track {p:?}: {anc:?} is tracked as a file")));
+                        }
+                        pos += i + 1;
+                    }
+                    checked_dir = dir.to_owned();
+                }
+                sorted.push((p, e));
+            } else {
+                if in_order {
+                    in_order = false;
+                    idx.entries = std::mem::take(&mut sorted).into_iter().collect();
+                }
+                idx.insert(&p, e)?;
+            }
+        }
+        if in_order {
+            idx.entries = sorted.into_iter().collect();
         }
         r.finish().map_err(c)?;
         Ok(idx)
