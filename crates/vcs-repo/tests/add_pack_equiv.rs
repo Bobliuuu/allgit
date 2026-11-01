@@ -64,7 +64,10 @@ fn bulk_add_equals_small_batches() {
         }
         ra.commit("c", sig()).unwrap();
         rb.commit("c", sig()).unwrap();
-        let (la, lb) = (ra.log(vcs_repo::ROOT_ZONE, None, 5).unwrap(), rb.log(vcs_repo::ROOT_ZONE, None, 5).unwrap());
+        let (la, lb) = (
+            ra.log(vcs_repo::ROOT_ZONE, None, 5).unwrap(),
+            rb.log(vcs_repo::ROOT_ZONE, None, 5).unwrap(),
+        );
         assert_eq!(la[0].1.root, lb[0].1.root, "same tree id, seed {seed}");
         assert!(ra.fsck().unwrap().problems.is_empty(), "{:?}", ra.fsck().unwrap().problems);
         assert!(rb.fsck().unwrap().problems.is_empty());
