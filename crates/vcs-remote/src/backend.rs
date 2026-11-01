@@ -95,7 +95,7 @@ pub fn validate_key(key: &str) -> Result<(), BackendError> {
         || key.starts_with('/')
         || key
             .split('/')
-            .any(|c| c.is_empty() || c == "." || c == ".." || c.contains('\\') || c.contains('\0'));
+            .any(|c| c.is_empty() || c == "." || c == ".." || c.contains('\\') || c.chars().any(char::is_control));
     if bad {
         Err(BackendError::Other(format!("invalid key {key:?}")))
     } else {

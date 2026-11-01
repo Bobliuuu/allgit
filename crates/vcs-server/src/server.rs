@@ -439,6 +439,9 @@ fn dispatch(sh: &Shared, req: &Request, who: &Principal) -> Response {
             if let Err(e) = validate_key(&key) {
                 return backend_err(e);
             }
+            if shadows_manifest(&key) {
+                return text(400, "key is a variant spelling of the manifest key");
+            }
             match m {
                 "GET" | "HEAD" => object_read(sh, req, &key, m == "HEAD"),
                 "PUT" => object_put(sh, req, who, &key),
@@ -448,6 +451,16 @@ fn dispatch(sh: &Shared, req: &Request, who: &Principal) -> Response {
         }
         _ => text(404, "no such route"),
     }
+}
+
+/// Another spelling of the manifest key (case, trailing dots/spaces, `:stream`) that a case-folding or
+/// Windows filesystem backend would resolve to the manifest file, skipping manifest validation.
+fn shadows_manifest(key: &str) -> bool {
+    if key == manifest::KEY {
+        return false;
+    }
+    let base = key.split(':').next().unwrap_or(key).trim_end_matches(['.', ' ']);
+    base.eq_ignore_ascii_case(manifest::KEY)
 }
 
 fn object_read(sh: &Shared, req: &Request, key: &str, head: bool) -> Response {
