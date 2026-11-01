@@ -51,6 +51,31 @@ pub fn validate_branch_name(s: &str) -> Result<(), NameError> {
     }
 }
 
+/// True if `s` names the metadata directory on *some* filesystem: ASCII case variants, but also
+/// what case-/normalization-folding volumes (APFS, HFS+: `.vcſ` with U+017F, fullwidth forms,
+/// zero-width code points that HFS+ ignores) and NTFS (trailing dots/spaces, `:stream` suffixes,
+/// the `VCS~1` short name) resolve to it. Writing `.vcſ/config` on such a volume would overwrite
+/// `.vcs/config`, so the name is refused wherever `.vcs` is.
+pub fn is_meta_alias(s: &str) -> bool {
+    use unicode_normalization::UnicodeNormalization;
+    if s.eq_ignore_ascii_case(META_DIR) {
+        return true;
+    }
+    if s.is_ascii() && !s.contains([':', '~', '.', ' ']) {
+        return false;
+    }
+    let base = s.split(':').next().unwrap_or(s).trim_end_matches(['.', ' ']);
+    let folded: String = base
+        .nfkc()
+        .filter(|c| !matches!(*c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{206a}'..='\u{206f}' | '\u{feff}'))
+        .flat_map(char::to_lowercase)
+        .collect();
+    let short = folded
+        .strip_prefix("vcs~")
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    folded == META_DIR || short
+}
+
 /// One tree-entry name / path component.
 pub fn validate_component(s: &str) -> Result<(), NameError> {
     let bad = s.is_empty()
@@ -58,7 +83,7 @@ pub fn validate_component(s: &str) -> Result<(), NameError> {
         || s == "."
         || s == ".."
         || s.bytes().any(|c| c == b'/' || c == b'\\' || c == 0)
-        || s.eq_ignore_ascii_case(META_DIR);
+        || is_meta_alias(s);
     if bad {
         Err(NameError::Component(s.to_owned()))
     } else {
