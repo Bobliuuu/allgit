@@ -221,3 +221,17 @@ built in: tar is POSIX ustar (paths up to 255 bytes, link targets up to 100), zi
 stored method without zip64. Symlinks stay symlinks, executable files get mode 0755 and others
 0644. Output is reproducible: entries are in path order, owner 0, and every mtime is the newest
 commit time of the revision, so the same revision always gives the same bytes.
+
+## Plumbing: `rev-parse`, `ls-files`, `cat-file`, `shortlog`
+
+All four accept `--json` (one line, `"version": 1`, `"command": <name>`).
+
+- `vcs rev-parse [--short] [--zone Z] <rev>...` prints commit ids; `--show-toplevel` prints the
+  working tree root. JSON: `{"zone", "ids": [...]}` (or `{"toplevel"}`).
+- `vcs ls-files [-s] [--rev R] [<paths>...]` lists tracked files (or those of a revision);
+  `-s` adds `<mode> <id>` (100644, 100755, 120000). JSON: `{"files": [{"path", "mode", "id"}]}`.
+- `vcs cat-file (-t|-s|-p) <object>` where the object is a 64-digit id, a revision (a commit), or
+  `<rev>:<path>` (a file). `-p` prints file bytes, or a commit's zone, tree, parents, author and
+  message. JSON: `{"id", "type", "size", "content"}` (content with `-p`, text only).
+- `vcs shortlog [-s] [-n] [-e] [<branch>] [--zone Z]` groups the zone's reachable history by
+  author name (`-e`: name and email). JSON: `{"zone", "authors": [{"author", "count", "subjects"}]}`.

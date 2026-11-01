@@ -16,6 +16,7 @@ mod generate;
 mod grep;
 mod json;
 mod logfmt;
+mod plumb;
 mod remote;
 
 /// The assist command: `--assist`, else the opt-in `merge.assist` setting (announced, because file
