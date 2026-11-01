@@ -197,7 +197,17 @@ pub struct Publisher<'a> {
     /// Manifest the caller already read (see [`Publisher::with_manifest_hint`]); used at most once.
     manifest_hint: Option<(Manifest, Option<String>)>,
     quirks: GcQuirks,
+    /// How many applied txids this publisher keeps (at most [`MAX_APPLIED`]).
+    applied_window: usize,
+    /// CAS attempts this publisher has lost to a concurrent writer, and whether `run` should
+    /// back off before the next step (set by a lost CAS, cleared by `run`).
+    cas_losses: u32,
+    backoff_due: bool,
+    backoff: bool,
 }
+
+/// Longest randomized wait after a lost manifest CAS; the window doubles per loss up to this.
+pub const CAS_BACKOFF_CAP_MS: u64 = 250;
 
 /// Dependencies of an object (what must exist remotely before it may).
 pub(crate) fn deps(o: &Object) -> Vec<ObjectId> {
@@ -407,6 +417,10 @@ impl<'a> Publisher<'a> {
             hold_ms: DEFAULT_HOLD_MS,
             manifest_hint: None,
             quirks: GcQuirks::default(),
+            applied_window: MAX_APPLIED,
+            cas_losses: 0,
+            backoff_due: false,
+            backoff: true,
         }
     }
     /// Longest time (backend clock) from the start of an attempt to its CAS. A slower publish
@@ -427,6 +441,19 @@ impl<'a> Publisher<'a> {
         self
     }
     #[doc(hidden)]
+    /// Keep only the newest `n` applied txids in the manifest (default and ceiling:
+    /// [`MAX_APPLIED`]; at least 1). A smaller window shrinks the manifest by 32 bytes per entry,
+    /// but a lost-ack retry of this publisher's own transaction is recognised as already applied
+    /// only while fewer than `n` other publishes landed meanwhile. Beyond that the retry is
+    /// rejected as `Diverged` (its `old` heads moved) unless the heads happen to be back at
+    /// their old values (ABA), in which case it applies again. So `n` must exceed
+    /// (publishes per second the remote can absorb) x (longest a publisher keeps retrying);
+    /// see docs/manifest-scaling.md and `tests/model_window.rs`.
+    pub fn with_applied_window(mut self, n: usize) -> Self {
+        self.applied_window = n.clamp(1, MAX_APPLIED);
+        self
+    }
+
     pub fn with_gc_quirks(mut self, q: GcQuirks) -> Self {
         self.quirks = q;
         self
@@ -499,7 +526,33 @@ impl<'a> Publisher<'a> {
             if let Step::Done(o) = self.step()? {
                 return Ok(o);
             }
+            if std::mem::take(&mut self.backoff_due) && self.backoff {
+                std::thread::sleep(std::time::Duration::from_millis(self.backoff_ms()));
+            }
         }
+    }
+
+    /// Disable the randomized wait `run` inserts after a lost CAS (tests, measurements).
+    /// `step` never waits, so model checking is unaffected either way.
+    pub fn without_backoff(mut self) -> Self {
+        self.backoff = false;
+        self
+    }
+
+    /// Jittered exponential wait after the `cas_losses`-th lost CAS: uniform in
+    /// `[0, min(CAP, 4 ms << losses))`, derived from the txid so concurrent publishers pick
+    /// different waits without a random source. Only liveness depends on it, never safety.
+    fn backoff_ms(&self) -> u64 {
+        let window = (4u64 << self.cas_losses.min(6)).min(CAS_BACKOFF_CAP_MS);
+        let mut h = blake3::Hasher::new();
+        h.update(self.txid.as_bytes()).update(&self.cas_losses.to_le_bytes());
+        h.update(
+            &std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.subsec_nanos())
+                .to_le_bytes(),
+        );
+        u64::from_le_bytes(h.finalize().as_bytes()[..8].try_into().unwrap()) % window
     }
 
     fn retry(&mut self, e: BackendError) -> Result<Step, PublishError> {
@@ -1026,8 +1079,9 @@ impl<'a> Publisher<'a> {
                     new.branches.insert((u.zone.clone(), u.branch.clone()), u.new);
                 }
                 new.applied.push(self.txid);
-                if new.applied.len() > MAX_APPLIED {
-                    new.applied.remove(0);
+                if new.applied.len() > self.applied_window {
+                    let excess = new.applied.len() - self.applied_window;
+                    new.applied.drain(..excess);
                 }
                 self.state = State::Cas {
                     expected_tag: tag,
@@ -1069,6 +1123,8 @@ impl<'a> Publisher<'a> {
                     }
                     // Lost the race: reload, re-validate `old` heads (disjoint writers reconcile here).
                     Ok(None) => {
+                        self.cas_losses += 1;
+                        self.backoff_due = true;
                         self.state = State::Load;
                         Ok(Step::Continue)
                     }
@@ -1420,6 +1476,36 @@ mod tests {
     use std::collections::BTreeMap;
     use vcs_objects::{EntryMode, Tree, TreeEntry};
     use vcs_store::MemoryStore;
+
+    #[test]
+    fn cas_backoff_is_bounded_grows_and_can_be_disabled() {
+        let (b, s) = (crate::MemBackend::new(), MemoryStore::new());
+        let t = Transaction {
+            updates: vec![],
+            author: vcs_objects::Signature {
+                name: "t".into(),
+                email: "t@x".into(),
+                timestamp: 1,
+            },
+            message: "m".into(),
+            lock_ops: vec![],
+        };
+        let mut p = Publisher::new(&b, &s, t);
+        let mut max_seen = vec![0u64; 8];
+        for losses in 0..8u32 {
+            p.cas_losses = losses;
+            for _ in 0..200 {
+                let ms = p.backoff_ms();
+                assert!(
+                    ms < (4u64 << losses.min(6)).min(CAS_BACKOFF_CAP_MS),
+                    "loss {losses}: {ms} ms outside the window"
+                );
+                max_seen[losses as usize] = max_seen[losses as usize].max(ms);
+            }
+        }
+        assert!(max_seen[5] > max_seen[0], "window grows with losses: {max_seen:?}");
+        assert!(!p.without_backoff().backoff);
+    }
 
     #[test]
     fn post_order_diamond_emits_dependencies_first() {

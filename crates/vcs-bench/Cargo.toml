@@ -8,6 +8,8 @@ publish = false
 [features]
 # https endpoints for s3bench; off by default so it does not turn TLS on for the whole workspace
 s3-tls = ["vcs-store-s3/tls"]
+# manifestbench: also measure the sharded-manifest prototype (#252)
+sharded = ["vcs-remote/sharded"]
 
 [dependencies]
 vcs-objects.workspace = true
@@ -57,3 +59,7 @@ harness = false
 [[bin]]
 name = "packfmtbench"
 path = "src/bin/packfmtbench.rs"
+
+[[bin]]
+name = "manifestbench"
+path = "src/bin/manifestbench.rs"
