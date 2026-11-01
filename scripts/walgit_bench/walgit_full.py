@@ -32,7 +32,7 @@ ENV = dict(os.environ, AWS_ACCESS_KEY_ID="benchak", AWS_SECRET_ACCESS_KEY="bench
            GIT_AUTHOR_NAME="b", GIT_AUTHOR_EMAIL="b@x.invalid", GIT_COMMITTER_NAME="b", GIT_COMMITTER_EMAIL="b@x.invalid",
            GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null", GIT_TERMINAL_PROMPT="0",
            GIT_CONFIG_COUNT="2", GIT_CONFIG_KEY_0="gc.auto", GIT_CONFIG_VALUE_0="0", GIT_CONFIG_KEY_1="maintenance.auto", GIT_CONFIG_VALUE_1="false",
-           VCS_TOKEN="tok1", VCS_PRINCIPAL="bench", PATH=f"{RT}:{os.environ['PATH']}")
+           VCS_TOKEN="tok1", VCS_PRINCIPAL="bench", VCS_AUTHOR_NAME="b", VCS_AUTHOR_EMAIL="b@x.invalid", PATH=f"{RT}:{os.environ['PATH']}")
 ENV.pop("VCS_PACK_FORMAT", None)
 ARMS_ALL = ["git", "walgit", "vcs_def", "vcs_best", "vcs_fast"]
 COUNT = False  # counting pass: servers go through the proxy
