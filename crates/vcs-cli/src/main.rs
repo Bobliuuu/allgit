@@ -11,6 +11,7 @@ mod bisect;
 mod cmds;
 mod config;
 mod generate;
+mod grep;
 mod json;
 mod logfmt;
 mod remote;
@@ -689,7 +690,7 @@ fn need_remote(repo: &Repo) -> Result<String, Error> {
 
 fn run(cli: Cli) -> Result<(), Error> {
     if let Cmd::More(m) = &cli.cmd {
-        return cmds::dispatch(m);
+        return cmds::dispatch(m, cli.json);
     }
     if cli.json {
         let doc = json::build(&cli.cmd).ok_or_else(|| Error::Msg("--json is not supported for this command".into()))??;

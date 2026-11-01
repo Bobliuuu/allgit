@@ -22,6 +22,7 @@ vcs-server.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 clap_mangen.workspace = true
+regex = "1"
 
 [features]
 default = []
