@@ -205,6 +205,19 @@ impl ObjectStore for MemoryStore {
 enum Pend {
     Mem(Vec<u8>),
     File(PathBuf),
+    /// Bytes `[off, off+len)` of the shared spill file (unix): one file for all objects past the
+    /// memory budget instead of a create/write/read/unlink per object.
+    #[cfg(unix)]
+    Spill { off: u64, len: u64 },
+}
+
+/// One append-only scratch file in `tmp/` that holds every pending object past the memory budget.
+/// Offsets are reserved with an atomic counter and written with `pwrite`, so writers never contend.
+#[cfg(unix)]
+struct SpillFile {
+    path: PathBuf,
+    file: fs::File,
+    len: AtomicU64,
 }
 
 /// At most this many bytes of pending objects are kept in memory; the rest spill to `tmp/`.
@@ -231,6 +244,10 @@ pub struct LocalStore {
     pending: Mutex<HashMap<ObjectId, Pend>>,
     /// Bytes held by `Pend::Mem` entries (bounded by [`PEND_MEM_CAP`]).
     pend_mem: AtomicU64,
+    /// Memory budget for pending objects; [`PEND_MEM_CAP`] unless a test lowers it.
+    pend_cap: AtomicU64,
+    #[cfg(unix)]
+    spill: Mutex<Option<std::sync::Arc<SpillFile>>>,
     seq: AtomicU64,
     packs: RwLock<Vec<Pack>>,
     /// Dedup hits on objects older than this refresh their age; see [`DEFAULT_TOUCH_AFTER`].
@@ -374,11 +391,19 @@ impl LocalStore {
             dir,
             pending: Mutex::new(HashMap::new()),
             pend_mem: AtomicU64::new(0),
+            pend_cap: AtomicU64::new(PEND_MEM_CAP),
+            #[cfg(unix)]
+            spill: Mutex::new(None),
             seq: AtomicU64::new(0),
             packs: RwLock::new(packs),
             touch_after: DEFAULT_TOUCH_AFTER,
             sweep_crash: Mutex::new(None),
         })
+    }
+    /// Lower the in-memory budget for unsynced objects (test support: forces the spill path).
+    #[doc(hidden)]
+    pub fn set_pending_mem_cap(&self, bytes: u64) {
+        self.pend_cap.store(bytes, Ordering::Relaxed);
     }
     /// The dedup-touch threshold; a destructive sweep's grace period must exceed it.
     pub fn touch_after(&self) -> std::time::Duration {
@@ -528,13 +553,18 @@ impl LocalStore {
                 .and_then(|t| now.duration_since(t).ok())
                 .is_some_and(|a| a >= older_than)
         };
-        let pending: BTreeSet<PathBuf> = self
+        #[allow(unused_mut)]
+        let mut pending: BTreeSet<PathBuf> = self
             .pending
             .lock()
             .unwrap()
             .values()
             .filter_map(|p| if let Pend::File(f) = p { Some(f.clone()) } else { None })
             .collect();
+        #[cfg(unix)]
+        if let Some(sp) = self.spill.lock().unwrap().as_ref() {
+            pending.insert(sp.path.clone());
+        }
         let tmp = self.dir.join("tmp");
         if let Ok(rd) = fs::read_dir(&tmp) {
             for e in rd.flatten() {
@@ -720,7 +750,7 @@ impl LocalStore {
             return Ok(());
         }
         let len = (head.len() + tail.len()) as u64;
-        if self.pend_mem.load(Ordering::Relaxed) + len <= PEND_MEM_CAP {
+        if self.pend_mem.load(Ordering::Relaxed) + len <= self.pend_cap.load(Ordering::Relaxed) {
             let mut v = Vec::with_capacity(len as usize);
             v.extend_from_slice(head);
             v.extend_from_slice(tail);
@@ -728,9 +758,54 @@ impl LocalStore {
             self.pending.lock().unwrap().insert(id, Pend::Mem(v));
             return Ok(());
         }
-        let tmp = self.write_tmp(&id, head, tail)?;
-        self.pending.lock().unwrap().insert(id, Pend::File(tmp));
-        Ok(())
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileExt;
+            let sp = self.spill_file()?;
+            let off = sp.len.fetch_add(len, Ordering::Relaxed);
+            io(&sp.path, sp.file.write_all_at(head, off))?;
+            io(&sp.path, sp.file.write_all_at(tail, off + head.len() as u64))?;
+            self.pending.lock().unwrap().insert(id, Pend::Spill { off, len });
+            Ok(())
+        }
+        #[cfg(not(unix))]
+        {
+            let tmp = self.write_tmp(&id, head, tail)?;
+            self.pending.lock().unwrap().insert(id, Pend::File(tmp));
+            Ok(())
+        }
+    }
+    #[cfg(unix)]
+    fn spill_file(&self) -> Result<std::sync::Arc<SpillFile>, StoreError> {
+        let mut g = self.spill.lock().unwrap();
+        if let Some(sp) = g.as_ref() {
+            return Ok(sp.clone());
+        }
+        let n = self.seq.fetch_add(1, Ordering::Relaxed);
+        let path = self.dir.join("tmp").join(format!("spill.{}.{n}.tmp", std::process::id()));
+        let file = io(&path, fs::OpenOptions::new().read(true).write(true).create_new(true).open(&path))?;
+        let sp = std::sync::Arc::new(SpillFile {
+            path,
+            file,
+            len: AtomicU64::new(0),
+        });
+        *g = Some(sp.clone());
+        Ok(sp)
+    }
+    #[cfg(unix)]
+    fn read_spill(&self, off: u64, len: u64) -> Result<Vec<u8>, StoreError> {
+        use std::os::unix::fs::FileExt;
+        let sp = self.spill.lock().unwrap().clone().expect("spilled object without spill file");
+        let mut v = vec![0u8; len as usize];
+        io(&sp.path, sp.file.read_exact_at(&mut v, off))?;
+        Ok(v)
+    }
+    /// Forget the spill file once every object in it is published (or the batch was abandoned).
+    #[cfg(unix)]
+    fn end_spill(&self) {
+        if let Some(sp) = self.spill.lock().unwrap().take() {
+            let _ = fs::remove_file(&sp.path);
+        }
     }
     fn write_tmp(&self, id: &ObjectId, head: &[u8], tail: &[u8]) -> Result<PathBuf, StoreError> {
         let n = self.seq.fetch_add(1, Ordering::Relaxed);
@@ -755,6 +830,8 @@ impl LocalStore {
                 let bytes = match p {
                     Pend::Mem(v) => std::borrow::Cow::Borrowed(v.as_slice()),
                     Pend::File(f) => std::borrow::Cow::Owned(io(f, fs::read(f))?),
+                    #[cfg(unix)]
+                    Pend::Spill { off, len } => std::borrow::Cow::Owned(self.read_spill(*off, *len)?),
                 };
                 Ok((**id, bytes))
             }),
@@ -782,6 +859,12 @@ impl ObjectStore for LocalStore {
         let pending = match self.pending.lock().unwrap().get(id) {
             Some(Pend::Mem(v)) => return decode_verified(id, v),
             Some(Pend::File(f)) => Some(f.clone()),
+            #[cfg(unix)]
+            Some(Pend::Spill { off, len }) => {
+                let (off, len) = (*off, *len);
+                let b = self.read_spill(off, len)?;
+                return decode_verified(id, &b);
+            }
             None => None,
         };
         if pending.is_none() {
@@ -831,16 +914,23 @@ impl ObjectStore for LocalStore {
             self.sync_as_pack(&mut pending)?;
             pending.clear();
             self.pend_mem.store(0, Ordering::Relaxed);
+            #[cfg(unix)]
+            self.end_spill();
             return Ok(());
         }
         // Small batch: spill the in-memory objects to tmp files, then publish them as loose files.
-        let mem: Vec<ObjectId> = pending.iter().filter(|(_, p)| matches!(p, Pend::Mem(_))).map(|(i, _)| *i).collect();
+        let mem: Vec<ObjectId> = pending.iter().filter(|(_, p)| !matches!(p, Pend::File(_))).map(|(i, _)| *i).collect();
         for id in mem {
-            if let Some(Pend::Mem(v)) = pending.get(&id) {
-                let t = self.write_tmp(&id, &[], v)?;
-                pending.insert(id, Pend::File(t));
-            }
+            let t = match pending.get(&id) {
+                Some(Pend::Mem(v)) => self.write_tmp(&id, &[], v)?,
+                #[cfg(unix)]
+                Some(Pend::Spill { off, len }) => self.write_tmp(&id, &[], &self.read_spill(*off, *len)?)?,
+                _ => continue,
+            };
+            pending.insert(id, Pend::File(t));
         }
+        #[cfg(unix)]
+        self.end_spill();
         // 1. object data to the device, then one hardware flush covering all of it.
         let tmps: Vec<&PathBuf> = pending
             .values()
@@ -977,6 +1067,47 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn spilled_objects_are_readable_published_and_cleaned_up() {
+        for n in [5usize, PACK_MIN + 10] {
+            let d = tempfile::tempdir().unwrap();
+            let s = LocalStore::open(d.path()).unwrap();
+            s.set_pending_mem_cap(0); // everything goes through the spill file
+            let ids: Vec<_> = (0..n).map(|i| s.put_blob(format!("spilled {i}").as_bytes()).unwrap()).collect();
+            assert!(fs::read_dir(d.path().join("tmp")).unwrap().count() <= 1, "one spill file, not one per object");
+            for (i, id) in ids.iter().enumerate() {
+                assert_eq!(s.get_blob(id).unwrap(), format!("spilled {i}").as_bytes());
+                assert!(s.contains(id).unwrap());
+            }
+            s.put_blob(b"spilled 0").unwrap(); // dedup against a pending spilled object
+            s.sync().unwrap();
+            assert!(fs::read_dir(d.path().join("tmp")).unwrap().next().is_none(), "spill file removed (n={n})");
+            let s2 = LocalStore::open(d.path()).unwrap();
+            for (i, id) in ids.iter().enumerate() {
+                assert_eq!(s2.get_blob(id).unwrap(), format!("spilled {i}").as_bytes());
+            }
+            assert!(s2.verify_packs().is_empty());
+        }
+    }
+
+    #[test]
+    fn spilled_but_unsynced_objects_are_not_published_after_a_crash() {
+        let d = tempfile::tempdir().unwrap();
+        let ids: Vec<_> = {
+            let s = LocalStore::open(d.path()).unwrap();
+            s.set_pending_mem_cap(0);
+            (0..(PACK_MIN + 3)).map(|i| s.put_blob(format!("lost {i}").as_bytes()).unwrap()).collect()
+            // "crash": dropped without sync()
+        };
+        let s = LocalStore::open(d.path()).unwrap();
+        assert!(ids.iter().all(|i| !s.contains(i).unwrap()), "unsynced spilled object visible");
+        assert!(s.list().unwrap().is_empty());
+        // the leftover spill file is an orphan that cleanup removes, and is not fatal
+        let far = std::time::SystemTime::now() + std::time::Duration::from_secs(7200);
+        s.clean_orphans(far, std::time::Duration::from_secs(3600)).unwrap();
+        assert!(fs::read_dir(d.path().join("tmp")).unwrap().next().is_none());
+    }
 
     fn exercise(s: &dyn ObjectStore) {
         let id = s.put_blob(b"hello").unwrap();
