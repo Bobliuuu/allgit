@@ -132,7 +132,7 @@ impl Repo {
             }
         }
         let mut ix = self.index()?;
-        let st = self.status_inner(crate::repo::StatusOpts::default(), &ix, false)?;
+        let st = self.status_inner(crate::repo::StatusOpts::default(), &ix, false, None)?;
         self.require_clean(zone, &st)?;
         // Paths whose state changes. Out-of-set paths have no disk state to compare, so only
         // joiners need a preflight and only leavers need removal.

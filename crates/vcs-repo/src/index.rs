@@ -110,6 +110,32 @@ impl Entries {
         self.rev += 1;
         self.map.get_mut(path)
     }
+    /// Tracked names directly inside `dir` ("" = root): `files` are entries that are exactly
+    /// `dir/name`, `dirs` the names with something tracked beneath them. Both sorted.
+    pub fn children(&self, dir: &str) -> Children<'_> {
+        use std::ops::Bound::{Included, Unbounded};
+        let prefix = if dir.is_empty() { String::new() } else { format!("{dir}/") };
+        let mut out = Children::default();
+        let mut start = prefix.clone();
+        'seek: loop {
+            for (k, _) in self.map.range::<str, _>((Included(start.as_str()), Unbounded)) {
+                let Some(rest) = k.strip_prefix(prefix.as_str()) else { break 'seek };
+                match rest.find('/') {
+                    None => out.files.push(rest),
+                    Some(i) => {
+                        let name = &rest[..i];
+                        out.dirs.push(name);
+                        // everything under `name/` is one contiguous run: jump past it
+                        start = format!("{prefix}{name}0"); // '0' == '/' + 1
+                        continue 'seek;
+                    }
+                }
+            }
+            break;
+        }
+        out.dirs.sort_unstable();
+        out
+    }
     /// Change counter (not persisted): differs iff some entry was added, removed or altered.
     pub fn revision(&self) -> u64 {
         self.rev
@@ -129,6 +155,13 @@ impl Entries {
     pub fn tree_count(&self) -> usize {
         self.trees.len()
     }
+}
+
+/// See [`Entries::children`].
+#[derive(Debug, Default)]
+pub struct Children<'a> {
+    pub files: Vec<&'a str>,
+    pub dirs: Vec<&'a str>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -216,7 +249,57 @@ impl Index {
         })
     }
 
+    /// Serialise as `AGI3`: entries in fixed-size blocks behind a length table, so a reader can
+    /// decode the blocks on several threads. `AGI2` and `AGIX` (older layouts) are still read.
     pub fn encode(&self) -> Vec<u8> {
+        let mut blocks: Vec<Vec<u8>> = Vec::with_capacity(self.entries.len() / BLOCK + 1);
+        let mut w = Writer::new();
+        let mut in_block = 0usize;
+        for (p, e) in &self.entries {
+            w.str(p)
+                .u8(e.mode as u8)
+                .id(&e.id)
+                .varint(e.size)
+                .varint(e.mtime_ns)
+                .varint(e.ctime_ns);
+            in_block += 1;
+            if in_block == BLOCK {
+                blocks.push(std::mem::replace(&mut w, Writer::new()).finish());
+                in_block = 0;
+            }
+        }
+        if in_block > 0 {
+            blocks.push(w.finish());
+        }
+        let mut w = Writer::new();
+        w.varint(self.written_ns)
+            .varint(self.entries.len() as u64)
+            .varint(BLOCK as u64)
+            .varint(blocks.len() as u64);
+        for b in &blocks {
+            w.varint(b.len() as u64);
+        }
+        for b in &blocks {
+            w.raw(b);
+        }
+        // Optional cache-tree section (count 0 = absent).
+        match (&self.entries.trees_fp, self.entries.trees.is_empty()) {
+            (Some(fp), false) => {
+                w.varint(self.entries.trees.len() as u64).id(fp);
+                for (d, id) in &self.entries.trees {
+                    w.str(d).id(id);
+                }
+            }
+            _ => {
+                w.varint(0);
+            }
+        }
+        frame(b"AGI3", w.finish())
+    }
+
+    /// The legacy `AGI2` encoding (kept for tests and for readers of older repositories).
+    #[cfg(test)]
+    fn encode_v2(&self) -> Vec<u8> {
         let mut w = Writer::new();
         w.varint(self.written_ns).varint(self.entries.len() as u64);
         for (p, e) in &self.entries {
@@ -227,7 +310,6 @@ impl Index {
                 .varint(e.mtime_ns)
                 .varint(e.ctime_ns);
         }
-        // Optional trailing cache-tree section (absent in indexes written without one).
         if !self.entries.trees.is_empty() {
             if let Some(fp) = &self.entries.trees_fp {
                 w.varint(self.entries.trees.len() as u64).id(fp);
@@ -240,60 +322,57 @@ impl Index {
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let c = |e: vcs_objects::DecodeError| Error::Corrupt(format!("index: {e}"));
+        let v3 = bytes.starts_with(b"AGI3");
         // AGIX: legacy entries without a ctime.
         let legacy = bytes.starts_with(b"AGIX");
-        let body = unframe(if legacy { b"AGIX" } else { b"AGI2" }, bytes, "index")?;
+        let body = unframe(
+            if v3 {
+                b"AGI3"
+            } else if legacy {
+                b"AGIX"
+            } else {
+                b"AGI2"
+            },
+            bytes,
+            "index",
+        )?;
         let mut r = Reader::new(body);
-        let c = |e: vcs_objects::DecodeError| Error::Corrupt(format!("index: {e}"));
         let written_ns = r.varint().map_err(c)?;
         let n = r.count(36).map_err(c)?;
         let mut idx = Index {
             entries: Entries::default(),
             written_ns,
         };
+        let mut list: Vec<(String, IndexEntry)>;
+        if v3 {
+            let per = r.varint().map_err(c)? as usize;
+            let nblocks = r.count(1).map_err(c)?;
+            if per == 0 || per > (1 << 20) || nblocks != n.div_ceil(per) {
+                return Err(Error::Corrupt("index: bad block table".into()));
+            }
+            let mut lens = Vec::with_capacity(nblocks);
+            for _ in 0..nblocks {
+                lens.push(r.varint().map_err(c)? as usize);
+            }
+            let mut slices: Vec<(&[u8], usize)> = Vec::with_capacity(nblocks);
+            for (i, l) in lens.iter().enumerate() {
+                let cnt = if i + 1 == nblocks { n - per * i } else { per };
+                slices.push((r.raw(*l).map_err(c)?, cnt));
+            }
+            list = decode_blocks(&slices)?;
+        } else {
+            list = Vec::with_capacity(n);
+            for _ in 0..n {
+                list.push(read_entry(&mut r, legacy)?);
+            }
+        }
         // Entries are written in key order, so build the map in one pass and check file/directory
         // conflicts afterwards: a conflict is always "an ancestor directory of K is itself a key".
-        let mut list: Vec<(String, IndexEntry)> = Vec::with_capacity(n);
-        let mut sorted = true;
-        for _ in 0..n {
-            let p = r.str(4096).map_err(c)?;
-            validate_path(&p)?;
-            let mode = match r.u8().map_err(c)? {
-                1 => EntryMode::File,
-                2 => EntryMode::Executable,
-                4 => EntryMode::Symlink,
-                _ => return Err(Error::Corrupt("index: bad mode".into())),
-            };
-            let id = r.id().map_err(c)?;
-            let size = r.varint().map_err(c)?;
-            let mtime_ns = r.varint().map_err(c)?;
-            let ctime_ns = if legacy { 0 } else { r.varint().map_err(c)? };
-            if let Some((prev, _)) = list.last() {
-                sorted &= prev.as_str() < p.as_str();
-            }
-            list.push((
-                p,
-                IndexEntry {
-                    id,
-                    mode,
-                    size,
-                    mtime_ns,
-                    ctime_ns,
-                },
-            ));
-        }
+        let sorted = list.windows(2).all(|w| w[0].0 < w[1].0);
         if sorted {
+            check_no_conflicts(&list)?;
             idx.entries.map = list.into_iter().collect();
-            for k in idx.entries.map.keys() {
-                let mut pos = 0;
-                while let Some(i) = k[pos..].find('/') {
-                    let anc = &k[..pos + i];
-                    if idx.entries.map.contains_key(anc) {
-                        return Err(Error::Msg(format!("cannot track {k:?}: {anc:?} is tracked as a file")));
-                    }
-                    pos += i + 1;
-                }
-            }
         } else {
             for (p, e) in list {
                 if idx.entries.map.contains_key(&p) {
@@ -303,23 +382,145 @@ impl Index {
             }
         }
         if r.remaining() > 0 {
-            let n = r.count(33).map_err(c)?;
-            let fp = r.id().map_err(c)?;
-            let mut trees = BTreeMap::new();
-            for _ in 0..n {
-                let d = r.str(4096).map_err(c)?;
-                if !d.is_empty() {
-                    validate_path(&d)?;
-                }
-                trees.insert(d, r.id().map_err(c)?);
+            let n = if v3 {
+                r.varint().map_err(c)? as usize
+            } else {
+                r.count(33).map_err(c)?
+            };
+            if !v3 && n == 0 {
+                return Err(Error::Corrupt("index: empty tree section".into()));
             }
-            idx.entries.trees = trees;
-            idx.entries.trees_fp = Some(fp);
+            if n > 0 {
+                let fp = r.id().map_err(c)?;
+                let mut trees = BTreeMap::new();
+                for _ in 0..n {
+                    let d = r.str(4096).map_err(c)?;
+                    if !d.is_empty() {
+                        validate_path(&d)?;
+                    }
+                    trees.insert(d, r.id().map_err(c)?);
+                }
+                idx.entries.trees = trees;
+                idx.entries.trees_fp = Some(fp);
+            }
+        } else if v3 {
+            return Err(Error::Corrupt("index: missing tree section".into()));
         }
         r.finish().map_err(c)?;
         idx.entries.rev = 0;
         Ok(idx)
     }
+}
+
+/// Entries per `AGI3` block.
+const BLOCK: usize = 2048;
+/// Below this many entries a decode stays on the calling thread.
+const PAR_MIN: usize = 16 * 1024;
+
+fn read_entry(r: &mut Reader<'_>, legacy: bool) -> Result<(String, IndexEntry)> {
+    let c = |e: vcs_objects::DecodeError| Error::Corrupt(format!("index: {e}"));
+    let p = r.str(4096).map_err(c)?;
+    validate_path(&p)?;
+    let mode = match r.u8().map_err(c)? {
+        1 => EntryMode::File,
+        2 => EntryMode::Executable,
+        4 => EntryMode::Symlink,
+        _ => return Err(Error::Corrupt("index: bad mode".into())),
+    };
+    let id = r.id().map_err(c)?;
+    let size = r.varint().map_err(c)?;
+    let mtime_ns = r.varint().map_err(c)?;
+    let ctime_ns = if legacy { 0 } else { r.varint().map_err(c)? };
+    Ok((
+        p,
+        IndexEntry {
+            id,
+            mode,
+            size,
+            mtime_ns,
+            ctime_ns,
+        },
+    ))
+}
+
+fn threads_for(n: usize) -> usize {
+    if n < PAR_MIN {
+        1
+    } else {
+        std::thread::available_parallelism().map_or(1, |t| t.get()).clamp(1, 16)
+    }
+}
+
+/// Decode `AGI3` blocks (slice, entry count), on several threads for big indexes.
+fn decode_blocks(blocks: &[(&[u8], usize)]) -> Result<Vec<(String, IndexEntry)>> {
+    let total: usize = blocks.iter().map(|b| b.1).sum();
+    let one = |(bytes, cnt): &(&[u8], usize)| -> Result<Vec<(String, IndexEntry)>> {
+        let mut r = Reader::new(bytes);
+        let mut v = Vec::with_capacity(*cnt);
+        for _ in 0..*cnt {
+            v.push(read_entry(&mut r, false)?);
+        }
+        r.finish().map_err(|e| Error::Corrupt(format!("index: {e}")))?;
+        Ok(v)
+    };
+    let threads = threads_for(total).min(blocks.len().max(1));
+    if threads <= 1 {
+        let mut out = Vec::with_capacity(total);
+        for b in blocks {
+            out.extend(one(b)?);
+        }
+        return Ok(out);
+    }
+    let per = blocks.len().div_ceil(threads);
+    let parts: Vec<Result<Vec<(String, IndexEntry)>>> = std::thread::scope(|sc| {
+        let one = &one;
+        let hs: Vec<_> = blocks
+            .chunks(per)
+            .map(|chunk| {
+                sc.spawn(move || {
+                    let mut out = Vec::new();
+                    for b in chunk {
+                        out.extend(one(b)?);
+                    }
+                    Ok(out)
+                })
+            })
+            .collect();
+        hs.into_iter().map(|h| h.join().expect("index decode worker panicked")).collect()
+    });
+    let mut out = Vec::with_capacity(total);
+    for p in parts {
+        out.extend(p?);
+    }
+    Ok(out)
+}
+
+/// `list` is strictly sorted: fail if some key has an ancestor directory that is itself a key.
+fn check_no_conflicts(list: &[(String, IndexEntry)]) -> Result<()> {
+    let check = |part: &[(String, IndexEntry)]| -> Result<()> {
+        for (k, _) in part {
+            let mut pos = 0;
+            while let Some(i) = k[pos..].find('/') {
+                let anc = &k[..pos + i];
+                if list.binary_search_by(|(p, _)| p.as_str().cmp(anc)).is_ok() {
+                    return Err(Error::Msg(format!("cannot track {k:?}: {anc:?} is tracked as a file")));
+                }
+                pos += i + 1;
+            }
+        }
+        Ok(())
+    };
+    let threads = threads_for(list.len());
+    if threads <= 1 {
+        return check(list);
+    }
+    let per = list.len().div_ceil(threads);
+    let rs: Vec<Result<()>> = std::thread::scope(|sc| {
+        let check = &check;
+        let hs: Vec<_> = list.chunks(per).map(|part| sc.spawn(move || check(part))).collect();
+        hs.into_iter().map(|h| h.join().expect("index check worker panicked")).collect()
+    });
+    rs.into_iter().collect()
 }
 
 #[cfg(test)]
@@ -419,6 +620,45 @@ mod tests {
         e3.id = t(5);
         j.entries.insert("a/b/c".into(), e3);
         assert_eq!(j.entries.cached_trees(&fp).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn v3_roundtrip_parallel_and_legacy_read() {
+        let mut i = Index::default();
+        for k in 0..40_000u64 {
+            let p = format!("d{}/s{}/f{k}.txt", k % 13, k % 5);
+            let mut en = e();
+            en.size = k;
+            en.mtime_ns = k * 3;
+            i.insert(&p, en).unwrap();
+        }
+        i.written_ns = 7;
+        i.entries.store_trees(
+            ObjectId::from_bytes([4; 32]),
+            [("".to_string(), ObjectId::from_bytes([5; 32]))].into_iter().collect(),
+        );
+        let b3 = i.encode();
+        assert!(b3.starts_with(b"AGI3"));
+        let d3 = Index::decode(&b3).unwrap();
+        assert_eq!(d3.entries, i.entries);
+        assert_eq!(d3.written_ns, 7);
+        assert_eq!(d3.entries.tree_count(), 1);
+        // the previous on-disk layout still reads, and re-encodes as the new one
+        let d2 = Index::decode(&i.encode_v2()).unwrap();
+        assert_eq!(d2.entries, i.entries);
+        assert_eq!(d2.entries.tree_count(), 1);
+        // a conflict hidden in a late block is still caught
+        let mut c = Index::default();
+        for k in 0..40_000u64 {
+            c.insert(&format!("x{k:06}"), e()).unwrap();
+        }
+        let mut bad = c.clone();
+        bad.entries.insert("x039999/y".into(), e()); // bypass the conflict check
+        assert!(Index::decode(&bad.encode()).is_err());
+        // truncation anywhere in the body is an error, never a panic
+        for cut in [5, 20, b3.len() / 2, b3.len() - 1] {
+            assert!(Index::decode(&b3[..cut]).is_err());
+        }
     }
 
     /// Measurement for #112, not a regression test: `cargo test -p vcs-repo --release index_cost -- --ignored --nocapture`.

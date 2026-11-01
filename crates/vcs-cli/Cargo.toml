@@ -29,6 +29,8 @@ default = []
 # https:// for s3:// endpoints and for vcs-server remotes (rustls, certificate verification always on).
 # Off by default: the default build has no TLS dependencies and builds offline.
 tls = ["vcs-store-s3/tls", "vcs-server/tls"]
+# `vcs watch`: inotify/FSEvents daemon that lets `status` skip unchanged files and the untracked walk.
+watcher = ["vcs-repo/watcher"]
 structural = ["vcs-repo/structural"]
 structural-python = ["vcs-repo/structural-python"]
 structural-typescript = ["vcs-repo/structural-typescript"]

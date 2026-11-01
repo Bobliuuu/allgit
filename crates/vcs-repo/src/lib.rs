@@ -10,6 +10,7 @@ pub mod edit;
 pub mod error;
 pub mod export;
 pub mod failpoint;
+pub mod fsmonitor;
 pub mod gc;
 pub mod ignore;
 pub mod import;
@@ -30,6 +31,8 @@ pub mod stash;
 pub mod sync;
 pub mod tags;
 pub mod treeops;
+#[cfg(feature = "watcher")]
+pub mod watcher;
 pub mod worktree_fs;
 pub mod worktree;
 
