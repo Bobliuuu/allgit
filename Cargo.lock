@@ -1612,6 +1612,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcs-assist-openai"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tempfile",
+ "ureq",
+ "vcs-assist-claude",
+]
+
+[[package]]
 name = "vcs-bench"
 version = "0.1.0"
 dependencies = [

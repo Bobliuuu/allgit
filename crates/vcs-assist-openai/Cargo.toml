@@ -1,0 +1,27 @@
+[package]
+name = "vcs-assist-openai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "vcs-assist-openai"
+path = "src/main.rs"
+
+[dependencies]
+# Prompt, validation, request parsing and the eval harness are shared with the Claude adapter.
+vcs-assist-claude = { path = "../vcs-assist-claude", default-features = false }
+ureq = { version = "2", default-features = false }
+serde_json = "1"
+
+[features]
+# `tls` is needed for the real https://api.openai.com endpoint (rustls, certificates always verified).
+default = ["tls"]
+tls = ["ureq/tls"]
+structural = ["vcs-assist-claude/structural"]
+structural-python = ["vcs-assist-claude/structural-python"]
+structural-typescript = ["vcs-assist-claude/structural-typescript"]
+structural-go = ["vcs-assist-claude/structural-go"]
+
+[dev-dependencies]
+tempfile.workspace = true

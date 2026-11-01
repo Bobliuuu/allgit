@@ -1,5 +1,7 @@
 # Claude assistant for `vcs merge --assist`
 
+See also [assist-openai.md](assist-openai.md) for the OpenAI-compatible adapter.
+
 `vcs-assist-claude` is a separate binary (crate `crates/vcs-assist-claude`) that implements the assistant side of the
 protocol in [merge.md](merge.md#assisted-merge-vcs-merge---assist). It reads a conflict request on stdin, asks the
 Anthropic Messages API for a resolution, validates the answer, and prints the protocol response. It proposes only:
