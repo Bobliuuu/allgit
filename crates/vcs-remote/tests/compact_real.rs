@@ -289,7 +289,7 @@ fn compacted_pack_has_commits_then_trees_then_files() {
     let b = fresh(&w);
     let mut o = opts();
     o.format = PackFormat::V2; // v2 entries have one offset each, so file order is observable
-    
+
     o.all = true;
     vcs_remote::compact::compact(&b, &o).unwrap();
     let stem = pack_stems(&b).remove(0);
@@ -913,4 +913,48 @@ fn the_plan_is_deterministic_and_respects_the_memory_cap() {
     assert!(plan_tiers(&packs[..2], 3, 4096, u64::MAX).is_empty());
     let _: BTreeMap<u8, u8> = BTreeMap::new();
     let _ = build_pack_fmt(vec![], PackFormat::V2);
+}
+
+/// #232: S3 and HTTP have no trusted clock, so `compact` takes no `gc/lock` there. The documented
+/// story is "two concurrent compactors are harmless". Run a second compactor to completion inside
+/// the first one's hook at every phase, on a backend without `supports_gc` (no lock), and check
+/// that nothing is lost, the head stays complete, and a final run converges.
+#[test]
+fn two_lockless_compactors_never_lose_an_object_at_any_phase() {
+    let w = world();
+    let ids = ids_of(&w.all);
+    let points = [
+        CompactPoint::Planned,
+        CompactPoint::PackPut,
+        CompactPoint::IdxPut,
+        CompactPoint::Verified,
+        CompactPoint::BeforeDelete(0),
+        CompactPoint::BeforeDelete(1),
+        CompactPoint::BeforeDelete(2),
+        CompactPoint::BeforeDelete(3),
+        CompactPoint::Done,
+    ];
+    for at in points {
+        let b = MemBackend::new();
+        assert!(!b.supports_gc(), "this backend has no clock, so compact takes no lock");
+        for (k, d) in &w.snapshot {
+            assert!(b.put_if_absent(k, d).unwrap());
+        }
+        let mut second: Option<Result<(), String>> = None;
+        let mut hook = |p: CompactPoint| {
+            if p == at && second.is_none() {
+                second = Some(vcs_remote::compact::compact(&b, &opts()).map(|_| ()).map_err(|e| e.to_string()));
+            }
+        };
+        let first = compact_with(&b, &opts(), CompactQuirks::default(), &mut hook);
+        // either may abort cleanly when the other removed an input; neither may lose data
+        let _ = (first, second);
+        invariants(&b, &ids).unwrap_or_else(|e| panic!("second compactor at {at:?}: {e}"));
+        g_reach(&b).unwrap_or_else(|e| panic!("second compactor at {at:?}: {e}"));
+        vcs_remote::compact::compact(&b, &opts()).unwrap_or_else(|e| panic!("final run after {at:?}: {e}"));
+        invariants(&b, &ids).unwrap();
+        for stem in pack_stems(&b) {
+            assert!(b.exists(&format!("{stem}.pack")).unwrap());
+        }
+    }
 }

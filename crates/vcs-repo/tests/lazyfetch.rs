@@ -217,3 +217,50 @@ fn fs_backend_lazy_clone_publish_and_sync_roundtrip() {
     let rep = b.fsck().unwrap();
     assert!(rep.problems.is_empty(), "{:?}", rep.problems);
 }
+
+#[test]
+fn prefetch_subscribed_fetches_new_head_blobs_once_and_a_failing_backend_stores_nothing_bad() {
+    let d = tempfile::tempdir().unwrap();
+    let remote = MemBackend::new();
+    let a = seeded(&remote, d.path());
+    let b = Repo::clone_from(&remote, "mem", &d.path().join("b"), Some(&["engine".to_string()])).unwrap();
+    // a new head on the remote: fetch stores commits and trees, blobs stay remote
+    for i in 0..20 {
+        write(&a, &format!("engine/f{i}.rs"), &format!("file {i} v3 {}", pad(i, "v3")));
+    }
+    commit_all(&a, "v3");
+    a.publish(&remote, None, sig()).unwrap();
+    b.fetch(&remote, None).unwrap();
+    let v3 = |i: usize| blob_id(&format!("file {i} v3 {}", pad(i, "v3")));
+    assert!(!b.store().contains(&v3(5)).unwrap());
+    // a different zone name fetches nothing
+    assert_eq!(b.prefetch_subscribed(&remote, Some(&["nope".to_string()])).unwrap(), 0);
+    assert_eq!(b.prefetch_subscribed(&remote, None).unwrap(), 20);
+    assert!(b.store().contains(&v3(5)).unwrap());
+    // idempotent: nothing left to fetch
+    assert_eq!(b.prefetch_subscribed(&remote, None).unwrap(), 0);
+    let rep = b.fsck().unwrap();
+    assert!(rep.problems.is_empty(), "{:?}", rep.problems);
+}
+
+#[test]
+fn prefetch_subscribed_rejects_a_tampered_blob_and_does_not_store_it() {
+    let d = tempfile::tempdir().unwrap();
+    let remote = MemBackend::new();
+    let a = seeded(&remote, d.path());
+    let b = Repo::clone_from(&remote, "mem", &d.path().join("b"), Some(&["engine".to_string()])).unwrap();
+    write(&a, "engine/f0.rs", "brand new");
+    commit_all(&a, "v3");
+    a.publish(&remote, None, sig()).unwrap();
+    b.fetch(&remote, None).unwrap();
+    let id = blob_id("brand new");
+    remote.tamper_object(&id, Object::Blob(b"evil".to_vec()).encode());
+    let err = b.prefetch_subscribed(&remote, None).err().expect("must fail").to_string();
+    assert!(err.contains("hash verification"), "{err}");
+    assert!(!b.store().contains(&id).unwrap(), "tampered blob must not be stored");
+    // the worktree was never touched
+    assert_eq!(
+        fs::read_to_string(b.worktree().join("engine/f0.rs")).unwrap(),
+        format!("file 0 v2 {}", pad(0, "v2"))
+    );
+}

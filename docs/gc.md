@@ -203,7 +203,8 @@ sweep can take it. Compaction does not drop garbage.
 **Backends.** Compaction needs `list`, `get`, `put_if_absent`, `delete`. It runs on directory remotes and on S3 (RustFS tested,
 below). On a backend without a trusted clock (S3 today) there is no `gc/lock`; there is no sweeper there either (remote GC is
 refused), and two concurrent compactors are harmless (C1 makes a merge idempotent; a compactor whose input vanished aborts before
-deleting anything). When #232 gives S3 a clock and touch, the lock applies automatically. The HTTP server's `DELETE` needs the
+deleting anything). `tests/compact_real.rs::two_lockless_compactors_never_lose_an_object_at_any_phase` runs a second compactor to
+completion inside the first one's hook at every phase on a backend without a clock and checks I-IDX, I-LIVE and G-REACH. When #232 gives S3 a clock and touch, the lock applies automatically. The HTTP server's `DELETE` needs the
 admin token; not tested here.
 
 **Publish hint.** Every 8th remote generation `vcs publish` lists `packs/` (one extra request per 8 publishes) and prints
