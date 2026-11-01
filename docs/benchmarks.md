@@ -366,6 +366,12 @@ Local per-change measurements are in the "After" sections of this file.
 Not measured in this run: cold cache, a quiet machine, fsmonitor or untracked-cache git, 100k-commit history,
 git with repacked objects, macOS or Windows.
 
+## Perforce (Helix Core) on the same datasets
+
+A real `p4d` 2026.1 on loopback was benchmarked on the same three 100k-file layouts (add, initial submit, 1-file submit,
+status, log, 1% sync, full sync, disk), and `vcs import-p4` was checked against real `p4` output. It is client/server and
+not an apples-to-apples comparison; see [research/perforce-benchmark.md](research/perforce-benchmark.md).
+
 ## Caveats
 
 - One machine, one run session, `--quick` sampling; treat differences under ~2x as noise.
