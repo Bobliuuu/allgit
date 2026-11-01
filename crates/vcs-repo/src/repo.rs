@@ -1695,10 +1695,20 @@ impl Repo {
     /// directory that is new on the target side (two colliding paths always share a directory
     /// whose entries collide), instead of folding every tracked path.
     pub(crate) fn transition_diff(&self, zone: &str, zones: &Zones, diff: &treeops::TreeDiff, ix: &mut Index) -> Result<()> {
+        self.transition_diff_check(zone, zones, diff)?;
+        self.transition_apply(zone, &diff.old, &diff.new, ix)
+    }
+
+    /// The preflight half of [`Repo::transition_diff`] (touches no file).
+    pub(crate) fn transition_diff_check(&self, zone: &str, zones: &Zones, diff: &treeops::TreeDiff) -> Result<()> {
         for names in &diff.new_dir_names {
             crate::portable::require_no_collision(names.iter().map(String::as_str), "checkout")?;
         }
-        self.transition_check_paths(zone, zones, &diff.old, &diff.new)?;
+        self.transition_check_paths(zone, zones, &diff.old, &diff.new)
+    }
+
+    /// The apply half of [`Repo::transition_diff`]; call [`Repo::transition_diff_check`] first.
+    pub(crate) fn transition_diff_apply(&self, zone: &str, diff: &treeops::TreeDiff, ix: &mut Index) -> Result<()> {
         self.transition_apply(zone, &diff.old, &diff.new, ix)
     }
 
