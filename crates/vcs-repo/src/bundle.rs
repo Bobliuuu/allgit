@@ -254,7 +254,11 @@ fn scan_pack(f: &mut fs::File, path: &Path, h: &Header, mut visit: impl FnMut(Ob
     let mut r = BufReader::new(Read::take(&mut *f, h.pack_len));
     let mut hasher = blake3::Hasher::new();
     let mut head = [0u8; 12];
-    let (want_magic, version) = if h.info.pack_format == PACK_V2 { (PACK_MAGIC_V2, 2u8) } else { (PACK_MAGIC, 1u8) };
+    let (want_magic, version) = if h.info.pack_format == PACK_V2 {
+        (PACK_MAGIC_V2, 2u8)
+    } else {
+        (PACK_MAGIC, 1u8)
+    };
     if h.pack_len < 12 + 32 || r.read_exact(&mut head).is_err() || &head[..8] != want_magic {
         return bad("pack header");
     }
