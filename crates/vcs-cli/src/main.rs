@@ -17,6 +17,7 @@ mod generate;
 mod grep;
 mod hooks;
 mod json;
+mod lockable_cmd;
 mod logfmt;
 mod plumb;
 mod remote;
@@ -87,7 +88,12 @@ enum Cmd {
     /// Create a new repository (default: current directory)
     Init { path: Option<PathBuf> },
     /// Stage files or directories (also stages deletions)
-    Add { paths: Vec<String> },
+    Add {
+        paths: Vec<String>,
+        /// Stage changes to lockable files (`.vcsattributes`) even without holding their lock
+        #[arg(long)]
+        force_no_lock: bool,
+    },
     /// Discard working-tree changes (from the index) or unstage them (--staged, from HEAD)
     Restore {
         paths: Vec<String>,
@@ -118,6 +124,9 @@ enum Cmd {
         /// Commit message (omit to write it in core.editor / $EDITOR)
         #[arg(short, long)]
         message: Option<String>,
+        /// Commit changes to lockable files (`.vcsattributes`) even without holding their lock
+        #[arg(long)]
+        force_no_lock: bool,
     },
     /// Get, set, list or unset settings (repo .vcs/config, user config, environment)
     #[command(subcommand)]
@@ -414,7 +423,7 @@ enum Cmd {
         #[arg(long, default_value = "")]
         reason: String,
     },
-    /// Release locks you hold (`--break` removes anyone's lock; unrestricted for now)
+    /// Release locks you hold (`--break` removes anyone's lock; the server requires an admin token)
     Unlock {
         paths: Vec<String>,
         #[arg(long = "break")]
@@ -749,12 +758,13 @@ fn run(cli: Cli) -> Result<(), Error> {
             let r = Repo::init(&p)?;
             println!("Initialized empty vcs repository in {}", r.worktree().join(".vcs").display());
         }
-        Cmd::Add { paths } => {
+        Cmd::Add { paths, force_no_lock } => {
             let (repo, cwd) = open()?;
             if paths.is_empty() {
                 return Err(Error::Msg("nothing specified; use `vcs add .` to stage everything".into()));
             }
             let rel: Vec<String> = paths.iter().map(|p| repo.rel_path(&cwd, p)).collect::<Result<_, _>>()?;
+            lockable_cmd::guard(&repo, lockable_cmd::Stage::Add, &rel, force_no_lock)?;
             let rep = repo.add(&rel)?;
             for s in &rep.skipped {
                 eprintln!("warning: skipped {s}");
@@ -810,8 +820,9 @@ fn run(cli: Cli) -> Result<(), Error> {
                 }
             }
         }
-        Cmd::Commit { message } => {
+        Cmd::Commit { message, force_no_lock } => {
             let (repo, cwd) = open()?;
+            lockable_cmd::guard(&repo, lockable_cmd::Stage::Commit, &[], force_no_lock)?;
             let cfg = config::Config::load()?;
             cfg.identity()?;
             let hz = zone_of_cwd(&repo, &cwd, None)?;
@@ -892,6 +903,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                     println!("  (fix, `vcs add`, `vcs commit`; or `vcs merge --abort`)");
                 }
             }
+            lockable_cmd::status_section(&repo, &st)?;
             if !st.untracked.is_empty() {
                 println!("untracked:");
                 for u in &st.untracked {
@@ -1630,19 +1642,21 @@ fn run(cli: Cli) -> Result<(), Error> {
                 Some(Outcome::AlreadyApplied) => println!("transaction was already applied on the remote"),
                 None => {}
             }
+            lockable_cmd::after_publish(&repo)?;
         }
         Cmd::Lock { paths, lease_secs, reason } => {
             let (repo, cwd) = open()?;
-            let backend = remote::open_backend(&need_remote(&repo)?)?;
+            let backend = lockable_cmd::wrap_lock(remote::open_backend(&need_remote(&repo)?))?;
             let rel: Vec<String> = paths.iter().map(|p| repo.rel_path(&cwd, p)).collect::<Result<_, _>>()?;
-            let got = repo.lock_paths(
+            let got = lockable_cmd::wrap_lock(repo.lock_paths(
                 backend.as_ref(),
                 &rel,
                 lease_secs.saturating_mul(1000),
                 &reason,
                 author()?,
                 &principal(),
-            )?;
+            ))?;
+            lockable_cmd::after_lock(&repo, &rel, &got, lease_secs.saturating_mul(1000))?;
             let defs = repo.zones()?;
             for (z, p, t) in got {
                 println!("locked {p} (zone {}) token {t}", defs.label(&z));
@@ -1653,6 +1667,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             let backend = remote::open_backend(&need_remote(&repo)?)?;
             let rel: Vec<String> = paths.iter().map(|p| repo.rel_path(&cwd, p)).collect::<Result<_, _>>()?;
             repo.unlock_paths(backend.as_ref(), &rel, admin_break, author()?, &principal())?;
+            lockable_cmd::after_unlock(&repo, &rel)?;
             println!("unlocked {} path(s)", rel.len());
         }
         Cmd::Locks => {
@@ -1667,11 +1682,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                     .duration_since(UNIX_EPOCH)
                     .map(|d| d.as_millis() as u64)
                     .unwrap_or(0);
-                let state = if l.expires_at > now { "held" } else { "expired" };
-                println!(
-                    "{p} (zone {z}) {state} by {} until {} (unix ms) token {}  {}",
-                    l.holder, l.expires_at, l.token, l.reason
-                );
+                println!("{}", lockable_cmd::lock_line(&z, &p, &l, now));
             }
         }
         Cmd::Fetch { source, zones, stats } => {
@@ -1967,7 +1978,12 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
-    match run_lazy(cli) {
+    let refresh = lockable_cmd::refresh_target(&cli.cmd);
+    let res = run_lazy(cli);
+    if let Some(d) = refresh {
+        lockable_cmd::refresh(&d);
+    }
+    match res {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e}");
