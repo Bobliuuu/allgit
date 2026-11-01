@@ -52,7 +52,7 @@ pub fn hash_token(token: &str) -> String {
     blake3::hash(token.as_bytes()).to_hex().to_string()
 }
 
-fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }

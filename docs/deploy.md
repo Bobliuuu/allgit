@@ -74,7 +74,7 @@ sudo install -d /etc/vcs && sudo install -m 0640 -g vcs deploy/tokens.example /e
 sudo install -m 0644 deploy/policy.example /etc/vcs/policy                                       # then edit
 sudo install -m 0644 deploy/vcs-server.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now vcs-server
-curl -s http://127.0.0.1:8480/healthz      # ok
+curl -s http://127.0.0.1:8480/readyz       # ready
 ```
 
 For S3 put `AWS_ACCESS_KEY_ID=` / `AWS_SECRET_ACCESS_KEY=` in `/etc/vcs/server.env` (mode 0600) and swap `--root` for
@@ -109,6 +109,52 @@ Certificates are always verified. After renewing the certificate files run `syst
 Do not tell users the link is encrypted unless it is: with the default CLI build an `https://` remote is refused.
 Audit log (`--audit-log`, `--audit-key`) and rate limiting (`--rate-limit <burst>,<per-sec>`, `--max-connections`) are
 documented in [server.md](server.md); add them to `ExecStart` as needed.
+
+## Operating: health, metrics, logs, shutdown
+
+**Config file.** `vcs-server --config /etc/vcs/server.toml` reads flat `key = value` lines (strings and numbers; keys are
+the long flag names, see `deploy/server.toml.example`). Flags override the file. A bad file stops startup with
+`server.toml:LINE: message` and exit status 2; unknown keys, duplicates, tables and arrays are errors.
+
+**Probes** (no token, constant bodies, nothing about the backend leaks):
+`GET /healthz` is liveness (always 200 while the process answers). `GET /readyz` is 200 `ready` when a HEAD of the manifest
+key succeeds on the backend (an absent manifest counts as reachable), else 503 `not ready`; the result is cached for 2 s, so
+probes cannot load the backend, and an open circuit breaker reports not ready without calling it. The Docker image's
+`HEALTHCHECK` uses `/readyz`.
+
+**Metrics.** `GET /metrics` returns Prometheus text (version 0.0.4) for an admin token, or for the token given with
+`--metrics-token <token|@file>` (at least 16 characters; it can read nothing else, other roles get 403). Families:
+`vcs_server_requests_total{method,status,role}`, `vcs_server_request_duration_seconds` (histogram),
+`vcs_server_request_bytes_total`, `vcs_server_response_bytes_total`, `vcs_server_auth_failures_total`,
+`vcs_server_rate_limited_total`, `vcs_server_lock_conflicts_total`, `vcs_server_audit_appends_total`,
+`vcs_server_audit_errors_total`, `vcs_server_backend_errors_total{kind=unavailable|other|timeout|circuit_open}`,
+`vcs_server_backend_retries_total`, `vcs_server_backend_breaker_trips_total`, `vcs_server_backend_circuit_open`,
+`vcs_server_open_connections`, `vcs_server_uptime_seconds`, `vcs_server_build_info{version,tls}`. Counters are per process
+and reset on restart (use `rate()`/`increase()`). `deploy/prometheus.yml`, `deploy/vcs-server.rules.yml` (alerts) and
+`deploy/grafana-dashboard.json` are samples; the alert thresholds are starting points, not tuned values.
+
+**Logs.** One line per event on stderr: `--log-format json|text` (default text), `--log-level error|warn|info|debug`
+(default info; else `VCS_SERVER_LOG` or `RUST_LOG`, e.g. `warn,vcs_server=debug`). Each request produces one `request` line
+with `request_id`, method, path (no query string), status, principal name, role, `dur_ms`, `bytes_in`, `bytes_out`. The same
+id is returned as `X-Request-Id`; a client-supplied id of up to 64 characters from `[A-Za-z0-9._-]` is reused. Tokens and the
+`Authorization` header are never logged (a test greps captured logs for every token used). Under systemd read them with
+`journalctl -u vcs-server -o cat | jq .`.
+
+**Shutdown.** SIGTERM and SIGINT stop accepting (the socket closes), let in-flight requests finish for up to
+`--shutdown-grace <secs>` (default 30; fractions allowed), fsync the audit log and exit 0, also when the grace expires with
+requests still running (logged as a warning). SIGHUP still reloads tokens, policy and the certificate. With
+`Type=notify` (the shipped unit) the server sends `READY=1` after binding and `STOPPING=1` on SIGTERM using
+`$NOTIFY_SOCKET`; no libsystemd. Keep `TimeoutStopSec` above the grace.
+
+**Backend resilience.** Transient backend errors (`Unavailable`: S3 5xx, timeouts, I/O) are retried `--backend-retries`
+times (default 2) with jittered exponential backoff (50 ms base, 1 s cap). `--backend-timeout <secs>` (default 60, 0 = none)
+is the backend budget of one request: no attempt or backoff starts past it. It cannot interrupt a single call that is stuck
+inside the backend, which is bounded only by that backend's own I/O timeouts. After `--breaker-threshold` consecutive
+failed backend operations (default 5, 0 = off) the breaker opens for `--breaker-cooldown` seconds (default 5): backend routes
+answer 503 with `Retry-After` immediately, `/readyz` fails, then one probe call decides whether it closes. Retried writes are
+safe because every protocol step is idempotent; the worst case of a write that did apply but whose reply was lost is a
+spurious 412, which clients already handle by re-reading. Errors the backend answered deliberately (`Other`) are not retried and do not
+count towards the breaker.
 
 ## Backups and operations
 

@@ -8,15 +8,22 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+# Type=notify: the server sends READY=1 once it listens and STOPPING=1 on SIGTERM (no libsystemd needed).
+Type=notify
+NotifyAccess=main
 User=vcs
 Group=vcs
 # Optional S3 credentials / settings (mode 0600, owned by root). Leave the file out for --root mode.
 EnvironmentFile=-/etc/vcs/server.env
 ExecReload=/bin/kill -HUP $MAINPID
 ExecStart=/usr/local/bin/vcs-server --root /var/lib/vcs/data --tokens /etc/vcs/tokens \
-  --policy /etc/vcs/policy --listen 127.0.0.1:8480 --max-lease-secs 86400
+  --policy /etc/vcs/policy --listen 127.0.0.1:8480 --max-lease-secs 86400 \
+  --log-format json --shutdown-grace 30 --metrics-token @/etc/vcs/metrics-token
+# or put the options in a file: ExecStart=/usr/local/bin/vcs-server --config /etc/vcs/server.toml (deploy/server.toml.example)
 # S3 instead of a directory: replace --root with
 #   --backend 's3://bucket/prefix?endpoint=https://s3.example.com&region=us-east-1'
+# SIGTERM drains in-flight requests for up to --shutdown-grace, then exits 0; keep the stop timeout above it.
+TimeoutStopSec=45
 Restart=on-failure
 RestartSec=2
 

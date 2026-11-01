@@ -329,6 +329,9 @@ fn require_lock_blocks_blind_changes_and_allows_locked_ones() {
         .unwrap_err()
         .to_string();
     assert!(e.contains("428") && e.contains("LockRequired") && e.contains("hero.psd"), "{e}");
+    let m = ureq::get(&format!("{url}/metrics")).set("Authorization", "Bearer t-root").call().unwrap().into_string().unwrap();
+    let m = vcs_server::metrics::parse(&m).unwrap();
+    assert!(m["vcs_server_lock_conflicts_total"] >= 1.0, "lock conflict counted");
     // non-matching paths are unaffected
     let (_, txt) = two_commits(&s, &["notes.txt"]);
     publish(&alice, &s, tx("z", Some(c1), txt, vec![], "alice"), "alice", 1_000).unwrap();

@@ -174,6 +174,11 @@ impl AuditLog {
         })
     }
 
+    /// fsync the file (records are already synced on append; this is the shutdown belt-and-braces).
+    pub fn sync(&self) -> std::io::Result<()> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).file.sync_all()
+    }
+
     /// Append one record and flush it to disk. Returns the record's hash.
     pub fn record(&self, ts_ms: u64, principal: &str, op: &str, key: &str, outcome: &str) -> std::io::Result<String> {
         let mut st = self.state.lock().unwrap_or_else(|e| e.into_inner());
