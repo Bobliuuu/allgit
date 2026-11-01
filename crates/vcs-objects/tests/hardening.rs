@@ -101,7 +101,11 @@ fn object() -> impl Strategy<Value = Object> {
         .prop_map(|(parents, branches, workspace, author, description)| {
             Object::Operation(Operation {
                 parents,
-                view: OpView { branches, workspace },
+                view: OpView {
+                    branches,
+                    workspace,
+                    tags: None,
+                },
                 author,
                 description,
             })
@@ -277,6 +281,7 @@ fn mutation_loop_over_a_seed_corpus() {
         view: OpView {
             branches: BTreeMap::from([(("root".to_owned(), "main".to_owned()), i(8))]),
             workspace: BTreeMap::from([("root".to_owned(), "main".to_owned())]),
+            tags: Some(BTreeMap::from([(("root".to_owned(), "v1".to_owned()), i(9))])),
         },
         author: sig,
         description: "d".into(),

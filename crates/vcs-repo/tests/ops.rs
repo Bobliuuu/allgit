@@ -282,3 +282,29 @@ fn undo_never_touches_remote_tracking_refs_or_remote() {
     assert_eq!(m_before.branches, m_after.branches);
     fsck_ok(&b);
 }
+
+#[test]
+fn undo_moves_tags_with_the_rest_of_the_view() {
+    let (_d, r) = setup();
+    let c1 = commit(&r, "f.txt", "one", "c1");
+    r.tag_create("root", "v1", None, None).unwrap();
+    // undo of a tag creation removes the tag
+    r.op_undo().unwrap();
+    assert!(r.tag_list("root").unwrap().is_empty());
+    // undoing the undo brings it back
+    r.op_undo().unwrap();
+    assert_eq!(r.tag_list("root").unwrap()[0].commit, c1);
+    // undo of a tag deletion restores it, annotated tags included
+    r.tag_create("root", "v2", None, Some(("rel", sig(), vec![]))).unwrap();
+    let before = r.refs().unwrap().tags;
+    r.tag_delete("root", "v2").unwrap();
+    assert_eq!(r.tag_list("root").unwrap().len(), 1);
+    r.op_undo().unwrap();
+    assert_eq!(r.refs().unwrap().tags, before);
+    assert_eq!(r.tag_list("root").unwrap()[1].annotation.as_ref().unwrap().message, "rel");
+    // restore to an earlier operation moves tags too
+    let first = r.op_log(100).unwrap().last().unwrap().0;
+    r.op_restore(&first).unwrap();
+    assert!(r.tag_list("root").unwrap().is_empty());
+    fsck_ok(&r);
+}

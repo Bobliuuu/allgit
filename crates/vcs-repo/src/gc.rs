@@ -132,6 +132,7 @@ pub(crate) fn children(o: &Object, out: &mut Vec<ObjectId>) {
         Object::Operation(op) => {
             out.extend(op.parents.iter().copied());
             out.extend(op.view.branches.values().copied());
+            out.extend(op.view.tags.iter().flat_map(|t| t.values().copied()));
         }
     }
 }
