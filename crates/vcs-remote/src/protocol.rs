@@ -116,6 +116,7 @@ pub struct Publisher<'a> {
     retries: u32,
     zones: BTreeMap<String, String>,
     labels: BTreeMap<String, String>,
+    tags: BTreeMap<(String, String), ObjectId>,
     principal: String,
     clock: Box<dyn Fn() -> u64 + 'a>,
     fault: Option<crate::locks::LockFault>,
@@ -211,6 +212,7 @@ impl<'a> Publisher<'a> {
             retries: 0,
             zones: BTreeMap::new(),
             labels: BTreeMap::new(),
+            tags: BTreeMap::new(),
             principal: String::new(),
             clock: Box::new(|| {
                 std::time::SystemTime::now()
@@ -258,6 +260,13 @@ impl<'a> Publisher<'a> {
     /// A later publisher's label for a zone replaces the stored one.
     pub fn with_labels(mut self, labels: BTreeMap<String, String>) -> Self {
         self.labels = labels;
+        self
+    }
+    /// Tags ((zone, name) -> commit or annotated tag object) to record in the manifest with this
+    /// tx. Their objects are uploaded first. A tag the remote already has with another target is
+    /// a conflict (tags are never moved by a publish); an identical one is a no-op.
+    pub fn with_tags(mut self, tags: BTreeMap<(String, String), ObjectId>) -> Self {
+        self.tags = tags;
         self
     }
     pub fn txid(&self) -> ObjectId {
@@ -449,7 +458,13 @@ impl<'a> Publisher<'a> {
             State::Collect => {
                 let mut list = Vec::new();
                 let mut seen = HashSet::new();
-                let heads: BTreeSet<ObjectId> = self.tx.updates.iter().map(|u| u.new).collect();
+                let heads: BTreeSet<ObjectId> = self
+                    .tx
+                    .updates
+                    .iter()
+                    .map(|u| u.new)
+                    .chain(self.tags.values().copied())
+                    .collect();
                 for h in heads {
                     let (backend, local) = (self.backend, self.local);
                     let r = post_order(
@@ -584,6 +599,21 @@ impl<'a> Publisher<'a> {
                         Some(l) => new.labels.insert(n.clone(), l.clone()),
                         None => new.labels.remove(n),
                     };
+                }
+                for ((z, n), id) in &self.tags {
+                    match cur.tags.get(&(z.clone(), n.clone())) {
+                        Some(q) if q == id => {}
+                        Some(q) => {
+                            self.state = State::Finished;
+                            return Err(PublishError::Remote(format!(
+                                "tag {z}/{n} already exists on the remote at {}; tags are not moved",
+                                q.short()
+                            )));
+                        }
+                        None => {
+                            new.tags.insert((z.clone(), n.clone()), *id);
+                        }
+                    }
                 }
                 if !self.tx.lock_ops.is_empty() || cur.has_lock_state() {
                     let (backend, now) = (self.backend, (self.clock)());
@@ -789,6 +819,37 @@ pub fn fetch_heads(
     zones: Option<&[String]>,
 ) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
     fetch_heads_impl(backend, local, zones, false)
+}
+
+/// Fetch the closure (commits and trees only) of every remote tag of `zones` (None = all) into
+/// `local`, verifying hashes and storing dependencies first. Returns the tags fetched.
+pub fn fetch_tags_lazy(
+    backend: &dyn Backend,
+    local: &dyn ObjectStore,
+    zones: Option<&[String]>,
+) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
+    let (m, _) = load_manifest(backend)?;
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for ((z, n), id) in &m.tags {
+        if zones.is_some_and(|w| !w.iter().any(|x| x == z)) {
+            continue;
+        }
+        post_order(
+            *id,
+            &mut |i| Ok(local.contains(i)?),
+            &mut |i| fetch_object(backend, i),
+            &mut |_, o| {
+                local.put(o)?;
+                Ok(())
+            },
+            &mut seen,
+            &|o| deps_of(o, true),
+        )?;
+        out.push((z.clone(), n.clone(), *id));
+    }
+    local.sync()?;
+    Ok(out)
 }
 
 /// Like [`fetch_heads`] but fetches only commits and trees. File blobs (and chunk manifests)

@@ -323,3 +323,45 @@ fn renamed_zone_publishes_its_name_and_clones_and_syncs_under_it() {
     a.publish(&remote, None, sig()).unwrap();
     assert!(load_manifest(&remote).unwrap().0.labels.is_empty());
 }
+
+#[test]
+fn tags_travel_through_publish_clone_fetch_and_sync() {
+    let d = tempfile::tempdir().unwrap();
+    let remote = MemBackend::new();
+    let a = seeded(&remote, d.path());
+    // clone first so we can later check that fetch/sync carries a tag created afterwards
+    let b = Repo::clone_from(&remote, "mem", &d.path().join("b"), None).unwrap();
+    assert!(b.tag_list("root").unwrap().is_empty());
+    a.tag_create("root", "v1", None, None).unwrap();
+    a.tag_create("engine", "e1", None, Some(("release", sig(), vec![]))).unwrap();
+    let rep = a.publish(&remote, None, sig()).unwrap();
+    assert_eq!(rep.tags.len(), 2, "tags publish even though no branch moved");
+    assert!(rep.updated.is_empty());
+    let (m, _) = load_manifest(&remote).unwrap();
+    assert_eq!(m.tags.len(), 2);
+    // republishing is a no-op
+    assert!(a.publish(&remote, None, sig()).unwrap().outcome.is_none());
+    // fetch into an existing clone
+    b.fetch(&remote, None).unwrap();
+    assert_eq!(b.tag_list("root").unwrap().len(), 1);
+    let e = b.tag_list("engine").unwrap();
+    assert_eq!(e.len(), 1);
+    assert_eq!(e[0].annotation.as_ref().unwrap().message, "release");
+    assert!(b.fsck().unwrap().problems.is_empty());
+    // a fresh clone gets them too
+    let c = Repo::clone_from(&remote, "mem", &d.path().join("c"), None).unwrap();
+    assert_eq!(c.tag_list("root").unwrap()[0].name, "v1");
+    assert_eq!(c.tag_list("engine").unwrap()[0].name, "e1");
+    // sync carries tags created later
+    a.tag_create("root", "v2", None, None).unwrap();
+    a.publish(&remote, None, sig()).unwrap();
+    c.sync(&remote).unwrap();
+    assert_eq!(c.tag_list("root").unwrap().len(), 2);
+    // a tag already on the remote at another target is reported, never moved
+    a.tag_delete("root", "v2").unwrap();
+    write(&a, "README", "readme2");
+    commit_all(&a, "second");
+    a.tag_create("root", "v2", None, None).unwrap();
+    let rep = a.publish(&remote, None, sig()).unwrap();
+    assert_eq!(rep.tag_conflicts, vec![("root".to_string(), "v2".to_string())]);
+}

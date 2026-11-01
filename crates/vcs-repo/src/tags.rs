@@ -54,7 +54,7 @@ impl Repo {
     }
 
     /// Follow a tag ref to (commit, annotation).
-    fn peel(&self, zone: &str, id: ObjectId) -> Result<(ObjectId, Option<AnnotatedTag>)> {
+    pub(crate) fn peel(&self, zone: &str, id: ObjectId) -> Result<(ObjectId, Option<AnnotatedTag>)> {
         match self.store.get(&id)? {
             Object::Commit(c) if c.zone == zone => Ok((id, None)),
             Object::Tag(t) if t.zone == zone => {

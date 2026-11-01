@@ -11,13 +11,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 use vcs_objects::{LockOp, Object, ObjectId, RefUpdate, Signature, Transaction};
-use vcs_remote::{fetch_heads_lazy, fetch_object, fetch_objects, load_manifest, Backend, Outcome, PublishError, Publisher};
+use vcs_remote::{fetch_heads_lazy, fetch_object, fetch_tags_lazy, fetch_objects, load_manifest, Backend, Outcome, PublishError, Publisher};
 
 #[derive(Debug)]
 pub struct PublishReport {
     /// (zone, branch, old remote head, new remote head)
     pub updated: Vec<(String, String, Option<ObjectId>, ObjectId)>,
     pub outcome: Option<Outcome>,
+    /// Tags newly recorded on the remote by this publish, as (zone, name).
+    pub tags: Vec<(String, String)>,
+    /// Local tags not published because the remote has the same name at another target.
+    pub tag_conflicts: Vec<(String, String)>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -225,10 +229,37 @@ impl Repo {
                 }
             }
         }
-        if updates.is_empty() {
+        // Tags of the published zones (all zones when unfiltered) that the remote lacks.
+        let mut tag_defs = BTreeMap::new();
+        let mut tag_conflicts = Vec::new();
+        for ((zone, name), id) in &refs.tags {
+            if zones.is_some_and(|w| !w.contains(zone)) {
+                continue;
+            }
+            match manifest.tags.get(&(zone.clone(), name.clone())) {
+                Some(r) if r == id => continue,
+                Some(_) => {
+                    tag_conflicts.push((zone.clone(), name.clone()));
+                    continue;
+                }
+                None => {}
+            }
+            tag_defs.insert((zone.clone(), name.clone()), *id);
+            if zone != ROOT_ZONE {
+                if let Some(p) = defs.path_of(zone) {
+                    zone_defs.insert(zone.clone(), p.to_owned());
+                    if defs.label(zone) != zone {
+                        label_defs.insert(zone.clone(), defs.label(zone).to_owned());
+                    }
+                }
+            }
+        }
+        if updates.is_empty() && tag_defs.is_empty() {
             return Ok(PublishReport {
                 updated: vec![],
                 outcome: None,
+                tags: vec![],
+                tag_conflicts,
             });
         }
         updates.sort();
@@ -246,13 +277,15 @@ impl Repo {
         let tx = Transaction {
             updates: updates.clone(),
             author,
-            message: "publish".into(),
+            // a tags-only publish must not collide with an earlier one in the applied-tx window
+            message: if updates.is_empty() { format!("publish tags {}", now_ms()) } else { "publish".into() },
             lock_ops,
         };
         let outcome = Publisher::new(backend, &self.store, tx)
             .with_principal(principal)
             .with_zones(zone_defs)
             .with_labels(label_defs)
+            .with_tags(tag_defs.clone())
             .run()
             .map_err(publish_err)?;
         let mut rr = self.remote_refs()?;
@@ -262,6 +295,8 @@ impl Repo {
         Ok(PublishReport {
             updated: updates.into_iter().map(|u| (u.zone, u.branch, u.old, u.new)).collect(),
             outcome: Some(outcome),
+            tags: tag_defs.into_keys().collect(),
+            tag_conflicts,
         })
     }
 
@@ -398,7 +433,31 @@ impl Repo {
             rr.branches.insert((a.clone(), b.clone()), *id);
         }
         self.save_remote_refs(&rr)?;
+        self.adopt_remote_tags(backend, Some(&want))?;
         Ok(got)
+    }
+
+    /// Fetch the remote's tags of `zones` and add the ones this repository lacks. A local tag
+    /// with the same name is never moved. Caller holds the lock.
+    fn adopt_remote_tags(&self, backend: &dyn Backend, zones: Option<&[String]>) -> Result<()> {
+        let got = fetch_tags_lazy(backend, &self.store, zones).map_err(publish_err)?;
+        if got.is_empty() {
+            return Ok(());
+        }
+        let mut refs = self.refs()?;
+        let mut changed = false;
+        for (z, n, id) in got {
+            if refs.tags.contains_key(&(z.clone(), n.clone())) {
+                continue;
+            }
+            self.peel(&z, id)?; // reject a remote tag that is not a commit or tag of its zone
+            refs.tags.insert((z, n), id);
+            changed = true;
+        }
+        if changed {
+            write_atomic(&self.vcs.join("refs"), &refs.encode())?;
+        }
+        Ok(())
     }
 
     /// Lazily fetch one missing object: download, verify its hash, then store and sync it.
@@ -589,6 +648,7 @@ impl Repo {
             }
             repo.save_remote_refs(&rr)?;
             write_atomic(&repo.vcs.join("refs"), &local.encode())?;
+            repo.adopt_remote_tags(backend, Some(&want))?;
             drop(_l);
             // Checkout needs the default branch's files: fetch them in one batch, not one by one.
             for a in &want {

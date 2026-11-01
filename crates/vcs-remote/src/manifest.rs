@@ -29,6 +29,9 @@ pub struct Manifest {
     pub next_token: u64,
     /// High-water mark of validator time (unix ms); never decreases.
     pub time_hw: u64,
+    /// (zone, tag name) -> a commit (lightweight tag) or an annotated tag object. Empty unless
+    /// tags were published; only then is the v4 format used.
+    pub tags: BTreeMap<(String, String), ObjectId>,
 }
 
 /// One lock record. `holder` is the validator-trusted principal, not the self-asserted author.
@@ -65,10 +68,12 @@ impl Manifest {
         !self.locks.is_empty() || self.next_token != 0 || self.time_hw != 0
     }
 
-    /// Format version: 3 once lock state exists, else 2 if zone labels exist, else 1 (so
+    /// Format version: 4 once tags exist (it carries everything v3 does), else 3 once lock state exists, else 2 if zone labels exist, else 1 (so
     /// repositories using neither stay byte-identical to v1; older readers reject newer versions).
     fn version(&self) -> u8 {
-        if self.has_lock_state() {
+        if !self.tags.is_empty() {
+            4
+        } else if self.has_lock_state() {
             3
         } else if !self.labels.is_empty() {
             2
@@ -104,7 +109,7 @@ impl Manifest {
                 w.str(i).str(l);
             }
         }
-        if self.version() == 3 {
+        if self.version() >= 3 {
             w.varint(self.next_token).varint(self.time_hw).varint(self.locks.len() as u64);
             for ((z, p), l) in &self.locks {
                 w.str(z)
@@ -114,6 +119,12 @@ impl Manifest {
                     .varint(l.acquired_at)
                     .varint(l.expires_at)
                     .str(&l.reason);
+            }
+        }
+        if self.version() == 4 {
+            w.varint(self.tags.len() as u64);
+            for ((z, n), id) in &self.tags {
+                w.str(z).str(n).id(id);
             }
         }
         w.finish()
@@ -126,7 +137,7 @@ impl Manifest {
             return Err(ManifestError("bad magic".into()));
         }
         let v = r.u8().map_err(e)?;
-        if !(1..=3).contains(&v) {
+        if !(1..=4).contains(&v) {
             return Err(ManifestError(format!("unsupported version {v}")));
         }
         let mut m = Manifest {
@@ -176,7 +187,7 @@ impl Manifest {
                 return Err(ManifestError("v2 manifest without labels".into()));
             }
         }
-        if v == 3 {
+        if v >= 3 {
             m.next_token = r.varint().map_err(e)?;
             m.time_hw = r.varint().map_err(e)?;
             for _ in 0..r.count(7).map_err(e)? {
@@ -197,8 +208,22 @@ impl Manifest {
                 ascending(m.locks.last_key_value().map(|(k, _)| k), &(z.clone(), p.clone()))?;
                 m.locks.insert((z, p), l);
             }
-            if !m.has_lock_state() {
-                return Err(ManifestError("v2 manifest without lock state".into()));
+            if v == 3 && !m.has_lock_state() {
+                return Err(ManifestError("v3 manifest without lock state".into()));
+            }
+        }
+        if v == 4 {
+            for _ in 0..r.count(34).map_err(e)? {
+                let z = r.str(64).map_err(e)?;
+                let n = r.str(200).map_err(e)?;
+                validate_zone_name(&z).map_err(|x| ManifestError(x.to_string()))?;
+                validate_branch_name(&n).map_err(|x| ManifestError(x.to_string()))?;
+                ascending(m.tags.last_key_value().map(|(k, _)| k), &(z.clone(), n.clone()))?;
+                m.tags.insert((z, n), r.id().map_err(e)?);
+            }
+            // the encoder writes v4 only when tags exist; an empty v4 would re-encode as an older version
+            if m.tags.is_empty() {
+                return Err(ManifestError("v4 manifest without tags".into()));
             }
         }
         r.finish().map_err(e)?;
@@ -251,5 +276,36 @@ mod tests {
         let mut bad = m.clone();
         bad.locks.get_mut(&("z".into(), "a/b.bin".into())).unwrap().token = 2;
         assert!(Manifest::decode(&bad.encode()).is_err(), "token must be below next_token");
+    }
+
+    #[test]
+    fn tags_use_v4_and_tag_free_manifests_keep_their_bytes() {
+        let mut m = Manifest {
+            generation: 3,
+            ..Default::default()
+        };
+        m.branches.insert(("a".into(), "main".into()), ObjectId::from_bytes([1; 32]));
+        let before = m.encode();
+        assert_eq!(before[4], 1);
+        m.tags.insert(("a".into(), "v1".into()), ObjectId::from_bytes([5; 32]));
+        let b = m.encode();
+        assert_eq!(b[4], 4);
+        assert_eq!(Manifest::decode(&b).unwrap(), m);
+        m.tags.clear();
+        assert_eq!(m.encode(), before, "tag-free manifest is byte-identical to before tags existed");
+        // tags and locks together
+        m.tags.insert(("a".into(), "v1".into()), ObjectId::from_bytes([5; 32]));
+        m.next_token = 2;
+        m.locks.insert(
+            ("a".into(), "f".into()),
+            Lock {
+                holder: "h".into(),
+                token: 1,
+                acquired_at: 1,
+                expires_at: 2,
+                reason: String::new(),
+            },
+        );
+        assert_eq!(Manifest::decode(&m.encode()).unwrap(), m);
     }
 }
