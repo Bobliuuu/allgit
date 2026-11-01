@@ -1,0 +1,10 @@
+Change 7 by alice@alice_ws on 2026/11/01 02:30:38
+
+	Drop link, new blob, run.sh loses +x
+
+Affected files ...
+
+... //depot/proj/bin/run.sh#2 edit
+... //depot/proj/data/blob.bin#2 edit
+... //depot/proj/link#2 delete
+
