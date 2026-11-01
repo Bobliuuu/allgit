@@ -168,8 +168,16 @@ detectable from the file alone (store the printed head hash elsewhere); without 
 the file can recompute the whole chain; the key only helps if it is kept away from whoever can write the log. The
 server opens the file append-only but cannot make it immutable: use `chattr +a`, WORM storage or a second sink. One
 process per log file. If the append fails the client gets 503 even though the write may already have been applied
-(the request is not rolled back). This is a different shape from the create-only `audit/<id>` objects and
-`GET /v1/audit` sketched in #127: it covers PUTs only, has no txid, zone, path summary or policy hash.
+(the request is not rolled back).
+
+Records carry a `reason` (`accepted`, `policy`, `lock`, `lock-required`, `invalid`, `forbidden`, `conflict`, ...);
+manifest writes also carry `policy` (BLAKE3 of the path policy in force, so a decision ties to the exact rules) and,
+when accepted, `vtime` (the validator's server time, which is also the `time_hw` stored in the same compare-and-swap).
+Older records without these fields still verify. `GET /v1/audit?after=<seq>&limit=<n>` (admin token only; 403
+otherwise, 404 when `--audit-log` is off) returns up to `limit` (default 100, max 1000) raw JSON lines after `seq`
+`after`, with `X-Audit-Next` (last seq returned; pass it as `after`) and `X-Audit-Head` (head hash to anchor); the
+lines are exactly the file's, so they verify offline. The chosen design is this chained log, not create-only
+`audit/<id>` objects (#127); a second sink is the operator's job (ship the endpoint or the file).
 
 **Forced updates and deletions.** A publish that replaces a branch head with a commit that does not descend from
 it, or removes a branch, is allowed (it is always a compare-and-swap on the old head, so a stale writer fails) but the
@@ -197,8 +205,7 @@ guesses, not tuned values; the binary exposes only `--max-connections` and `--ma
 ## Not done (known gaps)
 
 Certificate revocation and subject-to-principal mapping for mTLS; path-level read rules (impossible on content-addressed
-objects, see Read policy); a filtered manifest per principal; a rate-limit class for lock ops; `GET /v1/audit`,
-create-only audit objects and policy hash in audit (#127); lease expiry times are still computed by the client (the
+objects, see Read policy); a filtered manifest per principal; a rate-limit class for lock ops; create-only audit objects (#127, the chained log is the chosen design); lease expiry times are still computed by the client (the
 server bounds only `time_hw`); one request per connection and one thread per connection (bounded by `max_connections`);
 OIDC; Windows signal reload.
 

@@ -10,7 +10,7 @@
 //!
 //! Writes to the manifest key are validated by [`crate::validate`] before the CAS.
 
-use crate::audit::AuditLog;
+use crate::audit::{AuditLog, Extra};
 use crate::auth::{hash_token, AuthError, Principal, Role, TokenTable};
 use crate::http::{pct_decode, read_request, write_response, write_response_ka, Limits, ParseError, Request, Response};
 use crate::log::{Format, Level, Logger, V};
@@ -653,20 +653,31 @@ fn route_inner(sh: &Shared, req: &Request, ctx: &mut Ctx) -> Response {
     ctx.principal = who.name.clone();
     ctx.role = role_label(who.role);
     let mutating = matches!(req.method.as_str(), "PUT" | "DELETE") && req.path.starts_with("/v1/o/");
+    let mut extra = Extra::default();
     let resp = match &sh.limiter {
         Some(l) => match l.check(&who.name, now) {
-            Ok(()) => dispatch(sh, req, who),
+            Ok(()) => dispatch(sh, req, who, &mut extra),
             Err(ms) => {
                 sh.metrics.rate_limited.fetch_add(1, Ordering::Relaxed);
                 let secs = ms.div_ceil(1000).max(1);
                 text(429, "rate limit exceeded").with("Retry-After", secs.to_string())
             }
         },
-        None => dispatch(sh, req, who),
+        None => dispatch(sh, req, who, &mut extra),
     };
     if let (true, Some(a)) = (mutating, &sh.cfg.audit) {
         let key = pct_decode(&req.path["/v1/o/".len()..]).unwrap_or_else(|| req.path.clone());
-        match a.record(now, &who.name, &req.method, &key, &resp.status.to_string()) {
+        if extra.reason.is_none() {
+            extra.reason = Some(match resp.status {
+                200..=299 => "accepted",
+                401 | 403 => "forbidden",
+                409 | 412 => "conflict",
+                422 | 428 | 400 => "invalid",
+                429 => "rate-limited",
+                _ => "error",
+            });
+        }
+        match a.record_ext(now, &who.name, &req.method, &key, &resp.status.to_string(), &extra) {
             Ok(_) => {
                 sh.metrics.audit_appends.fetch_add(1, Ordering::Relaxed);
             }
@@ -680,8 +691,9 @@ fn route_inner(sh: &Shared, req: &Request, ctx: &mut Ctx) -> Response {
     resp
 }
 
-fn dispatch(sh: &Shared, req: &Request, who: &Principal) -> Response {
+fn dispatch(sh: &Shared, req: &Request, who: &Principal, extra: &mut Extra) -> Response {
     match (req.method.as_str(), req.path.as_str()) {
+        ("GET", "/v1/audit") => audit_page(sh, req, who),
         ("GET", "/v1/whoami") => {
             let zones = who
                 .zones
@@ -724,12 +736,55 @@ fn dispatch(sh: &Shared, req: &Request, who: &Principal) -> Response {
             }
             match m {
                 "GET" | "HEAD" => object_read(sh, req, who, &key, m == "HEAD"),
-                "PUT" => object_put(sh, req, who, &key),
+                "PUT" => object_put(sh, req, who, &key, extra),
                 "DELETE" => object_delete(sh, who, &key),
                 _ => text(405, "method not allowed"),
             }
         }
         _ => text(404, "no such route"),
+    }
+}
+
+/// `GET /v1/audit?after=<seq>&limit=<n>` (admin only): a page of the hash-chained audit log as JSON
+/// lines, oldest first, at most 1000 per page (default 100). `X-Audit-Next` is the last seq returned
+/// (pass it as `after` for the next page; absent when the page is empty), `X-Audit-Head` the current
+/// head hash to anchor. Verify offline with `vcs-server audit verify`.
+fn audit_page(sh: &Shared, req: &Request, who: &Principal) -> Response {
+    if who.role < Role::Admin {
+        return text(403, "Forbidden: the audit log needs an admin token");
+    }
+    let Some(a) = &sh.cfg.audit else {
+        return text(404, "audit log is not enabled");
+    };
+    let after = match req.query_param("after") {
+        None => None,
+        Some(v) => match v.parse::<u64>() {
+            Ok(n) => Some(n),
+            Err(_) => return text(400, "bad `after`"),
+        },
+    };
+    let limit = match req.query_param("limit") {
+        None => 100,
+        Some(v) => match v.parse::<usize>() {
+            Ok(n) if n >= 1 => n.min(1000),
+            _ => return text(400, "bad `limit`"),
+        },
+    };
+    match a.page(after, limit) {
+        Ok((lines, last, head)) => {
+            let mut body = lines.join("\n");
+            if !body.is_empty() {
+                body.push('\n');
+            }
+            let mut r = Response::new(200, body)
+                .with("Content-Type", "application/x-ndjson")
+                .with("X-Audit-Head", head);
+            if let Some(l) = last {
+                r = r.with("X-Audit-Next", l.to_string());
+            }
+            r
+        }
+        Err(e) => text(503, &format!("audit log unreadable: {e}")),
     }
 }
 
@@ -886,7 +941,7 @@ fn object_delete(sh: &Shared, who: &Principal, key: &str) -> Response {
     }
 }
 
-fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str) -> Response {
+fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str, extra: &mut Extra) -> Response {
     if who.role < Role::Write {
         return text(403, "Forbidden: read-only principal");
     }
@@ -946,6 +1001,9 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str) -> Respons
             Err(e) => return text(422, &format!("Invalid: {e}")),
         };
         let vcfg = sh.validator.read().unwrap_or_else(|e| e.into_inner()).clone();
+        if sh.cfg.audit.is_some() {
+            extra.policy = Some(vcfg.policy.hash());
+        }
         if let Err(r) = validate_and_report(
             sh.backend.as_ref(),
             &cur,
@@ -958,8 +1016,16 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str) -> Respons
             if matches!(r, Reject::LockedBy { .. } | Reject::LockRequired { .. }) {
                 sh.metrics.lock_conflicts.fetch_add(1, Ordering::Relaxed);
             }
+            extra.reason = Some(match &r {
+                Reject::Forbidden(_) => "policy",
+                Reject::LockedBy { .. } => "lock",
+                Reject::LockRequired { .. } => "lock-required",
+                Reject::Invalid(_) => "invalid",
+                Reject::Unavailable(_) => "unavailable",
+            });
             return reject_response(r);
         }
+        extra.vtime = Some(new.time_hw);
         // the server may have rewritten lock times: store its version, not the client's bytes
         body = std::borrow::Cow::Owned(new.encode());
     }
