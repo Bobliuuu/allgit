@@ -62,6 +62,39 @@ pub struct Rule {
     pub glob: String,
 }
 
+/// The spelling under which a case-folding, Unicode-normalizing or Windows filesystem would resolve a
+/// path: per component, drop an NTFS `:stream` suffix and trailing dots/spaces, apply NFKC, remove
+/// zero-width code points, lowercase and fold `ß`/`ſ`/`ς`. `deny` and `require-lock` rules also match
+/// this alias, so `Secrets/k` or `secrets./k` cannot slip past `deny ... secrets/**` (the objects are
+/// accepted as written; only the checked-out spelling collides).
+pub fn alias_key(path: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    let mut out = String::with_capacity(path.len());
+    for (i, c) in path.split('/').enumerate() {
+        if i > 0 {
+            out.push('/');
+        }
+        let base = c.split(':').next().unwrap_or(c).trim_end_matches(['.', ' ']);
+        if base.is_ascii() {
+            out.extend(base.chars().map(|ch| ch.to_ascii_lowercase()));
+            continue;
+        }
+        for ch in base
+            .nfkc()
+            .filter(|c| !matches!(*c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{206a}'..='\u{206f}' | '\u{feff}'))
+            .flat_map(char::to_lowercase)
+        {
+            match ch {
+                'ß' => out.push_str("ss"),
+                'ſ' => out.push('s'),
+                'ς' => out.push('σ'),
+                ch => out.push(ch),
+            }
+        }
+    }
+    out
+}
+
 impl Rule {
     fn applies(&self, principal: &str, zone: &str) -> bool {
         (self.principal == "*" || self.principal == principal) && (self.zone == "*" || self.zone == zone)
@@ -153,6 +186,16 @@ impl Policy {
         Ok(Policy { rules })
     }
 
+    /// Hex BLAKE3 of the canonical rule list (order and content), recorded in audit lines so a
+    /// decision can be tied to the exact policy that made it.
+    pub fn hash(&self) -> String {
+        let mut h = blake3::Hasher::new();
+        for r in &self.rules {
+            h.update(format!("{:?}\t{}\t{}\t{}\n", r.effect, r.principal, r.zone, r.glob).as_bytes());
+        }
+        h.finalize().to_hex().to_string()
+    }
+
     /// True when there is no write-side rule (`allow`, `deny`, `require-lock`). Read rules alone do
     /// not switch writes to deny-by-default.
     pub fn is_empty(&self) -> bool {
@@ -220,7 +263,14 @@ impl Policy {
                     .iter()
                     .find(|r| r.effect == e && r.applies(principal, zone) && glob_match(&r.glob, path))
             };
-            if let Some(r) = hit(Effect::Deny) {
+            // deny also matches the filesystem alias of the path (case, trailing dots, normalization)
+            let alias = alias_key(path);
+            let deny_hit = hit(Effect::Deny).or_else(|| {
+                self.rules
+                    .iter()
+                    .find(|r| r.effect == Effect::Deny && r.applies(principal, zone) && glob_match(&alias_key(&r.glob), &alias))
+            });
+            if let Some(r) = deny_hit {
                 return Verdict::Denied(format!(
                     "path {path} in zone {zone} is denied by policy rule `deny {} {} {}`",
                     r.principal, r.zone, r.glob
@@ -232,11 +282,12 @@ impl Policy {
                 ));
             }
         }
-        if self
-            .rules
-            .iter()
-            .any(|r| r.effect == Effect::RequireLock && r.applies(principal, zone) && glob_match(&r.glob, path))
-        {
+        let alias = alias_key(path);
+        if self.rules.iter().any(|r| {
+            r.effect == Effect::RequireLock
+                && r.applies(principal, zone)
+                && (glob_match(&r.glob, path) || glob_match(&alias_key(&r.glob), &alias))
+        }) {
             return Verdict::NeedsLock(format!(
                 "path {path} in zone {zone} requires a lock (`vcs lock`) before it can be changed"
             ));
@@ -331,6 +382,74 @@ mod tests {
         assert!(p.is_empty(), "require-signed alone does not make writes deny-by-default");
         assert!(Policy::parse("require-signed code").is_err());
         assert!(Policy::parse("require-signed code main extra").is_err());
+    }
+
+    /// Path-normalization corpus: every spelling of a protected path that reaches the policy is
+    /// treated like the protected path; spellings that can never be tree entries are refused by the
+    /// object-name validator before any policy runs.
+    #[test]
+    fn normalization_corpus() {
+        let p = Policy::parse("allow * z **\ndeny * z secrets/**\nrequire-lock * z art/*.psd\n").unwrap();
+        let denied = [
+            "secrets/k",
+            "Secrets/k",
+            "SECRETS/k",
+            "secrets./k",
+            "secrets /k",
+            "secrets:stream/k",
+            "\u{17f}ecrets/k",   // long s folds to s
+            "s\u{200b}ecrets/k", // zero-width space
+            "\u{ff53}ecrets/k",  // fullwidth s (NFKC)
+            "secrets/deep/er/Name",
+        ];
+        for d in denied {
+            assert!(
+                matches!(p.check_path("bob", false, "z", d), Verdict::Denied(_)),
+                "{d:?} must be denied"
+            );
+        }
+        for ok in ["secret/k", "secretsx/k", "xsecrets/k", "docs/secrets.txt", "sec rets/k"] {
+            assert_eq!(p.check_path("bob", false, "z", ok), Verdict::Ok, "{ok:?}");
+        }
+        for l in [
+            "art/h.psd",
+            "art/H.PSD",
+            "art/h.psd.",
+            "art/h.psd:stream",
+            "ART/h.psd",
+            "art/h.p\u{17f}d",
+        ] {
+            let want_lock = !l.ends_with("p\u{17f}d");
+            let v = p.check_path("bob", false, "z", l);
+            // `art/h.p\u{17f}d` folds to `art/h.psd` as well
+            assert!(matches!(v, Verdict::NeedsLock(_)), "{l:?} (long-s expected={want_lock}) -> {v:?}");
+        }
+        assert_eq!(p.check_path("bob", false, "z", "art/h.txt"), Verdict::Ok);
+        // spellings that are not valid tree entries never reach the policy
+        use vcs_objects::names::validate_path;
+        for bad in [
+            "secrets/../x",
+            "secrets//k",
+            "./secrets/k",
+            "/secrets/k",
+            "secrets\\k",
+            "secrets/\0k",
+            "secrets/.",
+        ] {
+            assert!(validate_path(bad).is_err(), "{bad:?} must be refused by name validation");
+        }
+        // admin skips allow/deny but not require-lock, also through an alias
+        assert!(matches!(p.check_path("root", true, "z", "ART/h.PSD"), Verdict::NeedsLock(_)));
+        assert_eq!(p.check_path("root", true, "z", "Secrets/k"), Verdict::Ok);
+    }
+
+    #[test]
+    fn policy_hash_tracks_content_and_order() {
+        let a = Policy::parse("allow * z **\ndeny * z s/**\n").unwrap();
+        assert_eq!(a.hash(), Policy::parse("# c\nallow * z **\n\ndeny * z s/**\n").unwrap().hash());
+        assert_ne!(a.hash(), Policy::parse("deny * z s/**\nallow * z **\n").unwrap().hash());
+        assert_ne!(a.hash(), Policy::parse("allow * z **\n").unwrap().hash());
+        assert_eq!(a.hash().len(), 64);
     }
 
     #[test]
