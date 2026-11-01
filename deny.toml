@@ -9,6 +9,12 @@ allow = [
 ]
 confidence-threshold = 0.8
 
+# webpki-roots (the CA bundle behind the optional `tls` feature) is data under CDLA-Permissive-2.0.
+# Allowed for that crate only, so `cargo deny check licenses` passes without widening the list.
+[[licenses.exceptions]]
+allow = ["CDLA-Permissive-2.0"]
+crate = "webpki-roots"
+
 [bans]
 multiple-versions = "warn"
 wildcards = "allow"
