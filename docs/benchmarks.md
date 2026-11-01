@@ -653,8 +653,9 @@ indicative only. The "source" and "text" datasets are this repository's own `cra
 | text (`docs/`, markdown, 155 objects) | 4,971,271 | 4,978,839 | 880,261 | 0.177 |
 | binary generator (100 x 256 KiB random, 4 versions, 421 objects) | 104,877,913 | 104,898,249 | 104,895,494 | 1.000 |
 
-The binary generator output is incompressible, so every entry fell back to raw (the pack is 2,755 bytes smaller than v1
-only because of the smaller index framing; the fanout table adds 1 KiB). Whole-store `fsck` (packed): source 10.3 ms v1 vs
+The binary generator file contents are incompressible random bytes, so they fall back to raw (one extra byte each); v2 ends
+2,755 bytes smaller than v1 even with the 1 KiB fanout table, which I did not itemise (presumably the small non-blob objects
+compress). Whole-store `fsck` (packed): source 10.3 ms v1 vs
 7.3 ms v2, text 7.4 vs 5.5 ms, binary 171 vs 168 ms.
 
 Lookup and open, synthetic ids (1,000,000 objects), in-process, `Pack::contains` over every pack, 20,000 lookups:
