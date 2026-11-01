@@ -25,3 +25,12 @@ file loading. Both implementations run the same contract test (`worktree_fs::tes
 `add`/`add_dir` (staging reads), `restore`, `rm`, `mv`, merge conflict-marker writes and `resolve`, stash's work
 tree read, `diff`, import/export. They still use `std::fs` on `Repo::worktree()`. Moving them is mechanical and
 should be done one command at a time with the existing suite as the safety net.
+
+## Overlay and recovery
+
+For a future virtual filesystem the overlay (what the user edited but did not commit) is the only copy of those
+edits: the base tree is in the object store and can be re-read, the overlay is not. Nothing in the object store, `vcs
+fsck` or the operation log covers it today, because the operation log records committed state only. A real mount must
+persist its overlay under `.vcs/` (and `stash`/`shelve` it on request) before it can claim crash safety; that is not
+built. `tests/memfs.rs::memfs_checkout_equals_real_checkout_on_random_histories` checks that base tree plus a fresh
+(empty) overlay written through `MemFs` equals what a real checkout writes, for random zone histories.
