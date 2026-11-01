@@ -3,7 +3,6 @@
 
 use std::fs;
 use vcs_objects::{Object, ObjectId, Signature};
-use vcs_remote::protocol::object_key;
 use vcs_remote::{Backend, CountingBackend, FsBackend, MemBackend};
 use vcs_repo::Repo;
 use vcs_store::MemoryStore;
@@ -87,7 +86,7 @@ fn tampered_history_blob_is_rejected_and_not_stored() {
     seeded(&remote, d.path());
     let b = Repo::clone_from(&remote, "mem", &d.path().join("b"), Some(&["engine".to_string()])).unwrap();
     let id = old_blob(7);
-    remote.tamper(&object_key(&id), Object::Blob(b"evil".to_vec()).encode());
+    remote.tamper_object(&id, Object::Blob(b"evil".to_vec()).encode());
     let err = b.with_lazy_fetch(&remote, || Ok(b.store().get(&id)?)).unwrap_err().to_string();
     assert!(err.contains("hash verification"), "{err}");
     assert!(!b.store().contains(&id).unwrap());
@@ -98,7 +97,7 @@ fn tampered_head_blob_fails_the_batch_prefetch_and_the_clone() {
     let d = tempfile::tempdir().unwrap();
     let remote = MemBackend::new();
     seeded(&remote, d.path());
-    remote.tamper(&object_key(&new_blob(2)), Object::Blob(b"evil".to_vec()).encode());
+    remote.tamper_object(&new_blob(2), Object::Blob(b"evil".to_vec()).encode());
     let err = Repo::clone_from(&remote, "mem", &d.path().join("b"), Some(&["engine".to_string()]))
         .err()
         .expect("clone must fail")

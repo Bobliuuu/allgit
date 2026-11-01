@@ -158,7 +158,10 @@ fn run_one(
     t: Transaction,
     fault: Option<LockFault>,
 ) -> Result<Outcome, PublishError> {
-    let mut p = Publisher::new(b, store, t).with_principal(who).with_clock(|| clock.get());
+    let mut p = Publisher::new(b, store, t)
+        .with_loose_objects()
+        .with_principal(who)
+        .with_clock(|| clock.get());
     if let Some(f) = fault {
         p = p.with_lock_fault(f);
     }
@@ -343,6 +346,7 @@ struct Stats {
 
 fn mk_pub<'a>(b: &'a MemBackend, clock: &'a Cell<u64>, fault: Option<LockFault>, w: &'a Writer) -> Publisher<'a> {
     let mut p = Publisher::new(b, &w.store, w.tx.clone())
+        .with_loose_objects()
         .with_principal(w.who)
         .with_clock(|| clock.get());
     if let Some(f) = fault {

@@ -82,7 +82,7 @@ fn sparse_fetch_reads_only_requested_zone() {
     assert!(!dst.contains(&assets).unwrap(), "unsubscribed zone not downloaded");
     // every object read came from objects/ or the manifest, none of the assets' blobs
     for k in remote.read_log() {
-        assert!(k == "manifest" || k.starts_with("objects/"));
+        assert!(k == "manifest" || k.starts_with("objects/") || k.starts_with("packs/"));
     }
     // later subscribing to assets fetches only what's missing
     fetch_heads(&remote, &dst, Some(&["assets".to_string()])).unwrap();
@@ -126,7 +126,8 @@ fn incremental_fetch_downloads_only_new_objects() {
     assert!(used < 20, "publish used {used} requests; old history must be skipped");
     let before = remote.bytes_read();
     fetch_heads(&remote, &dst, None).unwrap();
-    assert!(remote.bytes_read() - before < 1000);
+    let used = remote.bytes_read() - before;
+    assert!(used < 2000, "incremental fetch read {used} bytes");
     assert!(dst.contains(&h2).unwrap());
 }
 
@@ -136,18 +137,8 @@ fn tampered_remote_object_is_rejected() {
     let src = MemoryStore::new();
     let h = chain(&src, "a", 1, 10);
     publish(&remote, &src, &[("a", None, h)]).unwrap();
-    // swap a blob's bytes for different (valid) content under the same key
-    let blob_key = remote
-        .keys()
-        .into_iter()
-        .find(|k| {
-            k.starts_with("objects/")
-                && Object::decode(&remote.get(k).unwrap().unwrap().data)
-                    .map(|o| matches!(o, Object::Blob(_)))
-                    .unwrap_or(false)
-        })
-        .unwrap();
-    remote.tamper(&blob_key, Object::Blob(b"evil".to_vec()).encode());
+    // corrupt the one blob (chain(.., "a", 1, 10) stores vec![1; 10]) wherever it lives
+    remote.tamper_object(&Object::Blob(vec![1u8; 10]).id(), Object::Blob(b"evil".to_vec()).encode());
     let dst = MemoryStore::new();
     let e = fetch_heads(&remote, &dst, None).unwrap_err();
     assert!(e.to_string().contains("hash verification"), "{e}");

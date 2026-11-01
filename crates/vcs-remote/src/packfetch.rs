@@ -1,6 +1,7 @@
 //! Read one object out of a remote pack with a ranged GET, instead of downloading the pack.
 
 use crate::backend::{Backend, BackendError};
+use std::collections::HashMap;
 use std::path::Path;
 use vcs_objects::{id_of_encoded, ObjectId};
 use vcs_store::pack::PackIndex;
@@ -18,7 +19,7 @@ pub fn fetch_from_pack(b: &dyn Backend, stem: &str, id: &ObjectId) -> Result<Opt
         return Ok(None);
     };
     if bytes.len() != len as usize || id_of_encoded(&bytes) != *id {
-        return Err(BackendError::Other(format!("pack {stem}: object {id} failed verification")));
+        return Err(BackendError::Other(format!("pack {stem}: object {id} fails hash verification")));
     }
     Ok(Some(bytes))
 }
@@ -90,7 +91,7 @@ pub fn fetch_many(b: &dyn Backend, ids: &[ObjectId]) -> Result<Vec<(ObjectId, Ve
                         return Err(BackendError::Other(format!("pack {stem}: short read for {id}")));
                     };
                     if id_of_encoded(bytes) != *id {
-                        return Err(BackendError::Other(format!("pack {stem}: object {id} failed verification")));
+                        return Err(BackendError::Other(format!("pack {stem}: object {id} fails hash verification")));
                     }
                     out.push((*id, bytes.to_vec()));
                 }
@@ -107,6 +108,147 @@ pub fn fetch_many(b: &dyn Backend, ids: &[ObjectId]) -> Result<Vec<(ObjectId, Ve
         }
     }
     Ok(out)
+}
+
+/// First ranged GET when streaming the metadata prefix of a pack, then x4 per request up to the
+/// cap. Small first so a pack that is mostly file data costs little over-read.
+const PREFIX_FIRST: u64 = 4 * 1024;
+const PREFIX_MAX: u64 = 4 * 1024 * 1024;
+/// Header of a pack: magic + u32 count; each entry is a u32 length then the encoded object.
+const PACK_HEADER: u64 = 12;
+
+/// How much of a pack to read ahead the first time a walk needs something from it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ReadAhead {
+    /// Only the object asked for (one ranged GET each).
+    None,
+    /// The leading commits and trees (packs written by [`crate::Publisher`] put them first),
+    /// in a few ranged GETs that grow geometrically and stop at the first file blob.
+    Metadata,
+    /// The whole pack in one GET.
+    Whole,
+}
+
+/// Reads objects from a remote that may hold packs, loose objects, or both. The pack list and
+/// indexes are fetched once (`1 + packs` requests) and then answer "which pack has it" from
+/// memory, so a walk over thousands of objects costs a few large ranged GETs, not LISTs plus
+/// one GET per object. A pack the walk never touches is never read. Everything returned is
+/// checked against the id that was asked for.
+pub struct RemoteSource<'a> {
+    b: &'a dyn Backend,
+    ahead: ReadAhead,
+    packs: Option<Vec<(String, PackIndex)>>,
+    read_ahead_done: Vec<bool>,
+    /// Pre-read objects keyed by the hash of their bytes, so a lying pack cannot plant data.
+    cache: HashMap<ObjectId, Vec<u8>>,
+}
+
+impl<'a> RemoteSource<'a> {
+    pub fn new(b: &'a dyn Backend, ahead: ReadAhead) -> Self {
+        Self {
+            b,
+            ahead,
+            packs: None,
+            read_ahead_done: vec![],
+            cache: HashMap::new(),
+        }
+    }
+
+    fn packs(&mut self) -> Result<&[(String, PackIndex)], BackendError> {
+        if self.packs.is_none() {
+            let mut v = Vec::new();
+            for key in self.b.list(PACK_PREFIX)? {
+                let Some(stem) = key.strip_suffix(".idx") else { continue };
+                let Some(idx) = self.b.get(&key)? else { continue };
+                let idx = PackIndex::parse(&idx.data, Path::new(stem)).map_err(|e| BackendError::Other(e.to_string()))?;
+                v.push((stem.to_owned(), idx));
+            }
+            self.read_ahead_done = vec![false; v.len()];
+            self.packs = Some(v);
+        }
+        Ok(self.packs.as_deref().unwrap_or(&[]))
+    }
+
+    fn read_ahead(&mut self, i: usize) -> Result<(), BackendError> {
+        let (stem, pack_len) = {
+            let (s, idx) = &self.packs.as_ref().expect("packs loaded")[i];
+            (s.clone(), idx.pack_len)
+        };
+        let key = format!("{stem}.pack");
+        let end = pack_len.saturating_sub(32);
+        if self.ahead == ReadAhead::Whole {
+            if let Some(v) = self.b.get(&key)? {
+                let to = (end as usize).min(v.data.len());
+                absorb(&mut self.cache, &v.data, PACK_HEADER as usize, to, false);
+            }
+            return Ok(());
+        }
+        let (mut pos, mut want) = (PACK_HEADER, PREFIX_FIRST);
+        while pos < end {
+            let Some(buf) = self.b.get_range(&key, pos, want.min(end - pos))? else {
+                break;
+            };
+            let (used, stop) = absorb(&mut self.cache, &buf, 0, buf.len(), true);
+            pos += used as u64;
+            // stop: first non-metadata entry; used == 0: one entry larger than the request
+            if stop || used == 0 {
+                break;
+            }
+            want = (want * 4).min(PREFIX_MAX);
+        }
+        Ok(())
+    }
+
+    /// The verified encoded bytes of `id`: from read-ahead, else one ranged GET from the pack
+    /// that indexes it, else one GET of the loose object. `Ok(None)` if the remote lacks it.
+    pub fn fetch(&mut self, id: &ObjectId) -> Result<Option<Vec<u8>>, BackendError> {
+        if let Some(v) = self.cache.remove(id) {
+            return Ok(Some(v));
+        }
+        let hit = self
+            .packs()?
+            .iter()
+            .enumerate()
+            .find_map(|(i, (stem, idx))| idx.find(id).map(|(o, l)| (i, format!("{stem}.pack"), o, l)));
+        if let Some((i, key, off, len)) = hit {
+            if self.ahead != ReadAhead::None && !self.read_ahead_done[i] {
+                self.read_ahead_done[i] = true;
+                self.read_ahead(i)?;
+                if let Some(v) = self.cache.remove(id) {
+                    return Ok(Some(v));
+                }
+            }
+            let bytes = self
+                .b
+                .get_range(&key, off, len as u64)?
+                .ok_or_else(|| BackendError::Other(format!("pack {key}: pack file missing")))?;
+            if bytes.len() != len as usize || id_of_encoded(&bytes) != *id {
+                return Err(BackendError::Other(format!("object {id} fails hash verification")));
+            }
+            return Ok(Some(bytes));
+        }
+        let h = id.to_hex();
+        Ok(self.b.get(&format!("objects/{}/{}", &h[..2], &h[2..]))?.map(|v| v.data))
+    }
+}
+
+/// Parse `[u32 len][object]` frames from `buf[from..to]` into `cache`. With `meta_only`, stop at
+/// the first object that is not a tree or commit. Returns (bytes consumed from `from`, stopped).
+fn absorb(cache: &mut HashMap<ObjectId, Vec<u8>>, buf: &[u8], from: usize, to: usize, meta_only: bool) -> (usize, bool) {
+    let mut p = from;
+    while p + 4 <= to {
+        let len = u32::from_le_bytes(buf[p..p + 4].try_into().unwrap()) as usize;
+        let Some(obj) = p.checked_add(4 + len).filter(|e| *e <= to).map(|e| &buf[p + 4..e]) else {
+            break;
+        };
+        // kinds: 2 = tree, 3 = commit (vcs_objects::Kind)
+        if meta_only && !matches!(obj.first(), Some(2 | 3)) {
+            return (p - from, true);
+        }
+        cache.insert(id_of_encoded(obj), obj.to_vec());
+        p += 4 + len;
+    }
+    (p - from, false)
 }
 
 /// Upload a local pack (and its index) as `packs/<name>`. The pack goes first, so a reader

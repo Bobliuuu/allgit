@@ -440,3 +440,25 @@ History: 10,000 commits, two branches diverging 10 commits before each tip. Grap
 experimental graph-driven log was measured at 2.42 ms, 10.8 ms and 93.9 ms, i.e. slower, so it was dropped). The ~2.3 ms
 floor with the graph is loading and validating the 10k-entry file; building it cold was not measured.
 These numbers are from a different machine than the earlier tables in this file and are not comparable with them.
+
+## Remote packs: requests and bytes (`CountingBackend` over `MemBackend`)
+
+Measured by `cargo test -p vcs-remote --test packs -- --nocapture` on the Linux build box. Requests = every backend call
+(GET, ranged GET, HEAD, PUT, LIST); bytes are payload bytes. "loose" is the legacy layout (`with_loose_objects()`), "packed"
+the new default; both rows run the same code and workload, so only the layout differs. In-memory backend: no latency.
+
+| workload | layout | requests | bytes down | bytes up |
+|---|---|---|---|---|
+| publish 1 edited file, directory of 5,000 entries (second commit) | loose | 5,009 | 81 | 200,304 |
+| same | packed | 6 | 81 | 200,576 |
+| lazy clone (commits and trees), 1,000 commits x 100 files | loose | 2,002 | 3,899,939 | 0 |
+| same | packed | 9 | 4,063,554 | 0 |
+| full fetch (all objects), same history | loose | 3,101 | 3,909,413 | 0 |
+| same | packed | 4 | 4,058,293 | 0 |
+
+Reading: the 1-file publish upload is 200 KB in both layouts because the 5,000-entry tree itself is rewritten (that is the
+real changed object); only the request count changes. The packed clone moves about 4% more bytes (read-ahead past the metadata
+prefix, pack framing) for about 220x to 780x fewer requests; on a real network the win is latency, not bytes, and it was not
+measured here. The loose-layout "before" was produced with the new fetch code against a loose remote (one extra LIST), not
+by checking out the old tree, so the audit's figures (5,012 and 3,103) differ by that small amount. Not measured: S3 or any
+real network, first-publish cost, many accumulated packs (one index GET per pack per fetch).

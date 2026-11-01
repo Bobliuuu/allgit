@@ -65,6 +65,10 @@ impl PackIndex {
             checksum,
         })
     }
+    /// All entries as `(id, offset, len)`, sorted by id.
+    pub fn entries(&self) -> &[(ObjectId, u64, u32)] {
+        &self.entries
+    }
     /// `(offset, len)` of the object's encoded bytes within the pack file.
     pub fn find(&self, id: &ObjectId) -> Option<(u64, u32)> {
         self.entries
@@ -174,12 +178,20 @@ impl Pack {
     }
 }
 
-/// Write a pack + index for `objects` (id, encoded bytes) into `dir`; returns the opened pack.
-/// Pack is renamed into place first, index last: a pack without an index is ignored.
-pub fn write_pack(dir: &Path, tmp_dir: &Path, mut objects: Vec<(ObjectId, Vec<u8>)>) -> Result<Pack, StoreError> {
-    objects.sort_by_key(|o| o.0);
-    objects.dedup_by(|a, b| a.0 == b.0);
-    io(dir, fs::create_dir_all(dir))?;
+/// A pack and its index, built in memory.
+pub struct BuiltPack {
+    /// `pack-<hex of the pack checksum>`: content-addressed, so uploading it twice is harmless.
+    pub name: String,
+    pub pack: Vec<u8>,
+    pub idx: Vec<u8>,
+}
+
+/// Build pack and index bytes for `objects` (id, encoded bytes). Entries are laid out in the
+/// order given (duplicate ids keep their first occurrence), so callers may group related
+/// objects; the index is always sorted by id.
+pub fn build_pack(objects: Vec<(ObjectId, Vec<u8>)>) -> BuiltPack {
+    let mut seen = std::collections::HashSet::new();
+    let objects: Vec<_> = objects.into_iter().filter(|o| seen.insert(o.0)).collect();
     let mut pack = Vec::new();
     pack.extend_from_slice(PACK_MAGIC);
     pack.extend_from_slice(&(objects.len() as u32).to_le_bytes());
@@ -191,6 +203,7 @@ pub fn write_pack(dir: &Path, tmp_dir: &Path, mut objects: Vec<(ObjectId, Vec<u8
     }
     let sum = *blake3::hash(&pack).as_bytes();
     pack.extend_from_slice(&sum);
+    ents.sort_by_key(|e| e.0);
     let mut idx = Vec::new();
     idx.extend_from_slice(IDX_MAGIC);
     idx.extend_from_slice(&(ents.len() as u32).to_le_bytes());
@@ -202,9 +215,22 @@ pub fn write_pack(dir: &Path, tmp_dir: &Path, mut objects: Vec<(ObjectId, Vec<u8
         idx.extend_from_slice(&len.to_le_bytes());
     }
     idx.extend_from_slice(blake3::hash(&idx).as_bytes());
-    let name = ObjectId::from_bytes(sum).to_hex();
+    BuiltPack {
+        name: format!("pack-{}", ObjectId::from_bytes(sum).to_hex()),
+        pack,
+        idx,
+    }
+}
+
+/// Write a pack + index for `objects` (id, encoded bytes) into `dir`; returns the opened pack.
+/// Pack is renamed into place first, index last: a pack without an index is ignored.
+pub fn write_pack(dir: &Path, tmp_dir: &Path, mut objects: Vec<(ObjectId, Vec<u8>)>) -> Result<Pack, StoreError> {
+    objects.sort_by_key(|o| o.0);
+    io(dir, fs::create_dir_all(dir))?;
+    let built = build_pack(objects);
+    let name = built.name.strip_prefix("pack-").unwrap_or(&built.name).to_owned();
     let (pp, ip) = (dir.join(format!("pack-{name}.pack")), dir.join(format!("pack-{name}.idx")));
-    for (final_path, data) in [(&pp, &pack), (&ip, &idx)] {
+    for (final_path, data) in [(&pp, &built.pack), (&ip, &built.idx)] {
         let tmp = tmp_dir.join(format!("{}.{}.packtmp", name, final_path.extension().unwrap().to_string_lossy()));
         {
             let mut f = io(&tmp, fs::File::create(&tmp))?;
