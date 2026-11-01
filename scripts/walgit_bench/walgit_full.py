@@ -21,10 +21,11 @@ then maintenance on the remote and on a client copy, then the read phases again 
 import argparse, json, os, platform, shutil, statistics, subprocess, sys, time, resource, urllib.request
 
 HOME = os.path.expanduser("~")
-WB = f"{HOME}/wb2"
+WB = os.environ.get("WB_DIR", f"{HOME}/wb2")
 RT = os.environ.get("WB_RT", f"{HOME}/rt/walgitfull/target/release")
-WALGIT = f"{HOME}/ref/walgit/target/release/walgit-server"
-RUSTFS = f"{HOME}/s3local/rustfs/rustfs"
+WALGIT_SRC = os.environ.get("WB_WALGIT_SRC", f"{HOME}/ref/walgit")
+WALGIT = f"{WALGIT_SRC}/target/release/walgit-server"
+RUSTFS = os.environ.get("WB_RUSTFS", f"{HOME}/s3local/rustfs/rustfs")
 PROXY_PY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "s3count_proxy.py")
 P_RF, P_WG, P_VD, P_VB, P_VF, P_PROXY = 19200, 19201, 19202, 19203, 19204, 19210
 ENV = dict(os.environ, AWS_ACCESS_KEY_ID="benchak", AWS_SECRET_ACCESS_KEY="benchsecret1", AWS_DEFAULT_REGION="us-east-1",
@@ -124,7 +125,7 @@ def start_rustfs():
     S.start("rustfs", [RUSTFS, "server", "--address", f"127.0.0.1:{P_RF}", f"{WB}/rfdata"], f"http://127.0.0.1:{P_RF}/", e)
     for b in ("walgit-b", "vcs"):
         for _ in range(30):
-            if sh(f"aws --endpoint-url http://127.0.0.1:{P_RF} s3 mb s3://{b}", check=False).returncode == 0:
+            if sh((f"aws --endpoint-url http://127.0.0.1:{P_RF} s3 mb s3://{b}" if not os.environ.get("WB_NO_AWS") else f"curl -sf -X PUT --aws-sigv4 aws:amz:us-east-1:s3 --user benchak:benchsecret1 http://127.0.0.1:{P_RF}/{b}"), check=False).returncode == 0:
                 break
             time.sleep(1)
         else:
@@ -612,7 +613,7 @@ def main():
             "kernel": platform.release(), "git": sh("git --version").stdout.strip(),
             "cpu": [l.split(":")[1].strip() for l in open("/proc/cpuinfo") if l.startswith("model name")][0], "cores": os.cpu_count(),
             "load_start": open("/proc/loadavg").read().split()[:3], "rustfs": sh(f"{RUSTFS} --version").stdout.strip(),
-            "walgit_rev": sh(f"git -C {HOME}/ref/walgit rev-parse HEAD").stdout.strip(), "vcs_version": vcs_rev,
+            "walgit_rev": sh(f"git -C {WALGIT_SRC} rev-parse HEAD").stdout.strip(), "vcs_version": vcs_rev,
             "vcs_rev": os.environ.get("WB_VCS_REV", "?")}
     out = {"meta": meta, "res": {}}
     try:
