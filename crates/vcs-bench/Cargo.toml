@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+# https endpoints for s3bench; off by default so it does not turn TLS on for the whole workspace
+s3-tls = ["vcs-store-s3/tls"]
+
 [dependencies]
 vcs-objects.workspace = true
 vcs-store.workspace = true
@@ -12,7 +16,7 @@ vcs-repo.workspace = true
 tempfile.workspace = true
 blake3.workspace = true
 vcs-remote.workspace = true
-vcs-store-s3 = { path = "../vcs-store-s3", features = ["tls"] }
+vcs-store-s3 = { path = "../vcs-store-s3" }
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false }
@@ -28,6 +32,7 @@ path = "src/bin/packbench.rs"
 [[bin]]
 name = "s3bench"
 path = "src/bin/s3bench.rs"
+required-features = ["s3-tls"]
 
 [[bin]]
 name = "datagen"
