@@ -653,7 +653,7 @@ impl Repo {
         validate_path(path)?;
         let abs = self.worktree.join(path);
         let pick = |id: Option<ObjectId>, mode: Option<EntryMode>| -> Result<Option<(Vec<u8>, EntryMode)>> {
-            id.map(|id| Ok((self.store.get_blob(&id)?, mode.unwrap_or(EntryMode::File))))
+            id.map(|id| Ok((self.store.get_content(&id)?, mode.unwrap_or(EntryMode::File))))
                 .transpose()
         };
         let content = match how {
@@ -732,7 +732,7 @@ impl Repo {
                 continue;
             }
             if let Some(e) = ix.entries.get(&c.path) {
-                if has_conflict_markers(&self.store.get_blob(&e.id)?) {
+                if has_conflict_markers(&self.store.get_content(&e.id)?) {
                     rep.with_markers.push(c.path.clone());
                 }
             }

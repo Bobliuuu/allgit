@@ -277,3 +277,46 @@ fn tag_show_blame_commands() {
     assert!(ok(&d, &["op", "log"]).contains("tag delete root/light"));
     assert!(ok(&d, &["fsck"]).contains("ok"));
 }
+
+#[test]
+fn chunked_large_files_work_with_restore_show_blame_and_merge() {
+    // A pseudo-random 3 MiB file is stored as chunks plus a manifest; every read path must reassemble it.
+    let big: Vec<u8> = {
+        let mut x: u64 = 0x9E37_79B9_7F4A_7C15;
+        (0..3 * 1024 * 1024)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                (x >> 24) as u8
+            })
+            .collect()
+    };
+    let t = tempfile::tempdir().unwrap();
+    ok(t.path(), &["init", "demo"]);
+    let d = t.path().join("demo");
+    std::fs::write(d.join("big.bin"), &big).unwrap();
+    ok(&d, &["add", "big.bin"]);
+    ok(&d, &["commit", "-m", "big"]);
+    std::fs::write(d.join("big.bin"), b"scribble").unwrap();
+    ok(&d, &["restore", "big.bin"]);
+    assert_eq!(std::fs::read(d.join("big.bin")).unwrap(), big);
+    ok(&d, &["show"]);
+    let blame = vcs(&d, &["blame", "big.bin"]);
+    assert!(
+        String::from_utf8_lossy(&blame.stderr).contains("binary"),
+        "blame must refuse binary cleanly, not report corruption"
+    );
+    ok(&d, &["branch", "side"]);
+    ok(&d, &["switch", "side"]);
+    let mut changed = big.clone();
+    changed[0] ^= 0xff;
+    std::fs::write(d.join("big.bin"), &changed).unwrap();
+    ok(&d, &["add", "big.bin"]);
+    ok(&d, &["commit", "-m", "change"]);
+    ok(&d, &["show"]);
+    ok(&d, &["switch", "main"]);
+    ok(&d, &["merge", "side"]);
+    assert_eq!(std::fs::read(d.join("big.bin")).unwrap(), changed);
+    assert!(ok(&d, &["fsck"]).contains("ok"));
+}
