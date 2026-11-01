@@ -1433,11 +1433,17 @@ fn run(cli: Cli) -> Result<(), Error> {
             let backend = remote::open_backend(&need_remote(&repo)?)?;
             let want = (!zones.is_empty()).then_some(zones.as_slice());
             let rep = repo.publish_as(backend.as_ref(), want, author()?, &principal())?;
-            if rep.updated.is_empty() {
+            if rep.updated.is_empty() && rep.tags.is_empty() {
                 println!("nothing to publish");
             }
             for (a, b, old, new) in &rep.updated {
                 println!("{a}/{b} {} -> {}", opt_short(*old), new.short());
+            }
+            for (z, n) in &rep.tags {
+                println!("tag {z}/{n}");
+            }
+            for (z, n) in &rep.tag_conflicts {
+                eprintln!("warning: tag {z}/{n} exists on the remote at another target; not moved");
             }
             match rep.outcome {
                 Some(Outcome::Applied { generation }) => println!("published atomically (remote generation {generation})"),
