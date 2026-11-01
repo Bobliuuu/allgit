@@ -74,19 +74,29 @@ because it runs on all cores (4x the CPU). `bisect` was not timed to completion.
 at the base commit; it is O(commits x files), so only one run of the first case was taken. The other "before" cells
 were not measured at this size (3000 commits / 2000 files: 10.8 s for `log -n20 -- file` before, 27 ms after, one load-14 run).
 
-### 100,000 commits, 1,000 files (quiet machine, partial: the run was cut when this doc was written)
+### 100,000 commits, 1,000 files (quiet machine, load1 1.6-3; medians of 7 rounds)
 
-| Case | git | git + cg | vcs |
-|---|---|---|---|
-| `log -n20 -- file` (hot 1%) | 7.9 | 6.4 | 83.6 |
-| `log -n20 -- dir` | 7.7 | 6.1 | 82.2 |
-| `log -n20 -- file` (cold) | 282 | 70 | 222 |
-| `log` all matches (cold) | 757 | 192 | 483 |
-| `log --follow` | 894 | 517 | 645 |
+"vcs (flat graph)" reads the commit-graph into flat arrays (no allocation per commit); "vcs (first PR)" decoded a
+vector per commit.
 
-On a short walk at 100k commits vcs is about 10x slower than git: loading the 100k-entry commit-graph and
-filter files (decode and verify, no mmap) costs about 80 ms per run. A fixed-layout file read in place would remove it;
-not done. Remaining 100k rows were not measured.
+| Case | git | git + cg | vcs (first PR) | vcs (flat graph) |
+|---|---|---|---|---|
+| `log -n20 -- file` (hot 1%) | 8.1 | 7.8 | 83.9 | 65.9 |
+| `log -n20 -- dir` | 7.6 | 7.5 | 86.4 | 65.6 |
+| `log -n20 -- file` (cold) | 281 | 78 | 235 | 165 |
+| `log` all matches (cold) | 759 | 204 | 482 | 335 |
+| `describe` | 9.8 | 8.5 | 92 | 62 |
+| `merge-base` | 190 | 47 | 127 | 81 |
+| `log -n200 --name-status` | 13 | 15 | 88 | 66 |
+
+Earlier run of this set (first PR build): `log --follow` git 894 / git+cg 517 / vcs 645; `log -S` git 12365 / 11945 / vcs
+5680 (CPU 32,968); `blame` git 1103 / 814 / vcs 4184 (3.8x git, slower); `grep` one hit git 22 / 24 / vcs 53;
+diff of commits 10,000 apart git 345 / 130 / vcs 105.
+
+Where the short-walk floor comes from: about 41 ms of the 62-66 ms is not the walk. Any command opens the store, and
+`Pack::open` reads the whole 32 MB pack index of this history (23 ms in `read`); `vcs rev-parse HEAD` alone takes 41 ms
+here. The graph (about 5 ms now) and filter (about 5 ms) files are the rest. Reading the pack index on demand is a
+`vcs-store` change and was not made here.
 
 ### Known limits
 
