@@ -157,7 +157,7 @@ impl Repo {
         // 2. write
         for p in &todo {
             let (mode, id) = (ix.entries[p].mode, ix.entries[p].id);
-            let data = self.store.get_blob(&id)?;
+            let data = self.store.get_content(&id)?;
             let abs = self.worktree.join(p);
             let parent = abs.parent().unwrap();
             io(parent, fs::create_dir_all(parent))?;
@@ -240,7 +240,7 @@ impl Repo {
             }
         }
         for (q, mode, id) in set {
-            let size = self.store.get_blob(&id)?.len() as u64;
+            let size = self.store.get_content(&id)?.len() as u64;
             // mtime 0 never matches the file's, so status re-hashes it instead of trusting a stale stat
             ix.insert(
                 &q,

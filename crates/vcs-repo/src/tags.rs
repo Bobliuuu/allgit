@@ -251,8 +251,8 @@ impl Repo {
             if o == n {
                 continue;
             }
-            let ob = o.map(|(_, i)| self.store.get_blob(i)).transpose()?;
-            let nb = n.map(|(_, i)| self.store.get_blob(i)).transpose()?;
+            let ob = o.map(|(_, i)| self.store.get_content(i)).transpose()?;
+            let nb = n.map(|(_, i)| self.store.get_content(i)).transpose()?;
             let d = diff::unified(p, ob.as_deref(), nb.as_deref());
             if d.is_empty() {
                 out.push_str(&format!("diff --vcs a/{p} b/{p}\nmode changed\n"));
@@ -306,7 +306,7 @@ impl Repo {
         let Some(mut blob) = self.blob_at(commit.root, &rel)? else {
             return msg(format!("{path:?} does not exist at {} in zone {zone:?}", head.short()));
         };
-        let mut content = self.store.get_blob(&blob)?;
+        let mut content = self.store.get_content(&blob)?;
         if diff::is_binary(&content) {
             return msg(format!("{path:?} is binary; blame works on text files"));
         }
@@ -332,7 +332,7 @@ impl Repo {
                 break;
             };
             if pb != blob {
-                let pcontent = self.store.get_blob(&pb)?;
+                let pcontent = self.store.get_content(&pb)?;
                 let origins = diff::line_origins(&pcontent, &content);
                 let mut next = Vec::new();
                 for (f, l) in pending.drain(..) {

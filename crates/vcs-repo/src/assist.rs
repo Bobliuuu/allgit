@@ -174,7 +174,7 @@ impl Repo {
         Ok(match id {
             None => None,
             Some(i) => {
-                let b = self.store.get_blob(i)?;
+                let b = self.store.get_content(i)?;
                 let bin = b[..b.len().min(8000)].contains(&0);
                 Some(if bin { None } else { String::from_utf8(b).ok() })
             }
