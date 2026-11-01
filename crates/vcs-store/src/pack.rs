@@ -57,6 +57,22 @@ pub const BLOCK_TARGET: usize = 4 * 1024 * 1024;
 const MAX_BLOCK: u64 = 256 * 1024 * 1024;
 /// Upper bound on one decoded object, so a lying zstd frame header cannot demand more.
 const MAX_DECODED: u64 = u32::MAX as u64;
+
+/// Most a compliant zstd encoder can expand input: a block holds at most 128 KiB and an RLE block
+/// costs 4 bytes, i.e. 32768:1. A frame header claiming more than twice that per compressed byte
+/// (once past a small floor) is lying, and is refused before any output buffer is allocated, so a
+/// few hundred bytes of input cannot make the reader reserve hundreds of megabytes.
+const MAX_ZSTD_RATIO: u64 = 65_536;
+const RATIO_FLOOR: u64 = 1 << 20;
+
+fn check_ratio(claimed: u64, compressed: usize) -> Result<(), String> {
+    if claimed > RATIO_FLOOR && claimed / (compressed as u64).max(1) > MAX_ZSTD_RATIO {
+        return Err(format!(
+            "zstd frame claims {claimed} bytes from {compressed} (more than {MAX_ZSTD_RATIO}:1, no encoder produces that)"
+        ));
+    }
+    Ok(())
+}
 const FANOUT_BYTES: usize = 256 * 4;
 const HEADER: u64 = 12; // magic + u32 count
 const IDX_ENTRY: usize = 32 + 8 + 4;
@@ -168,6 +184,7 @@ pub fn decode_payload_max(version: u8, payload: &[u8], max: u64) -> Result<std::
             if n > max.min(MAX_DECODED) {
                 return Err("zstd frame claims an oversized object".into());
             }
+            check_ratio(n, rest.len())?;
             // One decompression context per thread: creating one per object is a visible cost
             // when a checkout reads 100k small blobs.
             thread_local! {
@@ -220,6 +237,7 @@ fn parse_delta(payload: &[u8], max_delta: u64) -> Result<(u64, Vec<u8>), String>
     if n > max_delta {
         return Err("delta claims an oversized body".into());
     }
+    check_ratio(n, z.len())?;
     let d = zstd::bulk::decompress(z, n as usize).map_err(|e| format!("zstd: {e}"))?;
     Ok((dist, d))
 }
@@ -325,13 +343,25 @@ impl PackIndex {
     pub fn open_lazy(path: &Path) -> Result<PackIndex, StoreError> {
         #[cfg(unix)]
         {
-            let f = fs::File::open(path).map_err(|source| StoreError::Io { path: path.to_owned(), source })?;
-            let len = f.metadata().map_err(|source| StoreError::Io { path: path.to_owned(), source })?.len();
+            let f = fs::File::open(path).map_err(|source| StoreError::Io {
+                path: path.to_owned(),
+                source,
+            })?;
+            let len = f
+                .metadata()
+                .map_err(|source| StoreError::Io {
+                    path: path.to_owned(),
+                    source,
+                })?
+                .len();
             let head_n = ((8 + 4 + 8 + 32 + FANOUT_BYTES) as u64).min(len);
             // v1 has no fanout and is always fully verified at open (see `from_vec_lazy`): read whole
             let v2_plus = head_n >= 8 && pread_exact(&f, 0, 8).is_ok_and(|m| m != IDX_MAGIC[..]);
             if v2_plus && head_n >= 8 + 4 + 8 + 32 {
-                let head = pread_exact(&f, 0, head_n as usize).map_err(|source| StoreError::Io { path: path.to_owned(), source })?;
+                let head = pread_exact(&f, 0, head_n as usize).map_err(|source| StoreError::Io {
+                    path: path.to_owned(),
+                    source,
+                })?;
                 let (version, count, pack_len, checksum, fanout, base) = Self::parse_header(&head, len, path)?;
                 return Ok(PackIndex {
                     src: Src::File {
@@ -348,7 +378,10 @@ impl PackIndex {
                 });
             }
         }
-        let b = fs::read(path).map_err(|source| StoreError::Io { path: path.to_owned(), source })?;
+        let b = fs::read(path).map_err(|source| StoreError::Io {
+            path: path.to_owned(),
+            source,
+        })?;
         Self::from_vec_lazy(b, path)
     }
 
@@ -393,7 +426,9 @@ impl PackIndex {
         match &self.src {
             Src::Mem(b) => Ok(std::borrow::Cow::Borrowed(b)),
             #[cfg(unix)]
-            Src::File { file, len, .. } => pread_exact(file, 0, *len as usize).map(std::borrow::Cow::Owned).map_err(|e| format!("index read: {e}")),
+            Src::File { file, len, .. } => pread_exact(file, 0, *len as usize)
+                .map(std::borrow::Cow::Owned)
+                .map_err(|e| format!("index read: {e}")),
             #[cfg(not(unix))]
             Src::File { .. } => unreachable!("file-backed indexes exist on unix only"),
         }
@@ -484,7 +519,8 @@ impl PackIndex {
                     Some(e) => e,
                     None => {
                         let e = std::sync::Arc::new(
-                            pread_exact(file, (self.base + lo * IDX_ENTRY) as u64, (hi - lo) * IDX_ENTRY).map_err(|e| format!("index read: {e}"))?,
+                            pread_exact(file, (self.base + lo * IDX_ENTRY) as u64, (hi - lo) * IDX_ENTRY)
+                                .map_err(|e| format!("index read: {e}"))?,
                         );
                         buckets.lock().unwrap()[first] = Some(e.clone());
                         e
@@ -567,6 +603,7 @@ pub fn decode_block(payload: &[u8]) -> Result<Block, String> {
             if n > MAX_BLOCK {
                 return Err("zstd frame claims an oversized block".into());
             }
+            check_ratio(n, body.len())?;
             let out = zstd::bulk::decompress(body, n as usize).map_err(|e| format!("zstd: {e}"))?;
             if out.len() as u64 != n {
                 return Err("zstd frame length mismatch".into());
@@ -1287,7 +1324,7 @@ pub fn write_pack_streaming<'a>(
             if w.len >= kicked + WRITEBACK_STEP + (1 << 20) {
                 use std::os::unix::io::AsRawFd;
                 let done = w.len - (1 << 20); // the BufWriter may still hold the last MiB
-                // SAFETY: valid fd; the call only schedules write-back and has no memory effects.
+                                              // SAFETY: valid fd; the call only schedules write-back and has no memory effects.
                 unsafe {
                     libc::sync_file_range(
                         w.inner.get_ref().as_raw_fd(),
