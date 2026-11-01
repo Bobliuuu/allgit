@@ -353,6 +353,9 @@ pub struct OpView {
     pub branches: BTreeMap<(String, String), ObjectId>,
     /// zone -> checked-out branch, for subscribed zones.
     pub workspace: BTreeMap<String, String>,
+    /// (zone, tag name) -> tag target. `None` in operations recorded before tags were part of the
+    /// view (restoring those leaves tags alone); `Some` otherwise, even when empty.
+    pub tags: Option<BTreeMap<(String, String), ObjectId>>,
 }
 
 /// One entry of the operation log (distinct from the commit DAG): the local view after a
@@ -481,6 +484,13 @@ impl Object {
                 }
                 o.author.encode(&mut w);
                 w.str(&o.description);
+                // appended last so operations without a tag view keep their exact bytes
+                if let Some(tags) = &o.view.tags {
+                    w.varint(tags.len() as u64);
+                    for ((z, n), id) in tags {
+                        w.str(z).str(n).id(id);
+                    }
+                }
             }
             Object::Tag(t) => {
                 w.str(&t.zone).str(&t.name).id(&t.target);
@@ -671,9 +681,29 @@ impl Object {
                 }
                 let author = Signature::decode(&mut r)?;
                 let description = r.str(MAX_MESSAGE)?;
+                let tags = if r.remaining() > 0 {
+                    let nt = r.count(2 + 2 + 32)?;
+                    let mut tags = BTreeMap::new();
+                    let mut prev: Option<(String, String)> = None;
+                    for _ in 0..nt {
+                        let z = r.str(64)?;
+                        names::validate_zone_name(&z).map_err(|_| DecodeError::Invalid("zone name"))?;
+                        let n = r.str(200)?;
+                        names::validate_branch_name(&n).map_err(|_| DecodeError::Invalid("tag name"))?;
+                        let key = (z, n);
+                        if prev.as_ref().is_some_and(|p| *p >= key) {
+                            return Err(DecodeError::Invalid("operation tags not strictly sorted"));
+                        }
+                        prev = Some(key.clone());
+                        tags.insert(key, r.id()?);
+                    }
+                    Some(tags)
+                } else {
+                    None
+                };
                 Object::Operation(Operation {
                     parents,
-                    view: OpView { branches, workspace },
+                    view: OpView { branches, workspace, tags },
                     description,
                     author,
                 })
@@ -1007,6 +1037,7 @@ mod tests {
                 view: OpView {
                     branches: bs.into_iter().map(|(k, v)| (k, ObjectId::from_bytes(v))).collect(),
                     workspace: ws,
+                    tags: None,
                 },
                 description: d,
                 author: Signature {
@@ -1033,8 +1064,19 @@ mod tests {
         assert_eq!(enc[0], 6);
         assert_eq!(Object::decode(&enc).unwrap(), op);
         let mut t = enc.clone();
-        t.push(0);
+        t.extend([0, 0]);
         assert_eq!(Object::decode(&t), Err(DecodeError::Trailing));
+        // a view without a tag section (every operation recorded before tags) keeps its bytes;
+        // with one (even empty) it decodes back as Some
+        let Object::Operation(mut o) = op.clone() else { unreachable!() };
+        assert_eq!(o.view.tags, None);
+        o.view.tags = Some(Default::default());
+        let with_empty = Object::Operation(o.clone()).encode();
+        assert_eq!(with_empty.len(), enc.len() + 1);
+        assert_eq!(Object::decode(&with_empty).unwrap(), Object::Operation(o.clone()));
+        o.view.tags = Some([(("a".to_owned(), "v1".to_owned()), oid(3))].into());
+        let enc_t = Object::Operation(o.clone()).encode();
+        assert_eq!(Object::decode(&enc_t).unwrap(), Object::Operation(o));
         // unsorted branches are rejected
         let mut w = Writer::new();
         w.u8(Kind::Operation as u8).u8(FORMAT_VERSION).varint(0).varint(2);

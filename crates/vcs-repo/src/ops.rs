@@ -52,13 +52,14 @@ impl Repo {
         }
     }
 
-    /// Local view (branch heads + subscriptions) as currently on disk.
+    /// Local view (branch heads + tags + subscriptions) as currently on disk.
     pub fn current_view(&self) -> Result<OpView> {
         let refs = self.refs()?;
         let ws = self.workspace()?;
         Ok(OpView {
             branches: refs.branches,
             workspace: ws.subs,
+            tags: Some(refs.tags),
         })
     }
 
@@ -173,6 +174,25 @@ impl Repo {
                 }
             }
         }
+        for ((a, n), id) in target.tags.iter().flatten() {
+            if !zones.exists(a) {
+                return msg(format!("cannot restore: zone {a:?} no longer exists"));
+            }
+            match self.store.get(id) {
+                Ok(Object::Commit(cm)) if &cm.zone == a => {}
+                Ok(Object::Tag(t)) if &t.zone == a => {}
+                Ok(_) => {
+                    return msg(format!(
+                        "cannot restore: tag {a}/{n} points to {id}, which is not a commit or tag of that zone"
+                    ))
+                }
+                Err(_) => {
+                    return msg(format!(
+                        "cannot restore: object {id} for tag {a}/{n} is missing locally (fetch it first); nothing was changed"
+                    ))
+                }
+            }
+        }
         for a in target.workspace.keys() {
             if !zones.exists(a) {
                 return msg(format!("cannot restore: zone {a:?} no longer exists"));
@@ -225,6 +245,9 @@ impl Repo {
             self.save_index(&mut ix)?;
         }
         refs.branches = target.branches.clone();
+        if let Some(tags) = &target.tags {
+            refs.tags = tags.clone();
+        }
         write_atomic(&self.vcs.join("refs"), &refs.encode())?;
         self.save_ws(&Workspace {
             subs: target.workspace.clone(),
