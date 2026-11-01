@@ -42,6 +42,9 @@ pub struct BlameLine {
     /// 1-based.
     pub line_no: usize,
     pub text: String,
+    /// Repository-relative path the line had in `commit` (differs from the blamed path when the
+    /// file was renamed and rename following is on).
+    pub path: String,
 }
 
 impl Repo {
@@ -292,12 +295,21 @@ impl Repo {
     /// following only first parents of `rev` (default: the zone's current head). The zone is the
     /// one owning `path`. A line brought in by a merge belongs to the merge commit.
     pub fn blame(&self, path: &str, rev: Option<&str>) -> Result<Vec<BlameLine>> {
+        self.blame_follow(path, rev, None)
+    }
+
+    /// Like [`Repo::blame`]; with `follow = Some(threshold)` (per mille, see
+    /// `vcs_merge::rename::DEFAULT_THRESHOLD`) a file that appears in a commit without existing in
+    /// its first parent is matched against the files that commit removed, and blame continues
+    /// through the old name when one is similar enough.
+    pub fn blame_follow(&self, path: &str, rev: Option<&str>, follow: Option<u32>) -> Result<Vec<BlameLine>> {
         let zones = self.zones()?;
         let zone = zones.owner(path).to_owned();
         if path.is_empty() || zones.path_of(&zone) == Some(path) {
             return msg("blame needs a file path");
         }
-        let rel = zones.relative(&zone, path).to_owned();
+        let mut rel = zones.relative(&zone, path).to_owned();
+        let zprefix = zones.path_of(&zone).unwrap_or("").to_owned();
         if rel.is_empty() {
             return msg("blame needs a file path");
         }
@@ -312,7 +324,7 @@ impl Repo {
         }
         let final_content = content.clone();
         let n = diff::lines_of(&final_content).len();
-        let mut owner: BTreeMap<usize, ObjectId> = BTreeMap::new();
+        let mut owner: BTreeMap<usize, (ObjectId, String)> = BTreeMap::new();
         // (final line, line index in the commit being examined)
         let mut pending: Vec<(usize, usize)> = (0..n).map(|i| (i, i)).collect();
         let mut id = head;
@@ -321,13 +333,30 @@ impl Repo {
                 Some(p) => Some((*p, self.commit_obj(p)?)),
                 None => None,
             };
-            let pblob = match &parent {
+            let mut pblob = match &parent {
                 Some((_, pc)) => self.blob_at(pc.root, &rel)?,
                 None => None,
             };
+            let mut prev_rel = rel.clone();
+            if let (None, Some(th), Some((_, pc))) = (pblob, follow, &parent) {
+                // renamed in this commit? match against the files it removed
+                let old = treeops::flatten(&self.store, Some(pc.root), "")?;
+                let new = treeops::flatten(&self.store, Some(commit.root), "")?;
+                let gone: Vec<(&String, Vec<u8>)> = old
+                    .iter()
+                    .filter(|(p, _)| !new.contains_key(*p))
+                    .map(|(p, (_, i))| Ok((p, self.store.get_content(i)?)))
+                    .collect::<Result<_>>()?;
+                let names: Vec<(&str, &[u8])> = gone.iter().map(|(p, d)| (p.as_str(), d.as_slice())).collect();
+                let cur = [(rel.as_str(), content.as_slice())];
+                if let Some((i, _, _)) = vcs_merge::pair_by_content(&names, &cur, th).into_iter().next() {
+                    prev_rel = names[i].0.to_owned();
+                    pblob = self.blob_at(pc.root, &prev_rel)?;
+                }
+            }
             let (Some((pid, pc)), Some(pb)) = (parent, pblob) else {
                 for (f, _) in pending.drain(..) {
-                    owner.insert(f, id);
+                    owner.insert(f, (id, rel.clone()));
                 }
                 break;
             };
@@ -339,7 +368,7 @@ impl Repo {
                     match origins[l] {
                         Some(pl) => next.push((f, pl)),
                         None => {
-                            owner.insert(f, id);
+                            owner.insert(f, (id, rel.clone()));
                         }
                     }
                 }
@@ -347,6 +376,7 @@ impl Repo {
                 content = pcontent;
             }
             blob = pb;
+            rel = prev_rel;
             id = pid;
             commit = pc;
         }
@@ -354,10 +384,19 @@ impl Repo {
             .into_iter()
             .enumerate()
             .map(|(i, l)| BlameLine {
-                commit: owner[&i],
+                commit: owner[&i].0,
+                path: join_prefix(&zprefix, &owner[&i].1),
                 line_no: i + 1,
                 text: String::from_utf8_lossy(l).trim_end_matches('\n').to_owned(),
             })
             .collect())
+    }
+}
+
+fn join_prefix(prefix: &str, rel: &str) -> String {
+    if prefix.is_empty() {
+        rel.to_owned()
+    } else {
+        format!("{prefix}/{rel}")
     }
 }

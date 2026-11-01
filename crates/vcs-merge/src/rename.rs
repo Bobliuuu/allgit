@@ -186,6 +186,70 @@ pub fn detect_renames(blobs: &dyn BlobSource, base: &Flat, side: &Flat, threshol
     Ok(out)
 }
 
+/// A path and its content, for the content-based detectors below.
+pub type Named<'a> = (&'a str, &'a [u8]);
+
+/// Pair deleted files with added files by content (identical bytes first, then similarity at or
+/// above `threshold` per mille). One-to-one, deterministic; refuses nothing but still ignores
+/// ties by taking the lexicographically first. Returns `(deleted index, added index, score)`.
+pub fn pair_by_content(gone: &[Named], added: &[Named], threshold: u32) -> Vec<(usize, usize, u32)> {
+    pair_impl(gone, added, threshold, true)
+}
+
+/// Copy detection: for each added file, the best-matching `source` (a file that still exists) at or
+/// above `threshold`. Many added files may share one source. `(source index, added index, score)`.
+pub fn copies_by_content(sources: &[Named], added: &[Named], threshold: u32) -> Vec<(usize, usize, u32)> {
+    pair_impl(sources, added, threshold, false)
+}
+
+fn pair_impl(from: &[Named], to: &[Named], threshold: u32, one_to_one: bool) -> Vec<(usize, usize, u32)> {
+    if from.is_empty() || to.is_empty() {
+        return Vec::new();
+    }
+    let ffp: Vec<Option<Vec<u64>>> = from.iter().map(|(_, d)| fingerprint(d)).collect();
+    let tfp: Vec<Option<Vec<u64>>> = to.iter().map(|(_, d)| fingerprint(d)).collect();
+    let mut cands: Vec<(u32, bool, usize, usize)> = Vec::new();
+    for (i, (fp, f)) in ffp.iter().zip(from).enumerate() {
+        for (j, (tp, t)) in tfp.iter().zip(to).enumerate() {
+            let s = if f.1 == t.1 && !f.1.is_empty() {
+                1000
+            } else {
+                match (fp, tp) {
+                    (Some(x), Some(y)) if !x.is_empty() && !y.is_empty() => {
+                        let (lo, hi) = (x.len().min(y.len()), x.len().max(y.len()));
+                        if 2000 * lo / (lo + hi) < threshold as usize {
+                            continue;
+                        }
+                        similarity(x, y)
+                    }
+                    _ => continue,
+                }
+            };
+            if s >= threshold {
+                cands.push((s, base_name(f.0) == base_name(t.0), i, j));
+            }
+        }
+    }
+    cands.sort_by(|x, y| {
+        (y.0, y.1)
+            .cmp(&(x.0, x.1))
+            .then(from[x.2].0.cmp(from[y.2].0))
+            .then(to[x.3].0.cmp(to[y.3].0))
+    });
+    let (mut uf, mut ut) = (vec![false; from.len()], vec![false; to.len()]);
+    let mut out = Vec::new();
+    for (s, _, i, j) in cands {
+        if ut[j] || (one_to_one && uf[i]) {
+            continue;
+        }
+        uf[i] = true;
+        ut[j] = true;
+        out.push((i, j, s));
+    }
+    out.sort_by_key(|&(i, j, _)| (j, i));
+    out
+}
+
 /// Result of a rename-aware merge.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RenameMerge {
@@ -306,6 +370,20 @@ mod tests {
     }
     fn run(fx: &Fx, b: &Flat, l: &Flat, r: &Flat) -> RenameMerge {
         merge_flat_renames(&fx.0, Algorithm::Myers, false, DEFAULT_THRESHOLD, b, l, r).unwrap()
+    }
+
+    #[test]
+    fn content_pairing_and_copies() {
+        let a: &[u8] = b"one\ntwo\nthree\nfour\n";
+        let a2: &[u8] = b"one\ntwo\nthree\nfour\nfive\n";
+        let z: &[u8] = b"zzz\nyyy\n";
+        let r = pair_by_content(&[("old.txt", a), ("gone.txt", z)], &[("new.txt", a2)], DEFAULT_THRESHOLD);
+        assert_eq!(r.len(), 1);
+        assert_eq!((r[0].0, r[0].1), (0, 0));
+        assert!(r[0].2 >= 800 && r[0].2 < 1000);
+        let c = copies_by_content(&[("src.txt", a)], &[("c1.txt", a), ("c2.txt", a2), ("x.txt", z)], DEFAULT_THRESHOLD);
+        assert_eq!(c.iter().map(|x| x.1).collect::<Vec<_>>(), vec![0, 1]);
+        assert_eq!(c[0].2, 1000);
     }
 
     #[test]

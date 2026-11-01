@@ -31,22 +31,34 @@ pub struct Opts {
     pub author: Option<String>,
     pub color: bool,
     pub paths: Vec<String>,
+    pub x: crate::logopts::LogExtra,
 }
 
-/// Collect, filter and render the log of `zone`.
-pub fn run(repo: &Repo, cwd: &Path, zone: &str, branch: Option<&str>, limit: usize, o: &Opts) -> Result<String, Error> {
-    let filtering = o.author.is_some() || !o.paths.is_empty();
+/// The commits `vcs log` would show (filters applied, count applied). The flag is true when the
+/// branch has no commits at all.
+pub fn select(
+    repo: &Repo,
+    cwd: &Path,
+    zone: &str,
+    branch: Option<&str>,
+    limit: usize,
+    o: &Opts,
+) -> Result<(Vec<(ObjectId, Commit)>, bool), Error> {
+    let filtering = o.author.is_some() || !o.paths.is_empty() || o.x.filters();
     // Filters need the whole history; the count applies after filtering.
-    let all = repo.log(zone, branch, if filtering { usize::MAX } else { limit })?;
+    let mut all = repo.log(zone, branch, if filtering { usize::MAX } else { limit })?;
     let defs = repo.zones()?;
     if all.is_empty() {
-        return Ok(format!("zone {}: no commits yet\n", defs.label(zone)));
+        return Ok((Vec::new(), true));
+    }
+    if o.x.first_parent {
+        all = crate::logopts::first_parent_chain(&all);
     }
     let mut shown: Vec<(ObjectId, Commit)> = all.clone();
     if let Some(a) = &o.author {
         shown.retain(|(_, c)| author_matches(c, a));
     }
-    if !o.paths.is_empty() {
+    if !o.paths.is_empty() && !o.x.follow {
         let mut specs = Vec::new();
         for p in &o.paths {
             specs.push(repo.rel_path(cwd, p)?);
@@ -62,11 +74,26 @@ pub fn run(repo: &Repo, cwd: &Path, zone: &str, branch: Option<&str>, limit: usi
         }
         shown = keep;
     }
+    if o.x.filters() {
+        let prefix = defs.path_of(zone).unwrap_or("").to_owned();
+        o.x.filter(repo, &prefix, &all, &mut shown, &o.paths, cwd)?;
+    }
     shown.truncate(limit);
+    Ok((shown, false))
+}
+
+/// Collect, filter and render the log of `zone`.
+pub fn run(repo: &Repo, cwd: &Path, zone: &str, branch: Option<&str>, limit: usize, o: &Opts) -> Result<String, Error> {
+    let defs = repo.zones()?;
+    let (shown, empty) = select(repo, cwd, zone, branch, limit, o)?;
+    if empty {
+        return Ok(format!("zone {}: no commits yet\n", defs.label(zone)));
+    }
     if shown.is_empty() {
         return Ok("no matching commits\n".to_string());
     }
-    Ok(render(&shown, |z| defs.label(z).to_string(), o))
+    let notes = o.x.notes(repo, zone, &shown)?;
+    Ok(render_with(&shown, |z| defs.label(z).to_string(), o, &notes))
 }
 
 pub fn author_matches(c: &Commit, needle: &str) -> bool {
@@ -140,7 +167,13 @@ fn paint(on: bool, code: &str, s: &str) -> String {
 }
 
 /// Render `commits` (newest first). Pure; the graph follows only parents present in the slice.
-pub fn render(commits: &[(ObjectId, Commit)], label: impl Fn(&str) -> String, o: &Opts) -> String {
+/// Lines in `notes` (file lists) are printed under their commit.
+pub fn render_with(
+    commits: &[(ObjectId, Commit)],
+    label: impl Fn(&str) -> String,
+    o: &Opts,
+    notes: &BTreeMap<ObjectId, Vec<String>>,
+) -> String {
     let ordered;
     let commits = if o.graph {
         ordered = children_first(commits);
@@ -152,7 +185,18 @@ pub fn render(commits: &[(ObjectId, Commit)], label: impl Fn(&str) -> String, o:
     let mut lanes: Vec<Option<ObjectId>> = Vec::new();
     let mut out = String::new();
     for (id, c) in commits {
-        let body = body_lines(id, c, &label, o);
+        let mut body = body_lines(id, c, &label, o);
+        if let Some(n) = notes.get(id).filter(|n| !n.is_empty()) {
+            // keep the blank separator after the message, then the list, then another blank
+            let blank = body.last().is_some_and(String::is_empty);
+            if !blank && !o.graph && !o.oneline && o.x.format.is_none() {
+                body.push(String::new());
+            }
+            body.extend(n.iter().cloned());
+            if !o.oneline && o.x.format.is_none() {
+                body.push(String::new());
+            }
+        }
         if !o.graph {
             for l in body {
                 out.push_str(&l);
@@ -274,6 +318,12 @@ fn place(lanes: &mut Vec<Option<ObjectId>>, id: ObjectId) -> usize {
 }
 
 fn body_lines(id: &ObjectId, c: &Commit, label: &impl Fn(&str) -> String, o: &Opts) -> Vec<String> {
+    if let Some(f) = &o.x.format {
+        return crate::logopts::expand(f, id, c, &label(&c.zone))
+            .split('\n')
+            .map(str::to_owned)
+            .collect();
+    }
     if o.oneline {
         let subject = c.message.lines().next().unwrap_or("");
         return vec![format!("{} {}", paint(o.color, YELLOW, &id.short()), subject)];

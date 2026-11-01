@@ -255,11 +255,29 @@ fn build_inner(cmd: &Cmd) -> Result<J, Error> {
                 ],
             )
         }
-        Cmd::Log { zone, limit, branch, .. } => {
+        Cmd::Log {
+            zone,
+            limit,
+            branch,
+            oneline,
+            graph,
+            author,
+            paths,
+            x,
+            ..
+        } => {
             let zone = zone_of_cwd(&repo, &cwd, zone.clone())?;
             let defs = repo.zones()?;
-            let commits = repo
-                .log(&zone, branch.as_deref(), *limit)?
+            let o = crate::logfmt::Opts {
+                oneline: *oneline,
+                graph: *graph,
+                author: author.clone(),
+                color: false,
+                paths: paths.clone(),
+                x: x.clone(),
+            };
+            let commits = crate::logfmt::select(&repo, &cwd, &zone, branch.as_deref(), *limit, &o)?
+                .0
                 .into_iter()
                 .map(|(id, c)| {
                     J::Obj(vec![

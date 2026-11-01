@@ -13,12 +13,14 @@ mod bundle_cmd;
 mod cmds;
 mod config;
 mod describe;
+mod difftool;
 mod generate;
 mod grep;
 mod hooks;
 mod json;
 mod lockable_cmd;
 mod logfmt;
+mod logopts;
 mod plumb;
 mod remote;
 mod shelve_cmd;
@@ -141,9 +143,8 @@ enum Cmd {
     Diff {
         #[arg(long)]
         staged: bool,
-        /// Per-file added/deleted line counts instead of the patch
-        #[arg(long)]
-        stat: bool,
+        #[command(flatten)]
+        opts: difftool::DiffArgs,
     },
     /// Import a `git fast-export` stream (file, or `-` for stdin) into the root zone
     ImportGit { stream: PathBuf },
@@ -193,6 +194,8 @@ enum Cmd {
         /// When to colour output
         #[arg(long, value_enum, default_value_t = logfmt::ColorWhen::Auto)]
         color: logfmt::ColorWhen,
+        #[command(flatten)]
+        x: logopts::LogExtra,
         /// Branch (default: the checked-out one)
         branch: Option<String>,
         /// Only commits that change these paths (after `--`)
@@ -248,6 +251,8 @@ enum Cmd {
         rev: Option<String>,
         #[arg(long)]
         zone: Option<String>,
+        #[command(flatten)]
+        opts: difftool::DiffArgs,
     },
     /// Attribute each line of a file to a commit, following first parents
     Blame {
@@ -255,6 +260,12 @@ enum Cmd {
         /// Revision to blame at (default: HEAD of the file's zone)
         #[arg(long)]
         rev: Option<String>,
+        /// Follow the file across renames (a file new in a commit is matched with files that commit removed)
+        #[arg(short = 'M', long)]
+        find_renames: bool,
+        /// Minimum similarity in percent for -M
+        #[arg(long, value_name = "PERCENT", default_value_t = 50, value_parser = clap::value_parser!(u32).range(0..=100))]
+        rename_threshold: u32,
     },
     #[command(flatten)]
     More(cmds::More),
@@ -933,27 +944,9 @@ fn run(cli: Cli) -> Result<(), Error> {
                 println!("clean");
             }
         }
-        Cmd::Diff { staged, stat } => {
+        Cmd::Diff { staged, opts } => {
             let (repo, _) = open()?;
-            let d = repo.diff(staged)?;
-            if stat {
-                let stats = json::diff_stat(&d);
-                for s in &stats {
-                    if s.binary {
-                        println!(" {} | binary", s.path);
-                    } else {
-                        println!(" {} | +{} -{}", s.path, s.added, s.deleted);
-                    }
-                }
-                println!(
-                    " {} file(s) changed, {} insertion(s), {} deletion(s)",
-                    stats.len(),
-                    stats.iter().map(|s| s.added).sum::<u64>(),
-                    stats.iter().map(|s| s.deleted).sum::<u64>()
-                );
-            } else {
-                print!("{d}");
-            }
+            difftool::run_diff(&repo, staged, &opts)?;
         }
         Cmd::ImportGit { stream } => {
             let (repo, _) = open()?;
@@ -1051,6 +1044,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             graph,
             author,
             color,
+            x,
             branch,
             paths,
         } => {
@@ -1063,6 +1057,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                 author,
                 color: color.enabled(),
                 paths,
+                x,
             };
             print!("{}", logfmt::run(&repo, &cwd, &zone, branch.as_deref(), limit, &opts)?);
         }
@@ -1109,7 +1104,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                 }
             }
         }
-        Cmd::Show { rev, zone } => {
+        Cmd::Show { rev, zone, opts } => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
             let rep = repo.show(&zone, rev.as_deref().unwrap_or("HEAD"))?;
@@ -1138,15 +1133,25 @@ fn run(cli: Cli) -> Result<(), Error> {
                 println!("    {l}");
             }
             println!();
-            print!("{}", rep.diff);
+            print!("{}", difftool::show_diff(&repo, &rep, &opts)?);
         }
-        Cmd::Blame { path, rev } => {
+        Cmd::Blame {
+            path,
+            rev,
+            find_renames,
+            rename_threshold,
+        } => {
             let (repo, cwd) = open()?;
             let rel = repo.rel_path(&cwd, &path)?;
-            let lines = repo.blame(&rel, rev.as_deref())?;
+            let lines = repo.blame_follow(&rel, rev.as_deref(), find_renames.then_some(rename_threshold * 10))?;
             let w = lines.len().to_string().len();
+            let names = lines.iter().any(|l| l.path != rel);
             for l in lines {
-                println!("{} ({:>w$}) {}", l.commit.short(), l.line_no, l.text);
+                if names {
+                    println!("{} {} ({:>w$}) {}", l.commit.short(), l.path, l.line_no, l.text);
+                } else {
+                    println!("{} ({:>w$}) {}", l.commit.short(), l.line_no, l.text);
+                }
             }
         }
         Cmd::Gen(g) => generate::run(g, <Cli as clap::CommandFactory>::command())?,

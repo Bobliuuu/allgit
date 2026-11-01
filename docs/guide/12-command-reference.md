@@ -318,13 +318,24 @@ Show unstaged changes (or --staged)
 Usage: vcs diff [OPTIONS]
 
 Options:
-  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
-      --staged         
-      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
-      --stat           Per-file added/deleted line counts instead of the patch
-      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
-      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
-  -h, --help           Print help
+  -C <DIR>                          Run as if vcs was started in <DIR> (applied before repository discovery)
+      --staged                      
+      --json                        Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --stat                        Per-file added/deleted line counts instead of the patch
+      --ca-pem <FILE>               PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --name-only                   Only the names of changed files
+      --name-status                 Names with a status letter: A added, D deleted, M modified, R<score> renamed, C<score> copied
+      --no-hooks                    Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+      --word-diff                   Show changed words inline as [-old-]{+new+} instead of changed lines
+      --color [<WHEN>]              Colour the output: auto (terminal and no NO_COLOR), always, never. Bare `--color` forces colour unless NO_COLOR is set; `--color=always` overrides NO_COLOR
+      --color-moved                 Colour lines that were moved (deleted in one place, added in another of the same diff) differently; only visible with colour
+      --diff-algorithm <ALGORITHM>  Diff algorithm: myers (default), patience or histogram [possible values: myers, patience, histogram]
+  -U, --unified <N>                 Lines of context around each change (default 3)
+  -w, --ignore-all-space            Ignore all whitespace when comparing lines
+  -M, --find-renames                Detect renamed files (the short -C of git is taken by the global --chdir; use --find-copies)
+      --find-copies                 Detect copies of modified files as well as renames
+      --rename-threshold <PERCENT>  Minimum similarity in percent for rename and copy detection [default: 50]
+  -h, --help                        Print help
 ```
 
 ## `vcs import-git`
@@ -399,17 +410,31 @@ Arguments:
   [PATHS]...  Only commits that change these paths (after `--`)
 
 Options:
-  -C <DIR>               Run as if vcs was started in <DIR> (applied before repository discovery)
-      --zone <ZONE>      Zone (default: the zone containing the current directory)
-      --json             Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
-  -n, --limit <LIMIT>    [default: 20]
-      --ca-pem <FILE>    PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
-      --oneline          One line per commit: short id and subject
-      --graph            Draw the commit graph with ASCII lanes
-      --no-hooks         Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
-      --author <AUTHOR>  Only commits whose author name or email contains this text (case-insensitive)
-      --color <COLOR>    When to colour output [default: auto] [possible values: auto, always, never]
-  -h, --help             Print help
+  -C <DIR>                          Run as if vcs was started in <DIR> (applied before repository discovery)
+      --zone <ZONE>                 Zone (default: the zone containing the current directory)
+      --json                        Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+  -n, --limit <LIMIT>               [default: 20]
+      --ca-pem <FILE>               PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --oneline                     One line per commit: short id and subject
+      --graph                       Draw the commit graph with ASCII lanes
+      --no-hooks                    Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+      --author <AUTHOR>             Only commits whose author name or email contains this text (case-insensitive)
+      --color <COLOR>               When to colour output [default: auto] [possible values: auto, always, never]
+      --since <DATE>                Only commits at or after this date (UTC; see `vcs log --help` placeholders in docs/guide)
+      --until <DATE>                Only commits at or before this date (a date without time includes that whole day)
+      --grep <REGEX>                Only commits whose message matches this regular expression
+      --merges                      Only merge commits (two or more parents)
+      --no-merges                   Skip merge commits
+      --first-parent                Follow only the first parent of each commit
+  -S <STRING>                       Only commits that change the number of occurrences of this string in some file (pickaxe)
+      --format <TEMPLATE>           Template per commit. Placeholders: %H %h %P %p %an %ae %at %ad %s %b %B %C %z %n %%
+      --follow                      With one path: the history of that file across renames (first-parent walk)
+      --name-status                 List changed files with a status letter under each commit
+      --name-only                   List changed file names under each commit
+  -M, --find-renames                Detect renames in --name-status / --name-only listings
+      --find-copies                 Detect copies of modified files too
+      --rename-threshold <PERCENT>  Minimum similarity in percent for rename and copy detection (also used by --follow) [default: 50]
+  -h, --help                        Print help
 ```
 
 ## `vcs gen`
@@ -779,12 +804,24 @@ Arguments:
   [REV]  
 
 Options:
-  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
-      --zone <ZONE>    
-      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
-      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
-      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
-  -h, --help           Print help
+  -C <DIR>                          Run as if vcs was started in <DIR> (applied before repository discovery)
+      --zone <ZONE>                 
+      --json                        Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --stat                        Per-file added/deleted line counts instead of the patch
+      --ca-pem <FILE>               PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --name-only                   Only the names of changed files
+      --name-status                 Names with a status letter: A added, D deleted, M modified, R<score> renamed, C<score> copied
+      --no-hooks                    Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+      --word-diff                   Show changed words inline as [-old-]{+new+} instead of changed lines
+      --color [<WHEN>]              Colour the output: auto (terminal and no NO_COLOR), always, never. Bare `--color` forces colour unless NO_COLOR is set; `--color=always` overrides NO_COLOR
+      --color-moved                 Colour lines that were moved (deleted in one place, added in another of the same diff) differently; only visible with colour
+      --diff-algorithm <ALGORITHM>  Diff algorithm: myers (default), patience or histogram [possible values: myers, patience, histogram]
+  -U, --unified <N>                 Lines of context around each change (default 3)
+  -w, --ignore-all-space            Ignore all whitespace when comparing lines
+  -M, --find-renames                Detect renamed files (the short -C of git is taken by the global --chdir; use --find-copies)
+      --find-copies                 Detect copies of modified files as well as renames
+      --rename-threshold <PERCENT>  Minimum similarity in percent for rename and copy detection [default: 50]
+  -h, --help                        Print help
 ```
 
 ## `vcs blame`
@@ -798,12 +835,14 @@ Arguments:
   <PATH>  
 
 Options:
-  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
-      --rev <REV>      Revision to blame at (default: HEAD of the file's zone)
-      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
-      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
-      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
-  -h, --help           Print help
+  -C <DIR>                          Run as if vcs was started in <DIR> (applied before repository discovery)
+      --rev <REV>                   Revision to blame at (default: HEAD of the file's zone)
+      --json                        Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+  -M, --find-renames                Follow the file across renames (a file new in a commit is matched with files that commit removed)
+      --ca-pem <FILE>               PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --rename-threshold <PERCENT>  Minimum similarity in percent for -M [default: 50]
+      --no-hooks                    Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help                        Print help
 ```
 
 ## `vcs hook`
