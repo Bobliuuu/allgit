@@ -87,7 +87,11 @@ fn branch_switch_and_sparse_set_on_the_fake() {
     let st = r.status().unwrap();
     assert!(st.zones.iter().all(|z| z.staged.is_empty() && z.unstaged.is_empty()));
     r.checkout("lib", "f").unwrap();
-    assert_eq!(mem.paths(), s(&["lib/d/e/c.txt"]), "a.txt and new.txt are tracked but not materialized");
+    assert_eq!(
+        mem.paths(),
+        s(&["lib/d/e/c.txt"]),
+        "a.txt and new.txt are tracked but not materialized"
+    );
     r.sparse_add(None, "lib", &s(&["lib/new.txt"])).unwrap();
     assert_eq!(mem.get("lib/new.txt").unwrap(), b"n\n");
     r.sparse_disable(None, "lib").unwrap();
