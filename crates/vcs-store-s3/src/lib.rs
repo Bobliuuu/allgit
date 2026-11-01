@@ -28,7 +28,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use vcs_remote::backend::validate_key;
 use vcs_remote::{Backend, BackendError, Conditional, Versioned};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct S3Config {
     /// e.g. `http://127.0.0.1:9000` (path-style addressing).
     pub endpoint: String,
@@ -46,6 +46,23 @@ pub struct S3Config {
     /// replaces the built-in web roots, e.g. for MinIO with a private CA. Verification is
     /// never disabled.
     pub ca_pem: Option<Vec<u8>>,
+}
+
+/// Never prints the secret key, access key id or session token.
+impl std::fmt::Debug for S3Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("S3Config")
+            .field("endpoint", &self.endpoint)
+            .field("region", &self.region)
+            .field("bucket", &self.bucket)
+            .field("access_key", &"<redacted>")
+            .field("secret_key", &"<redacted>")
+            .field("session_token", &self.session_token.as_ref().map(|_| "<redacted>"))
+            .field("prefix", &self.prefix)
+            .field("timeout", &self.timeout)
+            .field("ca_pem", &self.ca_pem.as_ref().map(|p| p.len()))
+            .finish()
+    }
 }
 
 impl S3Config {
@@ -135,6 +152,9 @@ impl S3Backend {
             #[allow(unused_mut)]
             let mut builder = ureq::AgentBuilder::new()
                 .timeout(cfg.timeout)
+                // signed requests are bound to this host: never replay them (and the session token
+                // header) at a Location chosen by the server
+                .redirects(0)
                 .max_idle_connections(idle)
                 .max_idle_connections_per_host(idle);
             #[cfg(feature = "tls")]
