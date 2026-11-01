@@ -1915,8 +1915,8 @@ fn run(cli: Cli) -> Result<(), Error> {
             }
             let cwd = std::env::current_dir().map_err(|source| Error::Io { path: ".".into(), source })?;
             let url = remote::normalize_url(&url, &cwd);
-            let backend = remote::open_backend(&url)?;
-            let counting = vcs_remote::CountingBackend::new(backend.as_ref());
+            let backend = remote::open_memo(&url, true)?;
+            let counting = vcs_remote::CountingBackend::new(&backend);
             let want = (!zones.is_empty()).then_some(zones.as_slice());
             let repo = Repo::clone_from(&counting, &url, &dir, want)?;
             if stats {
@@ -2085,8 +2085,8 @@ fn run(cli: Cli) -> Result<(), Error> {
         }
         Cmd::Sync => {
             let (repo, _) = open()?;
-            let backend = remote::open_backend(&need_remote(&repo)?)?;
-            let rep = repo.sync(backend.as_ref())?;
+            let backend = remote::open_memo(&need_remote(&repo)?, false)?;
+            let rep = repo.sync(&backend)?;
             for (a, b, act) in &rep.actions {
                 let what = match act {
                     SyncAction::UpToDate => "up to date".to_owned(),
