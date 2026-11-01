@@ -1,0 +1,16 @@
+# vcs-server path policy (--policy). One rule per line, `#` starts a comment:
+#
+#   <allow|deny|require-lock> <principal|*> <zone|*> <glob>
+#
+# Deny by default: once this file is loaded, a write principal may change a path only if an
+# `allow` rule matches and no `deny` rule does. A principal needs at least one `allow` rule
+# for a zone to move its branches or define it. Admins skip allow/deny, not require-lock.
+# Globs match zone-relative paths: `*` inside a segment, `?` one character, a `**` segment
+# any number of segments.
+allow alice  *    **
+allow bob    art  art/**
+allow bob    ui   **
+deny  *      *    secrets/**
+# Binary assets can only change while the writer holds a lock on that exact path.
+require-lock * art **/*.psd
+require-lock * art **/*.blend

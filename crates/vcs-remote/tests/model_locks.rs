@@ -11,8 +11,13 @@
 //! Mutation checks (`#[should_panic]`) run the same search against a deliberately broken
 //! validator and require the checker to fail.
 //!
-//! Not covered (see docs/locks.md): real clocks, `require-lock` (not implemented), replicas with
-//! clock skew (epsilon is 0 here), authentication, contention cost.
+//! Replica skew (#130): a scenario may give each writer its own clock offset (`skews`) and a
+//! skew epsilon (`eps`). Extra invariant L-SKEW (recomputed in true time from step to step): a
+//! lock is never taken over by another principal before its holder had the full lease in real
+//! time. The mutation `IgnoreSkewEpsilon` must violate it.
+//!
+//! Not covered (see docs/locks.md): real clocks, authentication, contention cost. `require-lock`
+//! is a server policy and is tested in vcs-server.
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -40,6 +45,10 @@ struct Scenario {
     jumps: bool,
     expect: fn(&[bool], &Manifest, &[Transaction]),
     min_leaves: u64,
+    /// Per-writer validator clock offset in ms (replica skew); empty = all exact.
+    skews: &'static [i64],
+    /// Skew epsilon handed to every validator.
+    eps: u64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -213,7 +222,7 @@ fn changed(b: &MemBackend, old: Option<ObjectId>, new: ObjectId) -> Vec<String> 
     out
 }
 
-fn check_backend(b: &MemBackend, ctx: &str) -> Manifest {
+fn check_backend(b: &MemBackend, ctx: &str, eps: u64) -> Manifest {
     for k in b.keys().into_iter().filter(|k| k.starts_with("objects/")) {
         let data = b.get(&k).unwrap().unwrap().data;
         let o = Object::decode(&data).unwrap_or_else(|e| panic!("{ctx}: undecodable {k}: {e}"));
@@ -301,7 +310,7 @@ fn check_backend(b: &MemBackend, ctx: &str) -> Manifest {
                 LockOp::Present { token, .. } => {
                     let l = pl.unwrap_or_else(|| panic!("{ctx}: L-FENCE: accepted publish presents token {token} but no lock existed"));
                     assert!(
-                        l.token == *token && l.holder == principal && l.expires_at > now,
+                        l.token == *token && l.holder == principal && l.expires_at.saturating_add(eps) > now,
                         "{ctx}: L-FENCE: accepted stale/foreign token {token} (current {})",
                         l.token
                     );
@@ -340,15 +349,24 @@ fn check_backend(b: &MemBackend, ctx: &str) -> Manifest {
     prev
 }
 
+fn load_manifest_opt(b: &MemBackend) -> Manifest {
+    b.get("manifest")
+        .unwrap()
+        .map(|v| Manifest::decode(&v.data).unwrap())
+        .unwrap_or_default()
+}
+
 struct Stats {
     leaves: u64,
 }
 
-fn mk_pub<'a>(b: &'a MemBackend, clock: &'a Cell<u64>, fault: Option<LockFault>, w: &'a Writer) -> Publisher<'a> {
+fn mk_pub<'a>(sc: &Scenario, i: usize, b: &'a MemBackend, clock: &'a Cell<u64>, fault: Option<LockFault>, w: &'a Writer) -> Publisher<'a> {
+    let skew = sc.skews.get(i).copied().unwrap_or(0);
     let mut p = Publisher::new(b, &w.store, w.tx.clone())
         .with_loose_objects()
         .with_principal(w.who)
-        .with_clock(|| clock.get());
+        .with_skew_epsilon(sc.eps)
+        .with_clock(move || (clock.get() as i64 + skew).max(0) as u64);
     if let Some(f) = fault {
         p = p.with_lock_fault(f);
     }
@@ -366,10 +384,47 @@ fn run_schedule(sc: &Scenario, fault: Option<LockFault>, sched: &[Choice]) -> Op
         }
     }
     (sc.setup)(&backend, &clock, &writers);
-    let mut pubs: Vec<Option<Publisher>> = writers.iter().map(|w| Some(mk_pub(&backend, &clock, fault, w))).collect();
+    let mut pubs: Vec<Option<Publisher>> = writers
+        .iter()
+        .enumerate()
+        .map(|(i, w)| Some(mk_pub(sc, i, &backend, &clock, fault, w)))
+        .collect();
     let mut st = vec![W::Running; writers.len()];
     let mut special = false;
     let (mut ticks, mut fwd, mut back) = (0, false, false);
+    // L-SKEW bookkeeping: lock token -> earliest true time (the shared `clock`) it may be taken over
+    let mut true_expiry: BTreeMap<u64, u64> = BTreeMap::new();
+    let mut seen = load_manifest_opt(&backend);
+    // true time at which each writer last finished its Load step (where the lease clock starts)
+    let mut val_true = vec![T0; writers.len()];
+    let skew_check = |clock: &Cell<u64>, seen: &mut Manifest, true_expiry: &mut BTreeMap<u64, u64>, val_true: &[u64]| {
+        let now_m = load_manifest_opt(&backend);
+        let t = clock.get();
+        let started = |holder: &str| writers.iter().position(|w| w.who == holder).map_or(t, |i| val_true[i]);
+        for (k, l) in &now_m.locks {
+            match seen.locks.get(k) {
+                Some(o) if o.token == l.token => {
+                    if o.expires_at != l.expires_at {
+                        true_expiry.insert(l.token, started(&l.holder) + l.expires_at.saturating_sub(now_m.time_hw));
+                    }
+                }
+                prev => {
+                    if let Some(o) = prev {
+                        if o.holder != l.holder {
+                            let lim = true_expiry.get(&o.token).copied().unwrap_or(0);
+                            assert!(
+                                t >= lim,
+                                "L-SKEW: {} took {k:?} over from {} at true time {t}, before the holder's full lease ended at {lim} (prev {o:?}, hw {} sched {sched:?})",
+                                l.holder, o.holder, now_m.time_hw
+                            );
+                        }
+                    }
+                    true_expiry.insert(l.token, started(&l.holder) + l.expires_at.saturating_sub(now_m.time_hw));
+                }
+            }
+        }
+        *seen = now_m;
+    };
     let step = |w: usize, pubs: &mut Vec<Option<Publisher>>, st: &mut Vec<W>| match pubs[w].as_mut().unwrap().step() {
         Ok(Step::Continue) => {}
         Ok(Step::Done(_)) => st[w] = W::Done(true),
@@ -383,11 +438,27 @@ fn run_schedule(sc: &Scenario, fault: Option<LockFault>, sched: &[Choice]) -> Op
     };
     for c in sched {
         match *c {
-            Choice::Step(w) => step(w, &mut pubs, &mut st),
+            Choice::Step(w) => {
+                let was_cas = pubs[w].as_ref().is_some_and(|p| p.next_is_cas());
+                step(w, &mut pubs, &mut st);
+                if pubs[w].as_ref().is_some_and(|p| p.next_is_cas()) && !was_cas {
+                    val_true[w] = clock.get();
+                }
+                if !sc.skews.is_empty() {
+                    skew_check(&clock, &mut seen, &mut true_expiry, &val_true);
+                }
+            }
             Choice::Fault(w, f) => {
                 special = true;
                 backend.inject_cas_fault(f);
+                let was_cas = pubs[w].as_ref().is_some_and(|p| p.next_is_cas());
                 step(w, &mut pubs, &mut st);
+                if pubs[w].as_ref().is_some_and(|p| p.next_is_cas()) && !was_cas {
+                    val_true[w] = clock.get();
+                }
+                if !sc.skews.is_empty() {
+                    skew_check(&clock, &mut seen, &mut true_expiry, &val_true);
+                }
             }
             Choice::Crash(w) => {
                 special = true;
@@ -438,7 +509,7 @@ fn run_schedule(sc: &Scenario, fault: Option<LockFault>, sched: &[Choice]) -> Op
     for w in 0..writers.len() {
         if st[w] == W::Crashed {
             // recovery: retry the same transaction, faults off (clock keeps its current value)
-            ok[w] = match mk_pub(&backend, &clock, fault, &writers[w]).run() {
+            ok[w] = match mk_pub(sc, w, &backend, &clock, fault, &writers[w]).run() {
                 Ok(_) => true,
                 Err(
                     PublishError::Diverged { .. }
@@ -450,7 +521,7 @@ fn run_schedule(sc: &Scenario, fault: Option<LockFault>, sched: &[Choice]) -> Op
             };
         }
     }
-    let m = check_backend(&backend, &ctx);
+    let m = check_backend(&backend, &ctx, sc.eps);
     let txs: Vec<Transaction> = writers.iter().map(|w| w.tx.clone()).collect();
     // L-VISIBLE: reported success iff durably applied
     for (w, t) in txs.iter().enumerate() {
@@ -537,6 +608,8 @@ fn s_acquire_race() -> Scenario {
             assert_eq!(l.token, 0);
         },
         min_leaves: 100,
+        skews: &[],
+        eps: 0,
     }
 }
 
@@ -556,6 +629,8 @@ fn s_holder_vs_contender() -> Scenario {
             assert_eq!(m.head(ZONE, "main"), Some(txs[0].updates[0].new));
         },
         min_leaves: 100,
+        skews: &[],
+        eps: 0,
     }
 }
 
@@ -579,6 +654,8 @@ fn s_crash_expire_reacquire() -> Scenario {
             }
         },
         min_leaves: 100,
+        skews: &[],
+        eps: 0,
     }
 }
 
@@ -605,6 +682,8 @@ fn s_break_vs_publish() -> Scenario {
             assert!(m.locks.is_empty(), "lock is gone");
         },
         min_leaves: 100,
+        skews: &[],
+        eps: 0,
     }
 }
 
@@ -630,6 +709,8 @@ fn s_renew_expiry_acquire() -> Scenario {
         jumps: false,
         expect: |ok, _, _| assert!(!(ok[0] && ok[1]), "renew and a contender's acquire are mutually exclusive"),
         min_leaves: 100,
+        skews: &[],
+        eps: 0,
     }
 }
 
@@ -657,6 +738,8 @@ fn s_multi_zone_atomic() -> Scenario {
             assert_eq!(m.head("y", "main"), Some(txs[1].updates[0].new), "no partial effect of bob's tx");
         },
         min_leaves: 100,
+        skews: &[],
+        eps: 0,
     }
 }
 
@@ -681,6 +764,8 @@ fn s_duplicate_acquire() -> Scenario {
             assert_eq!(m.applied.len(), 2, "base + one acquire");
         },
         min_leaves: 100,
+        skews: &[],
+        eps: 0,
     }
 }
 
@@ -698,6 +783,30 @@ fn s_clock_jumps() -> Scenario {
         jumps: true,
         expect: |_, _, _| {},
         min_leaves: 100,
+        skews: &[],
+        eps: 0,
+    }
+}
+
+/// Replica skew (#130): alice's validator runs 50 ms slow, bob's 50 ms fast; both race for
+/// a.bin with a 100 ms lease. With eps = 2 * max skew = 100 no takeover happens before the
+/// holder had 100 ms of real time; with eps 0 bob could take over immediately.
+fn s_replica_skew() -> Scenario {
+    Scenario {
+        name: "replica-skew",
+        build: || {
+            vec![
+                lock_only("alice", vec![acquire("a.bin", 100)]),
+                lock_only("bob", vec![acquire("a.bin", 100)]),
+            ]
+        },
+        setup: setup_base,
+        ticks: 2,
+        jumps: false,
+        expect: |_, _, _| {},
+        min_leaves: 100,
+        skews: &[-50, 50],
+        eps: 100,
     }
 }
 
@@ -713,6 +822,7 @@ scenarios! {
     multi_zone_rejection_is_atomic => s_multi_zone_atomic,
     duplicate_acquire_applies_once => s_duplicate_acquire,
     clock_jumps_do_not_break_invariants => s_clock_jumps,
+    replicas_with_skew_respect_the_full_lease => s_replica_skew,
 }
 
 // ---- mutation checks: each must make the model fail ------------------------------------
@@ -754,4 +864,21 @@ fn mutation_clock_backward_without_high_water_is_caught() {
 #[should_panic(expected = "L-FENCE")]
 fn mutation_token_reuse_is_caught() {
     go(s_crash_expire_reacquire(), Some(LockFault::ReuseTokens));
+}
+
+#[test]
+#[should_panic(expected = "L-SKEW")]
+fn mutation_ignoring_skew_epsilon_is_caught() {
+    go(s_replica_skew(), Some(LockFault::IgnoreSkewEpsilon));
+}
+
+/// An epsilon smaller than twice the skew (here 100 < 200) is also unsafe; the checker must notice.
+#[test]
+#[should_panic(expected = "L-SKEW")]
+fn mutation_too_small_epsilon_is_caught() {
+    let mut sc = s_replica_skew();
+    sc.name = "replica-skew-small-eps";
+    sc.skews = &[-100, 100];
+    sc.eps = 100;
+    go(sc, None);
 }

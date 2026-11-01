@@ -10,6 +10,7 @@ vcs-server hash-token <token>                      # prints the hash to put in t
 vcs-server --root <dir> --tokens <file> [--listen 127.0.0.1:8480] [--tls-cert <pem> --tls-key <pem>]
                   [--audit-log <file> [--audit-key <file>]] [--rate-limit <burst>,<per-sec>] [--max-connections <n>]
 vcs-server audit verify <file> [--key <keyfile>]
+vcs-server --backend 's3://bucket/prefix?endpoint=URL' --tokens <file> [--policy <file>] [--max-lease-secs N] [--skew-epsilon-ms N]
 VCS_TOKEN=<token> VCS_PRINCIPAL=<name> vcs clone http://host:port ...
 ```
 
@@ -112,3 +113,7 @@ mTLS and certificate reload; SIGHUP; the CLI cannot open `https://` remotes yet;
 `GET /v1/audit`, create-only audit objects and policy hash in audit (#127); the per-zone path-glob policy (#123);
 require-lock policy; lease expiry times are still computed by the client (the server bounds only `time_hw`); one
 request per connection and one thread per connection (bounded by `max_connections`); OIDC; object-level read ACLs.
+`objects/` uploads hash to their key; lease expiry times are still computed by the client (the server bounds only
+`time_hw`); one connection per request, one thread per connection, no concurrency cap; OIDC; object-level read ACLs.
+
+Deployment (systemd, Docker, S3 backend, path policy, require-lock, replicas): see [deploy.md](deploy.md).

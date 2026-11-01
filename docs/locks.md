@@ -247,3 +247,15 @@ contention cost. Those need integration tests and a measurement.
 * Lock-admin and principal model: depends on the authn/authz work.
 * Large manifests: a repo with many binaries held at once grows the manifest; may force the sharding decision earlier.
 * This doc adds no code. Implementation issues (manifest format v2, validator, CLI, model) should be filed as separate tasks once this is accepted.
+
+## Server-enforced details (vcs-server)
+
+* **Server-computed expiry.** `vcs-server` rewrites lock times on every manifest write: the requested lease is
+  `expires_at - time_hw` as sent by the client, and the stored `expires_at` is `server_now + lease`
+  (`acquired_at` of a new lock is `server_now`; `time_hw` is the server high-water mark). Leases above
+  `--max-lease-secs` are refused with 422.
+* **Skew epsilon.** A lock is live until `expires_at + eps`. The validator takes `eps` from `--skew-epsilon-ms`
+  (server) or `Publisher::with_skew_epsilon` (library). With replica clock offsets of at most `S`, `eps >= 2S`
+  guarantees that nobody else takes a lock over before the holder had the full lease in real time; the model checker
+  (`model_locks.rs`, invariant L-SKEW) proves this for two replicas and fails for `eps = 0` and for `eps < 2S`.
+* **require-lock and path policy** are configured in the server's `--policy` file; see [deploy.md](deploy.md).

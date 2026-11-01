@@ -1,0 +1,40 @@
+# Install: copy the binary to /usr/local/bin/vcs-server, this file to /etc/systemd/system/,
+# create the user and directories (docs/deploy.md), then
+#   systemctl daemon-reload && systemctl enable --now vcs-server
+[Unit]
+Description=vcs-server (validating-writer HTTP server for the vcs remote)
+Documentation=https://github.com/Bobliuuu/allgit/blob/main/docs/deploy.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=vcs
+Group=vcs
+# Optional S3 credentials / settings (mode 0600, owned by root). Leave the file out for --root mode.
+EnvironmentFile=-/etc/vcs/server.env
+ExecStart=/usr/local/bin/vcs-server --root /var/lib/vcs/data --tokens /etc/vcs/tokens \
+  --policy /etc/vcs/policy --listen 127.0.0.1:8480 --max-lease-secs 86400
+# S3 instead of a directory: replace --root with
+#   --backend 's3://bucket/prefix?endpoint=https://s3.example.com&region=us-east-1'
+Restart=on-failure
+RestartSec=2
+
+# Hardening: the server only needs its data directory and the network.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallFilter=@system-service
+ReadWritePaths=/var/lib/vcs
+StateDirectory=vcs
+
+[Install]
+WantedBy=multi-user.target

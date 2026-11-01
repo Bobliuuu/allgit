@@ -10,8 +10,11 @@
 
 pub mod audit;
 pub mod auth;
+pub mod backend_url;
 pub mod client;
+pub mod glob;
 pub mod http;
+pub mod policy;
 pub mod ratelimit;
 pub mod server;
 #[cfg(feature = "tls")]
@@ -21,5 +24,7 @@ pub mod validate;
 pub use audit::AuditLog;
 pub use auth::{Principal, Role, TokenTable};
 pub use client::HttpBackend;
+pub use policy::Policy;
 pub use ratelimit::RateLimit;
 pub use server::{Config, Server};
+pub use validate::ValidatorConfig;

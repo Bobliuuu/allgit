@@ -1452,12 +1452,15 @@ name = "vcs-server"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "rcgen",
+ "rustls",
  "tempfile",
  "thiserror",
  "ureq",
  "vcs-objects",
  "vcs-remote",
  "vcs-store",
+ "vcs-store-s3",
 ]
 
 [[package]]

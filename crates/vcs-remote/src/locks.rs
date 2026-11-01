@@ -21,21 +21,28 @@ pub enum LockFault {
     NoHighWater,
     /// Hand out the previous token again instead of a fresh one.
     ReuseTokens,
+    /// Ignore the replica skew epsilon (treat a lock as expired exactly at `expires_at`).
+    IgnoreSkewEpsilon,
 }
 
-fn live(l: &Lock, now: u64) -> bool {
-    now < l.expires_at
+/// A lock is live until `expires_at + eps`: `eps` is the replica clock-skew allowance (ms),
+/// so a validator whose clock runs ahead cannot declare a lock expired before its holder has
+/// had the full lease in real time. Choose `eps >= 2 * max_skew` (docs/locks.md).
+pub fn live(l: &Lock, now: u64, eps: u64) -> bool {
+    now < l.expires_at.saturating_add(eps)
 }
 
 /// Apply the lock ops of `tx` to `new` (a clone of `cur`) and validate every net-changed path.
 /// `changed(i)` returns the net changed paths of `tx.updates[i]`; it is only called for
 /// zones that have at least one live lock.
+#[allow(clippy::too_many_arguments)]
 pub fn apply(
     cur: &Manifest,
     new: &mut Manifest,
     tx: &Transaction,
     principal: &str,
     raw_now: u64,
+    skew_eps: u64,
     fault: Option<LockFault>,
     changed: &mut dyn FnMut(usize) -> Result<BTreeSet<String>, PublishError>,
 ) -> Result<(), PublishError> {
@@ -44,6 +51,8 @@ pub fn apply(
     } else {
         raw_now.max(cur.time_hw)
     };
+    let eps = if fault == Some(LockFault::IgnoreSkewEpsilon) { 0 } else { skew_eps };
+    let live = |l: &Lock, now: u64| live(l, now, eps);
     let mut locks = cur.locks.clone();
     let mut next = cur.next_token;
     let mut acquired: BTreeSet<(String, String)> = BTreeSet::new();

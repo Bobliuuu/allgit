@@ -21,6 +21,7 @@ path = "src/main.rs"
 [dependencies]
 vcs-remote.workspace = true
 vcs-objects.workspace = true
+vcs-store-s3.workspace = true
 blake3.workspace = true
 thiserror.workspace = true
 ureq = { version = "2", default-features = false }
