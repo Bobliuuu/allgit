@@ -116,8 +116,12 @@ impl Repo {
             }
             out.push(FilePair {
                 path: p.clone(),
-                old: o.map(|(_, i)| if content { self.store.get_content(i) } else { Ok(Vec::new()) }).transpose()?,
-                new: n.map(|(_, i)| if content { self.store.get_content(i) } else { Ok(Vec::new()) }).transpose()?,
+                old: o
+                    .map(|(_, i)| if content { self.store.get_content(i) } else { Ok(Vec::new()) })
+                    .transpose()?,
+                new: n
+                    .map(|(_, i)| if content { self.store.get_content(i) } else { Ok(Vec::new()) })
+                    .transpose()?,
                 old_mode: o.map(|x| x.0),
                 new_mode: n.map(|x| x.0),
             });

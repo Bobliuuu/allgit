@@ -153,8 +153,12 @@ tree-sitter) were not evaluated.
 
 * `feat/pack-v2` does not exist on the remote, so pack v2 / zstd decompression bombs were not reviewed. Require a bound
   on decompressed size (declared and actual) and a ratio cap when it lands, and fuzz it.
-* Windows: reserved device names (`CON`, `NUL`, `AUX`, `COM1`), 260-character path limits and ADS on non-`.vcs` names are
-  not handled by name validation. Windows is not a supported platform yet; do not claim it before this is done.
+* Windows: checkout refuses reserved device names (`CON`, `NUL`, `AUX`, `COM1`..., with or without an extension),
+  trailing dots/spaces, characters NTFS forbids (including `:stream` names) and paths that reach the 260-byte limit
+  with the worktree prefix. The check always runs on Windows builds and elsewhere when `VCS_PROTECT_WINDOWS=1`
+  (`portable::windows_path_problem`; tests `windows_names.rs`). It is not in name validation, because those names are
+  legal on Linux and macOS. Windows is still not a supported platform (symlinks, locking and file watching are untested
+  there); do not claim it.
 * `import-git`, `import-p4` and the git remote helper were only checked through the shared name validation (which
   now rejects the aliases in finding 1); their parsers were not fuzzed or re-read.
 * `stash`, `rebase` and `merge` write paths were assumed to share the checkout preflight; not individually tested for
