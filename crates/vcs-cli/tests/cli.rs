@@ -320,3 +320,19 @@ fn chunked_large_files_work_with_restore_show_blame_and_merge() {
     assert_eq!(std::fs::read(d.join("big.bin")).unwrap(), changed);
     assert!(ok(&d, &["fsck"]).contains("ok"));
 }
+
+#[test]
+fn rm_last_file_in_cwd_keeps_cwd_usable() {
+    let t = tempfile::tempdir().unwrap();
+    ok(t.path(), &["init", "demo"]);
+    let d = t.path().join("demo");
+    std::fs::create_dir(d.join("sub")).unwrap();
+    std::fs::write(d.join("sub/only.txt"), "x\n").unwrap();
+    std::fs::write(d.join("keep.txt"), "k\n").unwrap();
+    ok(&d, &["add", "."]);
+    ok(&d, &["commit", "-m", "init"]);
+    let sub = d.join("sub");
+    ok(&sub, &["rm", "only.txt"]);
+    assert!(sub.is_dir(), "current directory must survive removal of its last file");
+    ok(&sub, &["status"]);
+}
