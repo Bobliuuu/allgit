@@ -139,6 +139,42 @@ impl WorktreeFs for RealFs {
     fn write(&self, path: &str, data: &[u8], mode: EntryMode) -> io::Result<FsStat> {
         let abs = self.abs(path);
         let parent = abs.parent().expect("worktree file has a parent");
+        // Fast path for a path that does not exist yet (the whole of a clone): create it under
+        // its final name, exclusively. Nothing can observe a half-written file as a tracked one
+        // because the index entry is only saved after the write returns, and an interrupted
+        // checkout is redone from the (durable) store. Anything already there falls through to
+        // the write-temp-then-rename path below.
+        #[cfg(unix)]
+        {
+            use std::io::Write;
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            let bits = if mode == EntryMode::Executable { 0o755 } else { 0o644 };
+            let open = || fs::OpenOptions::new().write(true).create_new(true).mode(bits).open(&abs);
+            let f = match open() {
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                    fs::create_dir_all(parent)?;
+                    open()
+                }
+                r => r,
+            };
+            match f {
+                Ok(mut f) => {
+                    let r = f
+                        .write_all(data)
+                        .and_then(|()| f.set_permissions(fs::Permissions::from_mode(bits)))
+                        .and_then(|()| f.metadata());
+                    return match r {
+                        Ok(m) => Ok(stat_of(&m)),
+                        Err(e) => {
+                            let _ = fs::remove_file(&abs);
+                            Err(e)
+                        }
+                    };
+                }
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(e),
+            }
+        }
         fs::create_dir_all(parent)?;
         let tmp = parent.join(tmp_name());
         fs::write(&tmp, data)?;
@@ -566,5 +602,30 @@ mod tests {
         let names: Vec<_> = m.read_dir("x").unwrap().into_iter().map(|e| (e.name, e.kind)).collect();
         assert_eq!(names, vec![("a".into(), FileKind::File), ("b".into(), FileKind::Dir)]);
         assert_eq!(m.paths(), vec!["x/a", "x/b/c", "y"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn real_fs_create_fast_path_matches_replace_path() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let fs = RealFs::new(d.path().to_path_buf());
+        // new file in a missing directory: created exclusively, exact mode regardless of umask, no temp left behind
+        let st = fs.write("x/y/new.sh", b"#!/bin/sh\n", EntryMode::Executable).unwrap();
+        assert_eq!((st.len, st.mode), (10, EntryMode::Executable));
+        assert_eq!(
+            std::fs::metadata(d.path().join("x/y/new.sh")).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        let st2 = fs.stat("x/y/new.sh").unwrap();
+        assert_eq!((st.len, st.mtime_ns, st.ino), (st2.len, st2.mtime_ns, st2.ino));
+        // existing file: replaced via temp + rename (new inode), still exact
+        fs.write("x/y/new.sh", b"v2", EntryMode::File).unwrap();
+        assert_eq!(fs.read("x/y/new.sh").unwrap(), b"v2");
+        assert_ne!(fs.stat("x/y/new.sh").unwrap().ino, st.ino);
+        let names: Vec<_> = fs.read_dir("x/y").unwrap().into_iter().map(|e| e.name).collect();
+        assert_eq!(names, vec!["new.sh".to_string()], "no leftover temp files");
+        // a path whose parent is a file fails and creates nothing
+        assert!(fs.write("x/y/new.sh/z", b"no", EntryMode::File).is_err());
     }
 }

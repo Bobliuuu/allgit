@@ -784,6 +784,12 @@ impl ObjectStore for LocalStore {
             Some(Pend::File(f)) => Some(f.clone()),
             None => None,
         };
+        if pending.is_none() && self.in_pack(id) {
+            // packed (the usual state after a clone): no failed `open` of a loose path first
+            if let Some(b) = self.packed(id)? {
+                return decode_verified(id, &b);
+            }
+        }
         let p = pending.unwrap_or_else(|| self.path_of(id));
         match fs::read(&p) {
             Ok(b) => decode_verified(id, &b),

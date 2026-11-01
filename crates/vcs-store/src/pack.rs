@@ -626,6 +626,17 @@ impl Pack {
         let Some((off, len)) = self.idx.lookup(id).map_err(corrupt)? else {
             return Ok(None);
         };
+        if self.idx.version == 3 {
+            // v3: a block holds many objects; when the one read last is this block, do not open
+            // the pack and read its (possibly megabytes of) compressed bytes again per object.
+            let hit = self.block.lock().unwrap().as_ref().filter(|c| c.0 == off).map(|c| c.1.clone());
+            if let Some(blk) = hit {
+                return blk.get(id).map(|b| Some(b.to_vec())).ok_or_else(|| StoreError::Corrupt {
+                    id: *id,
+                    reason: "not in its block".into(),
+                });
+            }
+        }
         let mut f = io(&self.pack_path, fs::File::open(&self.pack_path))?;
         io(&self.pack_path, f.seek(SeekFrom::Start(off)))?;
         // `len` comes from the index; never allocate it up front, so a lying index on a short

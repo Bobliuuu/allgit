@@ -1765,6 +1765,8 @@ impl Repo {
 
     pub(crate) fn transition_check_paths_ws(&self, ws: &Workspace, zone: &str, zones: &Zones, old: &Flat, new: &Flat) -> Result<()> {
         let changed: Vec<&String> = new.iter().filter(|(p, v)| old.get(*p) != Some(v)).map(|(p, _)| p).collect();
+        // ancestor directories already found clean: a directory is stat'ed once, not once per file in it
+        let mut clean_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
         for p in &changed {
             validate_path(p)?;
             if zones.owner(p) != zone {
@@ -1794,6 +1796,9 @@ impl Repo {
                     rel.push('/');
                 }
                 rel.push_str(c);
+                if clean_dirs.contains(&rel) {
+                    continue;
+                }
                 match self.wfs.stat(&rel) {
                     Ok(m) if m.kind == FileKind::Symlink => {
                         return msg(format!(
@@ -1806,6 +1811,7 @@ impl Repo {
                     }
                     _ => {}
                 }
+                clean_dirs.insert(rel.clone());
             }
         }
         Ok(())
