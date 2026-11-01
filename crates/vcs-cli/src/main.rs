@@ -7,6 +7,8 @@ use vcs_remote::Outcome;
 use vcs_repo::{AssistResult, ChangeKind, Error, MergeOutcome, RebaseOutcome, Repo, Resolution, SyncAction, ROOT_ZONE};
 
 mod auth;
+mod bisect;
+mod cmds;
 mod config;
 mod generate;
 mod json;
@@ -219,6 +221,8 @@ enum Cmd {
         #[arg(long)]
         rev: Option<String>,
     },
+    #[command(flatten)]
+    More(cmds::More),
     /// Switch branch (in the zone containing cwd, or --zone)
     Switch {
         branch: String,
@@ -684,12 +688,16 @@ fn need_remote(repo: &Repo) -> Result<String, Error> {
 }
 
 fn run(cli: Cli) -> Result<(), Error> {
+    if let Cmd::More(m) = &cli.cmd {
+        return cmds::dispatch(m);
+    }
     if cli.json {
         let doc = json::build(&cli.cmd).ok_or_else(|| Error::Msg("--json is not supported for this command".into()))??;
         println!("{}", doc.render());
         return Ok(());
     }
     match cli.cmd {
+        Cmd::More(_) => unreachable!("handled by cmds::dispatch"),
         Cmd::Init { path } => {
             let p = path.unwrap_or_else(|| PathBuf::from("."));
             let r = Repo::init(&p)?;

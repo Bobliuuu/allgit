@@ -20,6 +20,7 @@ pub mod meta;
 pub mod ops;
 pub mod p4_marshal;
 pub mod pick;
+pub mod plumbing;
 pub mod portable;
 pub mod rebase;
 pub mod repo;
