@@ -37,6 +37,10 @@ pub struct ShelvesArgs {
 pub struct UnshelveArgs {
     /// `principal/name` as printed by `vcs shelves --all` (a bare `name` is one of yours)
     pub shelf: String,
+    /// Delete the shelf from the remote after it applied cleanly (like `stash pop`); a conflicted
+    /// apply keeps it
+    #[arg(long)]
+    pub drop: bool,
 }
 
 /// Parse `90s`, `15m`, `12h`, `30d`, `2w` into milliseconds.
@@ -187,7 +191,13 @@ pub fn unshelve(repo: &Repo, a: UnshelveArgs, local_principal: &str) -> Result<(
     let (p, n) = split_id(&a.shelf, &me);
     let (m, out) = repo.unshelve(b.as_ref(), p, n)?;
     match out {
-        StashPopOutcome::Applied => println!("applied shelf {} ({} zone(s)); changes are staged", m.id(), m.zones.len()),
+        StashPopOutcome::Applied => {
+            println!("applied shelf {} ({} zone(s)); changes are staged", m.id(), m.zones.len());
+            if a.drop {
+                shelf::delete(b.as_ref(), p, n).map_err(cerr)?;
+                println!("dropped shelf {}", m.id());
+            }
+        }
         StashPopOutcome::Conflicted { paths } => {
             println!("applied shelf {} with conflicts in {} file(s):", m.id(), paths.len());
             for p in paths {
