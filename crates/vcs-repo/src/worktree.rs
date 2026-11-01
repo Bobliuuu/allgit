@@ -115,6 +115,7 @@ impl Repo {
         }
         Ok(Repo {
             worktree: wt.to_owned(),
+            wfs: std::sync::Arc::new(crate::worktree_fs::RealFs::new(wt.to_owned())),
             vcs,
             common: self.common.clone(),
             store: LocalStore::open(self.common.join("objects"))?,
