@@ -194,6 +194,12 @@ fn shelve_scenario(root: &Path, url: &str) {
     assert!(out.contains("conflicts in 1 file"), "{out}");
     assert!(read(b.join("src/lib.rs")).contains("<<<<<<<"));
     assert!(file_ok(&b, "bob", &["shelves", "--all"]).contains("alice/w1"));
+    // --drop removes the shelf after a clean apply
+    let c = root.join("c");
+    file_ok(root, "carol", &["clone", url, "c"]);
+    file_ok(&a, "alice", &["shelve", "dropme"]);
+    assert!(file_ok(&c, "carol", &["unshelve", "--drop", "alice/dropme"]).contains("dropped shelf alice/dropme"));
+    assert!(file_fail(&c, "carol", &["unshelve", "alice/dropme"]).contains("no such shelf"));
     // delete; deleting a missing shelf is an error
     file_ok(&a, "alice", &["shelve", "--delete", "w1"]);
     assert!(file_ok(&a, "alice", &["shelves"]).contains("no shelves"));
