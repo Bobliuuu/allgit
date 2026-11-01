@@ -118,10 +118,11 @@ fn check_closure_over_time(b: &MemBackend, ctx: &str) {
                 .get(&format!("{stem}.pack"))
                 .unwrap_or_else(|| panic!("{ctx}: index {k} visible before its pack"));
             let idx = vcs_store::pack::PackIndex::parse(&data, std::path::Path::new(&k)).unwrap();
-            for (id, off, len) in idx.entries() {
-                let bytes = pack[*off as usize..*off as usize + *len as usize].to_vec();
-                assert_eq!(id_of_encoded(&bytes), *id, "{ctx}: pack object hash mismatch");
-                visible.insert(*id, bytes);
+            for (id, off, len) in idx.iter() {
+                let raw = &pack[off as usize..off as usize + len as usize];
+                let bytes = vcs_store::pack::decode_payload(idx.version(), raw).unwrap().into_owned();
+                assert_eq!(id_of_encoded(&bytes), id, "{ctx}: pack object hash mismatch");
+                visible.insert(id, bytes);
             }
         } else {
             continue;

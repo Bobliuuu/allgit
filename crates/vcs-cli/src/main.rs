@@ -413,11 +413,16 @@ enum Cmd {
     Sync,
     /// Verify all objects and graph invariants
     Fsck,
-    /// Move loose objects into a pack (one pack + index under .vcs/objects/pack)
+    /// Move loose objects into a pack (one pack + index under .vcs/objects/pack).
+    /// With --format, existing packs are rewritten to that format too
     Repack {
         /// Only if loose objects exceed gc.autoPackLimit, and only those older than the grace period
         #[arg(long)]
         auto: bool,
+        /// Pack format: v2 (zstd, fanout index; the default for new packs) or v1 (rollback for
+        /// older binaries)
+        #[arg(long)]
+        format: Option<String>,
     },
     /// Garbage collection. DESTRUCTIVE unless --dry-run: permanently deletes unreachable
     /// objects older than the grace period (local), or with --remote --yes on the remote
@@ -1769,9 +1774,18 @@ fn run(cli: Cli) -> Result<(), Error> {
                 );
             }
         }
-        Cmd::Repack { auto } => {
+        Cmd::Repack { auto, format } => {
             let (repo, _) = open()?;
-            if auto {
+            if let Some(f) = format {
+                if auto {
+                    return Err(Error::Msg("--format cannot be combined with --auto".into()));
+                }
+                let Some(fmt) = vcs_store::pack::PackFormat::parse(&f) else {
+                    return Err(Error::Msg(format!("unknown pack format {f:?} (use v1 or v2)")));
+                };
+                let (n, c) = repo.repack_as(fmt)?;
+                println!("packed {n} object(s); rewrote {c} existing pack(s) as v{}", fmt.version());
+            } else if auto {
                 let limit = config::Config::load()?.auto_pack_limit()?;
                 match repo.auto_repack(limit, vcs_repo::Repo::AUTO_REPACK_GRACE)? {
                     Some(n) => println!("packed {n} object(s)"),

@@ -4,7 +4,7 @@ use crate::backend::{Backend, BackendError};
 use std::collections::HashMap;
 use std::path::Path;
 use vcs_objects::{id_of_encoded, ObjectId};
-use vcs_store::pack::PackIndex;
+use vcs_store::pack::{decode_payload, PackIndex};
 
 /// Check the remote pack really ends where its index says: the last 32 bytes (the trailer) must
 /// equal the index's pack checksum and nothing may follow. One 33-byte ranged GET. Ranged object
@@ -35,10 +35,14 @@ pub fn fetch_from_pack(b: &dyn Backend, stem: &str, id: &ObjectId) -> Result<Opt
     let Some(bytes) = b.get_range(&format!("{stem}.pack"), off, len as u64)? else {
         return Ok(None);
     };
-    if bytes.len() != len as usize || id_of_encoded(&bytes) != *id {
+    if bytes.len() != len as usize {
         return Err(BackendError::Other(format!("pack {stem}: object {id} fails hash verification")));
     }
-    Ok(Some(bytes))
+    let enc = decode_payload(idx.version(), &bytes).map_err(|e| BackendError::Other(format!("pack {stem}: object {id}: {e}")))?;
+    if id_of_encoded(&enc) != *id {
+        return Err(BackendError::Other(format!("pack {stem}: object {id} fails hash verification")));
+    }
+    Ok(Some(enc.into_owned()))
 }
 
 /// Key prefix under which a remote keeps packs: `packs/<name>.pack` and `packs/<name>.idx`.
@@ -145,10 +149,12 @@ pub fn fetch_many(b: &dyn Backend, ids: &[ObjectId]) -> Result<Vec<(ObjectId, Ve
                     let Some(bytes) = buf.get(s..e) else {
                         return Err(BackendError::Other(format!("pack {stem}: short read for {id}")));
                     };
-                    if id_of_encoded(bytes) != *id {
+                    let enc =
+                        decode_payload(idx.version(), bytes).map_err(|e| BackendError::Other(format!("pack {stem}: object {id}: {e}")))?;
+                    if id_of_encoded(&enc) != *id {
                         return Err(BackendError::Other(format!("pack {stem}: object {id} fails hash verification")));
                     }
-                    out.push((*id, bytes.to_vec()));
+                    out.push((*id, enc.into_owned()));
                 }
                 i = j;
             }
@@ -240,16 +246,16 @@ impl<'a> RemoteSource<'a> {
     }
 
     fn read_ahead(&mut self, i: usize, wanted: &ObjectId) -> Result<(), BackendError> {
-        let (stem, pack_len) = {
+        let (stem, pack_len, version) = {
             let (s, idx) = &self.packs.as_ref().expect("packs loaded")[i];
-            (s.clone(), idx.pack_len)
+            (s.clone(), idx.pack_len, idx.version())
         };
         let key = format!("{stem}.pack");
         let end = pack_len.saturating_sub(32);
         if self.ahead == ReadAhead::Whole {
             if let Some(v) = self.b.get(&key)? {
                 let to = (end as usize).min(v.data.len());
-                absorb(&mut self.cache, &v.data, PACK_HEADER as usize, to, false, &mut Vec::new());
+                absorb(&mut self.cache, &v.data, PACK_HEADER as usize, to, false, version, &mut Vec::new());
             }
             return Ok(());
         }
@@ -273,7 +279,7 @@ impl<'a> RemoteSource<'a> {
                     break;
                 };
                 let mut fresh = Vec::new();
-                let (used, stop) = absorb(&mut self.cache, &buf, 0, buf.len(), true, &mut fresh);
+                let (used, stop) = absorb(&mut self.cache, &buf, 0, buf.len(), true, version, &mut fresh);
                 pos += used as u64;
                 if stop || used == 0 {
                     break;
@@ -299,7 +305,7 @@ impl<'a> RemoteSource<'a> {
             let Some(buf) = self.b.get_range(&key, pos, want.min(end - pos))? else {
                 break;
             };
-            let (used, stop) = absorb(&mut self.cache, &buf, 0, buf.len(), true, &mut Vec::new());
+            let (used, stop) = absorb(&mut self.cache, &buf, 0, buf.len(), true, version, &mut Vec::new());
             pos += used as u64;
             // stop: first non-metadata entry; used == 0: one entry larger than the request
             if stop || used == 0 {
@@ -320,8 +326,8 @@ impl<'a> RemoteSource<'a> {
             .packs()?
             .iter()
             .enumerate()
-            .find_map(|(i, (stem, idx))| idx.find(id).map(|(o, l)| (i, format!("{stem}.pack"), o, l)));
-        if let Some((i, key, off, len)) = hit {
+            .find_map(|(i, (stem, idx))| idx.find(id).map(|(o, l)| (i, format!("{stem}.pack"), o, l, idx.version())));
+        if let Some((i, key, off, len, version)) = hit {
             if self.ahead != ReadAhead::None && !self.read_ahead_done[i] {
                 self.read_ahead_done[i] = true;
                 self.read_ahead(i, id)?;
@@ -333,32 +339,44 @@ impl<'a> RemoteSource<'a> {
                 .b
                 .get_range(&key, off, len as u64)?
                 .ok_or_else(|| BackendError::Other(format!("pack {key}: pack file missing")))?;
-            if bytes.len() != len as usize || id_of_encoded(&bytes) != *id {
+            let enc = if bytes.len() == len as usize {
+                decode_payload(version, &bytes).map_err(|e| BackendError::Other(format!("pack {key}: object {id}: {e}")))?
+            } else {
+                return Err(BackendError::Other(format!("object {id} fails hash verification")));
+            };
+            if id_of_encoded(&enc) != *id {
                 return Err(BackendError::Other(format!("object {id} fails hash verification")));
             }
-            return Ok(Some(bytes));
+            return Ok(Some(enc.into_owned()));
         }
         let h = id.to_hex();
         Ok(self.b.get(&format!("objects/{}/{}", &h[..2], &h[2..]))?.map(|v| v.data))
     }
 }
 
-/// Parse `[u32 len][object]` frames from `buf[from..to]` into `cache`. With `meta_only`, stop at
-/// the first object that is not a tree or commit. Returns (bytes consumed from `from`, stopped).
+/// Parse `[u32 len][entry]` frames (entry decoded per pack `version`) from `buf[from..to]` into
+/// `cache`. With `meta_only`, stop at the first object that is not a tree or commit. Returns
+/// (bytes consumed from `from`, stopped). An entry that fails to decode ends the scan; the
+/// normal ranged read then reports the error.
 fn absorb(
     cache: &mut HashMap<ObjectId, Vec<u8>>,
     buf: &[u8],
     from: usize,
     to: usize,
     meta_only: bool,
+    version: u8,
     fresh: &mut Vec<ObjectId>,
 ) -> (usize, bool) {
     let mut p = from;
     while p + 4 <= to {
         let len = u32::from_le_bytes(buf[p..p + 4].try_into().unwrap()) as usize;
-        let Some(obj) = p.checked_add(4 + len).filter(|e| *e <= to).map(|e| &buf[p + 4..e]) else {
+        let Some(raw) = p.checked_add(4 + len).filter(|e| *e <= to).map(|e| &buf[p + 4..e]) else {
             break;
         };
+        let Ok(obj) = decode_payload(version, raw) else {
+            break;
+        };
+        let obj = &obj[..];
         // kinds: 2 = tree, 3 = commit (vcs_objects::Kind)
         if meta_only && !matches!(obj.first(), Some(2 | 3)) {
             return (p - from, true);
@@ -404,12 +422,25 @@ mod tests {
     use vcs_objects::Object;
     use vcs_store::pack::write_pack;
 
+    /// Incompressible bytes (xorshift), so pack size reflects object count in range tests.
+    fn noise(seed: u64, n: usize) -> Vec<u8> {
+        let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        (0..n)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x as u8
+            })
+            .collect()
+    }
+
     #[test]
     fn reads_one_object_by_range_not_whole_pack() {
         let d = tempfile::tempdir().unwrap();
         let objs: Vec<_> = (0..50)
             .map(|i| {
-                let enc = Object::Blob(vec![i as u8; 10_000]).encode();
+                let enc = Object::Blob(noise(i as u64, 10_000)).encode();
                 (id_of_encoded(&enc), enc)
             })
             .collect();

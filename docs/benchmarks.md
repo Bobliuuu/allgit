@@ -637,3 +637,36 @@ divided by the object size. The audit measured 11.3x for 300 B objects and 8.31 
 The object format and the loose layout are deliberately not changed here; `vcs repack` removes the overhead (see the
 loose-vs-packed section above), at the cost of the pack read path measured in the audit (F7). A future automatic repack
 policy is the real fix and belongs to the storage-engine work.
+
+## Pack/index v2 vs v1 (#245, #246; measured, Linux box)
+
+Reproduce (on the box, release build): `packfmtbench size <name> <dir>`, `packfmtbench binary`,
+`packfmtbench lookup <objects> <packs>` (`crates/vcs-bench/src/bin/packfmtbench.rs`). Each size run imports the tree into
+a repo with one commit, then `repack --format v1` and converts to v2. Bytes are apparent sizes of `objects/` (loose) or
+`objects/pack` (pack + index). The box was shared (load average about 10 of 30 cores), one run per row, so times are
+indicative only. The "source" and "text" datasets are this repository's own `crates/` and `docs/` trees (small: 341 and
+155 objects, one version); a larger or multi-version source repo was not measured.
+
+| Dataset | Loose | v1 pack+idx | v2 pack+idx | v2 / v1 |
+|---|---|---|---|---|
+| source (`crates/`, Rust, 341 objects) | 2,439,163 | 2,455,472 | 786,787 | 0.320 |
+| text (`docs/`, markdown, 155 objects) | 4,971,271 | 4,978,839 | 880,261 | 0.177 |
+| binary generator (100 x 256 KiB random, 4 versions, 421 objects) | 104,877,913 | 104,898,249 | 104,895,494 | 1.000 |
+
+The binary generator output is incompressible, so every entry fell back to raw (the pack is 2,755 bytes smaller than v1
+only because of the smaller index framing; the fanout table adds 1 KiB). Whole-store `fsck` (packed): source 10.3 ms v1 vs
+7.3 ms v2, text 7.4 vs 5.5 ms, binary 171 vs 168 ms.
+
+Lookup and open, synthetic ids (1,000,000 objects), in-process, `Pack::contains` over every pack, 20,000 lookups:
+
+| Layout | v1 miss | v2 miss | v1 hit | v2 hit | open all packs v1 / v2 |
+|---|---|---|---|---|---|
+| 1 pack | 0.70 us | 0.49 us | 0.60 us | 0.41 us | 68 ms / 45 ms |
+| 256 packs (about 3,900 each) | 86.3 us | 33.1 us (35.5 on a second run) | 39.0 us | 13.5 us | 60 ms / 37-47 ms |
+| 16 packs, 100,000 objects | 4.46 us | 1.52 us | 2.43 us | 0.80 us | 5.8 ms / 3.1 ms |
+
+Findings: v2 misses are about 2.6x faster than v1 at 256 packs, not the 6x the research prototype predicted (29 us flat
+vs 4.6 us fanout): each pack still costs a cache-missing fanout read plus a binary search over a bucket of about 15
+entries. Open time did not drop as much as hashing alone would suggest, because the whole index file is still read
+into memory; only the BLAKE3 pass is gone. Compression time (`repack` v1 to v2 conversion: source 17.7 ms, text 16.7 ms,
+binary 439 ms including the raw fallback attempt on 100 MB) was measured once.

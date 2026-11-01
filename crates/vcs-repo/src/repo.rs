@@ -1888,6 +1888,13 @@ impl Repo {
     pub fn repack(&self) -> Result<usize> {
         Ok(self.store.repack()?)
     }
+
+    /// Repack in an explicit pack format; also rewrites existing packs of the other format.
+    /// `vcs repack --format v1` is the rollback to the format older binaries read.
+    /// Returns `(loose objects packed, packs converted)`.
+    pub fn repack_as(&self, fmt: vcs_store::pack::PackFormat) -> Result<(usize, usize)> {
+        Ok(self.store.repack_as(fmt, true)?)
+    }
 }
 
 /// What fsck saw when it read a listed object, kept for checking chunk manifests.

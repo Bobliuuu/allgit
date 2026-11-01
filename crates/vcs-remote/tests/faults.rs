@@ -6,7 +6,7 @@
 use vcs_objects::*;
 use vcs_remote::protocol::object_key;
 use vcs_remote::*;
-use vcs_store::pack::{write_pack, IDX_MAGIC};
+use vcs_store::pack::{write_pack, IDX_MAGIC_V2};
 use vcs_store::{MemoryStore, ObjectStore};
 
 fn sig() -> Signature {
@@ -213,14 +213,14 @@ fn index_corruption_is_detected() {
         assert_clean_failure(fetch_heads(&b, &dst, None), &dst, r.head, &format!("idx cut {cut}"));
     }
     // 3. index with a valid checksum that points object A at object B's bytes: the id check on
-    //    the fetched range must catch it (entries start at 52, 44 bytes each; offset+len at +32)
+    //    the fetched range must catch it (v2 entries start after the 52-byte header and 1024-byte fanout, 44 bytes each; offset+len at +32)
     let mut swapped = r.idx.clone();
-    let (e0, e1) = (52usize, 52 + 44);
+    let (e0, e1) = (52usize + 1024, 52 + 1024 + 44);
     for i in 32..44 {
         swapped.swap(e0 + i, e1 + i);
     }
     reseal(&mut swapped);
-    assert_eq!(&swapped[..8], IDX_MAGIC);
+    assert_eq!(&swapped[..8], IDX_MAGIC_V2);
     let b = copy_where(&r.b, &|k| k != "packs/p1.idx");
     b.put_if_absent("packs/p1.idx", &swapped).unwrap();
     let dst = MemoryStore::new();
