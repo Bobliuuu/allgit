@@ -11,6 +11,8 @@ vcs-store.workspace = true
 vcs-repo.workspace = true
 tempfile.workspace = true
 blake3.workspace = true
+vcs-remote.workspace = true
+vcs-store-s3 = { path = "../vcs-store-s3", features = ["tls"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false }
@@ -22,6 +24,10 @@ path = "src/bin/chunkbench.rs"
 [[bin]]
 name = "packbench"
 path = "src/bin/packbench.rs"
+
+[[bin]]
+name = "s3bench"
+path = "src/bin/s3bench.rs"
 
 [[bin]]
 name = "datagen"
