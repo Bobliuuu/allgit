@@ -262,5 +262,41 @@ size and 66-67% at 32 KiB, on versioned random binaries with small edits. Implem
 - Remote: `fetch_object` falls back to packs under `packs/<name>.pack|.idx` when an object is not stored loose, using
   `fetch_from_pack` (one index GET plus one ranged GET). `packfetch::upload_pack` puts a local pack there. Publish still
   uploads loose objects; nothing uploads packs automatically yet.
-- Not done: ranged reads that map a byte range to chunks (reads reassemble the whole file in memory), streaming
-  checkout, and avoiding the full-file re-hash in `status` when mtime/size changed (it now also re-chunks large files).
+- Files of 16 MiB and up use the large-file layout below; ranged reads, streaming checkout and the `status` fast path exist for both layouts.
+
+## Large files (Chunked kind 9, no format bump)
+
+Files of at least `LARGE_THRESHOLD` = 16 MiB are stored as **ChunkedLarge** (kind 9): the same payload as Chunked
+(`total_len`, `count`, `(chunk_id, len)*`) over chunks of 512 KiB to 8 MiB (about 2 MiB on average), still ordinary
+Blob objects. `FORMAT_VERSION` stays 3: no existing id changes. Files from 1 MiB to 16 MiB keep the v3 small-chunk layout.
+
+- Chunker (`vcs_objects::chunk::large_*`): the gear hash of a position depends only on the 64 bytes ending there, so
+  candidate cut points are found by independent threads over disjoint segments (and in streaming windows), then a cheap
+  sequential pass picks cuts: strict mask between min and avg, loose mask after, forced cut at max. Pinned by tests
+  against a straight-line definition and against windowed streaming.
+- Decode is strict: kind 9 needs `total_len >= 16 MiB`, at least 2 chunks, every chunk `<= 8 MiB`, all but the last `>= 512 KiB`.
+- Compatibility. Old objects and ids are unchanged and readable. A v3 manifest of a file of 16 MiB or more stays valid:
+  `add` keeps the old id while the file's chunks still match it (so an old repository shows no phantom changes), and
+  uses the new layout only when the content changes. Consequence: the same bytes can have two ids (v3 manifest, kind 9
+  manifest); merges compare ids, so a file that is byte-identical on both sides but stored in different layouts is
+  seen as differing. `VCS_CHUNK_LAYOUT=v3` makes `add` keep writing v3 manifests (whole file in memory) for repositories
+  that must stay readable by older releases.
+- Min-reader. A release without kind 9 fails on such an object with `DecodeError::Kind(9)`. The first time a repository
+  stores a kind 9 manifest it writes `<common>/features` containing `large-chunked`; a release that knows the file
+  refuses to open a repository naming a feature it does not know. Releases that predate the file ignore it. Objects
+  fetched from a remote do not write the file (only local adds do).
+- Streaming add (`vcs_store::bigfile::put_file`): 64 MiB read windows, parallel read, boundary search, hashing and chunk
+  stores; peak memory is the window plus the store's pending budget, independent of file size. Chunks of 1 MiB and up are
+  written straight to their own temporary file at `put` and published as loose files at `sync` (never copied into a pack).
+- Incremental add (`put_file_incremental`): with the previous manifest of the same length, hash its chunks in parallel and
+  re-chunk only the changed stretches up to the first old boundary the new cuts rejoin; the result is bit-identical to a full pass.
+- Status: a file whose size/mtime/ctime match the index is not read. Otherwise a different length is `Modified` without reading,
+  and the same length is compared chunk by chunk with the stored manifest in parallel (no chunking, no store writes).
+- Checkout (`write_manifest_to` through `WorktreeFs::write_with`): temporary file in the target directory, `fallocate`, chunks
+  fetched, verified and `pwrite`n at their offsets by parallel workers, then an atomic rename; a failure removes the temporary
+  file and leaves the existing file alone. `get_content_range` reads only the chunks overlapping a byte range (a missing chunk
+  is `NotFound(chunk)`, so lazy fetch pulls just those).
+- Remote: blobs of 1 MiB and up are not copied into the transaction's pack; they are uploaded as their own objects, 16 at a
+  time, skipping those the remote already has, so an interrupted publish resumes and chunks upload/download in parallel.
+  Download uses the existing parallel pool. Not done: S3 multipart or ranged download of a single chunk (a chunk is at most 8 MiB).
+- Compression: pack entries and v3 blocks skip zstd when three 16 KiB samples shrink by less than 3% (`looks_incompressible`).

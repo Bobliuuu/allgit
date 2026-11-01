@@ -13,5 +13,5 @@ pub use codec::DecodeError;
 pub use id::{ChangeId, IdParseError, ObjectId};
 pub use object::{
     blob_id, content_id, id_of_encoded, id_of_parts, AnnotatedTag, ChunkRef, ChunkedBlob, Commit, EntryMode, Kind, LockOp, Object, OpView,
-    Operation, RefUpdate, Signature, Snapshot, Transaction, Tree, TreeEntry, CHUNK_THRESHOLD, FORMAT_VERSION,
+    Operation, RefUpdate, Signature, Snapshot, Transaction, Tree, TreeEntry, CHUNK_THRESHOLD, FORMAT_VERSION, LARGE_AVG, LARGE_MAX, LARGE_MIN, LARGE_THRESHOLD,
 };

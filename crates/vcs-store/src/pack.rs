@@ -135,6 +135,25 @@ impl PackFormat {
     }
 }
 
+/// Cheap compressibility test for big inputs: zstd level 1 over three 16 KiB samples (start, middle, end).
+/// True when they shrink by less than 3%, i.e. the data is almost surely already compressed or random
+/// (video, archives, model weights, encrypted data); compressing it at level 3 would cost CPU for nothing
+/// and make every read decompress. Inputs under 256 KiB are never skipped.
+pub fn looks_incompressible(data: &[u8]) -> bool {
+    const SAMPLE: usize = 16 << 10;
+    if data.len() < 256 << 10 {
+        return false;
+    }
+    let n = data.len();
+    let (mut total, mut comp) = (0usize, 0usize);
+    for off in [0, n / 2 - SAMPLE / 2, n - SAMPLE] {
+        let s = &data[off..off + SAMPLE];
+        total += SAMPLE;
+        comp += zstd::bulk::compress(s, 1).map_or(SAMPLE, |c| c.len().min(SAMPLE));
+    }
+    comp * 100 >= total * 97
+}
+
 /// Turn an encoded object into a pack entry payload. v1: the bytes as they are. v2: a codec byte
 /// then zstd level 3 output, or the raw bytes when compression does not make them smaller (so an
 /// entry never grows by more than the one codec byte).
@@ -143,12 +162,14 @@ pub fn encode_payload(fmt: PackFormat, enc: &[u8]) -> Vec<u8> {
         PackFormat::V1 => enc.to_vec(),
         // v3 stores blocks, not entries; a single object is sized as a v2 entry
         PackFormat::V2 | PackFormat::V3 | PackFormat::V4 => {
-            if let Ok(c) = zstd::bulk::compress(enc, ZSTD_LEVEL) {
-                if c.len() < enc.len() {
-                    let mut out = Vec::with_capacity(c.len() + 1);
-                    out.push(CODEC_ZSTD);
-                    out.extend_from_slice(&c);
-                    return out;
+            if !looks_incompressible(enc) {
+                if let Ok(c) = zstd::bulk::compress(enc, ZSTD_LEVEL) {
+                    if c.len() < enc.len() {
+                        let mut out = Vec::with_capacity(c.len() + 1);
+                        out.push(CODEC_ZSTD);
+                        out.extend_from_slice(&c);
+                        return out;
+                    }
                 }
             }
             let mut out = Vec::with_capacity(enc.len() + 1);
@@ -666,12 +687,14 @@ fn encode_block(objs: &[&(ObjectId, Vec<u8>)]) -> Vec<u8> {
     for o in objs {
         raw.extend_from_slice(&o.1);
     }
-    if let Ok(c) = zstd::bulk::compress(&raw, ZSTD_LEVEL) {
-        if c.len() < raw.len() {
-            let mut out = Vec::with_capacity(c.len() + 1);
-            out.push(if meta { CODEC_BLOCK_ZSTD_META } else { CODEC_BLOCK_ZSTD_DATA });
-            out.extend_from_slice(&c);
-            return out;
+    if !looks_incompressible(&raw) {
+        if let Ok(c) = zstd::bulk::compress(&raw, ZSTD_LEVEL) {
+            if c.len() < raw.len() {
+                let mut out = Vec::with_capacity(c.len() + 1);
+                out.push(if meta { CODEC_BLOCK_ZSTD_META } else { CODEC_BLOCK_ZSTD_DATA });
+                out.extend_from_slice(&c);
+                return out;
+            }
         }
     }
     let mut out = Vec::with_capacity(raw.len() + 1);
@@ -1381,4 +1404,29 @@ pub fn write_pack_streaming<'a>(
         io(d, f.sync_all())?;
     }
     Pack::open(&ip)
+}
+
+#[cfg(test)]
+mod incompressible_tests {
+    use super::*;
+
+    #[test]
+    fn looks_incompressible_tells_random_from_text_and_ignores_small_inputs() {
+        let mut x = 7u64;
+        let random: Vec<u8> = (0..1 << 20)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                (x >> 24) as u8
+            })
+            .collect();
+        assert!(looks_incompressible(&random));
+        assert!(!looks_incompressible(&random[..100_000]), "small inputs are always tried");
+        let text: Vec<u8> = b"fn main() { println!(\"hello\"); }\n".iter().cycle().take(1 << 20).copied().collect();
+        assert!(!looks_incompressible(&text));
+        // a random entry is stored raw (codec byte + bytes), a text entry is compressed
+        assert_eq!(encode_payload(PackFormat::V2, &random).len(), random.len() + 1);
+        assert!(encode_payload(PackFormat::V2, &text).len() < text.len() / 10);
+    }
 }

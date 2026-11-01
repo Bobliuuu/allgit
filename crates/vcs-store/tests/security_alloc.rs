@@ -41,7 +41,7 @@ fn chunk_manifest_total_len_does_not_preallocate() {
         .collect();
     let total_len = chunks.iter().map(|c| c.len as u64).sum();
     let store = MemoryStore::new();
-    let id = store.put(&Object::Chunked(ChunkedBlob { total_len, chunks })).unwrap();
+    let id = store.put(&Object::Chunked(ChunkedBlob { total_len, chunks, large: false })).unwrap();
     BIGGEST.store(0, Ordering::Relaxed);
     assert!(store.get_content(&id).is_err(), "missing chunks must be an error");
     let peak = BIGGEST.load(Ordering::Relaxed);

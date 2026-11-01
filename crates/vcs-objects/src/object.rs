@@ -15,6 +15,11 @@ pub const CHUNK_THRESHOLD: usize = 1 << 20;
 pub const CHUNK_MIN: usize = 4 << 10;
 pub const CHUNK_AVG: usize = 16 << 10;
 pub const CHUNK_MAX: usize = 64 << 10;
+/// Files of at least this many bytes use the large-file layout: [`Kind::ChunkedLarge`] manifests over
+/// 512 KiB..8 MiB chunks (about 2 MiB on average). Files between [`CHUNK_THRESHOLD`] and this size keep the
+/// v3 small-chunk layout, so their ids are unchanged. Fixed by the format (see docs/object-model.md "Large files").
+pub const LARGE_THRESHOLD: usize = 16 << 20;
+pub use crate::chunk::{LARGE_AVG, LARGE_MAX, LARGE_MIN};
 const MAX_MESSAGE: usize = 1 << 20;
 const MAX_PARENTS: usize = 64;
 
@@ -29,6 +34,10 @@ pub enum Kind {
     Operation = 6,
     Chunked = 7,
     Tag = 8,
+    /// Manifest of a file of at least [`LARGE_THRESHOLD`] bytes over 0.5-8 MiB chunks (same payload layout
+    /// as `Chunked`). Added without a `FORMAT_VERSION` bump: ids of every existing object are unchanged,
+    /// but readers that predate it fail with `DecodeError::Kind(9)` on such an object.
+    ChunkedLarge = 9,
 }
 
 impl Kind {
@@ -42,6 +51,7 @@ impl Kind {
             6 => Kind::Operation,
             7 => Kind::Chunked,
             8 => Kind::Tag,
+            9 => Kind::ChunkedLarge,
             _ => return Err(DecodeError::Kind(b)),
         })
     }
@@ -71,7 +81,7 @@ pub fn blob_id(data: &[u8]) -> ObjectId {
 /// Id a file with these bytes has in a tree: a plain blob below [`CHUNK_THRESHOLD`], otherwise
 /// the id of its chunk manifest. One canonical id per content.
 pub fn content_id(data: &[u8]) -> ObjectId {
-    match ChunkedBlob::plan(data) {
+    match ChunkedBlob::plan_for(data) {
         Some(m) => Object::Chunked(m).id(),
         None => blob_id(data),
     }
@@ -89,6 +99,9 @@ pub struct ChunkRef {
 pub struct ChunkedBlob {
     pub total_len: u64,
     pub chunks: Vec<ChunkRef>,
+    /// Large-file layout ([`Kind::ChunkedLarge`], chunks of 0.5-8 MiB) instead of the v3 small-chunk
+    /// layout ([`Kind::Chunked`]). Decides the object kind; both are `Object::Chunked`.
+    pub large: bool,
 }
 
 impl ChunkedBlob {
@@ -112,7 +125,70 @@ impl ChunkedBlob {
         Some(ChunkedBlob {
             total_len: data.len() as u64,
             chunks,
+            large: false,
         })
+    }
+
+    /// Manifest of the large-file layout, or `None` below [`LARGE_THRESHOLD`]. Chunk boundaries come from
+    /// the position-independent large chunker (parallel boundary search); chunk ids are hashed in parallel.
+    pub fn plan_large(data: &[u8]) -> Option<ChunkedBlob> {
+        if data.len() < LARGE_THRESHOLD {
+            return None;
+        }
+        let ends = crate::chunk::large_chunk_ends(data);
+        let mut starts = Vec::with_capacity(ends.len());
+        let mut s = 0;
+        for &e in &ends {
+            starts.push(s);
+            s = e;
+        }
+        let ids = crate::chunk::par_map(ends.len(), |i| blob_id(&data[starts[i]..ends[i]]));
+        let chunks = ids
+            .into_iter()
+            .enumerate()
+            .map(|(i, id)| ChunkRef {
+                id,
+                len: (ends[i] - starts[i]) as u32,
+            })
+            .collect();
+        Some(ChunkedBlob {
+            total_len: data.len() as u64,
+            chunks,
+            large: true,
+        })
+    }
+
+    /// The canonical manifest for new content: large layout from [`LARGE_THRESHOLD`], small-chunk layout from
+    /// [`CHUNK_THRESHOLD`], `None` below.
+    pub fn plan_for(data: &[u8]) -> Option<ChunkedBlob> {
+        if data.len() >= LARGE_THRESHOLD {
+            Self::plan_large(data)
+        } else {
+            Self::plan(data)
+        }
+    }
+
+    /// Byte offset at which each chunk starts (prefix sums of the chunk lengths).
+    pub fn offsets(&self) -> Vec<u64> {
+        let mut o = Vec::with_capacity(self.chunks.len());
+        let mut s = 0u64;
+        for c in &self.chunks {
+            o.push(s);
+            s += c.len as u64;
+        }
+        o
+    }
+
+    /// Indices of the chunks that overlap the byte range `[off, off + len)`, as `(first, last_exclusive)`.
+    /// Empty when the range is empty or starts at or beyond the end.
+    pub fn chunk_range(&self, offsets: &[u64], off: u64, len: u64) -> (usize, usize) {
+        let end = off.saturating_add(len).min(self.total_len);
+        if len == 0 || off >= end {
+            return (0, 0);
+        }
+        let first = offsets.partition_point(|&o| o <= off) - 1;
+        let last = offsets.partition_point(|&o| o < end);
+        (first, last)
     }
 }
 
@@ -408,6 +484,7 @@ impl Object {
             Object::Snapshot(_) => Kind::Snapshot,
             Object::Transaction(_) => Kind::Transaction,
             Object::Operation(_) => Kind::Operation,
+            Object::Chunked(m) if m.large => Kind::ChunkedLarge,
             Object::Chunked(_) => Kind::Chunked,
             Object::Tag(_) => Kind::Tag,
         }
@@ -522,18 +599,21 @@ impl Object {
                 let n = r.remaining();
                 Object::Blob(r.raw(n)?.to_vec())
             }
-            Kind::Chunked => {
+            Kind::Chunked | Kind::ChunkedLarge => {
+                let large = kind == Kind::ChunkedLarge;
                 let total_len = r.varint()?;
                 let n = r.count(32 + 1)?;
-                if n < 2 || total_len < CHUNK_THRESHOLD as u64 {
+                let floor = if large { LARGE_THRESHOLD } else { CHUNK_THRESHOLD };
+                let cap = if large { LARGE_MAX } else { CHUNK_MAX };
+                if n < 2 || total_len < floor as u64 {
                     return Err(DecodeError::Invalid("chunked blob below threshold"));
                 }
                 let mut chunks = Vec::with_capacity(n);
                 let mut sum = 0u64;
-                for _ in 0..n {
+                for i in 0..n {
                     let id = r.id()?;
                     let len = r.varint()?;
-                    if len == 0 || len > CHUNK_MAX as u64 {
+                    if len == 0 || len > cap as u64 || (large && i + 1 < n && len < LARGE_MIN as u64) {
                         return Err(DecodeError::Invalid("chunk length"));
                     }
                     sum += len;
@@ -542,7 +622,7 @@ impl Object {
                 if sum != total_len {
                     return Err(DecodeError::Invalid("chunk lengths do not sum to total"));
                 }
-                Object::Chunked(ChunkedBlob { total_len, chunks })
+                Object::Chunked(ChunkedBlob { total_len, chunks, large })
             }
             Kind::Tree => {
                 let n = r.count(1 + 1 + 1 + 32)?;
@@ -907,6 +987,7 @@ mod tests {
         let one = ChunkedBlob {
             total_len: 10,
             chunks: vec![ChunkRef { id: oid(1), len: 10 }],
+            large: false,
         };
         assert!(Object::decode(&Object::Chunked(one).encode()).is_err(), "below threshold");
         // an old-format object is refused
