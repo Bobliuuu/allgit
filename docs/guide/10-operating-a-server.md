@@ -33,9 +33,9 @@ bob write art
 $ vcs init repo && cd repo && echo hi > a.txt && vcs add . && vcs commit -m hi && export VCS_TOKEN=$(cat ../admin.token) && vcs remote set http://127.0.0.1:8491 && vcs publish; cd ..
 Initialized empty vcs repository in /home/ubuntu/guide-run/ch10/repo/.vcs
 staged 1 file(s), 0 removal(s)
-[root/main 6ad2ecd3114f] hi
+[root/main 497b99018f33] hi
 remote set to http://127.0.0.1:8491
-root/main (none) -> 6ad2ecd3114f
+root/main (none) -> 497b99018f33
 published atomically (remote generation 1)
 ```
 
@@ -63,11 +63,11 @@ Change one record and it says so.
 $ wc -l < audit.log
 4
 $ vcs-server audit verify audit.log --key audit.key
-ok: 4 records, head 107183b480eb191e30cc2a93170ef255a1f0d5804fb140dfc6878cfbfacbfb30
+ok: 4 records, head 8c2efeebb9a5544f7e55d3b39b6ac921f7efb902e39190c4209e01eba635b33f
 $ cut -c1-160 audit.log | head -3
-{"seq":0,"ts_ms":1793500062091,"principal":"ada","op":"PUT","key":"packs/pack-fe6a73bfdc60415a6f35850e0750d574580f66b722cd53e54a26f44c10b97a5b.pack","outcome":"
-{"seq":1,"ts_ms":1793500062116,"principal":"ada","op":"PUT","key":"packs/pack-fe6a73bfdc60415a6f35850e0750d574580f66b722cd53e54a26f44c10b97a5b.idx","outcome":"2
-{"seq":2,"ts_ms":1793500062140,"principal":"ada","op":"PUT","key":"tx/c770fd79a3552cab95e93b04af6e0ad793c6bcdc85fa14898372db8d0ef7376b","outcome":"201","prev":"
+{"seq":0,"ts_ms":1793500358513,"principal":"ada","op":"PUT","key":"packs/pack-744679da3efe017e9cdebf5e598ff5354aa55f9c169ca9a07591790e63990d99.pack","outcome":"
+{"seq":1,"ts_ms":1793500358525,"principal":"ada","op":"PUT","key":"packs/pack-744679da3efe017e9cdebf5e598ff5354aa55f9c169ca9a07591790e63990d99.idx","outcome":"2
+{"seq":2,"ts_ms":1793500358537,"principal":"ada","op":"PUT","key":"tx/32bc54f09fb235df15c2bed093e63e77a39251d58cd9bb39429b86ad48dec9ed","outcome":"201","prev":"
 $ sed -i "2s/ada/eve/" audit.log; vcs-server audit verify audit.log --key audit.key
 TAMPERED OR INVALID: line 2: record hash mismatch (record was modified)
 [exit 1]

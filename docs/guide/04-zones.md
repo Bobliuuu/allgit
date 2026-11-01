@@ -75,17 +75,17 @@ untracked:
 $ vcs add .
 staged 4 file(s), 0 removal(s)
 $ vcs commit -m "first playable"
-[assets/main 61615c4a9a0a] first playable
-[engine/main ea9707b97dd9] first playable
-[root/main 31b78928dec3] first playable
-[tools/main 7a77cf067fbc] first playable
-atomic transaction 6d0bed869d62 covering 4 zones
+[assets/main a2cba3a7dff5] first playable
+[engine/main 4266ff8fbdbb] first playable
+[root/main 38f9381dc661] first playable
+[tools/main 2cea13ae2d54] first playable
+atomic transaction f445c832840d covering 4 zones
 $ vcs log --zone engine --oneline
-ea9707b97dd9 first playable
+4266ff8fbdbb first playable
 $ vcs log --zone assets --oneline
-61615c4a9a0a first playable
+a2cba3a7dff5 first playable
 $ vcs log --oneline
-31b78928dec3 first playable
+38f9381dc661 first playable
 ```
 
 The same files, a second time. This change touches `engine` and `assets` only, so only two commits are made
@@ -96,17 +96,17 @@ $ echo "fn render() { draw(); }" > engine/render/mod.rs && echo "PNGDATA-v2" > a
 $ vcs add .
 staged 4 file(s), 0 removal(s)
 $ vcs commit -m "hero gets a new look and a new draw call"
-[assets/main 165508803861] hero gets a new look and a new draw call
-[engine/main a45ec54c3a41] hero gets a new look and a new draw call
-atomic transaction 42054034c758 covering 2 zones
+[assets/main e787b60393f7] hero gets a new look and a new draw call
+[engine/main 8455b6481cb5] hero gets a new look and a new draw call
+atomic transaction 465078b9066e covering 2 zones
 $ vcs log --zone engine --oneline
-a45ec54c3a41 hero gets a new look and a new draw call
-ea9707b97dd9 first playable
+8455b6481cb5 hero gets a new look and a new draw call
+4266ff8fbdbb first playable
 $ vcs log --zone assets --oneline
-165508803861 hero gets a new look and a new draw call
-61615c4a9a0a first playable
+e787b60393f7 hero gets a new look and a new draw call
+a2cba3a7dff5 first playable
 $ vcs zone branches engine
-* engine/main                     a45ec54c3a41
+* engine/main                     8455b6481cb5
 ```
 
 Each zone has its own log. `vcs log` without `--zone` shows the zone that contains your current directory
@@ -118,17 +118,17 @@ Branches belong to a zone. The artists make theirs without touching anyone else.
 
 ```text
 $ vcs zone branch assets art-wip
-created assets/art-wip at 165508803861
+created assets/art-wip at e787b60393f7
 $ vcs zone checkout assets art-wip
 zone assets: switched to art-wip
 $ echo "PNGDATA-v3-wip" > assets/textures/hero.png && vcs add assets && vcs commit -m "wip hero"
 staged 1 file(s), 0 removal(s)
-[assets/art-wip b31251219674] wip hero
+[assets/art-wip 0aad00eec57c] wip hero
 $ vcs status
-zone assets (assets/): branch art-wip @ b31251219674
-zone engine (engine/): branch main @ a45ec54c3a41
-zone root: branch main @ 31b78928dec3
-zone tools (tools/): branch main @ 7a77cf067fbc
+zone assets (assets/): branch art-wip @ 0aad00eec57c
+zone engine (engine/): branch main @ 8455b6481cb5
+zone root: branch main @ 38f9381dc661
+zone tools (tools/): branch main @ 2cea13ae2d54
 clean
 $ vcs zone checkout assets main
 zone assets: switched to main
@@ -146,30 +146,30 @@ so your own branch keeps its commits. It refuses if a zone has uncommitted work.
 
 ```text
 $ vcs snapshot create milestone-1 -m "alpha build"
-snapshot milestone-1 = c6d803617e04
+snapshot milestone-1 = e987d2997cfb
 $ vcs snapshot list
-milestone-1          c6d803617e04
+milestone-1          e987d2997cfb
 $ vcs snapshot show milestone-1
-snapshot milestone-1 (c6d803617e0408af1c90721b5155f74bbe5b21b1a152ea973db954d55e72c32f)
-  assets         16550880386173ba6a00ae77ba5f8a689e5e9aaeaf23174bc0c1075d5c0d49ac
-  engine         a45ec54c3a41e3995d14a29badd18ad5d937dfd41176121d6c64aad28d9a9819
-  root           31b78928dec3cc2725f0577210c462566116e1f0cdc3a17eb0e5fb591348d7a4
-  tools          7a77cf067fbcbf56ea2a7a02d07000032738516dd1b953cba61626dd4bc33d78
+snapshot milestone-1 (e987d2997cfb1c55894ca7f02c775e8f299d38a6f82145e421da5bbd9b7112c2)
+  assets         e787b60393f739a0e439c16807f349ed150e3cb75a5805b65cc9bc3061794f51
+  engine         8455b6481cb5b645968cc383db44d3905b1c2ad0d0836cde3031316a35d36149
+  root           38f9381dc661252168afebdb38030e1c733a9e2c066aa481745d8131e6177ead
+  tools          2cea13ae2d542b7445861cbfaf82580a124ed1a7887cd601db739a628383d61b
 $ echo "fn render() { draw(); post(); }" > engine/render/mod.rs && vcs add . && vcs commit -m "post-processing"
 staged 4 file(s), 0 removal(s)
-[engine/main 7f2dc6c0097c] post-processing
+[engine/main 5f5466f5c9d5] post-processing
 $ vcs snapshot checkout milestone-1
-zone engine: now on snapshot/milestone-1 at a45ec54c3a41
+zone engine: now on snapshot/milestone-1 at 8455b6481cb5
 zone assets: already at the snapshot
 zone root: already at the snapshot
 zone tools: already at the snapshot
 $ cat engine/render/mod.rs
 fn render() { draw(); }
 $ vcs branch --zone engine
-  engine/main                     7f2dc6c0097c
-* engine/snapshot/milestone-1     a45ec54c3a41
+  engine/main                     5f5466f5c9d5
+* engine/snapshot/milestone-1     8455b6481cb5
 $ vcs op undo
-undone; recorded operation 39afc2cc199d
+undone; recorded operation b57269e3c9f2
 $ cat engine/render/mod.rs
 fn render() { draw(); post(); }
 ```
@@ -187,9 +187,9 @@ README.md
 engine
 tools
 $ vcs status
-zone engine (engine/): branch main @ 7f2dc6c0097c
-zone root: branch main @ 31b78928dec3
-zone tools (tools/): branch main @ 7a77cf067fbc
+zone engine (engine/): branch main @ 5f5466f5c9d5
+zone root: branch main @ 38f9381dc661
+zone tools (tools/): branch main @ 2cea13ae2d54
 not subscribed (not downloaded/materialized, NOT deleted): assets
 clean
 $ vcs zone add assets

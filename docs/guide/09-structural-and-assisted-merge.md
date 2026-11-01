@@ -60,7 +60,7 @@ Now the same history with the binary built with `--features structural`
 
 ```text
 $ cd structural && vcs-structural merge mover
-root: merged, new commit f7570edd74f1
+root: merged, new commit d2c347d971e6
 $ cat lib.rs
 fn gamma() -> i32 {
     33
@@ -74,9 +74,9 @@ fn beta() -> i32 {
     2
 }
 $ vcs log --oneline -n 3; cd ..
-f7570edd74f1 Merge branch 'mover' into editor
-ee4c04f82022 gamma returns 33
-2d8a54fb26ec move gamma to the top
+d2c347d971e6 Merge branch 'mover' into editor
+62b01b46d452 gamma returns 33
+492d107137ad move gamma to the top
 ```
 
 `vcs merge --no-structural` turns it off for one merge. The two binaries print the same version, so the
@@ -179,7 +179,7 @@ fn gamma() -> i32 {
     33
 }
 $ vcs commit -m "merge mover, assisted"
-[root/editor 4ad3767bc5dc] merge mover, assisted
+[root/editor f6f0afb88a3c] merge mover, assisted
 ```
 
 Note that the file still had conflict markers after the assistant ran. Nothing is applied until you say so.

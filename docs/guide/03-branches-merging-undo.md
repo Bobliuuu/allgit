@@ -6,20 +6,20 @@ A branch is a name for a commit. Branches are cheap. Make one for every piece of
 
 ```text
 $ vcs branch
-* root/main                     14082a6ee152
+* root/main                     c2a96f0539e5
 $ vcs branch feature
-created root/feature at 14082a6ee152
+created root/feature at c2a96f0539e5
 $ vcs branch
-  root/feature                  14082a6ee152
-* root/main                     14082a6ee152
+  root/feature                  c2a96f0539e5
+* root/main                     c2a96f0539e5
 $ vcs switch feature
 zone root: switched to feature
 $ echo "feature work" > feature.txt && vcs add feature.txt && vcs commit -m "add feature file"
 staged 1 file(s), 0 removal(s)
-[root/feature 94af6b57cadb] add feature file
+[root/feature 71e7319194ac] add feature file
 $ vcs log --oneline --graph
-* 94af6b57cadb add feature file
-* 14082a6ee152 initial
+* 71e7319194ac add feature file
+* c2a96f0539e5 initial
 $ vcs switch main
 zone root: switched to main
 $ ls
@@ -34,10 +34,10 @@ No new commit is made.
 
 ```text
 $ vcs merge feature
-root: fast-forward 14082a6ee152 -> 94af6b57cadb
+root: fast-forward c2a96f0539e5 -> 71e7319194ac
 $ vcs log --oneline --graph
-* 94af6b57cadb add feature file
-* 14082a6ee152 initial
+* 71e7319194ac add feature file
+* c2a96f0539e5 initial
 ```
 
 ## A real merge
@@ -46,20 +46,20 @@ When both sides changed different parts of a file, the merge is automatic and ma
 
 ```text
 $ vcs branch left && vcs branch right
-created root/left at 94af6b57cadb
-created root/right at 94af6b57cadb
+created root/left at 71e7319194ac
+created root/right at 71e7319194ac
 $ vcs switch left && sed -i "s/^one$/ONE (left)/" notes.txt && vcs add notes.txt && vcs commit -m "left edits top"
 zone root: switched to left
 staged 1 file(s), 0 removal(s)
-[root/left 02ff9828837b] left edits top
+[root/left e9d4a5e0d16f] left edits top
 $ vcs switch right && sed -i "s/^five$/FIVE (right)/" notes.txt && vcs add notes.txt && vcs commit -m "right edits bottom"
 zone root: switched to right
 staged 1 file(s), 0 removal(s)
-[root/right 0a0b6612a2c7] right edits bottom
+[root/right 1ee55833878b] right edits bottom
 $ vcs switch left
 zone root: switched to left
 $ vcs merge right
-root: merged, new commit e075df2a1bc2
+root: merged, new commit 3308cc8b2896
 $ cat notes.txt
 ONE (left)
 two
@@ -67,13 +67,13 @@ three
 four
 FIVE (right)
 $ vcs log --oneline --graph
-* e075df2a1bc2 Merge branch 'right' into left
+* 3308cc8b2896 Merge branch 'right' into left
 | \
-| * 0a0b6612a2c7 right edits bottom
-* | 02ff9828837b left edits top
-/ |
-  * 94af6b57cadb add feature file
-  * 14082a6ee152 initial
+* | e9d4a5e0d16f left edits top
+| * 1ee55833878b right edits bottom
+| /
+* 71e7319194ac add feature file
+* c2a96f0539e5 initial
 ```
 
 ## Conflicts
@@ -92,16 +92,16 @@ In a merge, "ours" is the branch you are on. In a rebase, "ours" is the branch y
 
 ```text
 $ vcs branch c1 && vcs branch c2
-created root/c1 at e075df2a1bc2
-created root/c2 at e075df2a1bc2
+created root/c1 at 3308cc8b2896
+created root/c2 at 3308cc8b2896
 $ vcs switch c1 && sed -i "s/^version = 1/version = 2/" config.toml && vcs add config.toml && vcs commit -m "bump version to 2"
 zone root: switched to c1
 staged 1 file(s), 0 removal(s)
-[root/c1 a0191d8c6464] bump version to 2
+[root/c1 f2cf5094aa20] bump version to 2
 $ vcs switch c2 && sed -i "s/^version = 1/version = 3/" config.toml && vcs add config.toml && vcs commit -m "bump version to 3"
 zone root: switched to c2
 staged 1 file(s), 0 removal(s)
-[root/c2 31bfefb12316] bump version to 3
+[root/c2 1375b80b6b92] bump version to 3
 $ vcs merge c1
 automatic merge stopped: 1 conflict(s)
   conflict: config.toml
@@ -111,7 +111,7 @@ Inspect with `vcs conflict list|show <path>`; give up with `vcs merge --abort`.
 error: merge has conflicts
 [exit 1]
 $ vcs status
-zone root: branch c2 @ 31bfefb12316
+zone root: branch c2 @ 1375b80b6b92
   staged:
     modified:  config.toml
 merging c1 into root/c2: 1 unresolved conflict(s)
@@ -153,13 +153,13 @@ resolved config.toml
 $ vcs resolve --check
 all conflicts resolved, no conflict markers left
 $ vcs commit -m "merge c1, keep version 3"
-[root/c2 f9702707769e] merge c1, keep version 3
+[root/c2 80dc8144e373] merge c1, keep version 3
 $ vcs log --oneline -n 5
-f9702707769e merge c1, keep version 3
-a0191d8c6464 bump version to 2
-e075df2a1bc2 Merge branch 'right' into left
-31bfefb12316 bump version to 3
-0a0b6612a2c7 right edits bottom
+80dc8144e373 merge c1, keep version 3
+f2cf5094aa20 bump version to 2
+3308cc8b2896 Merge branch 'right' into left
+e9d4a5e0d16f left edits top
+1ee55833878b right edits bottom
 ```
 
 You can walk away at any time. `vcs merge --abort` restores the state from before the merge.
@@ -167,16 +167,16 @@ This run also shows `--theirs`.
 
 ```text
 $ vcs branch d1 && vcs branch d2
-created root/d1 at f9702707769e
-created root/d2 at f9702707769e
+created root/d1 at 80dc8144e373
+created root/d2 at 80dc8144e373
 $ vcs switch d1 && echo "d1" > clash.txt && vcs add clash.txt && vcs commit -m "d1 adds clash"
 zone root: switched to d1
 staged 1 file(s), 0 removal(s)
-[root/d1 3c55af07d85d] d1 adds clash
+[root/d1 dd2223e5c308] d1 adds clash
 $ vcs switch d2 && echo "d2" > clash.txt && vcs add clash.txt && vcs commit -m "d2 adds clash"
 zone root: switched to d2
 staged 1 file(s), 0 removal(s)
-[root/d2 6b26c5d7f7e2] d2 adds clash
+[root/d2 15b4d3d34e32] d2 adds clash
 $ vcs merge d1
 automatic merge stopped: 1 conflict(s)
   conflict: clash.txt
@@ -188,7 +188,7 @@ error: merge has conflicts
 $ vcs merge --abort
 merge aborted; working tree restored
 $ vcs status
-zone root: branch d2 @ 6b26c5d7f7e2
+zone root: branch d2 @ 15b4d3d34e32
 clean
 $ vcs merge d1
 automatic merge stopped: 1 conflict(s)
@@ -204,7 +204,7 @@ resolved clash.txt
 $ cat clash.txt
 d1
 $ vcs commit -m "merge d1, take theirs"
-[root/d2 870df6ae2d7d] merge d1, take theirs
+[root/d2 f6b75c6681aa] merge d1, take theirs
 ```
 
 Merge flags worth knowing:
@@ -224,25 +224,25 @@ then run `vcs rebase --continue`, or give up with `vcs rebase --abort`.
 $ vcs switch main
 zone root: switched to main
 $ vcs branch topic && vcs switch topic
-created root/topic at 94af6b57cadb
+created root/topic at 71e7319194ac
 zone root: switched to topic
 $ echo "topic" > topic.txt && vcs add topic.txt && vcs commit -m "topic work"
 staged 1 file(s), 0 removal(s)
-[root/topic 64db2f20d350] topic work
+[root/topic f9efd0b84cc8] topic work
 $ vcs switch main
 zone root: switched to main
 $ echo "main moved" > main-news.txt && vcs add main-news.txt && vcs commit -m "main moves on"
 staged 1 file(s), 0 removal(s)
-[root/main 2bd3a6ebdcfb] main moves on
+[root/main 70eb8e525643] main moves on
 $ vcs switch topic
 zone root: switched to topic
 $ vcs rebase main
-rebased 1 commit(s): 64db2f20d350 -> 320724b6a701
+rebased 1 commit(s): f9efd0b84cc8 -> 900ad4114425
 $ vcs log --oneline --graph
-* 320724b6a701 topic work
-* 2bd3a6ebdcfb main moves on
-* 94af6b57cadb add feature file
-* 14082a6ee152 initial
+* 900ad4114425 topic work
+* 70eb8e525643 main moves on
+* 71e7319194ac add feature file
+* c2a96f0539e5 initial
 ```
 
 ## Cherry-pick and revert
@@ -254,18 +254,18 @@ $ vcs log --oneline --graph
 $ vcs switch main
 zone root: switched to main
 $ vcs log --oneline -n 3
-2bd3a6ebdcfb main moves on
-94af6b57cadb add feature file
-14082a6ee152 initial
+70eb8e525643 main moves on
+71e7319194ac add feature file
+c2a96f0539e5 initial
 $ vcs cherry-pick topic
-root: cherry-pick done, new commit 7a79a2f3303e
+root: cherry-pick done, new commit 9e92a215e4fb
 $ vcs revert HEAD
-root: revert done, new commit a73d0639bff3
+root: revert done, new commit 03a60488ad00
 $ vcs log --oneline -n 4
-a73d0639bff3 Revert "topic work"
-7a79a2f3303e topic work
-2bd3a6ebdcfb main moves on
-94af6b57cadb add feature file
+03a60488ad00 Revert "topic work"
+9e92a215e4fb topic work
+70eb8e525643 main moves on
+71e7319194ac add feature file
 ```
 
 ## Undo with the operation log
@@ -282,96 +282,96 @@ With `--force` it deletes it, and `op undo` brings it back.
 
 ```text
 $ vcs op log -n 6
-@ f4401f4e800b  1793500020  ubuntu <ubuntu@localhost>
-    revert 7a79a2f3303e onto root/main
-  3ee19a161fe0  1793500020  ubuntu <ubuntu@localhost>
-    cherry-pick 320724b6a701 onto root/main
-  45b17a94b386  1793500020  ubuntu <ubuntu@localhost>
+@ d903cc80af34  1793500334  ubuntu <ubuntu@localhost>
+    revert 9e92a215e4fb onto root/main
+  f6a9ea9d8d27  1793500334  ubuntu <ubuntu@localhost>
+    cherry-pick 900ad4114425 onto root/main
+  85af90fb5374  1793500334  ubuntu <ubuntu@localhost>
     checkout root/main
-  69f67c3db0da  1793500020  Ada Lovelace <ada@example.com>
+  cc153120b8bc  1793500334  Ada Lovelace <ada@example.com>
     rebase root/topic onto main
-  a8d06687a51e  1793500020  ubuntu <ubuntu@localhost>
+  960996e063ad  1793500334  ubuntu <ubuntu@localhost>
     checkout root/topic
-  633a7ef6f322  1793500020  Ada Lovelace <ada@example.com>
+  0a8852680416  1793500334  Ada Lovelace <ada@example.com>
     commit: main moves on
 $ vcs branch -d topic
-error: branch root/topic (320724b6a701) has commits not reachable from any other branch or snapshot; merge it, or pass --force to delete anyway (the commit stays in the operation log)
+error: branch root/topic (900ad4114425) has commits not reachable from any other branch or snapshot; merge it, or pass --force to delete anyway (the commit stays in the operation log)
 [exit 1]
 $ vcs branch -d topic --force
-deleted root/topic (was 320724b6a701)
+deleted root/topic (was 900ad4114425)
 $ vcs branch
-  root/c1                       a0191d8c6464
-  root/c2                       f9702707769e
-  root/d1                       3c55af07d85d
-  root/d2                       870df6ae2d7d
-  root/feature                  94af6b57cadb
-  root/left                     e075df2a1bc2
-* root/main                     a73d0639bff3
-  root/right                    0a0b6612a2c7
+  root/c1                       f2cf5094aa20
+  root/c2                       80dc8144e373
+  root/d1                       dd2223e5c308
+  root/d2                       f6b75c6681aa
+  root/feature                  71e7319194ac
+  root/left                     3308cc8b2896
+* root/main                     03a60488ad00
+  root/right                    1ee55833878b
 $ vcs op undo
-undone; recorded operation b7d26709cc7a
+undone; recorded operation e5c23d169e8f
 $ vcs branch
-  root/c1                       a0191d8c6464
-  root/c2                       f9702707769e
-  root/d1                       3c55af07d85d
-  root/d2                       870df6ae2d7d
-  root/feature                  94af6b57cadb
-  root/left                     e075df2a1bc2
-* root/main                     a73d0639bff3
-  root/right                    0a0b6612a2c7
-  root/topic                    320724b6a701
+  root/c1                       f2cf5094aa20
+  root/c2                       80dc8144e373
+  root/d1                       dd2223e5c308
+  root/d2                       f6b75c6681aa
+  root/feature                  71e7319194ac
+  root/left                     3308cc8b2896
+* root/main                     03a60488ad00
+  root/right                    1ee55833878b
+  root/topic                    900ad4114425
 $ vcs op log -n 3
-@ b7d26709cc7a  1793500020  ubuntu <ubuntu@localhost>
-    undo operation 94c485dd4ac9
-  94c485dd4ac9  1793500020  ubuntu <ubuntu@localhost>
+@ e5c23d169e8f  1793500334  ubuntu <ubuntu@localhost>
+    undo operation 649bb81ce301
+  649bb81ce301  1793500334  ubuntu <ubuntu@localhost>
     delete branch root/topic
-  f4401f4e800b  1793500020  ubuntu <ubuntu@localhost>
-    revert 7a79a2f3303e onto root/main
+  d903cc80af34  1793500334  ubuntu <ubuntu@localhost>
+    revert 9e92a215e4fb onto root/main
 ```
 
 The full log from that session:
 
 ```text
 $ vcs op log -n 20
-@ b7d26709cc7a  1793500020  ubuntu <ubuntu@localhost>
-    undo operation 94c485dd4ac9
-  94c485dd4ac9  1793500020  ubuntu <ubuntu@localhost>
+@ e5c23d169e8f  1793500334  ubuntu <ubuntu@localhost>
+    undo operation 649bb81ce301
+  649bb81ce301  1793500334  ubuntu <ubuntu@localhost>
     delete branch root/topic
-  f4401f4e800b  1793500020  ubuntu <ubuntu@localhost>
-    revert 7a79a2f3303e onto root/main
-  3ee19a161fe0  1793500020  ubuntu <ubuntu@localhost>
-    cherry-pick 320724b6a701 onto root/main
-  45b17a94b386  1793500020  ubuntu <ubuntu@localhost>
+  d903cc80af34  1793500334  ubuntu <ubuntu@localhost>
+    revert 9e92a215e4fb onto root/main
+  f6a9ea9d8d27  1793500334  ubuntu <ubuntu@localhost>
+    cherry-pick 900ad4114425 onto root/main
+  85af90fb5374  1793500334  ubuntu <ubuntu@localhost>
     checkout root/main
-  69f67c3db0da  1793500020  Ada Lovelace <ada@example.com>
+  cc153120b8bc  1793500334  Ada Lovelace <ada@example.com>
     rebase root/topic onto main
-  a8d06687a51e  1793500020  ubuntu <ubuntu@localhost>
+  960996e063ad  1793500334  ubuntu <ubuntu@localhost>
     checkout root/topic
-  633a7ef6f322  1793500020  Ada Lovelace <ada@example.com>
+  0a8852680416  1793500334  Ada Lovelace <ada@example.com>
     commit: main moves on
-  6225cf99ca04  1793500020  ubuntu <ubuntu@localhost>
+  63b5dc6c76ea  1793500334  ubuntu <ubuntu@localhost>
     checkout root/main
-  cf983f43e00b  1793500020  Ada Lovelace <ada@example.com>
+  083814b31ac8  1793500334  Ada Lovelace <ada@example.com>
     commit: topic work
-  5e59a17d4e23  1793500020  ubuntu <ubuntu@localhost>
+  362f6daffbbd  1793500334  ubuntu <ubuntu@localhost>
     checkout root/topic
-  38a8ba539b1d  1793500020  ubuntu <ubuntu@localhost>
+  3b4f8a19f103  1793500333  ubuntu <ubuntu@localhost>
     create branch root/topic
-  ddcac2cfe0ac  1793500020  ubuntu <ubuntu@localhost>
+  34866f9d2112  1793500333  ubuntu <ubuntu@localhost>
     checkout root/main
-  3fb726f6e0df  1793500020  Ada Lovelace <ada@example.com>
+  4d9f399e7e8f  1793500333  Ada Lovelace <ada@example.com>
     commit: merge d1, take theirs
-  c81fb3bd65a9  1793500020  ubuntu <ubuntu@localhost>
+  803ede019715  1793500333  ubuntu <ubuntu@localhost>
     merge --abort root/d2
-  7da4a327f009  1793500020  Ada Lovelace <ada@example.com>
+  cc734d46324d  1793500333  Ada Lovelace <ada@example.com>
     commit: d2 adds clash
-  7eea93855a50  1793500019  ubuntu <ubuntu@localhost>
+  4336b68eee44  1793500333  ubuntu <ubuntu@localhost>
     checkout root/d2
-  4e6312e5db12  1793500019  Ada Lovelace <ada@example.com>
+  703d2af168f8  1793500333  Ada Lovelace <ada@example.com>
     commit: d1 adds clash
-  8aea4c8194c6  1793500019  ubuntu <ubuntu@localhost>
+  ad7f955fb791  1793500333  ubuntu <ubuntu@localhost>
     checkout root/d1
-  5f0622c37692  1793500019  ubuntu <ubuntu@localhost>
+  3a5e1659fc38  1793500333  ubuntu <ubuntu@localhost>
     create branch root/d2
 ```
 
