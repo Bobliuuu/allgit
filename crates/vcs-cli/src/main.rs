@@ -6,6 +6,7 @@ use vcs_objects::{ObjectId, Signature};
 use vcs_remote::Outcome;
 use vcs_repo::{AssistResult, ChangeKind, Error, MergeOutcome, RebaseOutcome, Repo, Resolution, SyncAction, ROOT_ZONE};
 
+mod archive;
 mod auth;
 mod bisect;
 mod cmds;

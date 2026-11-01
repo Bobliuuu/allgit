@@ -212,3 +212,12 @@ Name a commit after the nearest tag behind it: `v1` when the commit is tagged, e
 `v1-<n>-g<short id>` where `n` counts the commits reachable from the revision but not from the
 tag. Annotated tags only unless `--tags`; `--always` falls back to the short id instead of
 failing. The nearest tag is the first one met walking parents breadth-first.
+
+## `vcs archive [<rev>] -o <file.tar|file.zip> [--prefix DIR/] [--format tar|zip]`
+
+Write the files of a revision (every subscribed zone in which it resolves) as an archive. The
+format follows the extension, or `--format` (needed when writing to stdout). Both writers are
+built in: tar is POSIX ustar (paths up to 255 bytes, link targets up to 100), zip uses the
+stored method without zip64. Symlinks stay symlinks, executable files get mode 0755 and others
+0644. Output is reproducible: entries are in path order, owner 0, and every mtime is the newest
+commit time of the revision, so the same revision always gives the same bytes.

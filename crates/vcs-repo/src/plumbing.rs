@@ -120,3 +120,19 @@ impl Repo {
         ROOT_ZONE
     }
 }
+
+impl Repo {
+    /// Newest commit time among the commits `rev` names across the subscribed zones (what
+    /// `archive` stamps on every entry, so output depends only on the revision).
+    pub fn rev_time(&self, rev: &str) -> Result<u64> {
+        let ws = self.workspace()?;
+        let mut t = None::<u64>;
+        for z in ws.subs.keys() {
+            if let Ok(id) = self.resolve_rev(z, rev) {
+                let ts = self.commit_obj(&id)?.author.timestamp;
+                t = Some(t.map_or(ts, |x| x.max(ts)));
+            }
+        }
+        t.ok_or_else(|| Error::Msg(format!("unknown revision {rev:?} in any subscribed zone")))
+    }
+}
