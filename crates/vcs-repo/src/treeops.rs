@@ -43,6 +43,105 @@ fn walk(store: &dyn ObjectStore, tree: ObjectId, prefix: &str, out: &mut Flat) -
     Ok(())
 }
 
+/// The parts of two trees that differ: files of `old` and `new` (full paths) that are not
+/// identical on both sides, plus the entry names of every `new` directory that was read, for
+/// the case-folding collision check.
+#[derive(Default)]
+pub struct TreeDiff {
+    pub old: Flat,
+    pub new: Flat,
+    pub new_dir_names: Vec<Vec<String>>,
+}
+
+/// Diff two trees without reading subtrees whose ids are equal, so the cost follows the number of
+/// changed directories rather than tracked files. The result's `old`/`new` maps are exactly
+/// `flatten(old)`/`flatten(new)` with every path whose entry is equal on both sides removed.
+pub fn diff_trees(store: &dyn ObjectStore, old: Option<ObjectId>, new: Option<ObjectId>, prefix: &str) -> Result<TreeDiff> {
+    let mut d = TreeDiff::default();
+    if old != new {
+        diff_pair(store, old, new, prefix, &mut d)?;
+    }
+    Ok(d)
+}
+
+fn read_tree(store: &dyn ObjectStore, id: Option<ObjectId>) -> Result<Vec<TreeEntry>> {
+    match id {
+        None => Ok(Vec::new()),
+        Some(id) => match store.get(&id)? {
+            Object::Tree(t) => Ok(t.entries().to_vec()),
+            _ => Err(Error::Corrupt(format!("object {id} is not a tree"))),
+        },
+    }
+}
+
+fn add_side(store: &dyn ObjectStore, e: &TreeEntry, p: String, flat: &mut Flat, names: Option<&mut Vec<Vec<String>>>) -> Result<()> {
+    if p.len() > MAX_PATH {
+        return Err(Error::Corrupt("tree path too long".into()));
+    }
+    if e.mode == EntryMode::Directory {
+        match names {
+            Some(names) => walk_names(store, e.id, &p, flat, names),
+            None => walk(store, e.id, &p, flat),
+        }
+    } else {
+        flat.insert(p, (e.mode, e.id));
+        Ok(())
+    }
+}
+
+fn walk_names(store: &dyn ObjectStore, tree: ObjectId, prefix: &str, out: &mut Flat, names: &mut Vec<Vec<String>>) -> Result<()> {
+    let ents = read_tree(store, Some(tree))?;
+    names.push(ents.iter().map(|e| e.name.clone()).collect());
+    for e in &ents {
+        add_side(store, e, join(prefix, &e.name), out, Some(names))?;
+    }
+    Ok(())
+}
+
+fn diff_pair(store: &dyn ObjectStore, old: Option<ObjectId>, new: Option<ObjectId>, prefix: &str, d: &mut TreeDiff) -> Result<()> {
+    let (oe, ne) = (read_tree(store, old)?, read_tree(store, new)?);
+    if new.is_some() {
+        d.new_dir_names.push(ne.iter().map(|e| e.name.clone()).collect());
+    }
+    let (mut i, mut j) = (0, 0);
+    while i < oe.len() || j < ne.len() {
+        let ord = match (oe.get(i), ne.get(j)) {
+            (Some(a), Some(b)) => a.name.cmp(&b.name),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            _ => std::cmp::Ordering::Greater,
+        };
+        match ord {
+            std::cmp::Ordering::Less => {
+                let a = &oe[i];
+                add_side(store, a, join(prefix, &a.name), &mut d.old, None)?;
+                i += 1;
+            }
+            std::cmp::Ordering::Greater => {
+                let b = &ne[j];
+                add_side(store, b, join(prefix, &b.name), &mut d.new, Some(&mut d.new_dir_names))?;
+                j += 1;
+            }
+            std::cmp::Ordering::Equal => {
+                let (a, b) = (&oe[i], &ne[j]);
+                i += 1;
+                j += 1;
+                if a.mode == b.mode && a.id == b.id {
+                    continue;
+                }
+                let p = join(prefix, &a.name);
+                match (a.mode == EntryMode::Directory, b.mode == EntryMode::Directory) {
+                    (true, true) => diff_pair(store, Some(a.id), Some(b.id), &p, d)?,
+                    _ => {
+                        add_side(store, a, p.clone(), &mut d.old, None)?;
+                        add_side(store, b, p, &mut d.new, Some(&mut d.new_dir_names))?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 enum Node {
     File(EntryMode, ObjectId),
     Dir(BTreeMap<String, Node>),

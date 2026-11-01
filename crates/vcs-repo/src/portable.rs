@@ -2,7 +2,7 @@
 //! collide on case-insensitive or Unicode-normalizing filesystems (macOS, Windows).
 
 use crate::error::{msg, Result};
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use unicode_normalization::UnicodeNormalization;
 use vcs_objects::names::META_DIR;
 
@@ -53,31 +53,64 @@ pub fn check_symlink_target(link_path: &str, target: &[u8]) -> std::result::Resu
 
 /// The key under which two names are the same file on a folding filesystem.
 pub fn fold_component(c: &str) -> String {
-    c.nfd().collect::<String>().to_lowercase()
+    let mut s = String::with_capacity(c.len());
+    push_folded(&mut s, c);
+    s
+}
+
+fn push_folded(out: &mut String, c: &str) {
+    if c.is_ascii() {
+        out.extend(c.chars().map(|ch| ch.to_ascii_lowercase()));
+    } else {
+        out.push_str(&c.nfd().collect::<String>().to_lowercase());
+    }
 }
 
 /// Find two distinct paths (or directory prefixes of paths) that fold to the same name.
 /// Returns the pair `(first, second)` of the colliding spellings.
+///
+/// Consecutive paths usually share their leading directories (sorted input): those prefixes were
+/// just examined, so they are skipped instead of folded and looked up again.
 pub fn find_collision<'a>(paths: impl IntoIterator<Item = &'a str>) -> Option<(String, String)> {
-    let mut seen: BTreeMap<String, String> = BTreeMap::new();
+    let mut seen: HashMap<String, &'a str> = HashMap::new();
+    let mut prev: &str = "";
+    // For the previous path: end offset of each component in the original and in the folded key.
+    let mut orig_ends: Vec<usize> = Vec::new();
+    let mut key_ends: Vec<usize> = Vec::new();
+    let mut key = String::new();
     for p in paths {
-        let mut key = String::new();
-        let mut orig = String::new();
+        // number of leading components identical to the previous path's
+        let mut shared = 0;
         for c in p.split('/') {
-            if !key.is_empty() {
-                key.push('/');
-                orig.push('/');
-            }
-            key.push_str(&fold_component(c));
-            orig.push_str(c);
-            match seen.get(&key) {
-                Some(o) if *o != orig => return Some((o.clone(), orig)),
-                Some(_) => {}
-                None => {
-                    seen.insert(key.clone(), orig.clone());
-                }
+            if shared < orig_ends.len() && prev.get(if shared == 0 { 0 } else { orig_ends[shared - 1] + 1 }..orig_ends[shared]) == Some(c) {
+                shared += 1;
+            } else {
+                break;
             }
         }
+        orig_ends.truncate(shared);
+        key_ends.truncate(shared);
+        key.truncate(key_ends.last().copied().unwrap_or(0));
+        let mut pos = if shared == 0 { 0 } else { orig_ends[shared - 1] + 1 };
+        while pos <= p.len() {
+            let end = p[pos..].find('/').map_or(p.len(), |i| pos + i);
+            if !key.is_empty() {
+                key.push('/');
+            }
+            push_folded(&mut key, &p[pos..end]);
+            let orig = &p[..end];
+            match seen.get(key.as_str()) {
+                Some(o) if *o != orig => return Some(((*o).to_owned(), orig.to_owned())),
+                Some(_) => {}
+                None => {
+                    seen.insert(key.clone(), orig);
+                }
+            }
+            orig_ends.push(end);
+            key_ends.push(key.len());
+            pos = end + 1;
+        }
+        prev = p;
     }
     None
 }
@@ -125,6 +158,53 @@ mod tests {
         assert!(check_symlink_target("l", &[0xff]).is_err());
     }
 
+    /// The straightforward algorithm `find_collision` replaced (no prefix skipping).
+    fn reference(paths: &[String]) -> Option<(String, String)> {
+        let mut seen: std::collections::BTreeMap<String, String> = Default::default();
+        for p in paths {
+            let (mut key, mut orig) = (String::new(), String::new());
+            for c in p.split('/') {
+                if !key.is_empty() {
+                    key.push('/');
+                    orig.push('/');
+                }
+                key.push_str(&c.nfd().collect::<String>().to_lowercase());
+                orig.push_str(c);
+                match seen.get(&key) {
+                    Some(o) if *o != orig => return Some((o.clone(), orig)),
+                    Some(_) => {}
+                    None => {
+                        seen.insert(key.clone(), orig.clone());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn collision_search_matches_reference_on_random_paths() {
+        let names = ["a", "A", "b", "B", "ab", "aB", "\u{e9}", "e\u{301}", "x"];
+        let mut x = 0x2545_F491_4F6C_DD1Du64;
+        let mut rnd = |n: usize| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x % n as u64) as usize
+        };
+        for round in 0..3000 {
+            let n = 1 + rnd(8);
+            let mut paths: Vec<String> = (0..n)
+                .map(|_| (0..1 + rnd(4)).map(|_| names[rnd(names.len())]).collect::<Vec<_>>().join("/"))
+                .collect();
+            if round % 2 == 0 {
+                paths.sort();
+            }
+            let got = find_collision(paths.iter().map(String::as_str));
+            assert_eq!(got, reference(&paths), "{paths:?}");
+        }
+    }
+
     #[test]
     fn collisions() {
         assert!(find_collision(["a/x", "b/x", "a/y"]).is_none());
@@ -132,5 +212,10 @@ mod tests {
         assert!(find_collision(["README", "readme"]).is_some());
         assert!(find_collision(["Dir/a", "dir/b"]).is_some());
         assert!(find_collision(["caf\u{e9}", "cafe\u{301}"]).is_some());
+        // shared-prefix skipping must not hide a collision between non-adjacent paths
+        assert!(find_collision(["a/b/x", "a/b/y", "a/B/z"]).is_some());
+        assert!(find_collision(["a/b/x", "a/c/y", "a/B/x"]).is_some());
+        assert!(find_collision(["a/b/x", "a/b/y", "a/c/y", "a/b/z"]).is_none());
+        assert_eq!(find_collision(["Dir/a", "dir/b"]), Some(("Dir".into(), "dir".into())));
     }
 }

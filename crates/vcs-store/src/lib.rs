@@ -62,6 +62,17 @@ pub trait ObjectStore: Send + Sync {
     fn put_blob(&self, data: &[u8]) -> Result<ObjectId, StoreError> {
         self.put(&Object::Blob(data.to_vec()))
     }
+    /// Store a blob whose id the caller already computed (`id == vcs_objects::blob_id(data)`), so
+    /// the store need not hash it again. The default re-derives the id and checks it.
+    fn put_blob_prehashed(&self, id: &ObjectId, data: &[u8]) -> Result<(), StoreError> {
+        if self.put_blob(data)? != *id {
+            return Err(StoreError::Corrupt {
+                id: *id,
+                reason: "chunk id mismatch".into(),
+            });
+        }
+        Ok(())
+    }
     /// Store file content: a plain blob below `CHUNK_THRESHOLD`, otherwise chunk blobs plus a
     /// manifest. Returns the canonical id (`vcs_objects::content_id`).
     fn put_content(&self, data: &[u8]) -> Result<ObjectId, StoreError> {
@@ -71,12 +82,8 @@ pub trait ObjectStore: Send + Sync {
                 let mut off = 0usize;
                 for c in &m.chunks {
                     let end = off + c.len as usize;
-                    if self.put_blob(&data[off..end])? != c.id {
-                        return Err(StoreError::Corrupt {
-                            id: c.id,
-                            reason: "chunk id mismatch".into(),
-                        });
-                    }
+                    // `plan` already hashed this chunk; do not hash it again.
+                    self.put_blob_prehashed(&c.id, &data[off..end])?;
                     off = end;
                 }
                 self.put(&Object::Chunked(m))
@@ -231,9 +238,11 @@ fn hardware_flush(f: &fs::File) -> std::io::Result<()> {
     }
 }
 
-/// Run `f` over `items` on up to 8 threads (inline for small inputs); first error wins.
+const SYNC_THREADS: usize = 32;
+
+/// Run `f` over `items` on up to `SYNC_THREADS` threads (inline for small inputs); first error wins.
 fn par_try_each<T: Sync>(items: &[T], f: impl Fn(&T) -> Result<(), StoreError> + Sync) -> Result<(), StoreError> {
-    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(SYNC_THREADS);
     if threads <= 1 || items.len() < 64 {
         return items.iter().try_for_each(f);
     }
@@ -347,6 +356,51 @@ impl LocalStore {
     pub fn verify_packs(&self) -> Vec<String> {
         self.packs.read().unwrap().iter().flat_map(|p| p.verify()).collect()
     }
+    /// Write `head || tail` (already identified as `id`) as a pending loose object unless it exists.
+    fn store_encoded(&self, id: &ObjectId, head: &[u8], tail: &[u8]) -> Result<(), StoreError> {
+        let id = *id;
+        // Existing objects are never rewritten. A pending object is brand new already. A published
+        // one older than `touch_after` gets its modification time refreshed ("touch on dedup"), so
+        // GC's age check sees a re-adopted orphan as young (docs/gc.md). Younger ones are left
+        // alone, which keeps the common "just wrote it" dedup free of write I/O.
+        if self.pending.lock().unwrap().contains_key(&id) {
+            return Ok(());
+        }
+        let loose = self.path_of(&id);
+        match fs::metadata(&loose) {
+            Ok(m) => {
+                if self.is_stale(m.modified().ok()) {
+                    touch(&loose)?;
+                }
+                return Ok(());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => return Err(StoreError::Io { path: loose, source }),
+        }
+        // Packs are immutable and shared, so an old packed object is re-adopted by writing a fresh
+        // loose copy below (which `modified` prefers); an object in a recent pack needs nothing.
+        let packed_recent = self
+            .packs
+            .read()
+            .unwrap()
+            .iter()
+            .find(|pk| pk.contains(&id))
+            .map(|pk| !self.is_stale(pk.modified()));
+        if packed_recent == Some(true) {
+            return Ok(());
+        }
+        let n = self.seq.fetch_add(1, Ordering::Relaxed);
+        let tmp = self.dir.join("tmp").join(format!("{}.{}.{n}.tmp", id.to_hex(), std::process::id()));
+        {
+            let mut f = io(&tmp, fs::File::create(&tmp))?;
+            if !head.is_empty() {
+                io(&tmp, f.write_all(head))?;
+            }
+            io(&tmp, f.write_all(tail))?;
+        }
+        self.pending.lock().unwrap().insert(id, tmp);
+        Ok(())
+    }
     fn path_of(&self, id: &ObjectId) -> PathBuf {
         let h = id.to_hex();
         self.dir.join(&h[..2]).join(&h[2..])
@@ -370,44 +424,14 @@ impl ObjectStore for LocalStore {
     fn put(&self, obj: &Object) -> Result<ObjectId, StoreError> {
         let enc = obj.encode();
         let id = vcs_objects::id_of_encoded(&enc);
-        // Existing objects are never rewritten. A pending object is brand new already. A published
-        // one older than `touch_after` gets its modification time refreshed ("touch on dedup"), so
-        // GC's age check sees a re-adopted orphan as young (docs/gc.md). Younger ones are left
-        // alone, which keeps the common "just wrote it" dedup free of write I/O.
-        if self.pending.lock().unwrap().contains_key(&id) {
-            return Ok(id);
-        }
-        let loose = self.path_of(&id);
-        match fs::metadata(&loose) {
-            Ok(m) => {
-                if self.is_stale(m.modified().ok()) {
-                    touch(&loose)?;
-                }
-                return Ok(id);
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(source) => return Err(StoreError::Io { path: loose, source }),
-        }
-        // Packs are immutable and shared, so an old packed object is re-adopted by writing a fresh
-        // loose copy below (which `modified` prefers); an object in a recent pack needs nothing.
-        let packed_recent = self
-            .packs
-            .read()
-            .unwrap()
-            .iter()
-            .find(|pk| pk.contains(&id))
-            .map(|pk| !self.is_stale(pk.modified()));
-        if packed_recent == Some(true) {
-            return Ok(id);
-        }
-        let n = self.seq.fetch_add(1, Ordering::Relaxed);
-        let tmp = self.dir.join("tmp").join(format!("{}.{}.{n}.tmp", id.to_hex(), std::process::id()));
-        {
-            let mut f = io(&tmp, fs::File::create(&tmp))?;
-            io(&tmp, f.write_all(&enc))?;
-        }
-        self.pending.lock().unwrap().insert(id, tmp);
+        self.store_encoded(&id, &[], &enc)?;
         Ok(id)
+    }
+
+    fn put_blob_prehashed(&self, id: &ObjectId, data: &[u8]) -> Result<(), StoreError> {
+        debug_assert_eq!(*id, vcs_objects::blob_id(data));
+        // Same bytes as `Object::Blob(data).encode()`, written without building that copy.
+        self.store_encoded(id, &[vcs_objects::Kind::Blob as u8, vcs_objects::FORMAT_VERSION], data)
     }
 
     fn sync(&self) -> Result<(), StoreError> {
@@ -418,6 +442,16 @@ impl ObjectStore for LocalStore {
         }
         // 1. object data to the device, then one hardware flush covering all of it.
         let tmps: Vec<&PathBuf> = pending.values().collect();
+        // Start write-back of every file first (Linux), so the device sees all of it at once and
+        // the per-file fsync below mostly waits instead of serialising seeks and journal commits.
+        #[cfg(target_os = "linux")]
+        par_try_each(&tmps, |tmp| {
+            use std::os::unix::io::AsRawFd;
+            let f = io(tmp, fs::File::open(tmp))?;
+            // SAFETY: valid fd; the call only schedules write-back and has no memory effects.
+            unsafe { libc::sync_file_range(f.as_raw_fd(), 0, 0, libc::SYNC_FILE_RANGE_WRITE) };
+            Ok(())
+        })?;
         par_try_each(&tmps, |tmp| {
             let f = io(tmp, fs::File::open(tmp))?;
             io(tmp, flush_file(&f))
@@ -776,6 +810,46 @@ mod tests {
         // small content stays a plain blob
         let small = s.put_content(b"tiny").unwrap();
         assert!(matches!(s.get(&small).unwrap(), Object::Blob(_)));
+    }
+
+    #[test]
+    fn prehashed_chunk_files_are_byte_identical_to_ordinary_blob_puts() {
+        let d = tempfile::tempdir().unwrap();
+        let fast = LocalStore::open(d.path().join("fast")).unwrap();
+        let slow = LocalStore::open(d.path().join("slow")).unwrap();
+        let data: Vec<u8> = (0..3_000_000u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect();
+        let id = fast.put_content(&data).unwrap();
+        let Object::Chunked(m) = Object::Chunked(ChunkedBlob::plan(&data).unwrap()) else {
+            panic!()
+        };
+        for c in &m.chunks {
+            assert_eq!(
+                fast.get(&c.id).unwrap().encode(),
+                Object::Blob(fast.get_blob(&c.id).unwrap()).encode()
+            );
+        }
+        fast.sync().unwrap();
+        // the same content through the generic (hashing) path lands in the same files
+        let mut off = 0;
+        for c in &m.chunks {
+            slow.put_blob(&data[off..off + c.len as usize]).unwrap();
+            off += c.len as usize;
+        }
+        slow.put(&Object::Chunked(m)).unwrap();
+        slow.sync().unwrap();
+        let mut a = fast.list().unwrap();
+        let mut b = slow.list().unwrap();
+        a.sort();
+        b.sort();
+        assert_eq!(a, b);
+        for x in &a {
+            let h = x.to_hex();
+            assert_eq!(
+                std::fs::read(d.path().join("fast").join(&h[..2]).join(&h[2..])).unwrap(),
+                std::fs::read(d.path().join("slow").join(&h[..2]).join(&h[2..])).unwrap()
+            );
+        }
+        assert_eq!(id, vcs_objects::content_id(&data));
     }
 
     #[test]

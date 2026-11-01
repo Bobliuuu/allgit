@@ -565,6 +565,13 @@ impl Repo {
         Ok(())
     }
 
+    /// True if any of these (few) files is large enough to be worth a thread each. Stats at most 64.
+    fn has_big_file(&self, files: &[String]) -> bool {
+        files
+            .iter()
+            .any(|f| fs::symlink_metadata(self.worktree.join(f)).is_ok_and(|m| m.len() >= (vcs_objects::CHUNK_THRESHOLD as u64) / 4))
+    }
+
     /// Stat, read, hash and store each file (in parallel when there are many), then record
     /// them in the index. Blob writes only touch `store`, which is safe to share across threads.
     fn stage_files(&self, files: &[String], ix: &mut Index) -> Result<()> {
@@ -590,9 +597,11 @@ impl Repo {
                 mtime_ns: mtime_ns(&m),
             })
         };
-        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
+        // Few files can still be a lot of work (chunking multi-MiB files), so only a handful of
+        // small ones stay on the calling thread. The pool is bounded at 8 threads.
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8).min(files.len());
         let mut entries: Vec<Option<Result<IndexEntry>>> = (0..files.len()).map(|_| None).collect();
-        if threads <= 1 || files.len() < 64 {
+        if threads <= 1 || (files.len() < 64 && !self.has_big_file(files)) {
             for (i, f) in files.iter().enumerate() {
                 entries[i] = Some(one(f));
             }
@@ -674,10 +683,17 @@ impl Repo {
     }
 
     pub fn status_with(&self, opts: StatusOpts) -> Result<Status> {
+        let ix = self.index()?;
+        self.status_inner(opts, &ix, true)
+    }
+
+    /// `status_with` on an index the caller already loaded; `untracked: false` skips the walk
+    /// for untracked files (`Status::untracked` / `unsupported` are then left empty), which is
+    /// all a caller that only needs staged/unstaged/merge state has to pay for.
+    pub(crate) fn status_inner(&self, opts: StatusOpts, ix: &Index, untracked: bool) -> Result<Status> {
         let zones = self.zones()?;
         let ws = self.workspace()?;
         let refs = self.refs()?;
-        let ix = self.index()?;
         let mut st = Status::default();
         for (zone, branch) in &ws.subs {
             let mine: BTreeMap<&String, &IndexEntry> = ix.entries.iter().filter(|(p, _)| zones.owner(p) == zone).collect();
@@ -692,20 +708,7 @@ impl Repo {
                 .into_iter()
                 .map(|(path, kind)| Change { path, kind })
                 .collect();
-            let mut unstaged = Vec::new();
-            for (p, e) in &mine {
-                match self.wt_state(p, e, ix.written_ns)? {
-                    Wt::Clean => {}
-                    Wt::Modified => unstaged.push(Change {
-                        path: (*p).clone(),
-                        kind: ChangeKind::Modified,
-                    }),
-                    Wt::Deleted => unstaged.push(Change {
-                        path: (*p).clone(),
-                        kind: ChangeKind::Deleted,
-                    }),
-                }
-            }
+            let unstaged = self.unstaged_changes(&mine, ix.written_ns)?;
             st.zones.push(ZoneStatus {
                 zone: zone.clone(),
                 path: zones.path_of(zone).unwrap_or("").to_owned(),
@@ -720,6 +723,10 @@ impl Repo {
                 st.unsubscribed.push(n.to_owned());
             }
         }
+        if !untracked {
+            st.merging = self.merge_state()?;
+            return Ok(st);
+        }
         let budget = AtomicUsize::new(std::thread::available_parallelism().map_or(1, |n| n.get()).min(8) - 1);
         let ctx = WalkCtx {
             cache: if opts.dir_cache {
@@ -731,7 +738,7 @@ impl Repo {
             scan_start_ns: now_ns(),
             racy_ns: opts.racy_ns,
         };
-        let mut w = self.walk_untracked("", &zones, &ws, &ix, &budget, &IgnoreStack::default(), &ctx)?;
+        let mut w = self.walk_untracked("", &zones, &ws, ix, &budget, &IgnoreStack::default(), &ctx)?;
         st.untracked = std::mem::take(&mut w.untracked);
         st.unsupported = std::mem::take(&mut w.unsupported);
         if opts.dir_cache && (w.scanned > 0 || w.hits.len() != ctx.cache.dirs.len()) {
@@ -748,6 +755,45 @@ impl Repo {
         }
         st.merging = self.merge_state()?;
         Ok(st)
+    }
+
+    /// Working-tree changes of the tracked `entries`, in entry order. The per-file `lstat` (and
+    /// re-hash of racy/changed files) is independent per path, so a big list is split across at
+    /// most 8 threads.
+    fn unstaged_changes(&self, entries: &BTreeMap<&String, &IndexEntry>, written_ns: u64) -> Result<Vec<Change>> {
+        let list: Vec<(&String, &IndexEntry)> = entries.iter().map(|(p, e)| (*p, *e)).collect();
+        let check = |part: &[(&String, &IndexEntry)]| -> Result<Vec<Change>> {
+            let mut out = Vec::new();
+            for (p, e) in part {
+                match self.wt_state(p, e, written_ns)? {
+                    Wt::Clean => {}
+                    Wt::Modified => out.push(Change {
+                        path: (*p).clone(),
+                        kind: ChangeKind::Modified,
+                    }),
+                    Wt::Deleted => out.push(Change {
+                        path: (*p).clone(),
+                        kind: ChangeKind::Deleted,
+                    }),
+                }
+            }
+            Ok(out)
+        };
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
+        if threads <= 1 || list.len() < 2048 {
+            return check(&list);
+        }
+        let per = list.len().div_ceil(threads);
+        let parts: Vec<Result<Vec<Change>>> = std::thread::scope(|sc| {
+            let check = &check;
+            let hs: Vec<_> = list.chunks(per).map(|part| sc.spawn(move || check(part))).collect();
+            hs.into_iter().map(|h| h.join().expect("status worker panicked")).collect()
+        });
+        let mut out = Vec::new();
+        for p in parts {
+            out.extend(p?);
+        }
+        Ok(out)
     }
 
     /// Directory scan for untracked and unsupported entries. The scan is syscall-bound (one
@@ -1177,12 +1223,19 @@ impl Repo {
         let Some(target) = refs.head(zone, branch) else {
             return msg(format!("no such branch {zone}/{branch}"));
         };
-        let st = self.status()?;
-        self.require_clean(zone, &st)?;
-        let old = self.head_flat(zone, &zones, &ws, &refs)?;
-        let new = treeops::flatten(&self.store, Some(self.commit_obj(&target)?.root), zones.path_of(zone).unwrap())?;
         let mut ix = self.index()?;
-        self.transition(zone, &zones, &old, &new, &mut ix)?;
+        // Only staged/unstaged/merge state matters here, so skip the untracked-file walk.
+        let st = self.status_inner(StatusOpts::default(), &ix, false)?;
+        self.require_clean(zone, &st)?;
+        let prefix = zones.path_of(zone).unwrap();
+        let old_root = match self.current_head(zone, &ws, &refs) {
+            Some(h) => Some(self.commit_obj(&h)?.root),
+            None => None,
+        };
+        let new_root = self.commit_obj(&target)?.root;
+        // Subtrees that are identical on both branches are never read.
+        let diff = treeops::diff_trees(&self.store, old_root, Some(new_root), prefix)?;
+        self.transition_diff(zone, &zones, &diff, &mut ix)?;
         ws.subs.insert(zone.into(), branch.into());
         self.save_index(&mut ix)?;
         self.save_ws(&ws)?;
@@ -1277,6 +1330,18 @@ impl Repo {
         Ok(())
     }
 
+    /// [`Repo::transition`] for a [`treeops::TreeDiff`]: the same checks and writes restricted to
+    /// the paths that differ. The case-folding collision scan looks at the entry names of every
+    /// directory that is new on the target side (two colliding paths always share a directory
+    /// whose entries collide), instead of folding every tracked path.
+    pub(crate) fn transition_diff(&self, zone: &str, zones: &Zones, diff: &treeops::TreeDiff, ix: &mut Index) -> Result<()> {
+        for names in &diff.new_dir_names {
+            crate::portable::require_no_collision(names.iter().map(String::as_str), "checkout")?;
+        }
+        self.transition_check_paths(zone, zones, &diff.old, &diff.new)?;
+        self.transition_apply(zone, &diff.old, &diff.new, ix)
+    }
+
     /// Move the working tree + index of one zone from `old` to `new` (flat, full paths).
     /// Preflight validates everything before any file is touched.
     pub(crate) fn transition(&self, zone: &str, zones: &Zones, old: &Flat, new: &Flat, ix: &mut Index) -> Result<()> {
@@ -1287,13 +1352,19 @@ impl Repo {
     /// The preflight half of [`Repo::transition`]: validates without touching any file, so a
     /// caller moving several zones can check all of them before changing any.
     pub(crate) fn transition_check(&self, zone: &str, zones: &Zones, old: &Flat, new: &Flat, ix: &Index) -> Result<()> {
-        let changed: Vec<&String> = new.iter().filter(|(p, v)| old.get(*p) != Some(v)).map(|(p, _)| p).collect();
         crate::portable::require_no_collision(
             new.keys()
                 .map(String::as_str)
                 .chain(ix.entries.keys().filter(|p| !old.contains_key(*p)).map(String::as_str)),
             "checkout",
         )?;
+        self.transition_check_paths(zone, zones, old, new)
+    }
+
+    /// Everything in the preflight except the whole-tree collision scan. `old` and `new` may be
+    /// the changed parts of the two trees only (unchanged paths in neither).
+    fn transition_check_paths(&self, zone: &str, zones: &Zones, old: &Flat, new: &Flat) -> Result<()> {
+        let changed: Vec<&String> = new.iter().filter(|(p, v)| old.get(*p) != Some(v)).map(|(p, _)| p).collect();
         for p in &changed {
             validate_path(p)?;
             if zones.owner(p) != zone {
@@ -1352,14 +1423,15 @@ impl Repo {
                 dirs.insert(par.to_owned());
             }
         }
-        // writes
-        for p in changed {
+        // writes: independent per path, so a big batch runs on a bounded pool (8 threads)
+        let write_one = |p: &String| -> Result<IndexEntry> {
             let (mode, id) = new[p];
             let data = self.store.get_content(&id)?;
             let abs = self.worktree.join(p);
             let parent = abs.parent().unwrap();
             io(parent, fs::create_dir_all(parent))?;
-            let tmp = parent.join(format!(".vcs-tmp-{}", std::process::id()));
+            static SEQ: AtomicUsize = AtomicUsize::new(0);
+            let tmp = parent.join(format!(".vcs-tmp-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
             if mode == EntryMode::Symlink {
                 let _ = fs::remove_file(&tmp);
                 make_symlink(&data, &tmp)?;
@@ -1375,16 +1447,31 @@ impl Repo {
             // rename replaces the path itself (including an existing link); it never writes through it
             io(&abs, fs::rename(&tmp, &abs))?;
             let m = io(&abs, fs::symlink_metadata(&abs))?;
-            ix.entries.remove(p);
-            ix.insert(
-                p,
-                IndexEntry {
-                    id,
-                    mode,
-                    size: m.len(),
-                    mtime_ns: mtime_ns(&m),
-                },
-            )?;
+            Ok(IndexEntry {
+                id,
+                mode,
+                size: m.len(),
+                mtime_ns: mtime_ns(&m),
+            })
+        };
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
+        let written: Vec<Result<IndexEntry>> = if threads <= 1 || changed.len() < 64 {
+            changed.iter().map(|p| write_one(p)).collect()
+        } else {
+            let per = changed.len().div_ceil(threads);
+            std::thread::scope(|sc| {
+                let write_one = &write_one;
+                let hs: Vec<_> = changed
+                    .chunks(per)
+                    .map(|part| sc.spawn(move || part.iter().map(|p| write_one(p)).collect::<Vec<_>>()))
+                    .collect();
+                hs.into_iter().flat_map(|h| h.join().expect("checkout writer panicked")).collect()
+            })
+        };
+        for (p, e) in changed.iter().zip(written) {
+            let e = e?;
+            ix.entries.remove(*p);
+            ix.insert(p, e)?;
         }
         // prune now-empty directories (never the worktree root)
         for mut d in dirs {
@@ -1461,6 +1548,30 @@ impl Repo {
         Ok(seen)
     }
 
+    /// `store.get` for every id, on up to 8 threads, results in the order of `ids`. A blob is
+    /// reduced to an empty blob plus its length (`Listed::Blob`), so memory does not grow with
+    /// repository size.
+    fn fsck_fetch(&self, ids: &[ObjectId]) -> Vec<(std::result::Result<Object, vcs_store::StoreError>, Listed)> {
+        let one = |id: &ObjectId| match self.store.get(id) {
+            Err(e) => (Err(e), Listed::Failed),
+            Ok(Object::Blob(b)) => (Ok(Object::Blob(Vec::new())), Listed::Blob(b.len())),
+            Ok(o) => (Ok(o), Listed::Other),
+        };
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
+        if threads <= 1 || ids.len() < 64 {
+            return ids.iter().map(one).collect();
+        }
+        let per = ids.len().div_ceil(threads);
+        std::thread::scope(|sc| {
+            let one = &one;
+            let hs: Vec<_> = ids
+                .chunks(per)
+                .map(|part| sc.spawn(move || part.iter().map(one).collect::<Vec<_>>()))
+                .collect();
+            hs.into_iter().flat_map(|h| h.join().expect("fsck worker panicked")).collect()
+        })
+    }
+
     /// Verify every object (hash + canonical decode) and graph invariants.
     pub fn fsck(&self) -> Result<FsckReport> {
         let mut rep = FsckReport::default();
@@ -1480,9 +1591,13 @@ impl Repo {
             }
             Ok(())
         };
-        for id in &ids {
+        // Read + hash + decode every object on a few threads. Blob contents are reduced to their
+        // length right away (a chunk manifest check only needs that), so memory stays small.
+        let fetched = self.fsck_fetch(&ids);
+        let listed: std::collections::HashMap<ObjectId, Listed> = ids.iter().zip(&fetched).map(|(id, (_, l))| (*id, *l)).collect();
+        for (id, (fetched, _)) in ids.iter().zip(fetched) {
             rep.objects += 1;
-            match self.store.get(id) {
+            match fetched {
                 Err(e) => rep.problems.push(format!("{id}: {e}")),
                 Ok(Object::Commit(c)) => {
                     commits.insert(*id, c);
@@ -1515,15 +1630,23 @@ impl Repo {
                             format!("chunk manifest {id}: missing chunk {}", c.id),
                             &mut rep.problems,
                         )?;
-                        // A present chunk must be a plain blob of the recorded length.
-                        if self.store.contains(&c.id)? {
-                            match self.store.get(&c.id) {
-                                Ok(Object::Blob(b)) if b.len() == c.len as usize => {}
-                                Ok(_) => rep
-                                    .problems
-                                    .push(format!("chunk manifest {id}: chunk {} is not a blob of {} bytes", c.id, c.len)),
-                                Err(_) => {} // reported when the chunk itself is checked
-                            }
+                        // A present chunk must be a plain blob of the recorded length. Chunks were
+                        // already read and hashed above; only an unlisted one is read again.
+                        let state = match listed.get(&c.id) {
+                            Some(l) => *l,
+                            None if self.store.contains(&c.id)? => match self.store.get(&c.id) {
+                                Ok(Object::Blob(b)) => Listed::Blob(b.len()),
+                                Ok(_) => Listed::Other,
+                                Err(_) => Listed::Failed,
+                            },
+                            None => continue,
+                        };
+                        match state {
+                            Listed::Blob(n) if n == c.len as usize => {}
+                            Listed::Failed => {} // reported when the chunk itself is checked
+                            _ => rep
+                                .problems
+                                .push(format!("chunk manifest {id}: chunk {} is not a blob of {} bytes", c.id, c.len)),
                         }
                     }
                 }
@@ -1573,6 +1696,14 @@ impl Repo {
     pub fn repack(&self) -> Result<usize> {
         Ok(self.store.repack()?)
     }
+}
+
+/// What fsck saw when it read a listed object, kept for checking chunk manifests.
+#[derive(Clone, Copy)]
+enum Listed {
+    Blob(usize),
+    Other,
+    Failed,
 }
 
 pub(crate) fn fresh_change_id(zone: &str, root: &ObjectId, parent: Option<&ObjectId>, author: &Signature) -> ChangeId {

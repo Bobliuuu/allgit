@@ -33,35 +33,52 @@ impl ChunkParams {
 }
 
 /// End offsets (exclusive) of each chunk; the last equals `data.len()`. Empty input gives no chunks.
+///
+/// Boundaries are part of the object format (they determine chunk ids): this loop is only an
+/// optimised form of the reference scan, checked against it in the tests.
 pub fn chunk_ends(data: &[u8], p: ChunkParams) -> Vec<usize> {
     let bits = p.avg.trailing_zeros();
-    // Stricter mask before the average size, looser after (normalized chunking).
-    let mask_s = (1u64 << (bits + 1)) - 1;
-    let mask_l = (1u64 << (bits - 1).max(1)) - 1;
-    let mut ends = Vec::new();
+    // Stricter mask before the average size, looser after (normalized chunking). The `>> 16`
+    // of the reference scan is folded into the masks (`m << 16`) so the hot loop is shift+add+test.
+    let mask_s = ((1u64 << (bits + 1)) - 1) << 16;
+    let mask_l = ((1u64 << (bits - 1).max(1)) - 1) << 16;
+    let mut ends = Vec::with_capacity(data.len() / p.avg.max(1) + 2);
     let mut start = 0;
     while start < data.len() {
         let end_max = (start + p.max).min(data.len());
         let mut cut = end_max;
         if end_max - start > p.min {
             let mut h = 0u64;
-            let mut i = start + p.min;
-            let mid = (start + p.avg).min(end_max);
-            while i < end_max {
-                h = (h << 1).wrapping_add(GEAR[data[i] as usize]);
-                // gear hash depends on the last 64 bytes only; mask tests the high bits
-                let mask = if i < mid { mask_s } else { mask_l };
-                if (h >> 16) & mask == 0 {
-                    cut = i + 1;
-                    break;
+            let from = start + p.min;
+            let mid = (start + p.avg).clamp(from, end_max);
+            match scan(&data[from..mid], &mut h, mask_s) {
+                Some(i) => cut = from + i + 1,
+                None => {
+                    if let Some(i) = scan(&data[mid..end_max], &mut h, mask_l) {
+                        cut = mid + i + 1;
+                    }
                 }
-                i += 1;
             }
         }
         ends.push(cut);
         start = cut;
     }
     ends
+}
+
+/// Roll the gear hash over `bytes`; index of the first byte whose hash has `mask` bits clear.
+#[inline(always)]
+fn scan(bytes: &[u8], h: &mut u64, mask: u64) -> Option<usize> {
+    let mut x = *h;
+    for (i, &b) in bytes.iter().enumerate() {
+        x = (x << 1).wrapping_add(GEAR[b as usize]);
+        if x & mask == 0 {
+            *h = x;
+            return Some(i);
+        }
+    }
+    *h = x;
+    None
 }
 
 #[cfg(test)]
@@ -94,6 +111,53 @@ mod tests {
         }
         assert_eq!(e, chunk_ends(&d, P()));
         assert!(chunk_ends(&[], P()).is_empty());
+    }
+
+    /// The original scan, kept to pin the boundaries (they are part of the object format).
+    fn reference_ends(data: &[u8], p: ChunkParams) -> Vec<usize> {
+        let bits = p.avg.trailing_zeros();
+        let mask_s = (1u64 << (bits + 1)) - 1;
+        let mask_l = (1u64 << (bits - 1).max(1)) - 1;
+        let mut ends = Vec::new();
+        let mut start = 0;
+        while start < data.len() {
+            let end_max = (start + p.max).min(data.len());
+            let mut cut = end_max;
+            if end_max - start > p.min {
+                let mut h = 0u64;
+                let mut i = start + p.min;
+                let mid = (start + p.avg).min(end_max);
+                while i < end_max {
+                    h = (h << 1).wrapping_add(GEAR[data[i] as usize]);
+                    let mask = if i < mid { mask_s } else { mask_l };
+                    if (h >> 16) & mask == 0 {
+                        cut = i + 1;
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            ends.push(cut);
+            start = cut;
+        }
+        ends
+    }
+
+    #[test]
+    fn matches_reference_scan_exactly() {
+        for (seed, n) in [(1u64, 5_000_000usize), (2, 70_000), (3, 3), (4, 0), (5, 4097)] {
+            let mut d = rnd(n, seed);
+            if seed == 1 {
+                d[1_000_000..1_300_000].fill(0); // long runs force max-size chunks
+            }
+            for p in [
+                ChunkParams::new(4 << 10, 16 << 10, 64 << 10),
+                ChunkParams::new(2048, 8192, 32768),
+                ChunkParams::new(1, 2, 8),
+            ] {
+                assert_eq!(chunk_ends(&d, p), reference_ends(&d, p), "seed {seed} n {n} {p:?}");
+            }
+        }
     }
 
     #[test]
