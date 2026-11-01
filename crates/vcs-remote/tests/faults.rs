@@ -56,6 +56,7 @@ fn publish(b: &dyn Backend, s: &MemoryStore, zone: &str, old: Option<ObjectId>, 
             lock_ops: vec![],
         },
     )
+    .with_loose_objects()
     .run()
 }
 
@@ -223,8 +224,21 @@ fn index_corruption_is_detected() {
     let b = copy_where(&r.b, &|k| k != "packs/p1.idx");
     b.put_if_absent("packs/p1.idx", &swapped).unwrap();
     let dst = MemoryStore::new();
-    let m = assert_clean_failure(fetch_heads(&b, &dst, None), &dst, r.head, "swapped index entries");
-    assert!(m.contains("verification") || m.contains("decode") || m.contains("missing"), "{m}");
+    // Whole-pack read-ahead reads objects by their framing, not through the swapped entries, so
+    // the fetch may succeed; what must hold is that nothing unverified is stored.
+    match fetch_heads(&b, &dst, None) {
+        Err(e) => {
+            let m = e.to_string();
+            assert!(m.contains("verification") || m.contains("decode") || m.contains("missing"), "{m}");
+        }
+        Ok(_) => {
+            for id in &r.ids {
+                if dst.contains(id).unwrap() {
+                    assert_eq!(dst.get(id).unwrap().id(), *id);
+                }
+            }
+        }
+    }
     // 4. index claims a longer pack than exists (ranged reads come back short)
     let mut longer = r.idx.clone();
     let claimed = u64::from_le_bytes(longer[12..20].try_into().unwrap()) + 1_000_000;
@@ -320,6 +334,28 @@ fn publish_repairs_a_present_object_whose_descendant_is_gone() {
     assert!(dst.contains(&c2).unwrap());
 }
 
+/// Same through the packed publish path (the default): the new head is written as a pack on
+/// top of a legacy loose remote that lost a leaf beneath its old head.
+#[test]
+fn packed_publish_repairs_a_hole_beneath_the_old_head() {
+    let (s, c1, leaf, damaged) = damaged_remote();
+    let c2 = commit_with(&s, "a", Some(c1), &[("g", b"new".to_vec())]);
+    let tx = Transaction {
+        updates: vec![RefUpdate {
+            zone: "a".into(),
+            branch: "main".into(),
+            old: Some(c1),
+            new: c2,
+        }],
+        author: sig(),
+        message: "m".into(),
+        lock_ops: vec![],
+    };
+    Publisher::new(&damaged, &s, tx).run().unwrap();
+    fetch_heads(&damaged, &MemoryStore::new(), None).expect("closure complete, leaf now in the pack");
+    let _ = leaf;
+}
+
 /// With verification switched off the old trust remains (hole stays); `repair_remote` is the
 /// unbounded repair mode and fixes it without moving any ref.
 #[test]
@@ -337,7 +373,11 @@ fn repair_remote_restores_a_hole_beyond_the_verify_budget() {
         message: "m".into(),
         lock_ops: vec![],
     };
-    Publisher::new(&damaged, &s, tx(Some(c1), c2)).with_verify_budget(0).run().unwrap();
+    Publisher::new(&damaged, &s, tx(Some(c1), c2))
+        .with_loose_objects()
+        .with_verify_budget(0)
+        .run()
+        .unwrap();
     assert!(!damaged.exists(&object_key(&leaf)).unwrap(), "budget 0 trusts present objects");
     assert!(fetch_heads(&damaged, &MemoryStore::new(), None).is_err());
     assert_eq!(repair_remote(&damaged, &s, &[c2]).unwrap(), 1);

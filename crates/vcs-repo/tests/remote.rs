@@ -364,25 +364,4 @@ fn tags_travel_through_publish_clone_fetch_and_sync() {
     a.tag_create("root", "v2", None, None).unwrap();
     let rep = a.publish(&remote, None, sig()).unwrap();
     assert_eq!(rep.tag_conflicts, vec![("root".to_string(), "v2".to_string())]);
-
-fn repair_restores_objects_the_remote_lost_beneath_present_ones() {
-    let d = tempfile::tempdir().unwrap();
-    let remote = MemBackend::new();
-    let a = seeded(&remote, d.path());
-    // the remote loses one file blob
-    let victim = remote.keys().into_iter().find(|k| k.starts_with("objects/")).unwrap();
-    let blob_key = remote
-        .keys()
-        .into_iter()
-        .filter(|k| k.starts_with("objects/"))
-        .find(|k| remote.get(k).unwrap().unwrap().data[0] == 1) // Kind::Blob
-        .unwrap_or(victim);
-    let damaged = MemBackend::new();
-    for k in remote.keys().into_iter().filter(|k| *k != blob_key) {
-        damaged.put_if_absent(&k, &remote.get(&k).unwrap().unwrap().data).unwrap();
-    }
-    assert!(Repo::clone_from(&damaged, "mem", &d.path().join("x"), None).is_err());
-    assert_eq!(a.repair_remote(&damaged).unwrap(), 1);
-    let b = Repo::clone_from(&damaged, "mem", &d.path().join("b"), None).unwrap();
-    assert!(b.fsck().unwrap().problems.is_empty());
 }
