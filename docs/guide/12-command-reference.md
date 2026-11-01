@@ -2031,14 +2031,14 @@ Options:
 ```text
 Turn one suggestion into a zone (plan only without --yes; history is not rewritten)
 
-Usage: vcs zone apply [OPTIONS] <TARGET>
+Usage: vcs zone apply [OPTIONS] <TARGET>...
 
 Arguments:
-  <TARGET>  Path or proposed name of a suggestion from `vcs zone suggest`
+  <TARGET>...  Path or proposed name of a suggestion from `vcs zone suggest`; several make all the zones in one step (one status check, one new root commit, one write of the repository state)
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
-      --name <NAME>    Zone name to use instead of the proposed one
+      --name <NAME>    Zone name to use instead of the proposed one (only with a single target)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --yes            Actually do it. Without this only the plan is printed
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)

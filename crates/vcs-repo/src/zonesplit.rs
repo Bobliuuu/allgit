@@ -35,13 +35,26 @@ impl Repo {
     /// is clean with a checked-out branch, has no sparse set, no merge/rebase is in progress, the
     /// directory holds committed files, and no other zone overlaps it.
     pub fn zone_split(&self, name: &str, path: &str, author: Signature, dry_run: bool) -> Result<SplitReport> {
-        validate_zone_name(name)?;
+        let mut v = self.zone_split_many(&[(name.to_owned(), path.to_owned())], author, dry_run)?;
+        Ok(v.remove(0))
+    }
+
+    /// Split several directories out of the root zone in one go: one lock, one status check, one
+    /// flatten of the root tree, one root commit that removes all of them, one commit per new zone,
+    /// one transaction and one write of the zone, workspace and ref files. With a single entry the
+    /// result is exactly what [`Repo::zone_split`] always produced.
+    pub fn zone_split_many(&self, splits: &[(String, String)], author: Signature, dry_run: bool) -> Result<Vec<SplitReport>> {
+        if splits.is_empty() {
+            return msg("nothing to split");
+        }
+        for (name, _) in splits {
+            validate_zone_name(name)?;
+        }
         let _l = self.lock()?;
         self.rebase_guard("zone split")?;
         let mut zones = self.zones()?;
         let mut ws = self.workspace()?;
         let mut refs = self.refs()?;
-        let path = path.trim_matches('/');
         let Some(branch) = ws.subs.get(ROOT_ZONE).cloned() else {
             return msg("the root zone is not subscribed in this workspace; subscribe it first");
         };
@@ -51,43 +64,57 @@ impl Repo {
         if self.merge_state()?.is_some() {
             return msg("a merge is in progress; finish or abort it first");
         }
-        let st = self.status()?;
+        let st = self.status_tracked()?;
         self.require_clean(ROOT_ZONE, &st)?;
         let Some(head) = refs.head(ROOT_ZONE, &branch) else {
             return msg("the root zone has no commits yet");
         };
-        zones.create(name, path)?; // validates the path and non-overlap
+        let items: Vec<(&str, String)> = splits.iter().map(|(n, p)| (n.as_str(), p.trim_matches('/').to_owned())).collect();
+        for (name, path) in &items {
+            zones.create(name, path)?; // validates the path and non-overlap (also against earlier entries)
+        }
         let root_tree = self.commit_obj(&head)?.root;
         let flat = treeops::flatten(&self.store, Some(root_tree), "")?;
-        let prefix = format!("{path}/");
-        let moved: Vec<(&str, _, _)> = flat
-            .iter()
-            .filter(|(p, _)| p.starts_with(&prefix))
-            .map(|(p, (m, id))| (&p[prefix.len()..], *m, *id))
-            .collect();
-        if moved.is_empty() {
-            return msg(format!(
-                "no committed files under {path:?} in the root zone's branch {branch}; nothing to split"
-            ));
+        let prefixes: Vec<String> = items.iter().map(|(_, p)| format!("{p}/")).collect();
+        let mut reps = Vec::new();
+        let mut moved: Vec<Vec<(&str, _, _)>> = Vec::new();
+        for ((name, path), prefix) in items.iter().zip(&prefixes) {
+            let m: Vec<(&str, _, _)> = flat
+                .iter()
+                .filter(|(p, _)| p.starts_with(prefix.as_str()))
+                .map(|(p, (m, id))| (&p[prefix.len()..], *m, *id))
+                .collect();
+            if m.is_empty() {
+                return msg(format!(
+                    "no committed files under {path:?} in the root zone's branch {branch}; nothing to split"
+                ));
+            }
+            reps.push(SplitReport {
+                zone: (*name).to_owned(),
+                path: path.clone(),
+                files: m.len(),
+                root_commit: None,
+                zone_commit: None,
+            });
+            moved.push(m);
         }
-        let mut rep = SplitReport {
-            zone: name.to_owned(),
-            path: path.to_owned(),
-            files: moved.len(),
-            root_commit: None,
-            zone_commit: None,
-        };
         if dry_run {
-            return Ok(rep);
+            return Ok(reps);
         }
         let new_root_tree = treeops::build(
             &self.store,
             flat.iter()
-                .filter(|(p, _)| !p.starts_with(&prefix))
+                .filter(|(p, _)| !prefixes.iter().any(|x| p.starts_with(x.as_str())))
                 .map(|(p, (m, id))| (p.as_str(), *m, *id)),
         )?;
-        let zone_tree = treeops::build(&self.store, moved)?;
-        let msg_root = format!("split {path}/ out of the root zone into zone {name} (history is not rewritten)");
+        let msg_root = match items.as_slice() {
+            [(name, path)] => format!("split {path}/ out of the root zone into zone {name} (history is not rewritten)"),
+            many => format!(
+                "split {} directories out of the root zone into zones {} (history is not rewritten)",
+                many.len(),
+                many.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", ")
+            ),
+        };
         let rc = Commit {
             zone: ROOT_ZONE.to_owned(),
             parents: vec![head],
@@ -96,33 +123,36 @@ impl Repo {
             author: author.clone(),
             message: msg_root.clone(),
         };
-        let zc = Commit {
-            zone: name.to_owned(),
-            parents: vec![],
-            root: zone_tree,
-            change_id: fresh_change_id(name, &zone_tree, None, &author),
-            author: author.clone(),
-            message: format!(
-                "start of zone {name}: {path}/ as of root commit {} (earlier history stays in the root zone)",
-                head.short()
-            ),
-        };
         let rid = self.store.put(&Object::Commit(rc))?;
-        let zid = self.store.put(&Object::Commit(zc))?;
-        let mut updates = vec![
-            RefUpdate {
-                zone: ROOT_ZONE.to_owned(),
-                branch: branch.clone(),
-                old: Some(head),
-                new: rid,
-            },
-            RefUpdate {
-                zone: name.to_owned(),
+        let mut updates = vec![RefUpdate {
+            zone: ROOT_ZONE.to_owned(),
+            branch: branch.clone(),
+            old: Some(head),
+            new: rid,
+        }];
+        for (((name, path), m), rep) in items.iter().zip(moved).zip(reps.iter_mut()) {
+            let zone_tree = treeops::build(&self.store, m)?;
+            let zc = Commit {
+                zone: (*name).to_owned(),
+                parents: vec![],
+                root: zone_tree,
+                change_id: fresh_change_id(name, &zone_tree, None, &author),
+                author: author.clone(),
+                message: format!(
+                    "start of zone {name}: {path}/ as of root commit {} (earlier history stays in the root zone)",
+                    head.short()
+                ),
+            };
+            let zid = self.store.put(&Object::Commit(zc))?;
+            updates.push(RefUpdate {
+                zone: (*name).to_owned(),
                 branch: DEFAULT_BRANCH.to_owned(),
                 old: None,
                 new: zid,
-            },
-        ];
+            });
+            rep.root_commit = Some(rid);
+            rep.zone_commit = Some(zid);
+        }
         updates.sort();
         self.store.put(&Object::Transaction(Transaction {
             updates: updates.clone(),
@@ -133,15 +163,16 @@ impl Repo {
         refs.apply(&updates)?;
         self.store.sync()?;
         // Order: zones and workspace first, refs last (the linearization point). A crash before
-        // the refs write leaves the new zone subscribed but empty, so the files show as staged
-        // additions of the new zone; `vcs commit` then reaches the intended state.
+        // the refs write leaves the new zones subscribed but empty, so the files show as staged
+        // additions of the new zones; `vcs commit` then reaches the intended state.
         write_atomic(&self.common.join("zones"), &zones.encode())?;
-        ws.subs.insert(name.to_owned(), DEFAULT_BRANCH.to_owned());
+        for (name, _) in &items {
+            ws.subs.insert((*name).to_owned(), DEFAULT_BRANCH.to_owned());
+        }
         self.save_ws(&ws)?;
         write_atomic(&self.common.join("refs"), &refs.encode())?;
-        self.record_op(&format!("zone split {name} at {path}"), Some(author))?;
-        rep.root_commit = Some(rid);
-        rep.zone_commit = Some(zid);
-        Ok(rep)
+        let what = items.iter().map(|(n, p)| format!("{n} at {p}")).collect::<Vec<_>>().join(", ");
+        self.record_op(&format!("zone split {what}"), Some(author))?;
+        Ok(reps)
     }
 }

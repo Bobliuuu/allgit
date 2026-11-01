@@ -488,7 +488,11 @@ impl Repo {
         for p in rel_paths {
             self.add_one(p, &zones, &ws, &mut ix, &mut rep, &mut todo)?;
         }
-        crate::portable::require_no_collision(ix.entries.keys().map(String::as_str).chain(todo.iter().map(String::as_str)), "add")?;
+        // A collision needs a path the index does not hold yet; re-folding 100k tracked names for a
+        // plain re-add of modified files costs more than the rest of the command.
+        if todo.iter().any(|t| !ix.entries.contains_key(t.as_str())) {
+            crate::portable::require_no_collision(ix.entries.keys().map(String::as_str).chain(todo.iter().map(String::as_str)), "add")?;
+        }
         // Read + hash + write the blobs on several threads; the index is updated afterwards.
         let verified = self.stage_files(&todo, &mut ix)?;
         self.note_resolved(rel_paths, &ix)?;
@@ -540,21 +544,32 @@ impl Repo {
             }
             Err(source) => Err(Error::Io { path: full, source }),
             Ok(m) if m.is_dir() => {
-                let mut seen = BTreeSet::new();
+                let mut tracked_seen = 0usize;
+                let start = todo.len();
                 let stack = self.ignore_stack_above(p)?;
                 if !p.is_empty() && stack.is_ignored(p, true) {
                     if !ix.has_under(p) {
                         rep.skipped.push(format!("{p} (ignored)"));
                         return Ok(());
                     }
-                    self.add_dir(p, zones, ws, ix, rep, &mut seen, todo, &stack.inherit())?;
+                    self.add_dir(p, zones, ws, ix, rep, &mut tracked_seen, todo, &stack.inherit())?;
                 } else {
-                    self.add_dir(p, zones, ws, ix, rep, &mut seen, todo, &stack)?;
+                    self.add_dir(p, zones, ws, ix, rep, &mut tracked_seen, todo, &stack)?;
                 }
-                for g in ix.under(p) {
-                    if !seen.contains(&g) && !ws.skips(zones.owner(&g), &g) {
-                        ix.entries.remove(&g);
-                        rep.removed += 1;
+                // Every tracked path was seen on disk (the common case): nothing was deleted, and no
+                // set of 100k seen paths has to be built to find that out.
+                let under = if p.is_empty() {
+                    ix.entries.len()
+                } else {
+                    usize::from(ix.entries.contains_key(p)) + ix.entries.range(format!("{p}/")..format!("{p}0")).count()
+                };
+                if tracked_seen != under {
+                    let seen: std::collections::HashSet<&str> = todo[start..].iter().map(String::as_str).collect();
+                    for g in ix.under(p) {
+                        if !seen.contains(g.as_str()) && !ws.skips(zones.owner(&g), &g) {
+                            ix.entries.remove(&g);
+                            rep.removed += 1;
+                        }
                     }
                 }
                 Ok(())
@@ -628,7 +643,7 @@ impl Repo {
         ws: &Workspace,
         ix: &Index,
         rep: &mut AddReport,
-        seen: &mut BTreeSet<String>,
+        tracked_seen: &mut usize,
         todo: &mut Vec<String>,
         parent_stack: &IgnoreStack,
     ) -> Result<()> {
@@ -648,11 +663,23 @@ impl Repo {
                 continue;
             }
             let rel = if dir.is_empty() { name.clone() } else { format!("{dir}/{name}") };
+            let ft = io(&abs, e.file_type())?;
+            // Fast path for the bulk of a re-add: a regular file the index already tracks has a valid
+            // name, is never ignored, and only needs its zone and sparse checks.
+            if ft.is_file() && e.file_name().to_str().is_some() && ix.entries.contains_key(&rel) {
+                let owner = zones.owner(&rel);
+                if !ws.subs.contains_key(owner) || ws.skips(owner, &rel) {
+                    continue;
+                }
+                todo.push(rel);
+                *tracked_seen += 1;
+                rep.staged += 1;
+                continue;
+            }
             if validate_component(&name).is_err() || e.file_name().to_str().is_none() {
                 rep.skipped.push(format!("{rel} (invalid name)"));
                 continue;
             }
-            let ft = io(&abs, e.file_type())?;
             if !(ft.is_symlink() || ft.is_dir() || ft.is_file()) {
                 rep.skipped.push(format!("{rel} (special file: unsupported)"));
                 continue;
@@ -678,20 +705,24 @@ impl Repo {
                     continue;
                 }
                 validate_path(&rel)?;
-                todo.push(rel.clone());
-                seen.insert(rel);
+                if ix.entries.contains_key(&rel) {
+                    *tracked_seen += 1;
+                }
+                todo.push(rel);
                 rep.staged += 1;
             } else if ft.is_dir() {
                 // a directory kept only for tracked files below it ignores everything else
                 if stack.is_ignored(&rel, true) {
-                    self.add_dir(&rel, zones, ws, ix, rep, seen, todo, &stack.inherit())?;
+                    self.add_dir(&rel, zones, ws, ix, rep, tracked_seen, todo, &stack.inherit())?;
                 } else {
-                    self.add_dir(&rel, zones, ws, ix, rep, seen, todo, &stack)?;
+                    self.add_dir(&rel, zones, ws, ix, rep, tracked_seen, todo, &stack)?;
                 }
             } else {
                 validate_path(&rel)?;
-                todo.push(rel.clone());
-                seen.insert(rel);
+                if ix.entries.contains_key(&rel) {
+                    *tracked_seen += 1;
+                }
+                todo.push(rel);
                 rep.staged += 1;
             }
         }
@@ -979,6 +1010,13 @@ impl Repo {
             }
         }
         Ok(Some(inc))
+    }
+
+    /// Staged/unstaged/merge state only: no walk for untracked files. For callers that just need
+    /// to know whether the tracked files are clean (merge, rebase, cherry-pick, zone split).
+    pub(crate) fn status_tracked(&self) -> Result<Status> {
+        let ix = self.index()?;
+        self.status_inner(StatusOpts::default(), &ix, false, None)
     }
 
     pub fn status_with(&self, opts: StatusOpts) -> Result<Status> {
