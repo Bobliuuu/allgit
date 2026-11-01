@@ -23,7 +23,7 @@ Every PR except two has a test that failed before the fix: #275 is configuration
 | 10 | Low | client | quote/backslash in credential host reaches `security -i` | PR #280 |
 | 11 | Low | supply chain | `cargo deny check licenses` fails on webpki-roots | PR #275 |
 | 12 | Info | working tree | folding of `ß`, `ſ`, `ς` missing from collision check | PR #273 |
-| 13 | Medium | client | `VCS_TOKEN` is sent to every `http://` remote | accepted, see below |
+| 13 | Medium | client | `VCS_TOKEN` is sent to every `http://` remote | opt-in `VCS_TOKEN_HOST` binding, see below |
 | 14 | Low | server | no throttling of failed authentication, no per-address connection cap | accepted |
 | 15 | Info | repo config | `merge.assist`, `core.editor`, bisect run commands from `.vcs/config` | accepted |
 
@@ -98,7 +98,7 @@ See the supply-chain section. PR #275 adds a per-crate exception rather than wid
 `VCS_TOKEN` takes precedence over the credential helper and is not tied to a host. A repository whose `.vcs/remote`
 points at an attacker's server (the file is local, so this needs the user to add or accept that remote) receives the
 token on the first request. Mitigations considered: bind the variable to a host (`VCS_TOKEN_HOST`), or prefer the
-helper whenever the remote is not the host named at login. Not done because it changes documented behaviour; recommend
+helper whenever the remote is not the host named at login. Set `VCS_TOKEN_HOST=host:port` (as shown by `vcs login`) and the variable is ignored for any other host, falling through to the credential helper. Unset keeps the old behaviour because making it mandatory changes documented behaviour; recommend
 using `vcs login` (host-scoped) instead of the environment variable, and tokens with the narrowest role and zones.
 Related: the client speaks plain `http://` unless built with the `tls` feature; bearer tokens then cross the network in
 clear text. The README already says to use loopback, a private network or a TLS proxy.
