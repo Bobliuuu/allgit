@@ -1253,30 +1253,50 @@ impl Repo {
             .filter_map(|i| if let Item::Dir(r, _, ig) = i { Some((r, *ig)) } else { None })
             .collect();
         let mut subs: Vec<Option<Result<WalkOut>>> = (0..subdirs.len()).map(|_| None).collect();
-        std::thread::scope(|sc| {
-            let mut handles = Vec::new();
-            for (i, (rel, ig)) in subdirs.iter().enumerate() {
+        // Workers pull subdirectories from a shared counter: at most `budget` extra threads per
+        // directory (not one thread per subdirectory, which costs a spawn for each of thousands
+        // of small directories); this thread works too.
+        let next = AtomicUsize::new(0);
+        let work = |next: &AtomicUsize| -> Vec<(usize, Result<WalkOut>)> {
+            let mut done = Vec::new();
+            loop {
+                let i = next.fetch_add(1, Ordering::AcqRel);
+                let Some((rel, ig)) = subdirs.get(i) else { break };
                 let child = if *ig { stack.inherit() } else { stack.clone() };
-                // `fetch_update` is renamed `try_update` on newer toolchains; keep the name older ones know.
-                #[allow(deprecated)]
-                let take = budget
-                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |b| b.checked_sub(1))
-                    .is_ok();
-                if take {
-                    handles.push((
-                        i,
-                        sc.spawn(move || {
-                            let r = self.walk_untracked(rel, zones, ws, ix, budget, &child, ctx);
-                            budget.fetch_add(1, Ordering::AcqRel);
-                            r
-                        }),
-                    ));
-                } else {
-                    subs[i] = Some(self.walk_untracked(rel, zones, ws, ix, budget, &child, ctx));
-                }
+                done.push((i, self.walk_untracked(rel, zones, ws, ix, budget, &child, ctx)));
             }
-            for (i, h) in handles {
-                subs[i] = Some(h.join().expect("walk worker panicked"));
+            done
+        };
+        let mut extra = 0usize;
+        while extra + 1 < subdirs.len() {
+            // `fetch_update` is renamed `try_update` on newer toolchains; keep the name older ones know.
+            #[allow(deprecated)]
+            let take = budget
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |b| b.checked_sub(1))
+                .is_ok();
+            if !take {
+                break;
+            }
+            extra += 1;
+        }
+        std::thread::scope(|sc| {
+            let work = &work;
+            let next = &next;
+            let hs: Vec<_> = (0..extra)
+                .map(|_| {
+                    sc.spawn(move || {
+                        let r = work(next);
+                        budget.fetch_add(1, Ordering::AcqRel);
+                        r
+                    })
+                })
+                .collect();
+            let mut all = work(next);
+            for h in hs {
+                all.extend(h.join().expect("walk worker panicked"));
+            }
+            for (i, r) in all {
+                subs[i] = Some(r);
             }
         });
         let mut subs = subs.into_iter();
