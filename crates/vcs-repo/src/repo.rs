@@ -62,6 +62,7 @@ pub struct Repo {
     pub(crate) vcs: PathBuf,
     pub(crate) store: LocalStore,
     pub(crate) structural: bool,
+    pub(crate) renames: bool,
     pub(crate) use_commit_graph: bool,
 }
 
@@ -196,6 +197,12 @@ pub(crate) enum Wt {
 impl Repo {
     /// Enable or disable the structural Rust merge in `merge`/`rebase` (default on; it only has
     /// an effect when built with feature `structural`).
+    /// Detect file renames/moves in `merge`/`rebase`/`cherry-pick` and merge edits across them
+    /// (default off).
+    pub fn set_renames(&mut self, on: bool) {
+        self.renames = on;
+    }
+
     pub fn set_structural(&mut self, on: bool) {
         self.structural = on;
     }
@@ -216,6 +223,7 @@ impl Repo {
             vcs,
             store,
             structural: true,
+            renames: false,
             use_commit_graph: true,
         };
         write_atomic(&r.vcs.join("zones"), &Zones::new().encode())?;
@@ -245,6 +253,7 @@ impl Repo {
                     vcs,
                     store,
                     structural: true,
+                    renames: false,
                     use_commit_graph: true,
                 });
             }

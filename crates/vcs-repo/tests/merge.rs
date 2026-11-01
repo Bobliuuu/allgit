@@ -388,3 +388,40 @@ proptest! {
         prop_assert!(r.fsck().unwrap().problems.is_empty());
     }
 }
+
+// ---------- rename-aware merge (opt-in via set_renames) ----------
+
+fn lines30() -> String {
+    (0..30).map(|i| format!("line {i}\n")).collect()
+}
+
+fn rename_scenario() -> (tempfile::TempDir, Repo) {
+    let base = lines30();
+    let edited = base.replace("line 20\n", "FEATURE EDIT\n");
+    diverge(
+        &[("old.txt", &base)],
+        |r| {
+            fs::create_dir_all(r.worktree().join("moved")).unwrap();
+            fs::rename(r.worktree().join("old.txt"), r.worktree().join("moved/new.txt")).unwrap();
+        },
+        |r| write(r, "old.txt", &edited),
+    )
+}
+
+#[test]
+fn rename_on_one_side_edit_on_other_conflicts_by_default() {
+    let (_d, r) = rename_scenario();
+    let out = merge(&r, "feature").unwrap();
+    assert!(matches!(out, MergeOutcome::Conflicted { .. }), "{out:?}");
+}
+
+#[test]
+fn rename_aware_merge_applies_edit_to_renamed_file() {
+    let (_d, mut r) = rename_scenario();
+    r.set_renames(true);
+    let out = merge(&r, "feature").unwrap();
+    assert!(matches!(out, MergeOutcome::Merged { .. }), "{out:?}");
+    assert!(!exists(&r, "old.txt"));
+    assert_eq!(read(&r, "moved/new.txt"), lines30().replace("line 20\n", "FEATURE EDIT\n"));
+    fsck(&r);
+}

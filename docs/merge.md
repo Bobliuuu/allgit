@@ -34,7 +34,7 @@ read through `ObjectStore`/`BlobSource`/`CommitGraph`; nothing is written. The o
 
 ## Not done
 
-Rename/copy detection (a rename is delete+add), semantic/structural merge beyond the prototype below (M6), histogram diff, recursive merge of
+Copy detection, directory-level rename inference, semantic/structural merge beyond the prototype below (M6), histogram diff, recursive merge of
 multiple bases, whitespace-insensitive merge, subtree-skipping tree merge (the whole tree is flattened; M5), writing
 conflict *objects* in the object graph (conflicts are persisted only in `.vcs/conflicts`, see below).
 
@@ -73,7 +73,7 @@ stores `new_blobs`, and moves the working tree/index/ref.
   tree, index and files exactly (discarding edits to merge-touched files); it refuses if any other file in the zone
   changed. `checkout`/`zone remove` refuse during a merge.
 * Not done: file<->directory conflicts (the merge is refused before anything is touched), merging several zones in
-  one command, rename detection. Merge quality of Myers vs patience was only compared on a
+  one command. Rename detection exists but is opt-in (`--renames`, see "Rename-aware merge"). Merge quality of Myers vs patience was only compared on a
 small hand-written corpus, not on real repositories; no timing numbers exist.
 
 ## Structural merge prototype (feature `structural`, off by default)
@@ -191,3 +191,97 @@ a `--reject` command, and batching several conflicts per call.
 Tested with scripted fake assistants (shell scripts) in `crates/vcs-cli/tests/assist.rs`: good answers, request shape,
 garbage of eight kinds, oversized output, timeout, binary skip, rebase; protocol unit tests live beside the
 parser.
+
+## Rename-aware merge (`--renames`, `merge.renames`; off by default)
+
+Issue #109, `crates/vcs-merge/src/rename.rs`. Plain `merge_flat` treats a rename as delete+add, so "A renames a file,
+B edits it" is a delete/modify conflict plus an unrelated new file. `merge_flat_renames` (library) and
+`vcs merge|rebase --renames` (or `vcs config merge.renames on`, env `VCS_MERGE_RENAMES`) fix that. `--no-structural`
+is unchanged and composes with it.
+
+* Detection (`detect_renames`, base against one side): only a path that vanished paired with a path that appeared.
+  First by identical blob id and mode (same basename preferred; several identical candidates with no unique pairing are
+  copies and are left alone). Then by similarity: a fingerprint is the sorted 64-bit hashes of the trimmed, non-blank
+  lines (blake3, first 8 bytes); similarity is the Dice coefficient of the two line multisets, threshold 50 %
+  (`rename::DEFAULT_THRESHOLD = 500` per mille). A size-ratio check skips most pairs before any comparison. Binary
+  files (NUL in the first 8000 bytes), blobs over 1 MiB and symlinks are only matched exactly; inexact matching is
+  skipped when deleted x added exceeds 2,000,000 pairs. Pairing is one-to-one by descending score; a tie for the same
+  source or target is ambiguous and yields no rename.
+* Merge: the base file (and the unrenamed side's file) are moved to the new path and the ordinary tree merge runs, so
+  the other side's edits are text/structurally merged into the renamed file and the result lives at the new path.
+  Symmetric in left/right. Both sides renaming to the same path is clean.
+* Stays a conflict: both sides rename one file to different paths (`ConflictKind::RenameRename`, "rename/rename", path =
+  the base path, left/right = the two renamed files; none of the three paths is in `entries`); the target of a rename
+  already exists on the other side (rename not applied, old behaviour); rename on one side with content edits against a
+  delete on the other (delete/modify at the new path). A rename without edits against a delete resolves to the delete.
+* Not done: copy detection, directory renames (a new file added by one side into a directory the other side moved is
+  not relocated), rename detection in `stash`.
+
+Tests: unit tests in `rename.rs` (exact, similar, rename+edit, both edit, rename/rename, delete, copies), and
+`crates/vcs-repo/tests/merge.rs` (`rename_*`): default still conflicts, `set_renames(true)` merges.
+
+## Real-history replay (issue #108)
+
+`scripts/replay.sh <bare-git-dir-or-url> <rev> [max]` runs `git fast-export --show-original-ids` (git is used only by
+this script, never by the core), `vcs import-git`, then `crates/vcs-repo/examples/replay.rs`. For each merge commit
+of the imported branch with exactly one merge base (sampled evenly, newest first, at most `max`, default 300) it re-runs
+the merge of the two parent trees with four engines (text = line diff3; struct = structural drivers; text+ren,
+struct+ren = with rename detection) and compares with the tree of the real merge commit. Counters: `clean` = merges with
+no conflict; `exact_tree` = clean and the whole tree equals the real merge commit's tree; per language, `conflicts`
+= conflicted paths, `content-merged` = files merged into a new blob, `exact` = such blobs identical to the real file,
+`parse ok` = such blobs that parse with the language's tree-sitter grammar (only for rs/py/go/ts, features on).
+The real merge is the reference, so a conflict here means "this engine would have stopped where the human did not
+have to", and a clean-but-different result would show up as clean > exact_tree.
+
+Run on the 30-core Lambda box, 2026-10-31, binary built with all four structural features, Myers. Revisions are the
+default-branch heads at clone time (`git clone --bare`).
+
+| repo (revision) | language | merge commits in history | replayed | clean: text / struct / text+ren / struct+ren | conflicted paths: text / struct / text+ren / struct+ren |
+|---|---|---|---|---|---|
+| https://github.com/pallets/flask (49943b5a94413a530761350f04e896f76e8d620e) | python | 1734 | 299 | 275 / 276 / 276 / 277 | 79 / 78 / 60 / 59 |
+| https://github.com/psf/requests (3c7baaa05ab4aa49cc819ce3a819d260de19c157) | python | 1612 | 300 | 295 / 295 / 295 / 295 | 4 / 4 / 4 / 4 |
+| https://github.com/clap-rs/clap (ccc89b83875474399e9d9d70841163f6319d1a41) | rust | 2270 | 299 | 297 / 297 / 297 / 297 | 7 / 7 / 7 / 7 |
+| https://github.com/gin-gonic/gin (0f09c3a9b4626d9fe9979cf4d0521d6ae32ab646) | go | 216 | 215 | 194 / 194 / 194 / 194 | 20 / 20 / 20 / 20 |
+| https://github.com/spf13/cobra (adbc8813901bba65827259daa8e22ff94ec1f30e) | go | 114 | 114 | 114 / 114 / 114 / 114 | 0 / 0 / 0 / 0 |
+| https://github.com/typeorm/typeorm (5bdc67882dee5a02d975d5ed140c9c3f91661116) | typescript | 869 | 298 | 276 / 276 / 276 / 276 | 46 / 45 / 45 / 44 |
+| https://github.com/sindresorhus/got (6b5aafc1cd538998728be6f45c65b0f80bae01b2) | javascript (no driver) | 73 | 73 | 72 / 72 / 72 / 72 | 0 / 0 / 0 / 0 |
+
+(Conflicted paths include docs and other non-code files; per-language splits are in the script output.) A clean
+result equalled the real merge's tree in every replayed merge except one: gin has 194 clean merges but 193 exact trees,
+identically in all four engines (one merge where the human's result differs from the mechanical merge; not investigated).
+Skipped: 1 merge each in flask, clap and gin and 2 in typeorm (several merge bases).
+
+Per-language file-level numbers (content-merged files / exact / parse ok, all of them from the same runs):
+
+| repo, language | engine | conflicts | content-merged | exact | parse ok |
+|---|---|---|---|---|---|
+| flask, python | text | 41 | 47 | 46 | 47/47 |
+| flask, python | struct | 40 | 48 | 46 | 48/48 |
+| flask, python | text+ren | 23 | 65 | 64 | 65/65 |
+| flask, python | struct+ren | 22 | 66 | 64 | 66/66 |
+| requests, python | all four | 4 | 56 | 55 | 56/56 |
+| clap, rust | all four | 7 | 31 | 29 | 31/31 |
+| gin, go | all four | 20 | 63 | 63 | 63/63 |
+| cobra, go | all four | 0 | 25 | 25 | 25/25 |
+| typeorm, typescript | text / text+ren | 45 / 44 | 96 | 94 | 96/96 |
+| typeorm, typescript | struct / struct+ren | 44 / 43 | 97 | 95 | 97/97 |
+
+Every parse-checked output also parsed in the real history (the baseline column of the script output equals parse ok in
+all rows). `exact` below `content-merged` (flask 1, requests 1, clap 2, typeorm 2) means a mechanically merged file
+differs from the file in the real merge commit; these are identical across engines and were not investigated.
+
+What this says, and what it does not:
+
+* Rename-aware merge removed 19 of 79 conflicted paths in flask (python: 41 to 23) and 1 of 46 in typeorm; no change
+  in the other five repositories (they have few or no rename-versus-edit overlaps in the sampled merges). It never
+  produced a conflict that the plain merge did not, and never made a clean merge differ from history (only the one gin merge above differs, in all engines), in the sampled merges.
+* Structural merge gained 1 file in flask and 1 in typeorm over text and nothing elsewhere. It is about 4x slower in
+  total merge time here (flask 245 ms text vs 914 ms struct for 299 merges; rename detection added 245 to 372 ms).
+  The structural driver's benefit on real merges is small in this sample.
+* Sampling is the newest-first even stride of the merge commits, at most 300 per repository; only six or seven
+  repositories, three languages with drivers plus one without; most real merges are trivially clean, so differences are
+  concentrated in few merges. Merges with several merge bases were skipped. These numbers do not cover rebase or
+  cherry-pick, conflicts that history resolved by hand differently from either side, or large monorepos.
+* Default: unchanged. Rename detection stays opt-in. It was never worse in the data, but it improved only one of seven
+  repositories, so the data does not show a strictly better result across the board; turning it on by default is a
+  one-line change in `Repo` (`renames: true`) if the owner decides the evidence is enough.

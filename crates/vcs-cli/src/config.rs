@@ -14,6 +14,7 @@ pub const KEYS: &[(&str, &str, &str)] = &[
     ("user.email", "VCS_AUTHOR_EMAIL", "author email for commits, tags and stashes"),
     ("core.editor", "VCS_EDITOR", "editor for `vcs commit` without -m"),
     ("merge.structural", "VCS_MERGE_STRUCTURAL", "on/off: structural merge (default on)"),
+    ("merge.renames", "VCS_MERGE_RENAMES", "on/off: detect renames in merge/rebase (default off)"),
     ("log.default-format", "VCS_LOG_FORMAT", "full or oneline (default full)"),
     (
         "remote.default",
@@ -51,6 +52,7 @@ pub fn validate_value(key: &str, value: &str) -> Result<(), Error> {
         return msg("config values cannot contain newlines");
     }
     match key {
+        "merge.renames" if !matches!(value, "on" | "off") => msg("merge.renames must be 'on' or 'off'"),
         "merge.structural" if !matches!(value, "on" | "off") => msg("merge.structural must be 'on' or 'off'"),
         "log.default-format" if !matches!(value, "full" | "oneline") => msg("log.default-format must be 'full' or 'oneline'"),
         "user.name" | "user.email" | "core.editor" | "remote.default" if value.trim().is_empty() => {
@@ -224,6 +226,15 @@ impl Config {
             None | Some("on") => Ok(true),
             Some("off") => Ok(false),
             Some(o) => msg(format!("merge.structural must be 'on' or 'off', got '{o}'")),
+        }
+    }
+
+    /// merge.renames, default off. An invalid value is an error.
+    pub fn renames(&self) -> Result<bool, Error> {
+        match self.get("merge.renames").as_deref() {
+            None | Some("off") => Ok(false),
+            Some("on") => Ok(true),
+            Some(o) => msg(format!("merge.renames must be 'on' or 'off', got '{o}'")),
         }
     }
 

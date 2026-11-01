@@ -225,6 +225,9 @@ enum Cmd {
         /// Do not use the structural Rust merge (only matters when built with `--features structural`)
         #[arg(long)]
         no_structural: bool,
+        /// Detect renamed/moved files and merge the other side's edits into them (off by default)
+        #[arg(long)]
+        renames: bool,
         /// After a conflicted merge, ask this command (run via the shell) for a resolution of each
         /// text conflict; answers are saved as proposals, never applied (see `vcs conflict proposals`)
         #[arg(long, value_name = "COMMAND")]
@@ -266,6 +269,9 @@ enum Cmd {
         /// Do not use the structural Rust merge (only matters when built with `--features structural`)
         #[arg(long)]
         no_structural: bool,
+        /// Detect renamed/moved files and merge the other side's edits into them (off by default)
+        #[arg(long)]
+        renames: bool,
         /// After a conflicted step, ask this command for a resolution of each text conflict
         /// (saved as proposals, never applied; see `vcs conflict proposals`)
         #[arg(long, value_name = "COMMAND")]
@@ -1038,11 +1044,13 @@ fn run(cli: Cli) -> Result<(), Error> {
             remote,
             abort,
             no_structural,
+            renames,
             assist,
             assist_timeout,
         } => {
             let (mut repo, cwd) = open()?;
             repo.set_structural(!no_structural && config::Config::load()?.structural()?);
+            repo.set_renames(renames || config::Config::load()?.renames()?);
             if abort {
                 repo.merge_abort()?;
                 println!("merge aborted; working tree restored");
@@ -1097,11 +1105,13 @@ fn run(cli: Cli) -> Result<(), Error> {
             cont,
             abort,
             no_structural,
+            renames,
             assist,
             assist_timeout,
         } => {
             let (mut repo, cwd) = open()?;
             repo.set_structural(!no_structural && config::Config::load()?.structural()?);
+            repo.set_renames(renames || config::Config::load()?.renames()?);
             if abort {
                 repo.rebase_abort()?;
                 println!("rebase aborted; original branch restored");

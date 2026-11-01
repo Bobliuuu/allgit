@@ -15,7 +15,7 @@ use crate::repo::{fresh_change_id, Repo};
 use crate::treeops::{self, Flat};
 use std::collections::BTreeSet;
 use std::fs;
-use vcs_merge::{merge_flat_with, Algorithm, ConflictKind, MarkerLabels, StoreBlobs};
+use vcs_merge::{ConflictKind, MarkerLabels};
 use vcs_objects::{Commit, EntryMode, Object, ObjectId, RefUpdate, Signature, Transaction};
 use vcs_store::ObjectStore;
 
@@ -164,7 +164,7 @@ impl Repo {
         };
         let old = self.head_flat(zone, &zones, &ws, &refs)?;
         let mut ix = self.index()?;
-        let tm = merge_flat_with(&StoreBlobs(&self.store), Algorithm::Myers, self.structural, &base, &old, &theirs).map_err(me)?;
+        let tm = self.tree3(&base, &old, &theirs).map_err(me)?;
         if let Some(x) = tm.conflicts.iter().find(|x| x.kind == ConflictKind::FileDirectory) {
             return msg(format!(
                 "{:?} is a file on one side and a directory on the other; file/directory conflicts are not supported yet (nothing was changed)",

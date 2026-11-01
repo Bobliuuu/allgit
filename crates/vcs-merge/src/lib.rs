@@ -8,6 +8,7 @@ pub mod base;
 pub mod cgraph;
 pub mod diff;
 pub mod error;
+pub mod rename;
 #[cfg(any(
     feature = "structural",
     feature = "structural-python",
@@ -24,3 +25,4 @@ pub use diff::Algorithm;
 pub use error::MergeError;
 pub use text::{merge3, render_markers, Hunk, Line, MarkerLabels, TextMerge};
 pub use tree::{merge_flat, merge_flat_with, merge_trees, BlobSource, Conflict, ConflictKind, Flat, MapBlobs, StoreBlobs, TreeMerge};
+pub use rename::{detect_renames, merge_flat_renames, Rename, RenameMerge};
