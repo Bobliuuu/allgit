@@ -9,6 +9,9 @@ pub enum Algorithm {
     Myers,
     /// Anchors on lines unique to both sides (LIS), recursing between anchors; falls back to Myers.
     Patience,
+    /// Git-style histogram: anchors on the common region whose lines occur least often, recursing
+    /// on both sides; falls back to Myers when every common line is too frequent.
+    Histogram,
 }
 
 /// Matching line pairs `(index in a, index in b)`, strictly increasing in both coordinates,
@@ -30,6 +33,7 @@ fn solve(alg: Algorithm, a: &[u32], b: &[u32], ao: usize, bo: usize, out: &mut V
         match alg {
             Algorithm::Myers => myers(&a[..ae], &b[..be], ao, bo, out),
             Algorithm::Patience => patience(&a[..ae], &b[..be], ao, bo, out),
+            Algorithm::Histogram => histogram(&a[..ae], &b[..be], ao, bo, out),
         }
     }
     out.extend((0..suf).map(|i| (ao + ae + i, bo + be + i)));
@@ -132,6 +136,62 @@ fn patience(a: &[u32], b: &[u32], ao: usize, bo: usize, out: &mut Vec<(usize, us
     solve(Algorithm::Patience, &a[pa..], &b[pb..], ao + pa, bo + pb, out);
 }
 
+/// Lines occurring more often than this in the old side are not used as histogram anchors.
+const HIST_MAX_OCC: usize = 64;
+
+fn histogram(a: &[u32], b: &[u32], ao: usize, bo: usize, out: &mut Vec<(usize, usize)>) {
+    let mut occ: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+    for (i, x) in a.iter().enumerate() {
+        occ.entry(*x).or_default().push(i);
+    }
+    // best region: (lowest occurrence count, then longest), earliest wins ties
+    let mut best: Option<(usize, usize, usize, usize)> = None; // (count, len, i, j)
+    let mut j = 0;
+    while j < b.len() {
+        let mut next_j = j + 1;
+        if let Some(ps) = occ.get(&b[j]) {
+            if ps.len() <= HIST_MAX_OCC {
+                for &i in ps {
+                    let (mut i0, mut j0) = (i, j);
+                    let mut cnt = ps.len();
+                    while i0 > 0 && j0 > 0 && a[i0 - 1] == b[j0 - 1] {
+                        i0 -= 1;
+                        j0 -= 1;
+                        cnt = cnt.min(occ.get(&a[i0]).map_or(usize::MAX, Vec::len));
+                    }
+                    let (mut i1, mut j1) = (i + 1, j + 1);
+                    while i1 < a.len() && j1 < b.len() && a[i1] == b[j1] {
+                        cnt = cnt.min(occ.get(&a[i1]).map_or(usize::MAX, Vec::len));
+                        i1 += 1;
+                        j1 += 1;
+                    }
+                    next_j = next_j.max(j1);
+                    let len = i1 - i0;
+                    if best.is_none_or(|(bc, bl, ..)| cnt < bc || (cnt == bc && len > bl)) {
+                        best = Some((cnt, len, i0, j0));
+                    }
+                }
+            }
+        }
+        j = next_j;
+    }
+    match best {
+        Some((_, len, i, j)) => {
+            solve(Algorithm::Histogram, &a[..i], &b[..j], ao, bo, out);
+            out.extend((0..len).map(|k| (ao + i + k, bo + j + k)));
+            solve(Algorithm::Histogram, &a[i + len..], &b[j + len..], ao + i + len, bo + j + len, out);
+        }
+        None => {
+            // nothing common, or every common line is too frequent
+            if a.iter()
+                .any(|x| occ.get(x).is_some_and(|p| p.len() > HIST_MAX_OCC) && b.contains(x))
+            {
+                myers(a, b, ao, bo, out);
+            }
+        }
+    }
+}
+
 /// Longest strictly increasing subsequence by `.1` of pairs already increasing in `.0`.
 fn lis(p: &[(usize, usize)]) -> Vec<(usize, usize)> {
     let mut tails: Vec<usize> = Vec::new();
@@ -205,6 +265,70 @@ mod tests {
             let b: Vec<u32> = (0..rnd(12)).map(|_| rnd(4)).collect();
             assert_eq!(check(Algorithm::Myers, &a, &b), lcs(&a, &b));
             check(Algorithm::Patience, &a, &b);
+            check(Algorithm::Histogram, &a, &b);
         }
+    }
+
+    /// Turn a match list into an edit script and replay it: the result must be exactly `b`.
+    fn replay(alg: Algorithm, a: &[u32], b: &[u32]) {
+        let m = matches(alg, a, b);
+        let (mut i, mut j) = (0, 0);
+        let mut got: Vec<u32> = Vec::new();
+        for (mi, mj) in m.iter().copied().chain(std::iter::once((a.len(), b.len()))) {
+            assert!(mi >= i && mj >= j && mi <= a.len() && mj <= b.len(), "non-monotone script");
+            // delete a[i..mi], insert b[j..mj]
+            got.extend_from_slice(&b[j..mj]);
+            if mi < a.len() {
+                assert_eq!(a[mi], b[mj], "match must be equal lines");
+                got.push(a[mi]);
+            }
+            i = mi + 1;
+            j = mj + 1;
+        }
+        assert_eq!(got, b, "{alg:?} script does not reconstruct new text: a={a:?} b={b:?}");
+    }
+
+    /// Randomized round trip: every algorithm yields a valid edit script reconstructing the new text.
+    #[test]
+    fn every_algorithm_reconstructs_new_text() {
+        let mut s = 0x9e3779b97f4a7c15u64;
+        let mut rnd = |m: u64| {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            (s % m) as u32
+        };
+        for round in 0..1500 {
+            let alpha = 2 + rnd(8) as u64;
+            let a: Vec<u32> = (0..rnd(40)).map(|_| rnd(alpha)).collect();
+            let mut b = a.clone();
+            for _ in 0..rnd(6) {
+                match rnd(3) {
+                    0 if !b.is_empty() => {
+                        b.remove(rnd(b.len() as u64) as usize);
+                    }
+                    1 => b.insert(rnd(b.len() as u64 + 1) as usize, rnd(alpha)),
+                    _ if b.len() > 1 => {
+                        let l = b.len() - 1;
+                        b.swap(0, l)
+                    }
+                    _ => {}
+                }
+            }
+            if round % 5 == 0 {
+                b = (0..rnd(40)).map(|_| rnd(alpha)).collect();
+            }
+            for alg in [Algorithm::Myers, Algorithm::Patience, Algorithm::Histogram] {
+                replay(alg, &a, &b);
+            }
+        }
+    }
+
+    #[test]
+    fn histogram_handles_frequent_lines() {
+        let a: Vec<u32> = std::iter::repeat_n(1, 100).chain([2, 3]).collect();
+        let b: Vec<u32> = std::iter::repeat_n(1, 90).chain([9, 2, 3]).collect();
+        replay(Algorithm::Histogram, &a, &b);
+        assert!(matches(Algorithm::Histogram, &a, &b).len() >= 92);
     }
 }

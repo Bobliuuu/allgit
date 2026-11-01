@@ -15,6 +15,7 @@ path = "src/bin/git_remote_allgit.rs"
 [dependencies]
 vcs-repo.workspace = true
 vcs-objects.workspace = true
+vcs-merge.workspace = true
 vcs-store.workspace = true
 vcs-remote.workspace = true
 vcs-store-s3.workspace = true

@@ -23,6 +23,6 @@ pub use base::{is_ancestor, merge_base, CommitGraph, MemGraph, StoreGraph};
 pub use cgraph::CommitGraphFile;
 pub use diff::Algorithm;
 pub use error::MergeError;
-pub use rename::{detect_renames, merge_flat_renames, Rename, RenameMerge};
+pub use rename::{copies_by_content, detect_renames, merge_flat_renames, pair_by_content, Rename, RenameMerge};
 pub use text::{merge3, render_markers, Hunk, Line, MarkerLabels, TextMerge};
 pub use tree::{merge_flat, merge_flat_with, merge_trees, BlobSource, Conflict, ConflictKind, Flat, MapBlobs, StoreBlobs, TreeMerge};

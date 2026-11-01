@@ -5,6 +5,7 @@ pub mod assist;
 pub mod bundle;
 pub mod cgraph;
 pub mod diff;
+pub mod diffpairs;
 mod dircache;
 pub mod edit;
 pub mod error;
@@ -38,6 +39,7 @@ pub mod worktree;
 pub mod worktree_fs;
 
 pub use assist::{AssistResult, ProposalInfo};
+pub use diffpairs::FilePair;
 pub use error::{Error, Result};
 pub use export::{ExportExt, ExportOptions, ExportReport};
 pub use gc::{GcOptions, GcReport, GcRun};

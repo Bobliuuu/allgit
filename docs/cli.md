@@ -150,6 +150,35 @@ vcs log [--zone Z] [-n N] [--oneline] [--graph] [--author TEXT] [--color auto|al
 | `-- PATH...` | Keep commits whose content under any PATH differs from every parent (a root commit counts if it contains any). Paths are relative to the current directory. |
 | `--color` | `auto` colours only when stdout is a terminal and `NO_COLOR` is unset or empty. |
 
+More `vcs log` options (all combine with the above; filters run before `-n`):
+
+| Option | Effect |
+|---|---|
+| `--since DATE`, `--until DATE` | Author time range (UTC). `YYYY-MM-DD` (`--until` includes that day), `YYYY-MM-DD HH:MM[:SS]` (also `T`, trailing `Z`), Unix seconds, `now`, `yesterday`, `N second/minute/hour/day/week/month/year(s) ago` (month = 30 days, year = 365). |
+| `--grep REGEX` | Commit message matches the regular expression. |
+| `--merges` / `--no-merges` | Only merge commits / skip them. |
+| `--first-parent` | Only the first-parent chain from the branch tip. |
+| `-S STRING` | Pickaxe: commits where the number of occurrences of STRING in some file differs from the first parent. |
+| `--follow -- PATH` | History of one file across renames (first-parent walk, similarity threshold `--rename-threshold`). |
+| `--name-status`, `--name-only` | File list under each commit; `-M` / `--find-copies` / `--rename-threshold PERCENT` (default 50) detect renames and copies. |
+| `--format TEMPLATE` | One expanded template per commit: `%H` id, `%h` short id, `%P` / `%p` parents, `%an` `%ae` author name / email, `%at` author time (Unix), `%ad` author date (`YYYY-MM-DD HH:MM:SS` UTC), `%s` subject, `%b` body, `%B` whole message, `%C` change id, `%z` zone, `%n` newline, `%%`. Unknown placeholders are printed as written. |
+
+`vcs log --json` applies the same filters (not `--format`).
+
+## `vcs diff` and `vcs show` options
+
+`--stat`, `--name-only`, `--name-status` (`A`, `D`, `M`, `R<nnn>`, `C<nnn>`), `--word-diff`
+(`[-old-]{+new+}`), `--color[=auto|always|never]` (bare `--color` colours unless `NO_COLOR` is set;
+`=always` overrides it; the default is colour only on a terminal), `--color-moved` (lines deleted in
+one place and added in another get their own colour), `--diff-algorithm myers|patience|histogram`,
+`-U N`, `-w` / `--ignore-all-space`, `-M` / `--find-renames`, `--find-copies`,
+`--rename-threshold PERCENT`. Binary files print `Binary files ... differ (N -> M bytes)` and
+`Bin N -> M bytes` in `--stat`. Chunked files are read whole through the store. git's `-C` is not
+available because `-C DIR` is the global chdir option.
+
+`vcs blame -M [--rename-threshold PERCENT]` follows a file through renames; the output then names
+the file each line had when it was last changed.
+
 Notes and limits:
 
 * With `--graph` and a filter, only edges between shown commits are drawn; skipped commits are not
