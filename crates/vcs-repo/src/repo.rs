@@ -641,7 +641,7 @@ impl Repo {
         let mut names: Vec<_> = io(&abs, fs::read_dir(&abs))?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|source| Error::Io { path: abs.clone(), source })?;
-        names.sort_by_key(|e| e.file_name());
+        names.sort_by_cached_key(|e| e.file_name());
         for e in names {
             let name = e.file_name().to_string_lossy().into_owned();
             if name.eq_ignore_ascii_case(META_DIR) {
@@ -766,8 +766,8 @@ impl Repo {
             Ok((if old == Some(&ne) { None } else { Some(ne) }, verified))
         };
         // Few files can still be a lot of work (chunking multi-MiB files), so only a handful of
-        // small ones stay on the calling thread. The pool is bounded at 8 threads.
-        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8).min(files.len());
+        // small ones stay on the calling thread. The pool is bounded at 16 threads.
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(16).min(files.len());
         type Staged = Result<(Option<IndexEntry>, bool)>;
         type Out = Option<Staged>;
         let mut entries: Vec<Out> = (0..files.len()).map(|_| None).collect();

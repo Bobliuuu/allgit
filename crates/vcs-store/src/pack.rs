@@ -1247,6 +1247,10 @@ impl<W: Write> HashWriter<W> {
     }
 }
 
+/// Bytes of pack data between write-back kicks while streaming (Linux).
+#[cfg(target_os = "linux")]
+const WRITEBACK_STEP: u64 = 8 << 20;
+
 /// Stream `count` objects (id, encoded bytes) into one new pack + index under `<store>/pack`,
 /// without holding the whole pack in memory. Same format and crash order as [`write_pack`]:
 /// data fsynced, pack renamed, index renamed last, directories fsynced.
@@ -1268,6 +1272,10 @@ pub fn write_pack_streaming<'a>(
         };
         io(&tmp, w.put(PACK_MAGIC_V2))?;
         io(&tmp, w.put(&(count as u32).to_le_bytes()))?;
+        // Linux: start write-back of finished stretches while the rest is still being produced,
+        // so the final fsync waits for little instead of flushing the whole pack at once.
+        #[cfg(target_os = "linux")]
+        let mut kicked = 0u64;
         for o in objects {
             let (id, enc) = o?;
             // v2 entry: codec byte (raw: these packs are written for speed) then the encoded object
@@ -1275,6 +1283,21 @@ pub fn write_pack_streaming<'a>(
             ents.push((id, w.len, enc.len() as u32 + 1));
             io(&tmp, w.put(&[CODEC_RAW]))?;
             io(&tmp, w.put(&enc))?;
+            #[cfg(target_os = "linux")]
+            if w.len >= kicked + WRITEBACK_STEP + (1 << 20) {
+                use std::os::unix::io::AsRawFd;
+                let done = w.len - (1 << 20); // the BufWriter may still hold the last MiB
+                // SAFETY: valid fd; the call only schedules write-back and has no memory effects.
+                unsafe {
+                    libc::sync_file_range(
+                        w.inner.get_ref().as_raw_fd(),
+                        kicked as i64,
+                        (done - kicked) as i64,
+                        libc::SYNC_FILE_RANGE_WRITE,
+                    )
+                };
+                kicked = done;
+            }
         }
         let sum = *w.hasher.finalize().as_bytes();
         io(&tmp, w.inner.write_all(&sum))?;
