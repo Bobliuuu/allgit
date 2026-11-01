@@ -19,7 +19,10 @@ fn repo_with(n: usize) -> (tempfile::TempDir, Repo) {
         fs::write(r.worktree().join(format!("f{i}")), format!("content {i}")).unwrap();
     }
     let all: Vec<String> = (0..n).map(|i| format!("f{i}")).collect();
-    r.add(&all).unwrap();
+    // Small batches stay loose; a barrier of 256+ objects is published as a pack instead.
+    for chunk in all.chunks(100) {
+        r.add(chunk).unwrap();
+    }
     r.commit("c", sig()).unwrap();
     (d, r)
 }
