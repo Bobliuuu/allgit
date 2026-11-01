@@ -151,7 +151,38 @@ stores the same encoded bytes, so hashes, sync and GC reachability are unaffecte
 - Open refuses a pack whose length differs from the index (truncation) or an index with a bad checksum/ordering, rather
   than silently hiding objects. `fsck` additionally re-hashes the whole pack, checks each entry's framing and every
   object hash.
-- Not done: compression, deltas, multi-pack merging, range reads in `Backend`, chunking (see issue #9).
+- Not done: deltas, multi-pack merging, chunking (see issue #9).
+
+### Pack and index format v2 (#245, #246)
+
+New packs are written as v2; v1 packs are read forever (committed fixtures in `crates/vcs-store/tests/fixtures/v1`
+are made by the pre-v2 writer and tested byte-for-byte). A repository or a remote may hold both at once. The version is
+the magic: `VCSPACK1`/`VCSPIDX1` or `VCSPACK2`/`VCSPIDX2`.
+
+- Pack v2 entry: `len: u32` (covers codec byte + data), `codec: u8`, `data`. Codec 0 = raw, 1 = zstd level 3 (frame
+  carries its content size, capped at 4 GiB on decode). An object is stored raw unless zstd output is strictly smaller,
+  so an incompressible object costs exactly one extra byte. Header and trailer are unchanged (`VCSPACK2`, count,
+  entries, BLAKE3 trailer over the whole pack; pack name = trailer).
+- Object ids are unchanged: they hash the uncompressed encoded object. Reads decode first and then check the hash;
+  `fsck` decodes every entry and hashes the decoded bytes.
+- Index v2: `VCSPIDX2`, count u32, pack length u64, pack trailer (52 bytes as before), then a 256 x u32 cumulative
+  **fanout** table (entries whose first id byte is <= i), then the same 44-byte entries (`offset`/`len` now address the
+  codec-prefixed entry, so ranged reads for remote fetch work unchanged), then a BLAKE3 trailer. A lookup reads one
+  fanout pair and binary-searches only that bucket; an empty bucket is a miss without touching an entry.
+- Open cost: a local open checks magic, exact length, fanout monotonicity/total and the pack length, but does **not**
+  hash the index or scan its entries. Corruption is still caught: each lookup bounds-checks the entry it returns (a bad
+  offset/length is an error, and the object hash is checked on every read), and `fsck` (`Pack::verify`) runs
+  `PackIndex::verify_full` (BLAKE3 trailer, strict ordering, entries inside the pack, fanout agrees with the ids) plus the
+  whole-pack checks. Known gap: a bit flip in an index *id* can make that object look absent until `fsck` runs. Remote
+  and GC code parse indexes with the full check because they already download them. v1 indexes are always fully checked.
+- Remote: `fetch_from_pack`, `fetch_many`, `RemoteSource` (including read-ahead) and remote GC decode per the pack's
+  version, so a remote can mix v1 and v2 packs freely.
+
+#### Rollback
+
+`vcs repack --format v1` writes new packs as v1 and rewrites every existing v2 pack as v1 (`--format v2` converts the
+other way); plain `vcs repack` leaves existing packs alone. `VCS_PACK_FORMAT=v1` makes any process (GC rewrites, publish)
+write v1. Packs already uploaded to a remote as v2 stay v2 until re-uploaded; older binaries cannot read them.
 
 ### When packs help, and when they do not
 

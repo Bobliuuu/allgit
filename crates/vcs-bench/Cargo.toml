@@ -53,3 +53,7 @@ path = "src/bin/datagen.rs"
 [[bench]]
 name = "core"
 harness = false
+
+[[bin]]
+name = "packfmtbench"
+path = "src/bin/packfmtbench.rs"

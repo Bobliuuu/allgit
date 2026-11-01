@@ -163,8 +163,8 @@ impl<'a> View<'a> {
         }
         let mut loc = HashMap::new();
         for (stem, idx) in &packs {
-            for (id, _, _) in idx.iter().flat_map(|i| i.entries().iter()) {
-                loc.entry(*id).or_insert_with(|| stem.clone());
+            for (id, _, _) in idx.iter().flat_map(|i| i.iter()) {
+                loc.entry(id).or_insert_with(|| stem.clone());
             }
         }
         Ok(View { b, packs, loose, loc })
@@ -174,18 +174,20 @@ impl<'a> View<'a> {
         self.packs
             .get(stem)
             .and_then(|i| i.as_ref())
-            .map(|i| i.entries().iter().map(|e| e.0).collect())
+            .map(|i| i.iter().map(|e| e.0).collect())
             .unwrap_or_default()
     }
 
     fn read(&self, id: &ObjectId) -> Result<Option<Object>, GcError> {
         let bytes = if let Some(stem) = self.loc.get(id) {
-            let (off, len) = self.packs[stem]
+            let idx = self.packs[stem]
                 .as_ref()
-                .and_then(|i| i.find(id))
                 .ok_or_else(|| GcError::Damaged(format!("{id}: not in {stem}")))?;
+            let (off, len) = idx.find(id).ok_or_else(|| GcError::Damaged(format!("{id}: not in {stem}")))?;
             match self.b.get_range(&format!("{stem}.pack"), off, len as u64)? {
-                Some(d) if d.len() == len as usize => d,
+                Some(d) if d.len() == len as usize => vcs_store::pack::decode_payload(idx.version(), &d)
+                    .map_err(|e| GcError::Damaged(format!("{id}: pack {stem}: {e}")))?
+                    .into_owned(),
                 _ => return Err(GcError::Damaged(format!("{id}: pack {stem} is truncated or missing"))),
             }
         } else {

@@ -510,13 +510,21 @@ impl LocalStore {
     fn in_pack(&self, id: &ObjectId) -> bool {
         self.packs.read().unwrap().iter().any(|p| p.contains(id))
     }
-    /// Move every loose object into one new pack, then delete the loose files. Returns the
-    /// number of objects packed (0 if there were none, in which case no pack is written).
+    /// Move every loose object into one new pack (default write format), then delete the loose
+    /// files. Returns the number of objects packed (0 if there were none, in which case no pack
+    /// is written). Existing packs are left alone; see [`LocalStore::repack_as`].
     pub fn repack(&self) -> Result<usize, StoreError> {
+        Ok(self.repack_as(pack::PackFormat::from_env(), false)?.0)
+    }
+    /// Like [`LocalStore::repack`] but writing `fmt`; with `convert_existing`, packs of another
+    /// format are rewritten too (this is `vcs repack --format v1`, the rollback path). Returns
+    /// `(loose objects packed, existing packs converted)`.
+    pub fn repack_as(&self, fmt: pack::PackFormat, convert_existing: bool) -> Result<(usize, usize), StoreError> {
         self.sync()?;
+        let converted = if convert_existing { self.convert_packs(fmt)? } else { 0 };
         let loose = self.list_loose()?;
         if loose.is_empty() {
-            return Ok(0);
+            return Ok((0, converted));
         }
         let mut objs = Vec::with_capacity(loose.len());
         for id in &loose {
@@ -525,12 +533,51 @@ impl LocalStore {
             decode_verified(id, &b)?; // never pack something that does not hash to its name
             objs.push((*id, b));
         }
-        let pack = pack::write_pack(&self.dir.join("pack"), &self.dir.join("tmp"), objs)?;
+        let pack = pack::write_pack_fmt(&self.dir.join("pack"), &self.dir.join("tmp"), objs, fmt)?;
         self.packs.write().unwrap().push(pack);
         for id in &loose {
             let _ = fs::remove_file(self.path_of(id));
         }
-        Ok(loose.len())
+        Ok((loose.len(), converted))
+    }
+    /// Rewrite every pack not already in `fmt`. Same crash order as a sweep: new pack (pack file
+    /// first, index last), then old index, then old pack, so nothing is ever missing.
+    fn convert_packs(&self, fmt: pack::PackFormat) -> Result<usize, StoreError> {
+        let mut guard = self.packs.write().unwrap();
+        let old = std::mem::take(&mut *guard);
+        let mut out = Vec::with_capacity(old.len());
+        let (mut n, mut res) = (0, Ok(()));
+        for p in old {
+            if res.is_err() || p.version() == fmt.version() {
+                out.push(p);
+                continue;
+            }
+            let r = (|| -> Result<Pack, StoreError> {
+                let mut objs = Vec::new();
+                for id in p.ids() {
+                    let b = p.read(&id)?.ok_or(StoreError::NotFound(id))?;
+                    decode_verified(&id, &b)?;
+                    objs.push((id, b));
+                }
+                let np = pack::write_pack_fmt(&self.dir.join("pack"), &self.dir.join("tmp"), objs, fmt)?;
+                let idx_path = p.pack_path.with_extension("idx");
+                io(&idx_path, remove_if_present(&idx_path))?;
+                io(&p.pack_path, remove_if_present(&p.pack_path))?;
+                Ok(np)
+            })();
+            match r {
+                Ok(np) => {
+                    out.push(np);
+                    n += 1;
+                }
+                Err(e) => {
+                    res = Err(e);
+                    out.push(p);
+                }
+            }
+        }
+        *guard = out;
+        res.map(|_| n)
     }
     /// Estimated number of loose objects, from the fan-out directory `17` alone (as git's
     /// `gc.auto` does): ids are uniform, so that directory holds about 1/256 of them.
