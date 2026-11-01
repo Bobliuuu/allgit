@@ -175,8 +175,45 @@ fn editor_flow() {
     std::fs::write(d.join("a.txt"), "c\n").unwrap();
     e.ok(&d, &["add", "a.txt"]);
     let cfgd = script("cfg.sh", "echo 'via core.editor' > \"$1\"");
-    e.ok(&d, &["config", "set", "core.editor", &cfgd]);
+    e.ok(&d, &["config", "set", "--user", "core.editor", &cfgd]);
     let o = e.vcs(&d, &["commit"], &[("EDITOR", &fail)]);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert!(e.ok(&d, &["log", "-n", "1"]).contains("via core.editor"));
+}
+
+/// Security review finding 15: a program named by the repository's own config is never run, exactly
+/// like `credential.helper = !cmd`. The user config and the environment still work.
+#[cfg(unix)]
+#[test]
+fn repo_config_cannot_name_an_editor_or_assistant() {
+    use std::os::unix::fs::PermissionsExt;
+    let e = Env::new();
+    let (t, d) = repo(&e);
+    e.ok(&d, &["config", "set", "user.name", "Ann"]);
+    e.ok(&d, &["config", "set", "user.email", "ann@example.com"]);
+    let marker = d.join("pwned");
+    let evil_path = t.path().join("evil.sh");
+    std::fs::write(&evil_path, format!("#!/bin/sh\ntouch {}\necho evil > \"$1\"\n", marker.display())).unwrap();
+    std::fs::set_permissions(&evil_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let evil = evil_path.to_string_lossy().into_owned();
+    // refused at set time at repository scope
+    for key in ["core.editor", "merge.assist"] {
+        let err = e.err(&d, &["config", "set", key, &evil], &[]);
+        assert!(err.contains("commands from a repository config are refused"), "{err}");
+    }
+    // a hand-edited .vcs/config is ignored with a warning, not executed
+    std::fs::write(
+        d.join(".vcs/config"),
+        format!("user.name = Ann\nuser.email = ann@example.com\ncore.editor = {evil}\nmerge.assist = {evil}\n"),
+    )
+    .unwrap();
+    std::fs::write(d.join("f.txt"), "x\n").unwrap();
+    e.ok(&d, &["add", "f.txt"]);
+    let out = e.vcs(&d, &["commit"], &[]);
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("ignoring core.editor from the repository config"), "{stderr}");
+    assert!(!marker.exists(), "repo-config editor was executed");
+    // `off` and the user config remain allowed
+    e.ok(&d, &["config", "set", "merge.assist", "off"]);
 }

@@ -111,10 +111,11 @@ hashes and compares in constant time over all entries). Run behind a proxy that 
 
 ### 15. Commands from repo config (Info, accepted)
 
-`credential.helper = !command` is refused from repo config. `merge.assist`, `core.editor` and bisect commands are not
-(they run commands the user configured or typed). `.vcs/config` is not part of the object graph, so a clone cannot set
-it; finding 1 was the way to reach it from a repository, and is closed. Consider applying the credential-helper rule to
-`merge.assist` and `core.editor` for defence in depth.
+`credential.helper = !command` is refused from repo config, and so are `merge.assist` and `core.editor`: `vcs config set`
+at repository scope refuses them (except `off`/empty), and a hand-edited `.vcs/config` value is ignored with a warning.
+Only the user config and the environment (`VCS_EDITOR`, `$VISUAL`, `$EDITOR`) may name a program. Bisect commands are
+typed by the user. `.vcs/config` is not part of the object graph, so a clone cannot set it; finding 1 was the way to
+reach it from a repository, and is closed.
 
 ## Reviewed and found sound (no change)
 
