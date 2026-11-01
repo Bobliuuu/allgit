@@ -15,7 +15,7 @@ use crate::meta::{frame, unframe, write_atomic};
 use crate::repo::{fresh_change_id, Repo};
 use crate::treeops::{self, Flat};
 use std::fs;
-use vcs_merge::{merge_flat_with, Algorithm, ConflictKind, MarkerLabels, StoreBlobs};
+use vcs_merge::{ConflictKind, MarkerLabels};
 use vcs_objects::codec::{Reader, Writer};
 use vcs_objects::{Commit, EntryMode, Object, ObjectId, Signature};
 use vcs_store::ObjectStore;
@@ -137,6 +137,11 @@ impl Repo {
         for (p, e) in ix.entries.iter().filter(|(p, _)| zones.owner(p) == zone) {
             if ws.skips(zone, p) {
                 flat.insert(p.clone(), (e.mode, e.id)); // not materialized: unchanged by definition
+                continue;
+            }
+            // stat cache hit: the file is known to hold exactly the indexed content
+            if matches!(self.wt_state(p, e, ix.written_ns), Ok(crate::repo::Wt::Clean)) {
+                flat.insert(p.clone(), (e.mode, e.id));
                 continue;
             }
             let abs = self.worktree.join(p);
@@ -311,9 +316,9 @@ impl Repo {
         // Plan everything before touching any file.
         struct Plan {
             zone: String,
-            ours: Flat,
-            new: Flat,
-            conflicts: Vec<String>,
+            diff: treeops::TreeDiff,
+            /// Conflicted paths with the entry the head has there (the "ours" side).
+            conflicts: Vec<(String, Option<(EntryMode, ObjectId)>)>,
         }
         let mut plans = Vec::new();
         for z in &entry.zones {
@@ -322,15 +327,16 @@ impl Repo {
             }
             self.require_clean(&z.zone, &status)?;
             let prefix = zones.path_of(&z.zone).unwrap_or("").to_owned();
-            let flat_of = |id: &ObjectId| -> Result<Flat> { treeops::flatten(&self.store, Some(self.commit_obj(id)?.root), &prefix) };
             let base = match z.base {
-                Some(b) => flat_of(&b)?,
-                None => Flat::new(),
+                Some(b) => Some(self.commit_obj(&b)?.root),
+                None => None,
             };
-            let theirs = flat_of(&z.work)?;
-            let ours = self.head_flat(&z.zone, &zones, &ws, &refs)?;
-            let tm = merge_flat_with(&StoreBlobs(&self.store), Algorithm::Myers, self.structural, &base, &ours, &theirs)
-                .map_err(|e| Error::Msg(format!("stash merge: {e}")))?;
+            let theirs = self.commit_obj(&z.work)?.root;
+            let ours = match self.current_head(&z.zone, &ws, &refs) {
+                Some(h) => Some(self.commit_obj(&h)?.root),
+                None => None,
+            };
+            let mut tm = self.merge3_trees(&prefix, base, ours, Some(theirs))?;
             if let Some(c) = tm.conflicts.iter().find(|c| c.kind == ConflictKind::FileDirectory) {
                 return msg(format!(
                     "{:?} is a file on one side and a directory on the other; file/directory conflicts are not supported yet (nothing was changed)",
@@ -342,32 +348,42 @@ impl Repo {
                     return Err(Error::Corrupt("merged blob id mismatch".into()));
                 }
             }
-            self.require_changes_materialized(&z.zone, &ours, &theirs, what)?;
-            let mut new = tm.entries.clone();
+            if ws.sparse.contains_key(&z.zone) {
+                // only a sparse zone needs the whole-tree answer; others have nothing to refuse
+                let (fo, ft) = (
+                    treeops::flatten(&self.store, ours, &prefix)?,
+                    treeops::flatten(&self.store, Some(theirs), &prefix)?,
+                );
+                self.require_changes_materialized(&z.zone, &fo, &ft, what)?;
+            }
             let labels = MarkerLabels {
                 left: "Updated upstream",
                 base: "base",
                 right,
             };
-            for c in &tm.conflicts {
+            let conflicts = std::mem::take(&mut tm.conflicts);
+            for c in &conflicts {
                 let (mode, id, _) = self.placeholder(c, &labels)?;
-                new.insert(c.path.clone(), (mode, id));
+                tm.set_placeholder(&c.path, (mode, id));
             }
+            let (_, diff) = tm.apply(&self.store, ours, false)?;
             plans.push(Plan {
                 zone: z.zone.clone(),
-                ours,
-                new,
-                conflicts: tm.conflicts.iter().map(|c| c.path.clone()).collect(),
+                diff,
+                conflicts: conflicts
+                    .iter()
+                    .map(|c| (c.path.clone(), c.left.map(|id| (c.left_mode.unwrap_or(EntryMode::File), id))))
+                    .collect(),
             });
         }
         let mut ix = self.index()?;
         let mut conflicted = Vec::new();
         for p in &plans {
-            self.transition(&p.zone, &zones, &p.ours, &p.new, &mut ix)?;
-            for path in &p.conflicts {
+            self.transition_diff(&p.zone, &zones, &p.diff, &mut ix)?;
+            for (path, ours) in &p.conflicts {
                 // Show the conflict as an unstaged change against the head, not as staged work.
                 ix.entries.remove(path);
-                if let Some((mode, id)) = p.ours.get(path) {
+                if let Some((mode, id)) = ours {
                     ix.insert(
                         path,
                         crate::index::IndexEntry {

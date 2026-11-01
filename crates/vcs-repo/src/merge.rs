@@ -419,10 +419,10 @@ impl Repo {
         }
         let ours = refs.head(zone, &branch);
         let mut ix = self.index()?;
-        let old = self.head_flat(zone, &zones, &ws, &refs)?;
         let Some(ours) = ours else {
-            return self.fast_forward(zone, &branch, None, theirs, &old, &mut refs, &mut ix);
+            return self.fast_forward(zone, &branch, None, None, theirs, &mut refs, &mut ix);
         };
+        let ours_root = self.commit_obj(&ours)?.root;
         let bases = self.merge_bases(&ours, &theirs)?;
         let base = match bases.as_slice() {
             [] => {
@@ -431,7 +431,7 @@ impl Repo {
                 ))
             }
             [b] if *b == theirs => return Ok(MergeOutcome::UpToDate),
-            [b] if *b == ours => return self.fast_forward(zone, &branch, Some(ours), theirs, &old, &mut refs, &mut ix),
+            [b] if *b == ours => return self.fast_forward(zone, &branch, Some(ours), Some(ours_root), theirs, &mut refs, &mut ix),
             [b] => *b,
             many => {
                 let ids: Vec<String> = many.iter().map(|b| b.short()).collect();
@@ -442,23 +442,23 @@ impl Repo {
                 ));
             }
         };
-        let root_of = |id: &ObjectId| -> Result<Flat> { treeops::flatten(&self.store, Some(self.commit_obj(id)?.root), &prefix) };
-        let (fb, fr) = (root_of(&base)?, root_of(&theirs)?);
-        let tm = self.tree3(&fb, &old, &fr).map_err(me)?;
+        let (base_root, their_root) = (self.commit_obj(&base)?.root, self.commit_obj(&theirs)?.root);
+        let mut tm = self.merge3_trees(&prefix, Some(base_root), Some(ours_root), Some(their_root))?;
         if let Some(c) = tm.conflicts.iter().find(|c| c.kind == ConflictKind::FileDirectory) {
             return msg(format!(
                 "{:?} is a file on one side and a directory on the other; file/directory conflicts are not supported yet (nothing was changed)",
                 c.path
             ));
         }
-        self.require_conflicts_materialized(zone, tm.conflicts.iter().map(|c| c.path.as_str()), "merge")?;
+        if !tm.conflicts.is_empty() {
+            self.require_conflicts_materialized(zone, tm.conflicts.iter().map(|c| c.path.as_str()), "merge")?;
+        }
         for (id, data) in &tm.new_blobs {
             let got = self.store.put_content(data)?;
             if got != *id {
                 return Err(Error::Corrupt("merged blob id mismatch".into()));
             }
         }
-        let mut new = tm.entries.clone();
         let mut recs = Vec::new();
         let left_label = format!("ours ({zone}/{branch})");
         let labels = MarkerLabels {
@@ -466,9 +466,10 @@ impl Repo {
             base: "base",
             right: label,
         };
-        for c in &tm.conflicts {
+        let conflicts = std::mem::take(&mut tm.conflicts);
+        for c in &conflicts {
             let (mode, id, markers) = self.placeholder(c, &labels)?;
-            new.insert(c.path.clone(), (mode, id));
+            tm.set_placeholder(&c.path, (mode, id));
             recs.push(ConflictRec {
                 path: c.path.clone(),
                 kind: c.kind,
@@ -483,9 +484,9 @@ impl Repo {
                 resolved: false,
             });
         }
+        let (new_root, diff) = tm.apply(&self.store, Some(ours_root), recs.is_empty())?;
         if recs.is_empty() {
-            let entries: Vec<(&str, EntryMode, ObjectId)> = new.iter().map(|(p, (m, i))| (zones.relative(zone, p), *m, *i)).collect();
-            let root = treeops::build(&self.store, entries)?;
+            let root = new_root;
             let message = format!("{msg_prefix} into {branch}");
             let commit = Commit {
                 zone: zone.to_owned(),
@@ -508,7 +509,7 @@ impl Repo {
                 message,
                 lock_ops: vec![],
             }))?;
-            self.transition(zone, &zones, &old, &new, &mut ix)?;
+            self.transition_diff(zone, &zones, &diff, &mut ix)?;
             self.save_index(&mut ix)?;
             refs.apply(&[update])?;
             self.store.sync()?; // merge commit + transaction durable before refs name them
@@ -516,10 +517,10 @@ impl Repo {
             self.record_op(&format!("{msg_prefix} into {zone}/{branch}"), None)?;
             return Ok(MergeOutcome::Merged { commit: cid });
         }
-        let touched: BTreeSet<String> = old
+        let touched: BTreeSet<String> = diff
+            .old
             .keys()
-            .chain(new.keys())
-            .filter(|p| old.get(*p) != new.get(*p))
+            .chain(diff.new.keys())
             .cloned()
             .chain(recs.iter().map(|r| r.path.clone()))
             .collect();
@@ -535,7 +536,7 @@ impl Repo {
         // State first: a crash afterwards is recoverable with `vcs merge --abort`.
         self.clear_pick_marker()?; // a leftover marker must never turn this merge into a pick
         self.save_merge_state(&state)?;
-        if let Err(e) = self.transition(zone, &zones, &old, &new, &mut ix) {
+        if let Err(e) = self.transition_diff(zone, &zones, &diff, &mut ix) {
             self.clear_merge_state()?; // preflight failed before touching files
             return Err(e);
         }
@@ -551,15 +552,15 @@ impl Repo {
         zone: &str,
         branch: &str,
         from: Option<ObjectId>,
+        from_root: Option<ObjectId>,
         to: ObjectId,
-        old: &Flat,
         refs: &mut Refs,
         ix: &mut Index,
     ) -> Result<MergeOutcome> {
         let zones = self.zones()?;
         let root = self.commit_obj(&to)?.root;
-        let new = treeops::flatten(&self.store, Some(root), zones.path_of(zone).unwrap_or(""))?;
-        self.transition(zone, &zones, old, &new, ix)?;
+        let diff = treeops::diff_trees(&self.store, from_root, Some(root), zones.path_of(zone).unwrap_or(""))?;
+        self.transition_diff(zone, &zones, &diff, ix)?;
         self.save_index(ix)?;
         refs.apply(&[RefUpdate {
             zone: zone.into(),

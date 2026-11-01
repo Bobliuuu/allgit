@@ -64,6 +64,50 @@ pub fn diff_trees(store: &dyn ObjectStore, old: Option<ObjectId>, new: Option<Ob
     Ok(d)
 }
 
+/// Add to `d` the difference between the entry `old` and the entry `new` at `path` (either may be
+/// absent; a directory entry stands for its whole subtree). Equal subtrees are not read.
+pub fn diff_entries(
+    store: &dyn ObjectStore,
+    old: Option<(EntryMode, ObjectId)>,
+    new: Option<(EntryMode, ObjectId)>,
+    path: &str,
+    d: &mut TreeDiff,
+) -> Result<()> {
+    if old == new {
+        return Ok(());
+    }
+    if let (Some((EntryMode::Directory, a)), Some((EntryMode::Directory, b))) = (old, new) {
+        return diff_pair(store, Some(a), Some(b), path, d);
+    }
+    if let Some((mode, id)) = old {
+        add_side(
+            store,
+            &TreeEntry {
+                name: String::new(),
+                mode,
+                id,
+            },
+            path.to_owned(),
+            &mut d.old,
+            None,
+        )?;
+    }
+    if let Some((mode, id)) = new {
+        add_side(
+            store,
+            &TreeEntry {
+                name: String::new(),
+                mode,
+                id,
+            },
+            path.to_owned(),
+            &mut d.new,
+            Some(&mut d.new_dir_names),
+        )?;
+    }
+    Ok(())
+}
+
 fn read_tree(store: &dyn ObjectStore, id: Option<ObjectId>) -> Result<Vec<TreeEntry>> {
     match id {
         None => Ok(Vec::new()),
