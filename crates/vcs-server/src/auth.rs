@@ -59,13 +59,28 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
+#[derive(Clone, Debug)]
+struct Entry {
+    hash: String,
+    principal: Principal,
+    /// Unix milliseconds after which the token no longer authenticates. `None` = never.
+    expires_at_ms: Option<u64>,
+}
+
+/// Why a presented token did not authenticate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthError {
+    Unknown,
+    Expired,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct TokenTable {
-    entries: Vec<(String, Principal)>,
+    entries: Vec<Entry>,
 }
 
 impl TokenTable {
-    /// One entry per line: `<principal> <read|write|admin> <zones|*> <blake3-hex-of-token>`.
+    /// One entry per line: `<principal> <read|write|admin> <zones|*> <blake3-hex-of-token> [expires=<unix-seconds>]`.
     /// `zones` is a comma-separated list or `*`. `#` starts a comment. Produce the hash with
     /// `vcs-server hash-token <token>`.
     pub fn parse(text: &str) -> Result<Self, String> {
@@ -77,8 +92,8 @@ impl TokenTable {
             }
             let f: Vec<&str> = line.split_whitespace().collect();
             let err = |m: &str| format!("tokens line {}: {m}", n + 1);
-            if f.len() != 4 {
-                return Err(err("expected `<principal> <role> <zones|*> <token-hash>`"));
+            if f.len() != 4 && f.len() != 5 {
+                return Err(err("expected `<principal> <role> <zones|*> <token-hash> [expires=<unix-seconds>]`"));
             }
             let role = Role::parse(f[1]).ok_or_else(|| err("role must be read, write or admin"))?;
             let zones = if f[2] == "*" {
@@ -89,33 +104,79 @@ impl TokenTable {
             if f[3].len() != 64 || !f[3].chars().all(|c| c.is_ascii_hexdigit()) {
                 return Err(err("token hash must be 64 hex characters"));
             }
-            entries.push((
-                f[3].to_ascii_lowercase(),
-                Principal {
+            let expires_at_ms = match f.get(4) {
+                None => None,
+                Some(e) => {
+                    let secs = e
+                        .strip_prefix("expires=")
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .ok_or_else(|| err("fifth field must be `expires=<unix-seconds>`"))?;
+                    Some(secs.saturating_mul(1000))
+                }
+            };
+            entries.push(Entry {
+                hash: f[3].to_ascii_lowercase(),
+                principal: Principal {
                     name: f[0].to_owned(),
                     role,
                     zones,
                 },
-            ));
+                expires_at_ms,
+            });
         }
         Ok(Self { entries })
     }
 
     pub fn from_entries(entries: Vec<(&str, Principal)>) -> Self {
         Self {
-            entries: entries.into_iter().map(|(t, p)| (hash_token(t), p)).collect(),
+            entries: entries
+                .into_iter()
+                .map(|(t, principal)| Entry {
+                    hash: hash_token(t),
+                    principal,
+                    expires_at_ms: None,
+                })
+                .collect(),
         }
     }
 
+    /// Like [`from_entries`](Self::from_entries) with an optional expiry in unix seconds per token.
+    pub fn from_entries_expiring(entries: Vec<(&str, Principal, Option<u64>)>) -> Self {
+        Self {
+            entries: entries
+                .into_iter()
+                .map(|(t, principal, exp)| Entry {
+                    hash: hash_token(t),
+                    principal,
+                    expires_at_ms: exp.map(|s| s.saturating_mul(1000)),
+                })
+                .collect(),
+        }
+    }
+
+    /// Authenticate against the system clock.
     pub fn authenticate(&self, token: &str) -> Option<&Principal> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        self.authenticate_at(token, now).ok()
+    }
+
+    /// Authenticate at `now_ms` (unix ms). The token comparison is constant-time over all entries.
+    pub fn authenticate_at(&self, token: &str, now_ms: u64) -> Result<&Principal, AuthError> {
         let h = hash_token(token);
         let mut found = None;
-        for (eh, p) in &self.entries {
-            if ct_eq(eh.as_bytes(), h.as_bytes()) {
-                found = Some(p);
+        for e in &self.entries {
+            if ct_eq(e.hash.as_bytes(), h.as_bytes()) {
+                found = Some(e);
             }
         }
-        found
+        match found {
+            None => Err(AuthError::Unknown),
+            Some(e) if e.expires_at_ms.is_some_and(|x| now_ms >= x) => Err(AuthError::Expired),
+            Some(e) => Ok(&e.principal),
+        }
     }
 
     pub fn is_empty(&self) -> bool {

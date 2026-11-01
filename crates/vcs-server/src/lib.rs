@@ -5,15 +5,21 @@
 //! applies roles and a per-zone write policy, and validates every write of the manifest key
 //! (locks, zone policy) before the compare-and-swap. It keeps no state between requests.
 //!
-//! **There is no TLS here.** Bearer tokens travel in clear text; run the server on loopback
-//! or a private network behind a TLS-terminating proxy (docs/server.md).
+//! TLS is available behind the `tls` cargo feature (rustls); without it the server speaks plain
+//! HTTP and must sit on loopback, a private network or behind a TLS-terminating proxy (docs/server.md).
 
+pub mod audit;
 pub mod auth;
 pub mod client;
 pub mod http;
+pub mod ratelimit;
 pub mod server;
+#[cfg(feature = "tls")]
+pub mod tls;
 pub mod validate;
 
+pub use audit::AuditLog;
 pub use auth::{Principal, Role, TokenTable};
 pub use client::HttpBackend;
+pub use ratelimit::RateLimit;
 pub use server::{Config, Server};

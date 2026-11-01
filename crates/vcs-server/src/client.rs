@@ -1,6 +1,8 @@
 //! `HttpBackend`: a [`Backend`] that talks to `vcs-server`. Token comes from the caller
-//! (the CLI reads `VCS_TOKEN`); it is never part of the URL. Plain `http://` only: put a TLS
-//! proxy in front of the server for anything beyond loopback or a private network.
+//! (the CLI reads `VCS_TOKEN`); it is never part of the URL. `https://` needs the `tls` cargo
+//! feature (certificate verification is always on; [`HttpBackend::with_ca`] trusts a given CA bundle
+//! instead of the built-in web roots). Without it, only `http://`: use loopback, a private network
+//! or a TLS proxy.
 
 use crate::http::pct_encode;
 use std::time::Duration;
@@ -24,22 +26,41 @@ pub struct HttpBackend {
 }
 
 impl HttpBackend {
-    /// `base` is `http://host:port` (an optional trailing slash is ignored).
+    /// `base` is `http://host:port` or (feature `tls`) `https://host:port`; an optional trailing slash is ignored.
     pub fn new(base: &str, token: &str) -> Result<Self, BackendError> {
+        Self::with_ca(base, token, None)
+    }
+
+    /// Like [`new`](Self::new); for `https://`, `ca_pem` (if given) is the only trust root.
+    pub fn with_ca(base: &str, token: &str, ca_pem: Option<&[u8]>) -> Result<Self, BackendError> {
         let base = base.trim_end_matches('/');
-        if !base.starts_with("http://") {
+        #[allow(unused_mut)]
+        let mut b = ureq::AgentBuilder::new().timeout(Duration::from_secs(60)).max_idle_connections(0);
+        if base.starts_with("https://") {
+            #[cfg(feature = "tls")]
+            if let Some(pem) = ca_pem {
+                b = b.tls_config(crate::tls::client_config(pem).map_err(|e| BackendError::Other(format!("invalid ca bundle: {e}")))?);
+            }
+            #[cfg(not(feature = "tls"))]
+            {
+                let _ = ca_pem;
+                return Err(BackendError::Other(
+                    "https:// needs vcs-server built with the `tls` feature (or use a TLS proxy and http://)".into(),
+                ));
+            }
+        } else if base.starts_with("http://") {
+            if ca_pem.is_some() {
+                return Err(BackendError::Other("a CA bundle only applies to https:// URLs".into()));
+            }
+        } else {
             return Err(BackendError::Other(
-                "HttpBackend supports http:// only (no TLS in this build; use a TLS proxy and a private network)".into(),
+                "HttpBackend supports http:// and (with the tls feature) https:// only".into(),
             ));
         }
-        let agent = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(60))
-            .max_idle_connections(0)
-            .build();
         Ok(Self {
             base: base.to_owned(),
             token: token.to_owned(),
-            agent,
+            agent: b.build(),
         })
     }
 
@@ -109,7 +130,7 @@ impl HttpBackend {
             }
             Err(ureq::Error::Status(code, resp)) => {
                 let msg = resp.into_string().unwrap_or_default();
-                if code >= 500 {
+                if code >= 500 || code == 429 {
                     Err(BackendError::Unavailable(
                         self.redact(&format!("server returned {code}: {}", msg.trim())),
                     ))
