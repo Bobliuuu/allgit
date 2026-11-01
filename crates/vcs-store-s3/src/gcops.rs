@@ -89,9 +89,10 @@ impl S3Backend {
                     .ok_or_else(|| BackendError::Other("clock object vanished".into()))?
             }
         };
-        // the server stamped the copy somewhere inside this round trip; take its middle
-        let rtt = before.elapsed();
-        let at = Instant::now() - rtt / 2;
+        // The server stamped the copy somewhere inside this round trip. Anchor at the instant the request
+        // was sent: the estimate then runs ahead of the server by at most one round trip and never behind a
+        // time it already stamped (ages look slightly older, the safe direction for a grace period).
+        let at = before;
         *self.anchor.lock().unwrap() = Some((server, at));
         Ok(server + at.elapsed().as_millis() as u64)
     }
