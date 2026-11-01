@@ -496,7 +496,8 @@ enum Cmd {
         #[arg(long)]
         auto: bool,
         /// Pack format: v2 (zstd, fanout index; the default for new packs), v1 (rollback for
-        /// older binaries) or v3 (independently compressed blocks, for compacted packs)
+        /// older binaries), v3 (independently compressed blocks, for compacted packs) or v4 (v2 plus
+        /// delta entries; local only, opt-in)
         #[arg(long)]
         format: Option<String>,
         /// Do not merge small packs afterwards (by default packs of similar size are merged
@@ -2026,7 +2027,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                     return Err(Error::Msg("--format cannot be combined with --auto".into()));
                 }
                 let Some(fmt) = vcs_store::pack::PackFormat::parse(&f) else {
-                    return Err(Error::Msg(format!("unknown pack format {f:?} (use v1, v2 or v3)")));
+                    return Err(Error::Msg(format!("unknown pack format {f:?} (use v1, v2, v3 or v4)")));
                 };
                 let (n, c) = repo.repack_as(fmt)?;
                 println!("packed {n} object(s); rewrote {c} existing pack(s) as v{}", fmt.version());
@@ -2154,10 +2155,13 @@ fn compact_remote(
 ) -> Result<(), Error> {
     let format = match pack_format {
         Some(f) => {
-            vcs_store::pack::PackFormat::parse(f).ok_or_else(|| Error::Msg(format!("unknown pack format {f:?} (use v1, v2 or v3)")))?
+            vcs_store::pack::PackFormat::parse(f).ok_or_else(|| Error::Msg(format!("unknown pack format {f:?} (use v1, v2, v3 or v4)")))?
         }
         None => vcs_store::pack::PackFormat::for_compaction(),
     };
+    if format == vcs_store::pack::PackFormat::V4 {
+        return Err(Error::Msg("pack format v4 (delta entries) is local only; remote packs use v2 or v3".into()));
+    }
     if !dry_run && !yes {
         return Err(Error::Msg(
             "`vcs gc --remote --compact` rewrites the remote's packs (new pack first, then the old ones are DELETED) and affects every clone that shares it;\n\

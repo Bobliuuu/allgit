@@ -565,6 +565,12 @@ pub fn upload_pack(b: &dyn Backend, name: &str, pack_path: &Path) -> Result<(), 
     let other = |e: std::io::Error| BackendError::Other(e.to_string());
     let pack = std::fs::read(pack_path).map_err(other)?;
     let idx = std::fs::read(pack_path.with_extension("idx")).map_err(other)?;
+    // Remote readers fetch single entries by range and cannot resolve delta bases: v4 packs stay local.
+    if idx.starts_with(vcs_store::pack::IDX_MAGIC_V4) {
+        return Err(BackendError::Other(
+            "v4 (delta) packs are local-only; repack as v2 before uploading".into(),
+        ));
+    }
     b.put_if_absent(&format!("{PACK_PREFIX}{name}.pack"), &pack)?;
     b.put_if_absent(&format!("{PACK_PREFIX}{name}.idx"), &idx)?;
     Ok(())
