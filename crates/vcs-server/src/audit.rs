@@ -1,6 +1,6 @@
 //! Append-only, hash-chained audit log (JSON Lines).
 //!
-//! One record per authenticated mutating request (every `PUT`, accepted or rejected):
+//! One record per authenticated mutating request (every `PUT` and `DELETE`, accepted or rejected):
 //!
 //! ```text
 //! {"seq":0,"ts_ms":1700000000000,"principal":"alice","op":"PUT","key":"manifest","outcome":"200","prev":"<64 hex>","hash":"<64 hex>"}

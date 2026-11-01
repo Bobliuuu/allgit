@@ -394,7 +394,7 @@ fn route(sh: &Shared, req: &Request) -> Response {
         Some(Err(AuthError::Expired)) => return text(401, "token expired").with("WWW-Authenticate", "Bearer"),
         _ => return text(401, "unauthorized").with("WWW-Authenticate", "Bearer"),
     };
-    let mutating = req.method == "PUT" && req.path.starts_with("/v1/o/");
+    let mutating = matches!(req.method.as_str(), "PUT" | "DELETE") && req.path.starts_with("/v1/o/");
     let resp = match &sh.limiter {
         Some(l) => match l.check(&who.name, now) {
             Ok(()) => dispatch(sh, req, who),
