@@ -27,6 +27,10 @@ pub enum More {
     CatFile(crate::plumb::CatFileArgs),
     /// Summarize history by author
     Shortlog(crate::plumb::ShortlogArgs),
+    /// Best common ancestor of two revisions
+    MergeBase(crate::histcmds::MergeBaseArgs),
+    /// List the files that differ between two revisions (A/D/M and path)
+    DiffTree(crate::histcmds::DiffTreeArgs),
 }
 
 pub fn dispatch(cmd: &More, json: bool) -> Result<(), Error> {
@@ -40,5 +44,7 @@ pub fn dispatch(cmd: &More, json: bool) -> Result<(), Error> {
         More::LsFiles(a) => crate::plumb::ls_files(a, json),
         More::CatFile(a) => crate::plumb::cat_file(a, json),
         More::Shortlog(a) => crate::plumb::shortlog(a, json),
+        More::MergeBase(a) => crate::histcmds::merge_base(a, json),
+        More::DiffTree(a) => crate::histcmds::diff_tree(a, json),
     }
 }

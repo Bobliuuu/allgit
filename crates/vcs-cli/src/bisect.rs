@@ -119,13 +119,7 @@ enum Next {
 }
 
 fn chain(repo: &Repo, from: ObjectId) -> Result<Vec<ObjectId>, Error> {
-    let mut v = vec![from];
-    let mut cur = from;
-    while let Some(p) = repo.commit_of(&cur)?.parents.first() {
-        v.push(*p);
-        cur = *p;
-    }
-    Ok(v)
+    repo.parent_index(&[from]).first_parent_chain(from)
 }
 
 fn plan(repo: &Repo, st: &State) -> Result<Next, Error> {
