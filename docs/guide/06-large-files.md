@@ -12,12 +12,12 @@ Here a random 8 MiB file is committed, then 20 bytes in its middle are changed a
 $ head -c 8388608 /dev/urandom > scene.bin
 $ vcs add scene.bin && vcs commit -m "add 8 MiB scene"
 staged 1 file(s), 0 removal(s)
-[root/main 727d880b946a] add 8 MiB scene
+[root/main 5703e8041108] add 8 MiB scene
 $ du -sk .vcs/objects | cut -f1
-10040
+10012
 $ printf "EDITED-IN-THE-MIDDLE" | dd of=scene.bin bs=1 seek=4000000 conv=notrunc 2>/dev/null
 $ vcs status
-zone root: branch main @ 727d880b946a
+zone root: branch main @ 5703e8041108
   not staged:
     modified:  scene.bin
 $ vcs diff --stat
@@ -25,25 +25,25 @@ $ vcs diff --stat
  1 file(s) changed, 0 insertion(s), 0 deletion(s)
 $ vcs add scene.bin && vcs commit -m "tweak the middle of the scene"
 staged 1 file(s), 0 removal(s)
-[root/main 76af65942293] tweak the middle of the scene
+[root/main 5ef4b882d8f5] tweak the middle of the scene
 $ du -sk .vcs/objects | cut -f1
-10108
+10072
 $ vcs fsck
-checked 447 objects
+checked 436 objects
 ok
 ```
 
-The store grew by 44 KiB for the second version, not by another 8 MiB.
-(The 10076 KiB includes about 450 small chunk files, each rounded up to a disk block.)
+The store grew by 60 KiB for the second version, not by another 8 MiB.
+(The 10012 KiB includes about 430 small chunk files, each rounded up to a disk block.)
 A random file has no repeats of its own, so this saving comes only from the edit being small.
 Small files are stored whole:
 
 ```text
 $ echo "tiny" > small.txt && vcs add small.txt && vcs commit -m "small file"
 staged 1 file(s), 0 removal(s)
-[root/main 837c3def452c] small file
+[root/main e3577f7e739c] small file
 $ find .vcs/objects -type f | wc -l
-452
+441
 ```
 
 Limits: a large file is held in memory when it is read back or checked out. There is no streaming and no
@@ -56,23 +56,23 @@ Every new object starts as a loose file. That is many small files.
 
 ```text
 $ vcs repack
-packed 452 object(s)
+packed 441 object(s)
 $ find .vcs/objects -type f | sed "s/[0-9a-f]\{8,\}/<id>/" | sort | uniq -c
       1 .vcs/objects/pack/pack-<id>.idx
       1 .vcs/objects/pack/pack-<id>.pack
 $ ls .vcs/objects/pack
-pack-1feb46c78f41b48582859b6aa00efc95926eb370861b943ef3a023343290faff.idx
-pack-1feb46c78f41b48582859b6aa00efc95926eb370861b943ef3a023343290faff.pack
+pack-991819615bf3ed2ac463c85d324b7164f9144f837f8ff43143cb59ab0be8318b.idx
+pack-991819615bf3ed2ac463c85d324b7164f9144f837f8ff43143cb59ab0be8318b.pack
 $ du -sk .vcs/objects | cut -f1
-9188
+9180
 $ vcs fsck
-checked 452 objects
+checked 441 objects
 ok
 ```
 
 Repacking is safe to repeat. `vcs fsck` still passes after it.
 Packs do not use deltas or compression yet, so repack saves file overhead, not content.
-The sizes above went from 10120 KiB to 9208 KiB. That is block rounding, not smaller data.
+The sizes above went from 10072 KiB to 9180 KiB. That is block rounding, not smaller data.
 
 ## Garbage collection
 
@@ -86,15 +86,15 @@ because the operation log still names those commits (that is what makes `vcs op 
 
 ```text
 $ vcs branch scratch && vcs switch scratch && head -c 3000000 /dev/urandom > scratch.bin && vcs add scratch.bin && vcs commit -m "scratch work" && vcs switch main
-created root/scratch at 837c3def452c
+created root/scratch at e3577f7e739c
 zone root: switched to scratch
 staged 1 file(s), 0 removal(s)
-[root/scratch f7ca8548d5c6] scratch work
+[root/scratch 29e710fd1842] scratch work
 zone root: switched to main
 $ vcs branch -d scratch --force
-deleted root/scratch (was f7ca8548d5c6)
+deleted root/scratch (was 29e710fd1842)
 $ vcs gc --dry-run
-608 objects: 608 reachable
+605 objects: 605 reachable
 0 unreachable but younger than the 1209600s grace period (kept)
 0 unreachable and old enough: would delete
 dry run: nothing was deleted
@@ -107,7 +107,7 @@ DESTRUCTIVE: deleting unreachable local objects older than 60s (holding the repo
 error: refusing to delete with a grace period of 60s: it must exceed the touch-on-dedup threshold (302400s), otherwise a concurrent writer can re-adopt an object that this sweep then deletes (docs/gc.md)
 [exit 1]
 $ vcs gc --dry-run --grace-secs 0
-608 objects: 608 reachable
+605 objects: 605 reachable
 0 unreachable but younger than the 0s grace period (kept)
 0 unreachable and old enough: would delete
 dry run: nothing was deleted
