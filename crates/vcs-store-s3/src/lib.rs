@@ -22,6 +22,8 @@
 //!   conditional writes.
 
 mod admin;
+mod gcops;
+pub use gcops::parse_iso_ms;
 pub use admin::ManifestWriteProbe;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
@@ -109,6 +111,8 @@ pub struct S3Backend {
     agent: ureq::Agent,
     requests: AtomicU64,
     bytes_read: AtomicU64,
+    /// Server-clock anchor for `now_ms` (see gcops.rs).
+    anchor: gcops::Anchor,
 }
 
 enum Resp {
@@ -172,6 +176,7 @@ impl S3Backend {
             agent,
             requests: AtomicU64::new(0),
             bytes_read: AtomicU64::new(0),
+            anchor: Default::default(),
         })
     }
 
@@ -455,9 +460,20 @@ impl Backend for S3Backend {
             Resp::Status(c, m) => Err(Self::unexpected("delete", c, m)),
         }
     }
-    // `supports_gc` stays false: the S3 touch (server-side copy-to-self with
-    // `x-amz-metadata-directive: REPLACE`), HEAD `Last-Modified` and a server clock (`Date`
-    // header) are designed in docs/gc.md but not implemented, so remote GC refuses S3.
+    /// Remote GC support (gcops.rs): touch = server-side copy onto itself, ages from
+    /// `LastModified`, clock = the server's `LastModified` of `gc/clock`, anchored.
+    fn supports_gc(&self) -> bool {
+        true
+    }
+    fn now_ms(&self) -> Result<u64, BackendError> {
+        self.gc_now_ms()
+    }
+    fn modified_ms(&self, key: &str) -> Result<Option<u64>, BackendError> {
+        self.gc_modified_ms(key)
+    }
+    fn touch(&self, key: &str) -> Result<bool, BackendError> {
+        self.gc_touch(key)
+    }
 }
 
 /// Largest ListObjectsV2 page body we parse (S3 pages hold at most 1000 keys of <= 1024 bytes).
@@ -509,7 +525,7 @@ fn signed_header_set(
         signed.push(("x-amz-security-token".into(), t.to_owned()));
     }
     for (k, v) in headers {
-        if *k == "range" {
+        if *k == "range" || k.starts_with("x-amz-") {
             signed.push((k.to_string(), v.to_string()));
         }
     }
