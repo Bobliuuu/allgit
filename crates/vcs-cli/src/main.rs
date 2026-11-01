@@ -15,7 +15,9 @@ mod cmds;
 mod config;
 mod describe;
 mod difftool;
+mod everyday;
 mod generate;
+mod gitmap;
 mod grep;
 mod histcmds;
 mod hooks;
@@ -306,6 +308,9 @@ enum Cmd {
         branch: String,
         #[arg(long)]
         zone: Option<String>,
+        /// Create the branch (at the checked-out head) and switch to it
+        #[arg(short = 'c', long)]
+        create: bool,
     },
     /// Merge a branch into the checked-out branch (fast-forward when possible)
     Merge {
@@ -731,6 +736,11 @@ enum StashCmd {
         /// Entry number from `stash list` (default: newest)
         index: Option<usize>,
     },
+    /// Apply a stash entry (staged) and keep it
+    Apply {
+        /// Entry number from `stash list` (default: newest)
+        index: Option<usize>,
+    },
     /// List stash entries, newest first
     List,
     /// Forget a stash entry
@@ -910,7 +920,12 @@ fn run(cli: Cli) -> Result<(), Error> {
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
             signing_cmd::verify_tag(&repo, &zone, &name)?;
         }
-        Cmd::Commit { message, force_no_lock, sign, no_sign } => {
+        Cmd::Commit {
+            message,
+            force_no_lock,
+            sign,
+            no_sign,
+        } => {
             let (repo, cwd) = open()?;
             lockable_cmd::guard(&repo, lockable_cmd::Stage::Commit, &[], force_no_lock)?;
             let cfg = config::Config::load()?;
@@ -1287,9 +1302,13 @@ fn run(cli: Cli) -> Result<(), Error> {
                 None => print_branches(&repo, &zone)?,
             }
         }
-        Cmd::Switch { branch, zone } => {
+        Cmd::Switch { branch, zone, create } => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
+            if create {
+                let h = repo.create_branch(&zone, &branch)?;
+                println!("created {zone}/{branch} at {}", h.short());
+            }
             let old = hooks::head_arg(&repo, &zone);
             repo.checkout(&zone, &branch)?;
             println!("zone {zone}: switched to {branch}");
@@ -1513,6 +1532,15 @@ fn run(cli: Cli) -> Result<(), Error> {
                             println!("    {p}");
                         }
                         println!("fix the markers, `vcs add` the files, then `vcs stash drop`");
+                    }
+                },
+                StashCmd::Apply { index } => match repo.stash_apply(index.unwrap_or(0))? {
+                    vcs_repo::StashPopOutcome::Applied => println!("applied stash entry (kept)"),
+                    vcs_repo::StashPopOutcome::Conflicted { paths } => {
+                        println!("conflicts in {} file(s); the stash entry was kept:", paths.len());
+                        for p in &paths {
+                            println!("    {p}");
+                        }
                     }
                 },
                 StashCmd::List => {
@@ -2119,7 +2147,7 @@ fn run_lazy(cli: Cli) -> Result<(), Error> {
 
 fn main() -> ExitCode {
     let _ = ROOT_ZONE;
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(gitmap::argv_for_shim());
     hooks::set_disabled(cli.no_hooks);
     if let Some(ca) = &cli.ca_pem {
         // Resolved before `-C`; the config machinery reads it back as `remote.cainfo` (env VCS_CAINFO).
@@ -2179,7 +2207,9 @@ fn compact_remote(
         None => vcs_store::pack::PackFormat::for_compaction(),
     };
     if format == vcs_store::pack::PackFormat::V4 {
-        return Err(Error::Msg("pack format v4 (delta entries) is local only; remote packs use v2 or v3".into()));
+        return Err(Error::Msg(
+            "pack format v4 (delta entries) is local only; remote packs use v2 or v3".into(),
+        ));
     }
     if !dry_run && !yes {
         return Err(Error::Msg(

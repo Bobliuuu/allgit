@@ -9,6 +9,11 @@ name = "vcs"
 path = "src/main.rs"
 
 [[bin]]
+name = "git"
+path = "src/bin/git_shim.rs"
+required-features = ["git-shim"]
+
+[[bin]]
 name = "git-remote-allgit"
 path = "src/bin/git_remote_allgit.rs"
 
@@ -29,6 +34,8 @@ tempfile.workspace = true
 
 [features]
 default = []
+# A `git`-named binary that runs `vcs git <args>` (docs/git-to-vcs.md). Off by default.
+git-shim = []
 # https:// for s3:// endpoints and for vcs-server remotes (rustls, certificate verification always on).
 # Off by default: the default build has no TLS dependencies and builds offline.
 tls = ["vcs-store-s3/tls", "vcs-server/tls"]

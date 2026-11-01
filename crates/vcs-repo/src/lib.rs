@@ -30,6 +30,7 @@ pub mod plumbing;
 pub mod portable;
 pub mod rebase;
 pub mod repo;
+pub mod reset;
 pub mod shelve;
 pub mod sparse;
 pub mod stash;
@@ -40,8 +41,8 @@ pub mod treeops;
 #[cfg(feature = "watcher")]
 pub mod watcher;
 pub mod worktree;
-mod zone_batch;
 pub mod worktree_fs;
+mod zone_batch;
 pub mod zonedetect;
 mod zonesplit;
 
@@ -58,6 +59,7 @@ pub use merge::{ConflictRec, MergeOutcome, MergeState, Resolution, ResolveCheck}
 pub use meta::{DEFAULT_BRANCH, ROOT_ZONE};
 pub use rebase::{RebaseOutcome, RebaseState};
 pub use repo::{AddReport, Change, ChangeKind, CommitReport, FsckReport, Repo, Status, StatusOpts, WorkCounts, ZoneStatus};
+pub use reset::{ResetMode, ResetReport};
 pub use sparse::SparseReport;
 pub use stash::{StashEntry, StashPopOutcome, StashZone};
 pub use sync::{PublishReport, SyncAction, SyncReport};

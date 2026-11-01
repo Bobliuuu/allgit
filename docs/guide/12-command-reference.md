@@ -55,6 +55,9 @@ Commands:
   shortlog       Summarize history by author
   merge-base     Best common ancestor of two revisions
   diff-tree      List the files that differ between two revisions (A/D/M and path)
+  reset          Move the checked-out branch of a zone to another commit (--soft, --mixed, --hard); acts on one zone
+  clean          Delete untracked files (-n lists, -f deletes)
+  git            Run a git command line as its vcs equivalent, e.g. `vcs git log --oneline` (table: docs/git-to-vcs.md; `--map` lists it)
   switch         Switch branch (in the zone containing cwd, or --zone)
   merge          Merge a branch into the checked-out branch (fast-forward when possible)
   cherry-pick    Re-apply the change of one commit onto the checked-out branch
@@ -566,11 +569,12 @@ Set tracked changes aside (push, pop, list, drop); untracked files are left alon
 Usage: vcs stash [OPTIONS] <COMMAND>
 
 Commands:
-  push  Save staged and unstaged changes of tracked files and reset to the branch heads
-  pop   Apply a stash entry (staged) and drop it; on conflicts it is kept
-  list  List stash entries, newest first
-  drop  Forget a stash entry
-  help  Print this message or the help of the given subcommand(s)
+  push   Save staged and unstaged changes of tracked files and reset to the branch heads
+  pop    Apply a stash entry (staged) and drop it; on conflicts it is kept
+  apply  Apply a stash entry (staged) and keep it
+  list   List stash entries, newest first
+  drop   Forget a stash entry
+  help   Print this message or the help of the given subcommand(s)
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
@@ -614,7 +618,25 @@ Options:
   -h, --help           Print help
 ```
 
-##### `vcs stash list`
+##### `vcs stash apply`
+
+```text
+Apply a stash entry (staged) and keep it
+
+Usage: vcs stash apply [OPTIONS] [INDEX]
+
+Arguments:
+  [INDEX]  Entry number from `stash list` (default: newest)
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+###### `vcs stash list`
 
 ```text
 List stash entries, newest first
@@ -629,7 +651,7 @@ Options:
   -h, --help           Print help
 ```
 
-###### `vcs stash drop`
+####### `vcs stash drop`
 
 ```text
 Forget a stash entry
@@ -1349,6 +1371,68 @@ Options:
   -h, --help           Print help
 ```
 
+## `vcs reset`
+
+```text
+Move the checked-out branch of a zone to another commit (--soft, --mixed, --hard); acts on one zone
+
+Usage: vcs reset [OPTIONS] [REV] [-- <PATHS>...]
+
+Arguments:
+  [REV]       Revision to move to (default HEAD): a branch, tag, commit id prefix, with ~N or ^
+  [PATHS]...  Only unstage these paths (index entries return to HEAD); the head does not move
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --soft           Move only the branch head; keep the index and the files (changes show as staged)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --mixed          Move the head and reset the index to it; keep the files (the default)
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --hard           Move the head and reset the index AND the files of the zone; uncommitted work in the zone is lost
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+      --zone <ZONE>    Zone (default: the zone containing the current directory)
+  -h, --help           Print help
+```
+
+## `vcs clean`
+
+```text
+Delete untracked files (-n lists, -f deletes)
+
+Usage: vcs clean [OPTIONS] [PATHS]...
+
+Arguments:
+  [PATHS]...  Only below these paths
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+  -f, --force          Delete (required unless --dry-run, like git's clean.requireForce)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+  -n, --dry-run        Only list what would be deleted
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+  -d                   Also delete untracked directories (here: untracked files inside them are always listed, so this only removes the emptied directories)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+## `vcs git`
+
+```text
+Run a git command line as its vcs equivalent, e.g. `vcs git log --oneline` (table: docs/git-to-vcs.md; `--map` lists it)
+
+Usage: vcs git [OPTIONS] [GIT_ARGS]...
+
+Arguments:
+  [GIT_ARGS]...  A git command line, e.g. `vcs git log --oneline -5`
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
 ## `vcs switch`
 
 ```text
@@ -1362,6 +1446,7 @@ Arguments:
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --zone <ZONE>    
+  -c, --create         Create the branch (at the checked-out head) and switch to it
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
