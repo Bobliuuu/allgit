@@ -8,6 +8,7 @@ use vcs_repo::{AssistResult, ChangeKind, Error, MergeOutcome, RebaseOutcome, Rep
 
 mod archive;
 mod auth;
+mod autozone;
 mod bisect;
 mod bundle_cmd;
 mod cmds;
@@ -449,6 +450,8 @@ enum Cmd {
         /// Print the number of remote requests and bytes transferred
         #[arg(long)]
         stats: bool,
+        #[command(flatten)]
+        sel: autozone::ForArgs,
     },
     /// Publish checked-out branches to the remote in one atomic transaction
     Publish {
@@ -617,6 +620,12 @@ enum ZoneCmd {
         #[arg(long)]
         force: bool,
     },
+    /// Propose zone boundaries from manifests, ownership files, directories (read-only; see docs/zones-autodetect.md)
+    Suggest(autozone::SuggestArgs),
+    /// Turn one suggestion into a zone (plan only without --yes; history is not rewritten)
+    Apply(autozone::ApplyArgs),
+    /// Subscribe to the minimal zone set for a path, symbol, task or person, plus their dependencies
+    Subscribe(autozone::ForArgs),
 }
 
 #[derive(Subcommand, Clone)]
@@ -808,6 +817,9 @@ fn need_remote(repo: &Repo) -> Result<String, Error> {
 fn run(cli: Cli) -> Result<(), Error> {
     if let Cmd::More(m) = &cli.cmd {
         return cmds::dispatch(m, cli.json);
+    }
+    if let Some(r) = autozone::intercept(&cli.cmd, cli.json) {
+        return r;
     }
     if cli.json {
         let doc = json::build(&cli.cmd).ok_or_else(|| Error::Msg("--json is not supported for this command".into()))??;
@@ -1632,6 +1644,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                     repo.zone_delete(&name, force)?;
                     println!("deleted zone {name}");
                 }
+                ZoneCmd::Suggest(_) | ZoneCmd::Apply(_) | ZoneCmd::Subscribe(_) => unreachable!("handled by autozone::intercept"),
             }
         }
         Cmd::Snapshot(s) => {
@@ -1702,7 +1715,7 @@ fn run(cli: Cli) -> Result<(), Error> {
         Cmd::Shelve(a) => shelve_cmd::shelve(&open()?.0, a, &principal(), author()?)?,
         Cmd::Shelves(a) => shelve_cmd::shelves(&open()?.0, a, &principal())?,
         Cmd::Unshelve(a) => shelve_cmd::unshelve(&open()?.0, a, &principal())?,
-        Cmd::Clone { url, dir, zones, stats } => {
+        Cmd::Clone { url, dir, zones, stats, .. } => {
             if bundle_cmd::try_clone(&url, &dir, &zones, author()?)? {
                 return Ok(());
             }

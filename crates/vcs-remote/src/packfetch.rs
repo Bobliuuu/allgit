@@ -248,6 +248,26 @@ pub fn probe_kinds_with(b: &dyn Backend, cat: &PackCatalog, ids: &[ObjectId]) ->
     probed.into_iter().collect()
 }
 
+/// Stored size (the entry length in the pack index) of each of `ids` that sits in a pack, and how
+/// many ids are in no pack (loose objects: size unknown without a request each). Reads only the
+/// pack indexes (one LIST plus one GET per pack), never object bodies. For a v3 pack the length is
+/// that of the entry, not of the compressed block that must be fetched, so it is an estimate.
+pub fn stored_sizes(b: &dyn Backend, ids: &[ObjectId]) -> Result<(HashMap<ObjectId, u64>, usize), BackendError> {
+    let loaded = PackCatalog::new().get_settled(b)?;
+    let packs = &loaded.packs;
+    let mut m = HashMap::with_capacity(ids.len());
+    let mut unknown = 0;
+    for id in ids {
+        match packs.iter().find_map(|(_, p)| p.find(id)) {
+            Some((_, len)) => {
+                m.insert(*id, u64::from(len));
+            }
+            None => unknown += 1,
+        }
+    }
+    Ok((m, unknown))
+}
+
 /// Maximum unwanted bytes read between two wanted ranges to keep them in one request.
 const COALESCE_GAP: u64 = 64 * 1024;
 
