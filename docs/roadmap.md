@@ -42,7 +42,7 @@ reuse (#243), one manifest read per publish (#240), local object-cache eviction 
 directory-remote GC. Numbers: [benchmarks.md](benchmarks.md).
 🟡 Storage engine: the study decided to keep the baseline and make targeted, versioned changes (#188, #189). Next:
 pack format v2 with per-entry zstd (#245), pack index fanout (#246), automatic repack (#247), tiered remote
-compaction (#248, needs S3/HTTP remote GC #232), manifest scaling data (#252).
+compaction (#248, needs S3/HTTP remote GC #232), manifest scaling data and decision ([manifest-scaling.md](manifest-scaling.md), #252).
 ⬜ filesystem monitor (#113, #154), changed-path Bloom filters (#114), range-read tightening (#227), 100k-commit
 history benchmark, delta compression (gated, #250).
 
