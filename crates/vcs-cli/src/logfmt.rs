@@ -4,7 +4,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::IsTerminal;
 use std::path::Path;
 use vcs_objects::{Commit, ObjectId};
-use vcs_repo::treeops::{self, Flat};
 use vcs_repo::{Error, Repo};
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -46,10 +45,23 @@ pub fn select(
     limit: usize,
     o: &Opts,
 ) -> Result<(Vec<(ObjectId, Commit)>, bool), Error> {
-    let filtering = o.author.is_some() || !o.paths.is_empty() || o.x.filters();
-    // Filters need the whole history; the count applies after filtering.
-    let mut all = repo.log(zone, branch, if filtering { usize::MAX } else { limit })?;
     let defs = repo.zones()?;
+    let prefix = defs.path_of(zone).unwrap_or("").to_owned();
+    let mut specs = Vec::new();
+    if !o.x.follow {
+        for p in &o.paths {
+            specs.push(repo.rel_path(cwd, p)?);
+        }
+    }
+    // Author and path filters look at one commit at a time, so the walk can stop at the
+    // `limit`-th match instead of reading the whole history. The other filters need all of it.
+    if !o.x.filters() {
+        let mine = |c: &Commit| o.author.as_deref().is_none_or(|a| author_matches(c, a));
+        let f: Option<&dyn Fn(&Commit) -> bool> = o.author.is_some().then_some(&mine);
+        return repo.log_paths(zone, branch, &specs, f, limit);
+    }
+    // Filters need the whole history; the count applies after filtering.
+    let mut all = repo.log(zone, branch, usize::MAX)?;
     if all.is_empty() {
         return Ok((Vec::new(), true));
     }
@@ -60,26 +72,17 @@ pub fn select(
     if let Some(a) = &o.author {
         shown.retain(|(_, c)| author_matches(c, a));
     }
-    if !o.paths.is_empty() && !o.x.follow {
-        let mut specs = Vec::new();
-        for p in &o.paths {
-            specs.push(repo.rel_path(cwd, p)?);
-        }
-        let prefix = defs.path_of(zone).unwrap_or("").to_owned();
-        let by_id: BTreeMap<ObjectId, &Commit> = all.iter().map(|(i, c)| (*i, c)).collect();
-        let mut cache: BTreeMap<ObjectId, Flat> = BTreeMap::new();
+    if !specs.is_empty() {
+        let mut pf = vcs_repo::PathFilter::new(repo, zone, &specs)?.first_parent_only(o.x.first_parent);
         let mut keep = Vec::new();
         for (id, c) in &shown {
-            if touches(repo, &prefix, &specs, &by_id, &mut cache, *id, c)? {
+            if pf.touches(id, c)? {
                 keep.push((*id, c.clone()));
             }
         }
         shown = keep;
     }
-    if o.x.filters() {
-        let prefix = defs.path_of(zone).unwrap_or("").to_owned();
-        o.x.filter(repo, &prefix, &all, &mut shown, &o.paths, cwd)?;
-    }
+    o.x.filter(repo, &prefix, &all, &mut shown, &o.paths, cwd)?;
     shown.truncate(limit);
     Ok((shown, false))
 }
@@ -101,58 +104,6 @@ pub fn run(repo: &Repo, cwd: &Path, zone: &str, branch: Option<&str>, limit: usi
 pub fn author_matches(c: &Commit, needle: &str) -> bool {
     let n = needle.to_lowercase();
     c.author.name.to_lowercase().contains(&n) || c.author.email.to_lowercase().contains(&n)
-}
-
-fn in_spec(key: &str, specs: &[String]) -> bool {
-    specs
-        .iter()
-        .any(|s| s.is_empty() || key == s || key.strip_prefix(s.as_str()).is_some_and(|r| r.starts_with('/')))
-}
-
-fn filtered(repo: &Repo, prefix: &str, specs: &[String], root: ObjectId) -> Result<Flat, Error> {
-    let mut f = treeops::flatten(repo.store(), Some(root), prefix)?;
-    f.retain(|k, _| in_spec(k, specs));
-    Ok(f)
-}
-
-/// A commit touches the paths when its filtered tree differs from every parent's
-/// (a root commit touches them if it contains any).
-fn touches(
-    repo: &Repo,
-    prefix: &str,
-    specs: &[String],
-    by_id: &BTreeMap<ObjectId, &Commit>,
-    cache: &mut BTreeMap<ObjectId, Flat>,
-    id: ObjectId,
-    c: &Commit,
-) -> Result<bool, Error> {
-    let mine = flat_of(repo, prefix, specs, cache, id, c)?;
-    if c.parents.is_empty() {
-        return Ok(!mine.is_empty());
-    }
-    for p in &c.parents {
-        let Some(pc) = by_id.get(p) else { continue };
-        if flat_of(repo, prefix, specs, cache, *p, pc)? == mine {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
-fn flat_of(
-    repo: &Repo,
-    prefix: &str,
-    specs: &[String],
-    cache: &mut BTreeMap<ObjectId, Flat>,
-    id: ObjectId,
-    c: &Commit,
-) -> Result<Flat, Error> {
-    if let Some(f) = cache.get(&id) {
-        return Ok(f.clone());
-    }
-    let f = filtered(repo, prefix, specs, c.root)?;
-    cache.insert(id, f.clone());
-    Ok(f)
 }
 
 const YELLOW: &str = "\x1b[33m";

@@ -13,10 +13,11 @@
 use crate::difftool::{self, DiffArgs};
 use clap::Args;
 use regex::Regex;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::Mutex;
 use vcs_merge::{detect_renames, StoreBlobs};
 use vcs_objects::{Commit, ObjectId};
-use vcs_repo::treeops::{self, Flat};
+use vcs_repo::treeops;
 use vcs_repo::{Error, Repo};
 
 #[derive(Args, Clone, Debug, Default)]
@@ -138,13 +139,32 @@ impl LogExtra {
         }
         if let Some(needle) = &self.pickaxe {
             let by_id: BTreeMap<ObjectId, &Commit> = all.iter().map(|(i, c)| (*i, c)).collect();
-            let mut keep = Vec::new();
-            for (id, c) in shown.iter() {
-                if pickaxe_hit(repo, prefix, &by_id, c, needle.as_bytes())? {
-                    keep.push((*id, c.clone()));
-                }
+            // Commits are independent: test them on all cores, keep the order.
+            let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(32);
+            let per = shown.len().div_ceil(threads).max(1);
+            let by_id = &by_id;
+            // occurrences per blob: a blob is the new side of one commit and the old side of the next
+            let counts: &Mutex<HashMap<ObjectId, usize>> = &Mutex::new(HashMap::new());
+            let hits: Vec<Result<Vec<bool>, Error>> = std::thread::scope(|s| {
+                let hs: Vec<_> = shown
+                    .chunks(per)
+                    .map(|chunk| {
+                        s.spawn(move || -> Result<Vec<bool>, Error> {
+                            chunk
+                                .iter()
+                                .map(|(_, c)| pickaxe_hit(repo, prefix, by_id, c, needle.as_bytes(), counts))
+                                .collect()
+                        })
+                    })
+                    .collect();
+                hs.into_iter().map(|h| h.join().expect("pickaxe worker panicked")).collect()
+            });
+            let mut flags = Vec::with_capacity(shown.len());
+            for h in hits {
+                flags.extend(h?);
             }
-            *shown = keep;
+            let mut it = flags.into_iter();
+            shown.retain(|_| it.next().unwrap_or(false));
         }
         Ok(())
     }
@@ -193,8 +213,21 @@ fn tip_of(all: &[(ObjectId, Commit)]) -> Option<ObjectId> {
     all.iter().map(|(i, _)| *i).find(|i| !parents.contains(i))
 }
 
-fn flat(repo: &Repo, prefix: &str, c: &Commit) -> Result<Flat, Error> {
-    treeops::flatten(repo.store(), Some(c.root), prefix)
+/// `p` (repo-relative) as a path inside the zone at `prefix`, if it is inside it.
+fn in_zone<'a>(prefix: &str, p: &'a str) -> Option<&'a str> {
+    if prefix.is_empty() {
+        Some(p)
+    } else {
+        p.strip_prefix(prefix).and_then(|r| r.strip_prefix('/'))
+    }
+}
+
+/// The file (not directory) at repo-relative `p` in the tree `root` of the zone at `prefix`.
+fn file_at(repo: &Repo, prefix: &str, root: ObjectId, p: &str) -> Result<Option<(vcs_objects::EntryMode, ObjectId)>, Error> {
+    Ok(match in_zone(prefix, p) {
+        Some(r) if !r.is_empty() => treeops::entry_at(repo.store(), root, r)?.filter(|e| e.0 != vcs_objects::EntryMode::Directory),
+        _ => None,
+    })
 }
 
 /// Commits (first-parent walk from the tip) that touched `path`, following renames backwards.
@@ -203,26 +236,49 @@ fn follow_set(repo: &Repo, prefix: &str, all: &[(ObjectId, Commit)], path: &str,
     let mut keep = BTreeSet::new();
     let mut cur = path.to_owned();
     let mut at = tip_of(all);
-    while let Some(id) = at {
+    // entry of `cur` in the commit being looked at; carried to the next step as the "before" side
+    let mut here: Option<Option<(vcs_objects::EntryMode, ObjectId)>> = None;
+    let zone = all.first().map(|(_, c)| c.zone.clone()).unwrap_or_default();
+    let mut skip = at.map(|t| vcs_repo::FirstParentSkip::new(repo, &zone, t));
+    while let Some(mut id) = at {
+        // commits that leave the file as it is in their first parent are neither kept nor change the name
+        if let (Some(sk), Some(rel)) = (&skip, in_zone(prefix, &cur)) {
+            let reached = sk.skip(id, rel);
+            if reached != id && by_id.contains_key(&reached) {
+                id = reached;
+            }
+        }
         let c = by_id[&id];
-        let here = flat(repo, prefix, c)?;
+        if let Some(sk) = skip.as_mut() {
+            sk.note(&id, c);
+        }
+        let h = match here.take() {
+            Some(h) => h,
+            None => file_at(repo, prefix, c.root, &cur)?,
+        };
         let parent = c.parents.first().and_then(|p| by_id.get(p).map(|pc| (*p, *pc)));
         let Some((pid, pc)) = parent else {
-            if here.contains_key(&cur) {
+            if h.is_some() {
                 keep.insert(id);
             }
             break;
         };
-        let before = flat(repo, prefix, pc)?;
-        if here.get(&cur) != before.get(&cur) {
+        let before = file_at(repo, prefix, pc.root, &cur)?;
+        if h != before {
             keep.insert(id);
-            if here.contains_key(&cur) && !before.contains_key(&cur) {
-                let rs = detect_renames(&StoreBlobs(repo.store()), &before, &here, th).map_err(|e| Error::Msg(e.to_string()))?;
+            if h.is_some() && before.is_none() {
+                // only the changed paths matter for renames: a path in both trees is neither gone nor new
+                let d = treeops::diff_trees(repo.store(), Some(pc.root), Some(c.root), prefix)?;
+                let rs = detect_renames(&StoreBlobs(repo.store()), &d.old, &d.new, th).map_err(|e| Error::Msg(e.to_string()))?;
                 if let Some(r) = rs.iter().find(|r| r.to == cur) {
                     cur = r.from.clone();
+                    here = None; // new name: look it up in the parent
+                    at = Some(pid);
+                    continue;
                 }
             }
         }
+        here = Some(before);
         at = Some(pid);
     }
     Ok(keep)
@@ -244,28 +300,37 @@ fn count(hay: &[u8], needle: &[u8]) -> usize {
     n
 }
 
-fn pickaxe_hit(repo: &Repo, prefix: &str, by_id: &BTreeMap<ObjectId, &Commit>, c: &Commit, needle: &[u8]) -> Result<bool, Error> {
-    let new = flat(repo, prefix, c)?;
-    let old = match c.parents.first().and_then(|p| by_id.get(p)) {
-        Some(pc) => flat(repo, prefix, pc)?,
-        None if c.parents.is_empty() => Flat::new(),
+fn pickaxe_hit(
+    repo: &Repo,
+    prefix: &str,
+    by_id: &BTreeMap<ObjectId, &Commit>,
+    c: &Commit,
+    needle: &[u8],
+    counts: &Mutex<HashMap<ObjectId, usize>>,
+) -> Result<bool, Error> {
+    let old_root = match c.parents.first().and_then(|p| by_id.get(p)) {
+        Some(pc) => Some(pc.root),
+        None if c.parents.is_empty() => None,
         None => return Ok(false), // parent outside the listed history
     };
-    let paths: BTreeSet<&String> = new.keys().chain(old.keys()).collect();
+    // only the paths that differ (equal subtrees are not read)
+    let d = treeops::diff_trees(repo.store(), old_root, Some(c.root), prefix)?;
+    let paths: BTreeSet<&String> = d.new.keys().chain(d.old.keys()).collect();
+    let occurrences = |e: Option<&(vcs_objects::EntryMode, ObjectId)>| -> Result<usize, Error> {
+        let Some((_, id)) = e else { return Ok(0) };
+        if let Some(n) = counts.lock().expect("pickaxe cache").get(id) {
+            return Ok(*n);
+        }
+        let n = count(&repo.store().get_content(id)?, needle);
+        counts.lock().expect("pickaxe cache").insert(*id, n);
+        Ok(n)
+    };
     for p in paths {
-        let (o, n) = (old.get(p), new.get(p));
+        let (o, n) = (d.old.get(p), d.new.get(p));
         if o == n {
             continue;
         }
-        let oc = o
-            .map(|(_, i)| repo.store().get_content(i))
-            .transpose()?
-            .map_or(0, |b| count(&b, needle));
-        let nc = n
-            .map(|(_, i)| repo.store().get_content(i))
-            .transpose()?
-            .map_or(0, |b| count(&b, needle));
-        if oc != nc {
+        if occurrences(o)? != occurrences(n)? {
             return Ok(true);
         }
     }

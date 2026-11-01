@@ -642,6 +642,40 @@ impl<'a> IndexTrees<'a> {
     }
 }
 
+/// The entry (mode and id) at zone-relative `rel` below `root`, or `None` when nothing is
+/// there. `rel == ""` is the root itself (a directory). A file in the middle of the path means
+/// "absent", not an error. Reads one tree per path component.
+pub fn entry_at(store: &dyn ObjectStore, root: ObjectId, rel: &str) -> Result<Option<(EntryMode, ObjectId)>> {
+    let mut cur = (EntryMode::Directory, root);
+    if rel.is_empty() {
+        return Ok(Some(cur));
+    }
+    for part in rel.split('/') {
+        if cur.0 != EntryMode::Directory {
+            return Ok(None);
+        }
+        let Object::Tree(t) = store.get(&cur.1)? else {
+            return Err(Error::Corrupt(format!("object {} is not a tree", cur.1)));
+        };
+        match t.get(part) {
+            Some(e) => cur = (e.mode, e.id),
+            None => return Ok(None),
+        }
+    }
+    Ok(Some(cur))
+}
+
+/// Does `entry` hold at least one file? (A file does; a directory does when its tree is not empty.)
+pub fn entry_has_files(store: &dyn ObjectStore, entry: (EntryMode, ObjectId)) -> Result<bool> {
+    if entry.0 != EntryMode::Directory {
+        return Ok(true);
+    }
+    match store.get(&entry.1)? {
+        Object::Tree(t) => Ok(!t.entries().is_empty()),
+        _ => Err(Error::Corrupt(format!("object {} is not a tree", entry.1))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

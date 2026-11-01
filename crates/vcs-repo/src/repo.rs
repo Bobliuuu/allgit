@@ -7,7 +7,7 @@ use crate::index::{Index, IndexEntry};
 use crate::meta::{write_atomic, LockGuard, Refs, Workspace, Zones, DEFAULT_BRANCH, ROOT_ZONE};
 use crate::treeops::{self, Flat};
 use crate::worktree_fs::{FileKind, RealFs, WorktreeFs};
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -1476,56 +1476,6 @@ impl Repo {
 
     // ---------- log ----------
 
-    /// History reachable from the branch checked out for `zone` (or `main` if unsubscribed),
-    /// newest first (by timestamp, ties by id).
-    pub fn log(&self, zone: &str, branch: Option<&str>, limit: usize) -> Result<Vec<(ObjectId, Commit)>> {
-        let zone = self.resolve_zone(zone)?;
-        let zone = zone.as_str();
-        let zones = self.zones()?;
-        if !zones.exists(zone) {
-            return msg(format!("no such zone {zone:?}"));
-        }
-        let ws = self.workspace()?;
-        let refs = self.refs()?;
-        let head = match branch {
-            Some(b) => refs
-                .head(zone, b)
-                .ok_or_else(|| Error::Msg(format!("no such branch {zone}/{b}")))?
-                .into(),
-            None => self.current_head(zone, &ws, &refs),
-        };
-        let mut out = Vec::new();
-        let mut seen = BTreeSet::new();
-        let mut heap: BinaryHeap<(u64, ObjectId)> = BinaryHeap::new();
-        let mut cache: BTreeMap<ObjectId, Commit> = BTreeMap::new();
-        if let Some(h) = head {
-            let c = self.commit_obj(&h)?;
-            heap.push((c.author.timestamp, h));
-            cache.insert(h, c);
-        }
-        while let Some((_, id)) = heap.pop() {
-            if out.len() >= limit {
-                break;
-            }
-            if !seen.insert(id) {
-                continue;
-            }
-            let c = cache.remove(&id).expect("cached");
-            for p in &c.parents {
-                if !seen.contains(p) && !cache.contains_key(p) {
-                    let pc = self.commit_obj(p)?;
-                    if pc.zone != c.zone {
-                        return Err(Error::Corrupt(format!("commit {} has parent from different zone", id)));
-                    }
-                    heap.push((pc.author.timestamp, *p));
-                    cache.insert(*p, pc);
-                }
-            }
-            out.push((id, c));
-        }
-        Ok(out)
-    }
-
     // ---------- branches ----------
 
     pub fn branches(&self, zone: &str) -> Result<Vec<(String, Option<ObjectId>, bool)>> {
@@ -2149,6 +2099,7 @@ impl Repo {
         rep.evictable = evictable.into_iter().collect();
         self.fsck_ops(&mut rep.problems);
         self.fsck_commit_graph(&mut rep.problems);
+        self.fsck_path_filters(&mut rep.problems);
         rep.problems.extend(self.store.verify_packs());
         Ok(rep)
     }

@@ -52,6 +52,8 @@ Commands:
   ls-files       List tracked files
   cat-file       Show the type, size or content of an object
   shortlog       Summarize history by author
+  merge-base     Best common ancestor of two revisions
+  diff-tree      List the files that differ between two revisions (A/D/M and path)
   switch         Switch branch (in the zone containing cwd, or --zone)
   merge          Merge a branch into the checked-out branch (fast-forward when possible)
   cherry-pick    Re-apply the change of one commit onto the checked-out branch
@@ -1244,6 +1246,47 @@ Options:
   -e, --email          Show the author's email
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
       --zone <ZONE>    
+  -h, --help           Print help
+```
+
+## `vcs merge-base`
+
+```text
+Best common ancestor of two revisions
+
+Usage: vcs merge-base [OPTIONS] <A> <B>
+
+Arguments:
+  <A>  First revision
+  <B>  Second revision
+
+Options:
+      --all            Print every best common ancestor, not just the first
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --zone <ZONE>    Zone (default: the zone containing the current directory)
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+## `vcs diff-tree`
+
+```text
+List the files that differ between two revisions (A/D/M and path)
+
+Usage: vcs diff-tree [OPTIONS] <A> <B>
+
+Arguments:
+  <A>  Older revision
+  <B>  Newer revision
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --zone <ZONE>    Zone (default: the zone containing the current directory)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
 
