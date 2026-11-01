@@ -87,7 +87,8 @@ pub fn detect_renames(blobs: &dyn BlobSource, base: &Flat, side: &Flat, threshol
     let mut used_to: BTreeSet<&String> = BTreeSet::new();
 
     // exact: same blob id and mode
-    let mut by_id: BTreeMap<(EntryMode, ObjectId), (Vec<&String>, Vec<&String>)> = BTreeMap::new();
+    type Group<'a> = (Vec<&'a String>, Vec<&'a String>);
+    let mut by_id: BTreeMap<(EntryMode, ObjectId), Group> = BTreeMap::new();
     for p in &gone {
         by_id.entry(base[*p]).or_default().0.push(*p);
     }
@@ -105,7 +106,11 @@ pub fn detect_renames(blobs: &dyn BlobSource, base: &Flat, side: &Flat, threshol
         for a in as_ {
             if let Some(i) = ds_left.iter().position(|d| base_name(d) == base_name(a)) {
                 let d = ds_left.remove(i);
-                out.push(Rename { from: d.clone(), to: (*a).clone(), score: 1000 });
+                out.push(Rename {
+                    from: d.clone(),
+                    to: (*a).clone(),
+                    score: 1000,
+                });
                 used_from.insert(d);
                 used_to.insert(a);
             } else {
@@ -113,7 +118,11 @@ pub fn detect_renames(blobs: &dyn BlobSource, base: &Flat, side: &Flat, threshol
             }
         }
         if ds_left.len() == 1 && as_left.len() == 1 {
-            out.push(Rename { from: ds_left[0].clone(), to: as_left[0].clone(), score: 1000 });
+            out.push(Rename {
+                from: ds_left[0].clone(),
+                to: as_left[0].clone(),
+                score: 1000,
+            });
             used_from.insert(ds_left[0]);
             used_to.insert(as_left[0]);
         }
@@ -121,8 +130,16 @@ pub fn detect_renames(blobs: &dyn BlobSource, base: &Flat, side: &Flat, threshol
     }
 
     // similarity
-    let ds: Vec<&String> = gone.iter().copied().filter(|p| !used_from.contains(*p) && base[*p].0 != EntryMode::Symlink).collect();
-    let as_: Vec<&String> = added.iter().copied().filter(|p| !used_to.contains(*p) && side[*p].0 != EntryMode::Symlink).collect();
+    let ds: Vec<&String> = gone
+        .iter()
+        .copied()
+        .filter(|p| !used_from.contains(*p) && base[*p].0 != EntryMode::Symlink)
+        .collect();
+    let as_: Vec<&String> = added
+        .iter()
+        .copied()
+        .filter(|p| !used_to.contains(*p) && side[*p].0 != EntryMode::Symlink)
+        .collect();
     if !ds.is_empty() && !as_.is_empty() && ds.len().saturating_mul(as_.len()) <= MAX_PAIRS {
         let fp = |flat: &Flat, p: &String| -> Result<Option<Vec<u64>>, MergeError> { Ok(fingerprint(&blobs.blob(&flat[p].1)?)) };
         let dfp: Vec<Option<Vec<u64>>> = ds.iter().map(|p| fp(base, p)).collect::<Result<_, _>>()?;
@@ -157,7 +174,11 @@ pub fn detect_renames(blobs: &dyn BlobSource, base: &Flat, side: &Flat, threshol
             ud[i] = true;
             ua[j] = true;
             if !tie {
-                out.push(Rename { from: ds[i].clone(), to: as_[j].clone(), score: s });
+                out.push(Rename {
+                    from: ds[i].clone(),
+                    to: as_[j].clone(),
+                    score: s,
+                });
             }
         }
     }
@@ -220,12 +241,7 @@ pub fn merge_flat_renames(
                 };
                 c.path = f.to_owned();
                 rr_conflicts.push(c);
-                for p in [f, a.to.as_str()] {
-                    b2.remove(p);
-                    l2.remove(p);
-                    r2.remove(p);
-                }
-                for p in [b.to.as_str()] {
+                for p in [f, a.to.as_str(), b.to.as_str()] {
                     b2.remove(p);
                     l2.remove(p);
                     r2.remove(p);
@@ -263,7 +279,11 @@ pub fn merge_flat_renames(
         merge.conflicts.extend(rr_conflicts);
         merge.conflicts.sort_by(|a, b| a.path.cmp(&b.path));
     }
-    Ok(RenameMerge { merge, left_renames: al, right_renames: ar })
+    Ok(RenameMerge {
+        merge,
+        left_renames: al,
+        right_renames: ar,
+    })
 }
 
 #[cfg(test)]
@@ -298,7 +318,14 @@ mod tests {
         let sim = flat(vec![("y/b.txt", fx.e(&a2)), ("keep", fx.e("k\n"))]);
         let unrelated = flat(vec![("y/b.txt", fx.e(&lines(20, "z"))), ("keep", fx.e("k\n"))]);
         let r = detect_renames(&fx.0, &b, &exact, 500).unwrap();
-        assert_eq!(r, vec![Rename { from: "x/a.txt".into(), to: "y/a.txt".into(), score: 1000 }]);
+        assert_eq!(
+            r,
+            vec![Rename {
+                from: "x/a.txt".into(),
+                to: "y/a.txt".into(),
+                score: 1000
+            }]
+        );
         let r = detect_renames(&fx.0, &b, &sim, 500).unwrap();
         assert_eq!(r.len(), 1);
         assert!(r[0].score >= 900 && r[0].score < 1000);

@@ -16,7 +16,9 @@ use crate::repo::{fresh_change_id, Repo};
 use crate::treeops::{self, Flat};
 use std::collections::BTreeSet;
 use std::fs;
-use vcs_merge::{merge3, merge_flat_renames, merge_flat_with, render_markers, Algorithm, Conflict, ConflictKind, MarkerLabels, StoreBlobs, TextMerge};
+use vcs_merge::{
+    merge3, merge_flat_renames, merge_flat_with, render_markers, Algorithm, Conflict, ConflictKind, MarkerLabels, StoreBlobs, TextMerge,
+};
 use vcs_objects::codec::{Reader, Writer};
 use vcs_objects::names::validate_path;
 use vcs_objects::{Commit, EntryMode, Object, ObjectId, RefUpdate, Signature, Transaction};
@@ -122,10 +124,24 @@ pub enum MergeOutcome {
 
 impl Repo {
     /// Three-way tree merge honouring the structural and rename-detection settings.
-    pub(crate) fn tree3(&self, base: &Flat, ours: &Flat, theirs: &Flat) -> std::result::Result<vcs_merge::TreeMerge, vcs_merge::MergeError> {
+    pub(crate) fn tree3(
+        &self,
+        base: &Flat,
+        ours: &Flat,
+        theirs: &Flat,
+    ) -> std::result::Result<vcs_merge::TreeMerge, vcs_merge::MergeError> {
         let blobs = StoreBlobs(&self.store);
         if self.renames {
-            return Ok(merge_flat_renames(&blobs, Algorithm::Myers, self.structural, vcs_merge::rename::DEFAULT_THRESHOLD, base, ours, theirs)?.merge);
+            return Ok(merge_flat_renames(
+                &blobs,
+                Algorithm::Myers,
+                self.structural,
+                vcs_merge::rename::DEFAULT_THRESHOLD,
+                base,
+                ours,
+                theirs,
+            )?
+            .merge);
         }
         merge_flat_with(&blobs, Algorithm::Myers, self.structural, base, ours, theirs)
     }
