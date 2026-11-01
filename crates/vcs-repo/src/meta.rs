@@ -24,6 +24,14 @@ pub(crate) fn write_cache_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     write_atomic_inner(path, bytes, false)
 }
 
+/// Like [`write_cache_atomic`] without the fsync, for caches whose readers validate (and ignore)
+/// anything undecodable: a crash may leave an empty or torn file, which only costs a re-read.
+pub(crate) fn write_cache_nosync(path: &Path, bytes: &[u8]) -> Result<()> {
+    let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+    io(&tmp, fs::write(&tmp, bytes))?;
+    io(path, fs::rename(&tmp, path))
+}
+
 fn write_atomic_inner(path: &Path, bytes: &[u8], inject: bool) -> Result<()> {
     let tmp = path.with_extension(format!("tmp{}", std::process::id()));
     if inject && crate::failpoint::tick() {

@@ -139,7 +139,7 @@ impl Repo {
             if !t.contains('\n') && !url.contains('\n') {
                 let mut out = format!("{url}\n{t}\n").into_bytes();
                 out.extend_from_slice(&m.encode());
-                let _ = write_atomic(&self.common.join("remote-manifest"), &out);
+                let _ = crate::meta::write_cache_nosync(&self.common.join("remote-manifest"), &out);
                 // a cache: failure is fine
             }
         }
