@@ -9,6 +9,9 @@ use std::time::Duration;
 use vcs_remote::backend::validate_key;
 use vcs_remote::{Backend, BackendError, Conditional, Versioned};
 
+/// Idle keep-alive connections kept per server (parallel range fetches use several at once).
+const POOL: usize = 16;
+
 /// Never prints the token.
 impl std::fmt::Debug for HttpBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -41,7 +44,7 @@ impl HttpBackend {
     pub fn with_tls(base: &str, token: &str, ca_pem: Option<&[u8]>, identity: Option<(&[u8], &[u8])>) -> Result<Self, BackendError> {
         let base = base.trim_end_matches('/');
         #[allow(unused_mut)]
-        let mut b = ureq::AgentBuilder::new().timeout(Duration::from_secs(60)).max_idle_connections(0);
+        let mut b = ureq::AgentBuilder::new().timeout(Duration::from_secs(60)).max_idle_connections(POOL).max_idle_connections_per_host(POOL);
         if base.starts_with("https://") {
             #[cfg(feature = "tls")]
             match (ca_pem, identity) {

@@ -12,6 +12,8 @@ pub mod locks;
 pub mod manifest;
 pub mod membackend;
 pub mod packfetch;
+pub mod par;
+pub mod retry;
 pub mod protocol;
 pub mod shelf;
 #[cfg(feature = "sharded")]
@@ -26,6 +28,7 @@ pub use locks::LockFault;
 pub use manifest::{Lock, Manifest};
 pub use membackend::{CasFault, MemBackend};
 pub use packfetch::fetch_many;
+pub use retry::{RetryBackend, RetryPolicy};
 pub use protocol::{
     changed_paths, fetch_heads, fetch_heads_lazy, fetch_heads_lazy_shared, fetch_heads_lazy_with, fetch_object, fetch_objects,
     fetch_objects_with, fetch_tags_lazy, fetch_tags_lazy_shared, fetch_tags_lazy_with, load_manifest, refresh_manifest, repair_remote,

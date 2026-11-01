@@ -1,4 +1,4 @@
-//! Minimal HTTP/1.1 request parsing and response writing (one request per connection).
+//! Minimal HTTP/1.1 request parsing and response writing (persistent connections: HTTP/1.1 keep-alive unless the client says close).
 
 use std::io::{BufRead, Read, Write};
 
@@ -8,6 +8,8 @@ pub struct Request {
     pub query: String,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+    /// The client allows the connection to be reused (HTTP/1.1 without `Connection: close`).
+    pub keep_alive: bool,
 }
 
 impl Request {
@@ -71,14 +73,26 @@ fn reason(s: u16) -> &'static str {
 }
 
 pub fn write_response(w: &mut dyn Write, r: &Response, head_only: bool) -> std::io::Result<()> {
-    write!(w, "HTTP/1.1 {} {}\r\n", r.status, reason(r.status))?;
+    write_response_ka(w, r, head_only, false)
+}
+
+/// Like [`write_response`]; `keep_alive` advertises that the connection stays open.
+pub fn write_response_ka(w: &mut dyn Write, r: &Response, head_only: bool, keep_alive: bool) -> std::io::Result<()> {
+    use std::fmt::Write as _;
+    // One buffer, one write: separate head and body writes would trip Nagle against the client's
+    // delayed ACK (a ~40 ms stall per request on a persistent connection).
+    let mut head = String::with_capacity(256);
+    let _ = write!(head, "HTTP/1.1 {} {}\r\n", r.status, reason(r.status));
     for (k, v) in &r.headers {
-        write!(w, "{k}: {v}\r\n")?;
+        let _ = write!(head, "{k}: {v}\r\n");
     }
-    write!(w, "Content-Length: {}\r\nConnection: close\r\n\r\n", r.body.len())?;
+    let conn = if keep_alive { "keep-alive" } else { "close" };
+    let _ = write!(head, "Content-Length: {}\r\nConnection: {conn}\r\n\r\n", r.body.len());
+    let mut out = head.into_bytes();
     if !head_only {
-        w.write_all(&r.body)?;
+        out.extend_from_slice(&r.body);
     }
+    w.write_all(&out)?;
     w.flush()
 }
 
@@ -214,7 +228,14 @@ pub fn read_request(
         query: query.to_owned(),
         headers,
         body: vec![],
+        keep_alive: ver == "HTTP/1.1",
     };
+    if req
+        .header("connection")
+        .is_some_and(|c| c.split(',').any(|t| t.trim().eq_ignore_ascii_case("close")))
+    {
+        req.keep_alive = false;
+    }
     if req.header("transfer-encoding").is_some() {
         return Err(ParseError::Unsupported("chunked request bodies are not supported"));
     }

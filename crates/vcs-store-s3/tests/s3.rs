@@ -526,24 +526,148 @@ fn sequential_reads_reuse_one_connection_and_each_request_is_signed() {
 }
 
 #[test]
-fn writes_never_ride_a_pooled_connection() {
+fn writes_reuse_the_pooled_connection() {
     let (ep, conns, _) = keepalive_server();
     let b = S3Backend::new_unchecked(cfg(&ep)).unwrap();
     for _ in 0..5 {
         b.get("k").unwrap();
     }
-    assert_eq!(conns.load(std::sync::atomic::Ordering::SeqCst), 1);
-    for i in 0..5 {
+    for _ in 0..5 {
         b.put_if_match("k", b"x", "\"t1\"").unwrap();
-        // each write opened its own connection; the pooled read connection is still the one used for reads
-        assert_eq!(conns.load(std::sync::atomic::Ordering::SeqCst), 2 + i);
+        b.put_if_absent("n", b"y").unwrap();
     }
     b.get("k").unwrap();
-    assert_eq!(
-        conns.load(std::sync::atomic::Ordering::SeqCst),
-        6,
-        "reads still reuse their pooled connection"
-    );
+    assert_eq!(conns.load(std::sync::atomic::Ordering::SeqCst), 1, "reads and writes share one connection");
+}
+
+/// A stateful S3-like server (one connection per request is fine for it) that can lose the answer
+/// of the Nth conditional PUT after applying it (`lose_ack_on`), or answer 503 without applying
+/// (`fail_on`), counting every PUT it receives.
+struct Flaky {
+    url: String,
+    puts: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+fn flaky_server(lose_ack_on: Vec<usize>, fail_on: Vec<usize>) -> Flaky {
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    let puts = Arc::new(AtomicUsize::new(0));
+    let p2 = puts.clone();
+    let store: Arc<std::sync::Mutex<std::collections::HashMap<String, (Vec<u8>, u64)>>> = Default::default();
+    let ver = Arc::new(AtomicUsize::new(1));
+    std::thread::spawn(move || {
+        for s in l.incoming() {
+            let Ok(mut s) = s else { continue };
+            let mut data = Vec::new();
+            let mut buf = [0u8; 8192];
+            let end = loop {
+                if let Some(h) = String::from_utf8_lossy(&data).find("\r\n\r\n") {
+                    break h;
+                }
+                match s.read(&mut buf) {
+                    Ok(0) | Err(_) => break usize::MAX,
+                    Ok(n) => data.extend_from_slice(&buf[..n]),
+                }
+            };
+            if end == usize::MAX {
+                continue;
+            }
+            let head = String::from_utf8_lossy(&data[..end]).to_string();
+            let mut lines = head.lines();
+            let reqline = lines.next().unwrap_or("").to_owned();
+            let hdrs: std::collections::HashMap<String, String> = lines
+                .filter_map(|l| l.split_once(':'))
+                .map(|(k, v)| (k.trim().to_lowercase(), v.trim().to_owned()))
+                .collect();
+            let len: usize = hdrs.get("content-length").and_then(|v| v.parse().ok()).unwrap_or(0);
+            while data.len() < end + 4 + len {
+                match s.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => data.extend_from_slice(&buf[..n]),
+                }
+            }
+            let body = data[(end + 4).min(data.len())..].to_vec();
+            let mut parts = reqline.split(' ');
+            let (method, path) = (parts.next().unwrap_or(""), parts.next().unwrap_or("").to_owned());
+            let reply = |s: &mut std::net::TcpStream, r: String| {
+                let _ = s.write_all(r.as_bytes());
+            };
+            let mut st = store.lock().unwrap();
+            match method {
+                "PUT" => {
+                    let n = p2.fetch_add(1, SeqCst) + 1;
+                    if fail_on.contains(&n) {
+                        reply(&mut s, "HTTP/1.1 503 Slow Down\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into());
+                        continue;
+                    }
+                    let cur = st.get(&path).map(|(_, v)| format!("\"{v}\""));
+                    let ok = match (hdrs.get("if-none-match").map(String::as_str), hdrs.get("if-match")) {
+                        (Some("*"), _) => cur.is_none(),
+                        (_, Some(m)) => cur.as_deref() == Some(m.as_str()),
+                        _ => true,
+                    };
+                    if !ok {
+                        reply(&mut s, "HTTP/1.1 412 Precondition Failed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into());
+                        continue;
+                    }
+                    let v = ver.fetch_add(1, SeqCst) as u64;
+                    st.insert(path, (body, v));
+                    if lose_ack_on.contains(&n) {
+                        continue; // applied; connection dropped without an answer
+                    }
+                    reply(&mut s, format!("HTTP/1.1 200 OK\r\nETag: \"{v}\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"));
+                }
+                _ => match st.get(&path) {
+                    Some((d, v)) => reply(
+                        &mut s,
+                        format!("HTTP/1.1 200 OK\r\nETag: \"{v}\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", d.len(), String::from_utf8_lossy(d)),
+                    ),
+                    None => reply(&mut s, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into()),
+                },
+            }
+        }
+    });
+    Flaky { url: format!("http://{addr}"), puts }
+}
+
+fn fast_retry(b: S3Backend) -> RetryBackend {
+    RetryBackend::with_policy(
+        Box::new(b),
+        RetryPolicy {
+            retries: 3,
+            base: std::time::Duration::from_millis(1),
+            cap: std::time::Duration::from_millis(5),
+        },
+    )
+}
+
+#[test]
+fn lost_ack_on_cas_over_s3_is_resolved_without_a_blind_repeat() {
+    use std::sync::atomic::Ordering::SeqCst;
+    // PUT 1 creates and answers; PUT 2 (the CAS) applies but its answer is lost; PUT 3 is a CAS whose answer is lost too
+    let f = flaky_server(vec![2, 3], vec![]);
+    let b = fast_retry(S3Backend::new_unchecked(cfg(&f.url)).unwrap());
+    assert!(b.put_if_absent("m", b"v1").unwrap());
+    let t1 = b.get("m").unwrap().unwrap().tag;
+    let t2 = b.put_if_match("m", b"v2", &t1).unwrap().expect("applied despite the lost ack");
+    assert_eq!(f.puts.load(SeqCst), 2, "the lost-ack CAS was not repeated");
+    let cur = b.get("m").unwrap().unwrap();
+    assert_eq!((cur.data.as_slice(), cur.tag.as_str()), (&b"v2"[..], t2.as_str()));
+    // the same for create-only: applied, answer lost -> reported as "already existed" (conservative), never an error
+    assert!(!b.put_if_absent("n", b"n1").unwrap());
+    assert_eq!(f.puts.load(SeqCst), 3);
+    assert_eq!(b.get("n").unwrap().unwrap().data, b"n1");
+}
+
+#[test]
+fn s3_503_on_a_write_is_retried_and_applies_exactly_once() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let f = flaky_server(vec![], vec![1, 2]);
+    let b = fast_retry(S3Backend::new_unchecked(cfg(&f.url)).unwrap());
+    assert!(b.put_if_absent("k", b"v").unwrap(), "503s are retried; the write is created once");
+    assert_eq!(f.puts.load(SeqCst), 3, "two 503s then success");
+    assert_eq!(b.get("k").unwrap().unwrap().data, b"v");
 }
 
 #[test]

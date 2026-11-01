@@ -12,7 +12,7 @@
 
 use crate::audit::AuditLog;
 use crate::auth::{hash_token, AuthError, Principal, Role, TokenTable};
-use crate::http::{pct_decode, read_request, write_response, Limits, ParseError, Request, Response};
+use crate::http::{pct_decode, read_request, write_response, write_response_ka, Limits, ParseError, Request, Response};
 use crate::log::{Format, Level, Logger, V};
 use crate::metrics::Metrics;
 use crate::ratelimit::{Limiter, RateLimit};
@@ -46,6 +46,10 @@ pub struct Config {
     pub body_timeout: Duration,
     /// Simultaneous connections served; further ones are refused with 503 (plain) or dropped (TLS).
     pub max_connections: usize,
+    /// How long an idle persistent (keep-alive) connection waits for its next request before it is closed.
+    pub keepalive_idle: Duration,
+    /// Requests served on one connection before the server asks the client to reconnect.
+    pub max_requests_per_conn: usize,
     /// Per-principal token bucket; `None` = unlimited (no built-in default).
     pub rate_limit: Option<RateLimit>,
     /// Audit log of every authenticated PUT; `None` = no audit.
@@ -80,6 +84,8 @@ impl Config {
             header_timeout: Duration::from_secs(10),
             body_timeout: Duration::from_secs(600),
             max_connections: 256,
+            keepalive_idle: Duration::from_secs(5),
+            max_requests_per_conn: 1000,
             rate_limit: None,
             audit: None,
             tokens_file: None,
@@ -378,6 +384,7 @@ impl Write for DeadlineTcp {
 }
 
 fn handle_conn(sh: &Shared, conn: TcpStream) {
+    let _ = conn.set_nodelay(true);
     let deadline = Arc::new(Mutex::new(Instant::now() + sh.cfg.header_timeout));
     let ds = DeadlineTcp {
         tcp: conn,
@@ -418,84 +425,99 @@ fn handle_conn(sh: &Shared, conn: TcpStream) {
     let body_dl = sh.cfg.body_timeout;
     let dl2 = deadline.clone();
     let mut on_headers = move || *dl2.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now() + body_dl;
-    let mut error_reply = false;
-    let t0 = Instant::now();
-    let mut ctx = Ctx {
-        principal: "-".into(),
-        role: "none",
-        request_id: String::new(),
-    };
-    let (mut method, mut path, mut bytes_in) = (String::from("-"), String::from("-"), 0u64);
-    let (mut resp, head) = match read_request(&mut rd, &limits, &body_limit, &mut on_headers) {
-        Ok(req) => {
-            let head = req.method == "HEAD";
-            ctx.request_id = request_id(sh, &req);
-            method = req.method.clone();
-            path = req.path.clone();
-            bytes_in = req.body.len() as u64;
-            set_request_deadline(sh.cfg.resilience.request_deadline.map(|d| Instant::now() + d));
-            let r = route(sh, &req, &mut ctx);
-            set_request_deadline(None);
-            (r, head)
-        }
-        Err(ParseError::Io(e)) => {
-            error_reply = true;
-            if matches!(e.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) {
-                (text(408, "request timeout"), false)
-            } else {
-                return;
+    let mut served = 0usize;
+    loop {
+        let mut error_reply = false;
+        let t0 = Instant::now();
+        let mut ctx = Ctx {
+            principal: "-".into(),
+            role: "none",
+            request_id: String::new(),
+        };
+        let (mut method, mut path, mut bytes_in) = (String::from("-"), String::from("-"), 0u64);
+        let (mut resp, head, mut want_ka) = match read_request(&mut rd, &limits, &body_limit, &mut on_headers) {
+            Ok(req) => {
+                let head = req.method == "HEAD";
+                ctx.request_id = request_id(sh, &req);
+                method = req.method.clone();
+                path = req.path.clone();
+                bytes_in = req.body.len() as u64;
+                set_request_deadline(sh.cfg.resilience.request_deadline.map(|d| Instant::now() + d));
+                let r = route(sh, &req, &mut ctx);
+                set_request_deadline(None);
+                (r, head, req.keep_alive)
             }
+            Err(ParseError::Io(e)) => {
+                error_reply = true;
+                if matches!(e.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) && served == 0 {
+                    (text(408, "request timeout"), false, false)
+                } else {
+                    return;
+                }
+            }
+            Err(ParseError::Bad(m)) => {
+                error_reply = true;
+                (text(400, m), false, false)
+            }
+            Err(ParseError::TooLarge) => {
+                error_reply = true;
+                (text(413, "body too large"), false, false)
+            }
+            Err(ParseError::HeadersTooLarge) => {
+                error_reply = true;
+                (text(431, "request headers too large"), false, false)
+            }
+            Err(ParseError::Unsupported(m)) => {
+                error_reply = true;
+                (text(501, m), false, false)
+            }
+        };
+        // A client that sent garbage or stalled gets a short, best-effort error reply (on TLS this may
+        // be cut short if the handshake never completed); real responses get the full write budget.
+        let reply_budget = if error_reply {
+            Duration::from_secs(2).min(body_dl)
+        } else {
+            body_dl
+        };
+        *deadline.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now() + reply_budget;
+        if ctx.request_id.is_empty() {
+            ctx.request_id = new_request_id(sh);
         }
-        Err(ParseError::Bad(m)) => {
-            error_reply = true;
-            (text(400, m), false)
+        resp.headers.push(("X-Request-Id".into(), ctx.request_id.clone()));
+        served += 1;
+        want_ka = want_ka && !error_reply && served < sh.cfg.max_requests_per_conn && !sh.stop.load(Ordering::SeqCst);
+        let written = write_response_ka(rd.get_mut(), &resp, head, want_ka).is_ok();
+        let dur = t0.elapsed();
+        let bytes_out = if head { 0 } else { resp.body.len() as u64 };
+        sh.metrics.observe(&method, resp.status, ctx.role, dur, bytes_in, bytes_out);
+        let lvl = if resp.status >= 500 { Level::Warn } else { Level::Info };
+        sh.log.log(
+            lvl,
+            "request",
+            &[
+                ("request_id", V::S(&ctx.request_id)),
+                ("method", V::S(&method)),
+                ("path", V::S(&path.chars().take(256).collect::<String>())),
+                ("status", V::N(u64::from(resp.status))),
+                ("principal", V::S(&ctx.principal)),
+                ("role", V::S(ctx.role)),
+                ("dur_ms", V::F(dur.as_secs_f64() * 1000.0)),
+                ("bytes_in", V::N(bytes_in)),
+                ("bytes_out", V::N(bytes_out)),
+                ("write_ok", V::N(u64::from(written))),
+            ],
+        );
+        if !(want_ka && written) {
+            return;
         }
-        Err(ParseError::TooLarge) => {
-            error_reply = true;
-            (text(413, "body too large"), false)
+        // Idle wait for the next request: bounded by keepalive_idle, not the (longer) header timeout.
+        *deadline.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now() + sh.cfg.keepalive_idle;
+        if std::io::BufRead::fill_buf(&mut rd).map(<[u8]>::is_empty).unwrap_or(true) {
+            return;
         }
-        Err(ParseError::HeadersTooLarge) => {
-            error_reply = true;
-            (text(431, "request headers too large"), false)
-        }
-        Err(ParseError::Unsupported(m)) => {
-            error_reply = true;
-            (text(501, m), false)
-        }
-    };
-    // A client that sent garbage or stalled gets a short, best-effort error reply (on TLS this may
-    // be cut short if the handshake never completed); real responses get the full write budget.
-    let reply_budget = if error_reply {
-        Duration::from_secs(2).min(body_dl)
-    } else {
-        body_dl
-    };
-    *deadline.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now() + reply_budget;
-    if ctx.request_id.is_empty() {
-        ctx.request_id = new_request_id(sh);
+        *deadline.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now() + sh.cfg.header_timeout;
+
     }
-    resp.headers.push(("X-Request-Id".into(), ctx.request_id.clone()));
-    let written = write_response(rd.get_mut(), &resp, head).is_ok();
-    let dur = t0.elapsed();
-    let bytes_out = if head { 0 } else { resp.body.len() as u64 };
-    sh.metrics.observe(&method, resp.status, ctx.role, dur, bytes_in, bytes_out);
-    let lvl = if resp.status >= 500 { Level::Warn } else { Level::Info };
-    sh.log.log(
-        lvl,
-        "request",
-        &[
-            ("request_id", V::S(&ctx.request_id)),
-            ("method", V::S(&method)),
-            ("path", V::S(&path.chars().take(256).collect::<String>())),
-            ("status", V::N(u64::from(resp.status))),
-            ("principal", V::S(&ctx.principal)),
-            ("role", V::S(ctx.role)),
-            ("dur_ms", V::F(dur.as_secs_f64() * 1000.0)),
-            ("bytes_in", V::N(bytes_in)),
-            ("bytes_out", V::N(bytes_out)),
-            ("write_ok", V::N(u64::from(written))),
-        ],
-    );
 }
 
 /// Per-request facts the access log and metrics need; filled in by [`route`].
