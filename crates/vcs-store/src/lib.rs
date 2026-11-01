@@ -6,6 +6,7 @@
 
 pub use vcs_objects::chunk;
 mod compact;
+pub mod bigfile;
 pub mod delta;
 pub mod layout;
 pub mod pack;
@@ -103,17 +104,25 @@ pub trait ObjectStore: Send + Sync {
         Ok(())
     }
     /// Store file content: a plain blob below `CHUNK_THRESHOLD`, otherwise chunk blobs plus a
-    /// manifest. Returns the canonical id (`vcs_objects::content_id`).
+    /// manifest (small-chunk layout up to `LARGE_THRESHOLD`, large-file layout from there). Returns the
+    /// canonical id (`vcs_objects::content_id`).
     fn put_content(&self, data: &[u8]) -> Result<ObjectId, StoreError> {
-        match ChunkedBlob::plan(data) {
+        match ChunkedBlob::plan_for(data) {
             None => self.put_blob(data),
             Some(m) => {
-                let mut off = 0usize;
-                for c in &m.chunks {
-                    let end = off + c.len as usize;
-                    // `plan` already hashed this chunk; do not hash it again.
-                    self.put_blob_prehashed(&c.id, &data[off..end])?;
-                    off = end;
+                let offs = m.offsets();
+                // `plan` already hashed each chunk; do not hash it again. Large files store chunks in parallel.
+                let res = chunk::par_map(if m.large { m.chunks.len() } else { 0 }, |i| {
+                    let (s, c) = (offs[i] as usize, &m.chunks[i]);
+                    self.put_blob_prehashed(&c.id, &data[s..s + c.len as usize])
+                });
+                for r in res {
+                    r?;
+                }
+                if !m.large {
+                    for (c, &s) in m.chunks.iter().zip(&offs) {
+                        self.put_blob_prehashed(&c.id, &data[s as usize..s as usize + c.len as usize])?;
+                    }
                 }
                 self.put(&Object::Chunked(m))
             }
@@ -124,21 +133,23 @@ pub trait ObjectStore: Send + Sync {
     fn get_content(&self, id: &ObjectId) -> Result<Vec<u8>, StoreError> {
         match self.get(id)? {
             Object::Blob(b) => Ok(b),
-            Object::Chunked(m) => {
-                // total_len comes from the (possibly hostile) manifest: cap the up-front reservation and grow as verified chunks arrive
-                let mut out = Vec::with_capacity(m.total_len.min(16 << 20) as usize);
-                for c in &m.chunks {
-                    let b = self.get_blob(&c.id)?;
-                    if b.len() != c.len as usize {
-                        return Err(StoreError::Corrupt {
-                            id: *id,
-                            reason: format!("chunk {} has length {}, manifest says {}", c.id, b.len(), c.len),
-                        });
-                    }
-                    out.extend_from_slice(&b);
-                }
-                Ok(out)
+            Object::Chunked(m) => bigfile::read_manifest_range(self, id, &m, 0, m.total_len),
+            _ => Err(StoreError::Corrupt {
+                id: *id,
+                reason: "expected blob or chunk manifest".into(),
+            }),
+        }
+    }
+    /// Bytes `[off, off + len)` of the file stored under `id` (clamped to its length), reading only the
+    /// chunks that overlap the range. A missing chunk is `NotFound(chunk)`, so lazy fetch pulls just it.
+    fn get_content_range(&self, id: &ObjectId, off: u64, len: u64) -> Result<Vec<u8>, StoreError> {
+        match self.get(id)? {
+            Object::Blob(b) => {
+                let s = (off.min(b.len() as u64)) as usize;
+                let e = off.saturating_add(len).min(b.len() as u64) as usize;
+                Ok(b[s..e.max(s)].to_vec())
             }
+            Object::Chunked(m) => bigfile::read_manifest_range(self, id, &m, off, len),
             _ => Err(StoreError::Corrupt {
                 id: *id,
                 reason: "expected blob or chunk manifest".into(),
@@ -235,6 +246,8 @@ const PEND_MEM_CAP: u64 = 256 << 20;
 /// A barrier with at least this many pending objects publishes them as ONE pack (one data file,
 /// one fsync, two renames) instead of one loose file each (a create, fsync and rename per object).
 const PACK_MIN: usize = 64;
+/// Objects of at least this many encoded bytes are written to their own file at `put` and published as loose files.
+const BIG_OBJECT: u64 = 1 << 20;
 /// Barriers stop writing packs once this many packs exist (loose files again): readers consult every pack, so an
 /// unbounded number of small packs would slow reads. `vcs repack` / compaction merges them.
 const MAX_BARRIER_PACKS: usize = 32;
@@ -824,6 +837,19 @@ impl LocalStore {
             return Ok(());
         }
         let len = (head.len() + tail.len()) as u64;
+        if len >= BIG_OBJECT {
+            // Big objects (chunks of large files) go straight to their own temporary file: no copy through
+            // the memory budget or the spill file, and `sync` publishes them as loose files (renaming a
+            // 2 MiB file is cheaper than re-reading and re-writing it into a pack).
+            let tmp = self.write_tmp(&id, head, tail)?;
+            let mut p = self.pending.lock().unwrap();
+            if let std::collections::hash_map::Entry::Vacant(v) = p.entry(id) {
+                v.insert(Pend::File(tmp));
+            } else {
+                let _ = fs::remove_file(&tmp); // another thread stored the same chunk first
+            }
+            return Ok(());
+        }
         if self.pend_mem.load(Ordering::Relaxed) + len <= self.pend_cap.load(Ordering::Relaxed) {
             let mut v = Vec::with_capacity(len as usize);
             v.extend_from_slice(head);
@@ -896,7 +922,7 @@ impl LocalStore {
     /// Publish a big batch as one pack: stream every pending object into a single file, fsync it
     /// once, rename pack then index (a pack without an index is ignored), fsync the directory.
     fn sync_as_pack(&self, pending: &mut HashMap<ObjectId, Pend>) -> Result<(), StoreError> {
-        let items: Vec<(&ObjectId, &Pend)> = pending.iter().collect();
+        let items: Vec<(&ObjectId, &Pend)> = pending.iter().filter(|(_, p)| !matches!(p, Pend::File(_))).collect();
         let pack = pack::write_pack_streaming(
             &self.dir,
             items.len(),
@@ -911,15 +937,6 @@ impl LocalStore {
             }),
         )?;
         self.packs.write().unwrap().push(pack);
-        let files: Vec<&PathBuf> = pending
-            .values()
-            .filter_map(|p| if let Pend::File(f) = p { Some(f) } else { None })
-            .collect();
-        // Best effort: a leftover is an orphan in tmp/ that clean_orphans removes.
-        let _ = par_try_each(&files, |f| {
-            let _ = fs::remove_file(f);
-            Ok(())
-        });
         Ok(())
     }
     fn path_of(&self, id: &ObjectId) -> PathBuf {
@@ -984,13 +1001,17 @@ impl ObjectStore for LocalStore {
         if pending.is_empty() {
             return Ok(());
         }
-        if pending.len() >= pack_min() && self.packs.read().unwrap().len() < MAX_BARRIER_PACKS {
+        let in_files = pending.values().filter(|p| matches!(p, Pend::File(_))).count();
+        if pending.len() - in_files >= pack_min() && self.packs.read().unwrap().len() < MAX_BARRIER_PACKS {
             self.sync_as_pack(&mut pending)?;
-            pending.clear();
+            pending.retain(|_, p| matches!(p, Pend::File(_)));
             self.pend_mem.store(0, Ordering::Relaxed);
             #[cfg(unix)]
             self.end_spill();
-            return Ok(());
+            if pending.is_empty() {
+                return Ok(());
+            }
+            // big objects written to their own files are published as loose files below
         }
         // Small batch: spill the in-memory objects to tmp files, then publish them as loose files.
         let mem: Vec<ObjectId> = pending

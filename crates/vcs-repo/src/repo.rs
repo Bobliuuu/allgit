@@ -18,7 +18,14 @@ use vcs_objects::{ChangeId, Commit, EntryMode, Object, ObjectId, RefUpdate, Sign
 use vcs_store::{LocalStore, ObjectStore};
 
 pub(crate) const FORMAT_FILE: &str = "format";
+/// Optional file `<common>/features`: one name per line, each a capability a reader must have to read this repository.
+/// Absent in repositories that never used one; written the first time a large-file manifest is stored.
+pub(crate) const FEATURES_FILE: &str = "features";
+pub(crate) const FEATURE_LARGE_CHUNKED: &str = "large-chunked";
+const KNOWN_FEATURES: &[&str] = &[FEATURE_LARGE_CHUNKED];
 pub(crate) const FORMAT_TEXT: &str = "all-git repository format 1\n";
+/// Checkout streams files of at least this many bytes chunk by chunk instead of reassembling them in memory.
+const STREAM_CHECKOUT_MIN: u64 = 8 << 20;
 const RACY_NS: u64 = 2_000_000_000;
 
 #[derive(Default)]
@@ -309,6 +316,13 @@ impl Repo {
                     return msg(format!("unsupported repository format: {:?}", f.trim()));
                 }
                 let common = crate::worktree::resolve_common(&vcs)?;
+                if let Ok(feat) = fs::read_to_string(common.join(FEATURES_FILE)) {
+                    if let Some(f) = feat.lines().map(str::trim).find(|l| !l.is_empty() && !KNOWN_FEATURES.contains(l)) {
+                        return msg(format!(
+                            "this repository needs the {f:?} feature, which this version does not support; upgrade vcs"
+                        ));
+                    }
+                }
                 let store = LocalStore::open(common.join("objects"))?;
                 return Ok(Repo {
                     wfs: Arc::new(RealFs::new(cur.clone())),
@@ -779,6 +793,21 @@ impl Repo {
                     return Ok((None, true)); // stat cache hit
                 }
             }
+            if m.len() >= vcs_objects::LARGE_THRESHOLD as u64 {
+                // large file: streamed in constant memory, chunk-wise compared with the old manifest first
+                let f = io(&abs, fs::File::open(&abs))?;
+                self.counters.content_reads.fetch_add(1, Ordering::Relaxed);
+                let verified = mt.max(ct).saturating_add(racy) <= t_stat;
+                let id = self.stage_large(&abs, &f, m.len(), old.filter(|e| e.size == m.len()).map(|e| e.id))?;
+                let ne = IndexEntry {
+                    id,
+                    mode,
+                    size: m.len(),
+                    mtime_ns: mt,
+                    ctime_ns: ct,
+                };
+                return Ok((if old == Some(&ne) { None } else { Some(ne) }, verified));
+            }
             let data = io(&abs, fs::read(&abs))?;
             self.counters.content_reads.fetch_add(1, Ordering::Relaxed);
             let verified = mt.max(ct).saturating_add(racy) <= t_stat;
@@ -841,6 +870,45 @@ impl Repo {
         Ok(verified)
     }
 
+    /// Content id of the large file `f` (`len` bytes at `abs`), storing what is not stored yet. When the
+    /// old index entry names a manifest the file still matches chunk by chunk, that id is kept (so an
+    /// unchanged file keeps whatever layout it was first stored in, and nothing is written).
+    fn stage_large(&self, abs: &Path, f: &fs::File, len: u64, old: Option<ObjectId>) -> Result<ObjectId> {
+        let v3_layout = std::env::var("VCS_CHUNK_LAYOUT").is_ok_and(|v| v == "v3");
+        if let Some(oid) = old {
+            if let Ok(Object::Chunked(om)) = self.store.get(&oid) {
+                if om.total_len == len {
+                    if om.large && !v3_layout {
+                        // chunk-wise compare; only the changed stretches are re-chunked
+                        if let Some(id) = vcs_store::bigfile::put_file_incremental(&self.store, f, len, &oid, &om)? {
+                            return Ok(id);
+                        }
+                    } else if io(abs, vcs_store::bigfile::file_matches(&om, f))? {
+                        return Ok(oid);
+                    }
+                }
+            }
+        }
+        // `VCS_CHUNK_LAYOUT=v3` keeps writing the small-chunk manifests older releases can read (whole file in memory).
+        if v3_layout {
+            let data = io(abs, fs::read(abs))?;
+            return Ok(vcs_store::bigfile::put_legacy_content(&self.store, &data)?);
+        }
+        let id = vcs_store::bigfile::put_file(&self.store, f, len)?;
+        self.note_feature(FEATURE_LARGE_CHUNKED)?;
+        Ok(id)
+    }
+
+    /// Record in `<common>/features` that this repository holds objects older releases cannot read.
+    pub(crate) fn note_feature(&self, name: &str) -> Result<()> {
+        let p = self.common.join(FEATURES_FILE);
+        let cur = fs::read_to_string(&p).unwrap_or_default();
+        if cur.lines().any(|l| l == name) {
+            return Ok(());
+        }
+        write_atomic(&p, format!("{cur}{name}\n").as_bytes())
+    }
+
     // ---------- status ----------
 
     pub(crate) fn wt_state(&self, path: &str, e: &IndexEntry, written_ns: u64) -> Result<Wt> {
@@ -876,6 +944,20 @@ impl Repo {
         let ct_ok = e.ctime_ns == 0 || e.ctime_ns == m.ctime_ns;
         if m.len == e.size && m.mtime_ns == e.mtime_ns && ct_ok && m.mode == e.mode && e.stat_edge(self.index_racy_ns) <= written_ns {
             return Ok((Wt::Clean, false));
+        }
+        if e.size >= vcs_objects::CHUNK_THRESHOLD as u64 {
+            // The id of a large file names its length, so a different length is a different content.
+            if m.len != e.size || m.mode != e.mode {
+                return Ok((Wt::Modified, false));
+            }
+            // Same length: compare chunk by chunk against the stored manifest (parallel, no chunking).
+            if let Ok(Object::Chunked(om)) = self.store.get(&e.id) {
+                if let Some(f) = io(&abs(), self.wfs.open_read(path))? {
+                    self.counters.content_reads.fetch_add(1, Ordering::Relaxed);
+                    let same = io(&abs(), vcs_store::bigfile::file_matches(&om, &f))?;
+                    return Ok((if same { Wt::Clean } else { Wt::Modified }, true));
+                }
+            }
         }
         let data = io(&abs(), self.wfs.read(path))?;
         self.counters.content_reads.fetch_add(1, Ordering::Relaxed);
@@ -1927,8 +2009,36 @@ impl Repo {
         // writes: independent per path, so a big batch runs on a bounded pool (8 threads)
         let write_one = |p: &String| -> Result<IndexEntry> {
             let (mode, id) = new[p];
-            let data = self.store.get_content(&id)?;
             let abs = || self.worktree.join(p);
+            let data = match self.store.get(&id)? {
+                Object::Blob(b) => b,
+                Object::Chunked(cm) => {
+                    if mode != EntryMode::Symlink && cm.total_len >= STREAM_CHECKOUT_MIN {
+                        // large file: chunks are fetched, verified and written at their offsets in parallel
+                        let stash: std::sync::Mutex<Option<vcs_store::StoreError>> = std::sync::Mutex::new(None);
+                        let r = self.wfs.write_with(p, cm.total_len, mode, &|f| {
+                            vcs_store::bigfile::write_manifest_to(&self.store, &id, &cm, f).map_err(|e| {
+                                *stash.lock().unwrap() = Some(e);
+                                std::io::Error::other("chunk write failed")
+                            })
+                        });
+                        if let Some(e) = stash.into_inner().unwrap() {
+                            return Err(e.into());
+                        }
+                        if let Some(m) = io(&abs(), r)? {
+                            return Ok(IndexEntry {
+                                id,
+                                mode,
+                                size: m.len,
+                                mtime_ns: m.mtime_ns,
+                                ctime_ns: m.ctime_ns,
+                            });
+                        }
+                    }
+                    vcs_store::bigfile::read_manifest_range(&self.store, &id, &cm, 0, cm.total_len)?
+                }
+                _ => return msg(format!("object {id} is not file content")),
+            };
             let m = if mode == EntryMode::Symlink {
                 io(&abs(), self.wfs.symlink(&data, p))?
             } else if old.contains_key(p) {

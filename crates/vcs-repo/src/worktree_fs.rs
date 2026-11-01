@@ -63,6 +63,23 @@ pub trait WorktreeFs: Send + Sync {
     fn create_new(&self, path: &str, data: &[u8], mode: EntryMode) -> io::Result<FsStat> {
         self.write(path, data, mode)
     }
+    /// Atomically publish a regular file of `len` bytes at `path` (creating parent directories) whose
+    /// content `fill` writes into an already-created temporary file in the same directory, which is
+    /// renamed over `path` only when `fill` succeeded (a failure or crash never leaves a partial file at
+    /// `path`). `Ok(None)` means this filesystem has no file handles to stream into; use [`WorktreeFs::write`].
+    fn write_with(
+        &self,
+        _path: &str,
+        _len: u64,
+        _mode: EntryMode,
+        _fill: &(dyn Fn(&fs::File) -> io::Result<()> + Sync),
+    ) -> io::Result<Option<FsStat>> {
+        Ok(None)
+    }
+    /// An open handle on the regular file at `path` for streaming reads, if this filesystem has real files.
+    fn open_read(&self, _path: &str) -> io::Result<Option<fs::File>> {
+        Ok(None)
+    }
     /// Atomically replace `path` with a symlink to `target`.
     fn symlink(&self, target: &[u8], path: &str) -> io::Result<FsStat>;
     /// Remove a file or symlink.
@@ -230,6 +247,54 @@ impl WorktreeFs for RealFs {
         // rename replaces the path itself (including an existing link); it never writes through it
         fs::rename(&tmp, &abs)?;
         self.stat(path)
+    }
+    fn write_with(
+        &self,
+        path: &str,
+        len: u64,
+        mode: EntryMode,
+        fill: &(dyn Fn(&fs::File) -> io::Result<()> + Sync),
+    ) -> io::Result<Option<FsStat>> {
+        let abs = self.abs(path);
+        let parent = abs.parent().expect("worktree file has a parent");
+        let tmp = parent.join(tmp_name());
+        let f = match create_tmp(&tmp, mode) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                fs::create_dir_all(parent)?;
+                create_tmp(&tmp, mode)?
+            }
+            r => r?,
+        };
+        let res = (|| {
+            f.set_len(0)?;
+            fill(&f)?;
+            if f.metadata()?.len() != len {
+                return Err(io::Error::other("streamed file has the wrong length"));
+            }
+            #[cfg(unix)]
+            if umask_filters(mode) {
+                use std::os::unix::fs::PermissionsExt;
+                f.set_permissions(fs::Permissions::from_mode(want_bits(mode)))?;
+            }
+            Ok(())
+        })();
+        drop(f);
+        match res {
+            Ok(()) => {
+                if let Err(e) = fs::rename(&tmp, &abs) {
+                    let _ = fs::remove_file(&tmp);
+                    return Err(e);
+                }
+                self.stat(path).map(Some)
+            }
+            Err(e) => {
+                let _ = fs::remove_file(&tmp);
+                Err(e)
+            }
+        }
+    }
+    fn open_read(&self, path: &str) -> io::Result<Option<fs::File>> {
+        fs::File::open(self.abs(path)).map(Some)
     }
     fn create_new(&self, path: &str, data: &[u8], mode: EntryMode) -> io::Result<FsStat> {
         let abs = self.abs(path);
