@@ -189,6 +189,12 @@ fn lost_ack_then_retry_is_idempotent() {
     assert_eq!(m.head("a", "main"), Some(y));
 }
 
+/// Flake note: this binary failed once under load. It was run 200 times on a 30-core box with 8
+/// concurrent copies (0 failures), 208 times beside 60 CPU spinners (0 failures) and 60 times
+/// beside 24 `dsync` writers (0 failures): not reproduced. The only timing-dependent path is
+/// `FsBackend`'s CAS lock (10 s give-up while another writer fsyncs), whose critical section
+/// now excludes the fsync; that is a hardening, not a confirmed fix. The concurrent-CAS test
+/// below also asserts that no temp file is left behind by a lost race.
 #[test]
 fn works_on_fs_backend_with_concurrent_threads() {
     let d = tempfile::tempdir().unwrap();
@@ -214,6 +220,8 @@ fn works_on_fs_backend_with_concurrent_threads() {
     }
     let dst = MemoryStore::new();
     assert_eq!(fetch_heads(remote.as_ref(), &dst, None).unwrap().len(), 6);
+    let leftovers = std::fs::read_dir(d.path().join("remote").join(".tmp")).unwrap().count();
+    assert_eq!(leftovers, 0, "lost CAS races must not leave temp files behind");
 }
 
 #[test]

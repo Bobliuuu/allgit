@@ -119,16 +119,25 @@ impl Backend for FsBackend {
     }
     fn put_if_match(&self, key: &str, data: &[u8], tag: &str) -> Result<Option<String>, BackendError> {
         let dest = self.path(key)?;
-        let _l = self.lock()?;
-        match fs::read(&dest) {
-            Ok(cur) if tag_of(&cur) == tag => {}
-            Ok(_) => return Ok(None),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(err(e)),
-        }
+        // Write and fsync the new content BEFORE taking the lock: the fsync is the slow part
+        // under disk load, and holding the CAS lock across it made every other writer queue
+        // behind it (the lock wait gives up after 10 s with `Unavailable`).
         let tmp = self.tmp_file(data)?;
-        fs::rename(&tmp, &dest).map_err(err)?;
-        Ok(Some(tag_of(data)))
+        let swap = (|| {
+            let _l = self.lock()?;
+            match fs::read(&dest) {
+                Ok(cur) if tag_of(&cur) == tag => {}
+                Ok(_) => return Ok(None),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(e) => return Err(err(e)),
+            }
+            fs::rename(&tmp, &dest).map_err(err)?;
+            Ok(Some(tag_of(data)))
+        })();
+        if !matches!(swap, Ok(Some(_))) {
+            let _ = fs::remove_file(&tmp); // lost the race or failed: do not leave the temp file behind
+        }
+        swap
     }
     fn list(&self, prefix: &str) -> Result<Vec<String>, BackendError> {
         let mut v = Vec::new();
