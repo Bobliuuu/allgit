@@ -2244,7 +2244,7 @@ Usage: vcs repack [OPTIONS]
 Options:
       --auto             Only if loose objects exceed gc.autoPackLimit, and only those older than the grace period
   -C <DIR>               Run as if vcs was started in <DIR> (applied before repository discovery)
-      --format <FORMAT>  Pack format: v2 (zstd, fanout index; the default for new packs), v1 (rollback for older binaries) or v3 (independently compressed blocks, for compacted packs)
+      --format <FORMAT>  Pack format: v2 (zstd, fanout index; the default for new packs), v1 (rollback for older binaries), v3 (independently compressed blocks, for compacted packs) or v4 (v2 plus delta entries; local only, opt-in)
       --json             Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>    PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-compact       Do not merge small packs afterwards (by default packs of similar size are merged geometrically, with commits and trees first and file content grouped by path)

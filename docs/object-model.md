@@ -212,6 +212,21 @@ v3 pack back except compacting it again with `--pack-format v2` (`--compact` mer
 other way); plain `vcs repack` leaves existing packs alone. `VCS_PACK_FORMAT=v1` makes any process (GC rewrites, publish)
 write v1. Packs already uploaded to a remote as v2 stay v2 until re-uploaded; older binaries cannot read them.
 
+### Pack and index format v4: delta entries (#250, opt-in, local only)
+
+`VCSPACK4`/`VCSPIDX4` are v2 plus codec 2: `[2][varint distance][zstd(delta)]`, where the base is the entry that starts
+`distance` bytes earlier in the same pack (so a base always precedes its delta and chains cannot loop). Entries stay
+per object like v2, so a read costs the chain, not a block. The delta is Git's copy/insert encoding (`vcs_store::delta`).
+The writer deltifies only blobs and trees of at least 64 bytes, finds similar objects with a path-free content sketch, tries
+8 neighbours, keeps chains at most 8 deep and only keeps a delta that beats the whole v2 payload. Readers follow at most 50
+links, bound every size, and still check the object hash. Why and how much (and how it compares with v3 blocks):
+[delta-gate.md](research/storage/delta-gate.md).
+
+Opt in with `vcs repack --format v4` or `VCS_PACK_FORMAT=v4`. GC keeps a v4 pack as v4 when it rewrites it. Packs built for
+the network (`build_pack`, publish) stay v2 even with the variable set, and `upload_pack` refuses a v4 pack, because remote
+readers fetch one entry by byte range and cannot resolve a base. Rollback: `vcs repack --format v2` rewrites every v4 pack
+as v2; older binaries cannot read v4 packs.
+
 ### When packs help, and when they do not
 
 Measured (docs/benchmarks.md, 100 files x 256 KiB random data x 4 versions): with no compression or deltas, a pack is

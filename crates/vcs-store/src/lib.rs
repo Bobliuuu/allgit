@@ -6,6 +6,7 @@
 
 pub use vcs_objects::chunk;
 mod compact;
+pub mod delta;
 pub mod layout;
 pub mod pack;
 pub use compact::LocalCompaction;
@@ -478,7 +479,13 @@ impl LocalStore {
                     if keep.is_empty() {
                         st.packs_removed += 1;
                     } else {
-                        done.push(pack::write_pack(&self.dir.join("pack"), &self.dir.join("tmp"), keep)?);
+                        // A delta pack (v4) stays a delta pack (GC must not silently undo the opt-in); other formats follow the env default as before.
+                        let fmt = if old.version() == 4 {
+                            pack::PackFormat::V4
+                        } else {
+                            pack::PackFormat::from_env()
+                        };
+                        done.push(pack::write_pack_fmt(&self.dir.join("pack"), &self.dir.join("tmp"), keep, fmt)?);
                         st.packs_rewritten += 1;
                     }
                     st.packed_dropped += hit;
