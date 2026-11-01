@@ -1,0 +1,202 @@
+{
+  "classes": [
+    {
+      "adaptive": [
+        {
+          "physical_bytes": 27672217,
+          "policy": "oracle_min_per_file_all_codecs(ignores time)"
+        },
+        {
+          "physical_bytes": 28547057,
+          "policy": "oracle_min_per_file_among_none,lz4,zstd1,zstd3"
+        },
+        {
+          "files_stored_raw": 9,
+          "physical_bytes": 33554430,
+          "policy": "probe16K_lz4>=0.95?store:zstd3",
+          "probe_MBps": 2550.656449464635
+        }
+      ],
+      "class": "model_ckpt",
+      "codecs": [
+        {
+          "codec": "none",
+          "compress_MBps_median": 17369.596400438764,
+          "compress_MBps_min_max": [
+            4868.686868686869,
+            17785.860014343423
+          ],
+          "compress_peak_rss_delta_KiB": 3636,
+          "decompress_MBps_median": 12316.142073177223,
+          "decompress_peak_rss_delta_KiB": 3640,
+          "physical_bytes": 33554430,
+          "ratio": 1.0,
+          "reps": 3
+        },
+        {
+          "codec": "lz4",
+          "compress_MBps_median": 1287.2012960386558,
+          "compress_MBps_min_max": [
+            1278.1649604750628,
+            1287.471061145497
+          ],
+          "compress_peak_rss_delta_KiB": 3584,
+          "decompress_MBps_median": 7741.492288830515,
+          "decompress_peak_rss_delta_KiB": 3512,
+          "physical_bytes": 33686028,
+          "ratio": 0.9960933951607474,
+          "reps": 3
+        },
+        {
+          "codec": "zstd1",
+          "compress_MBps_median": 536.9557877448046,
+          "compress_MBps_min_max": [
+            532.807925458405,
+            537.6672641489813
+          ],
+          "compress_peak_rss_delta_KiB": 412,
+          "decompress_MBps_median": 893.0581494663797,
+          "decompress_peak_rss_delta_KiB": 3832,
+          "physical_bytes": 28547057,
+          "ratio": 1.1754076786269072,
+          "reps": 3
+        },
+        {
+          "codec": "zstd3",
+          "compress_MBps_median": 431.9720517638374,
+          "compress_MBps_min_max": [
+            430.36269565354127,
+            431.9811721756864
+          ],
+          "compress_peak_rss_delta_KiB": 584,
+          "decompress_MBps_median": 847.1207063372295,
+          "decompress_peak_rss_delta_KiB": 3720,
+          "physical_bytes": 28559674,
+          "ratio": 1.1748884108411042,
+          "reps": 3
+        },
+        {
+          "codec": "zstd9",
+          "compress_MBps_median": 123.75548797418674,
+          "compress_MBps_min_max": [
+            123.44075000864524,
+            125.52881853751899
+          ],
+          "compress_peak_rss_delta_KiB": 10604,
+          "decompress_MBps_median": 829.0847423504051,
+          "decompress_peak_rss_delta_KiB": 3724,
+          "physical_bytes": 28507914,
+          "ratio": 1.1770215807442101,
+          "reps": 3
+        },
+        {
+          "codec": "zstd19",
+          "compress_MBps_median": 6.051532156689443,
+          "compress_MBps_min_max": [
+            6.051532156689443,
+            6.051532156689443
+          ],
+          "compress_peak_rss_delta_KiB": 50168,
+          "decompress_MBps_median": 641.9699719399543,
+          "decompress_peak_rss_delta_KiB": 3724,
+          "physical_bytes": 28487445,
+          "ratio": 1.177867302595933,
+          "reps": 1
+        },
+        {
+          "codec": "brotli5",
+          "compress_MBps_median": 41.286561458477124,
+          "compress_MBps_min_max": [
+            40.898363196054845,
+            41.83441136560138
+          ],
+          "compress_peak_rss_delta_KiB": 19436,
+          "decompress_MBps_median": 148.93370444517515,
+          "decompress_peak_rss_delta_KiB": 0,
+          "physical_bytes": 28510451,
+          "ratio": 1.176916843581324,
+          "reps": 3
+        },
+        {
+          "codec": "brotli9",
+          "compress_MBps_median": 6.818449523143211,
+          "compress_MBps_min_max": [
+            6.818449523143211,
+            6.818449523143211
+          ],
+          "compress_peak_rss_delta_KiB": 44296,
+          "decompress_MBps_median": 143.7292743673801,
+          "decompress_peak_rss_delta_KiB": 0,
+          "physical_bytes": 28483016,
+          "ratio": 1.178050456454471,
+          "reps": 1
+        },
+        {
+          "codec": "brotli11",
+          "compress_MBps_median": 0.9773163975855619,
+          "compress_MBps_min_max": [
+            0.9773163975855619,
+            0.9773163975855619
+          ],
+          "compress_peak_rss_delta_KiB": 58576,
+          "decompress_MBps_median": 105.36941481624903,
+          "decompress_peak_rss_delta_KiB": 0,
+          "physical_bytes": 27672595,
+          "ratio": 1.2125509009906732,
+          "reps": 1
+        }
+      ],
+      "dictionary": null,
+      "sample_bytes": 33554430,
+      "sample_files": 9
+    }
+  ],
+  "dataset": {
+    "by_class": {
+      "model_ckpt": {
+        "blobs": 9,
+        "bytes": 1409304528
+      }
+    },
+    "files_per_rev": [
+      3,
+      3,
+      3
+    ],
+    "logical_bytes_all_revisions": 1409304528,
+    "logical_bytes_last_revision": 469768176,
+    "name": "synth_ml",
+    "revisions": 3,
+    "unique_blobs": 9,
+    "unique_bytes": 1409304528
+  },
+  "experiment": "codecs",
+  "machine": {
+    "args": [
+      "crates/vcs-compress-lab/target/release/compress-lab",
+      "codecs",
+      "--name",
+      "synth_ml",
+      "--source",
+      "dirrevs:/home/ubuntu/rt/lab_data/synth_ml",
+      "--out",
+      "/home/ubuntu/rt/lab_out/synth_ml_codecs.json"
+    ],
+    "cpu": "AMD EPYC 7J13 64-Core Processor",
+    "crates": {
+      "blake3": "1",
+      "brotli": "9",
+      "fastcdc": "5",
+      "lz4_flex": "0.14",
+      "zstd": "0.14"
+    },
+    "kernel": "6.8.0-1046-nvidia",
+    "loadavg_at_start": "15.46 20.11 16.43 9/710 3273369",
+    "memtotal": "MemTotal:       226763280 kB",
+    "nproc": 30,
+    "zstd": "1.5.7"
+  },
+  "max_file_window": 16777216,
+  "sample_cap_bytes": 67108864,
+  "source_spec": "dirrevs:/home/ubuntu/rt/lab_data/synth_ml"
+}

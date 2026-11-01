@@ -48,7 +48,11 @@ fn safetensors(tensors: &[(String, Vec<u8>)], dtype: &str) -> Vec<u8> {
         if i > 0 {
             hdr.push(',');
         }
-        hdr += &format!("\"{n}\":{{\"dtype\":\"{dtype}\",\"shape\":[{}],\"data_offsets\":[{off},{}]}}", d.len(), off + d.len());
+        hdr += &format!(
+            "\"{n}\":{{\"dtype\":\"{dtype}\",\"shape\":[{}],\"data_offsets\":[{off},{}]}}",
+            d.len(),
+            off + d.len()
+        );
         off += d.len();
     }
     hdr.push('}');
@@ -85,7 +89,12 @@ pub fn generate(kind: &str, out: &Path, mib: usize, seed: u64) {
             for (ri, ck) in [("r1_base", &base), ("r2_partial_finetune", &partial), ("r3_full_finetune", &full)] {
                 let d = out.join(ri);
                 std::fs::create_dir_all(&d).unwrap();
-                let named = |f: &dyn Fn(&[f32]) -> Vec<u8>| ck.iter().enumerate().map(|(i, t)| (format!("layer{i}.weight"), f(t))).collect::<Vec<_>>();
+                let named = |f: &dyn Fn(&[f32]) -> Vec<u8>| {
+                    ck.iter()
+                        .enumerate()
+                        .map(|(i, t)| (format!("layer{i}.weight"), f(t)))
+                        .collect::<Vec<_>>()
+                };
                 std::fs::write(d.join("model-fp32.safetensors"), safetensors(&named(&|t| to_bytes_f32(t)), "F32")).unwrap();
                 std::fs::write(d.join("model-bf16.safetensors"), safetensors(&named(&|t| to_bytes_bf16(t)), "BF16")).unwrap();
                 std::fs::write(d.join("model-q8.gguf"), safetensors(&named(&|t| to_bytes_i8(t)), "I8")).unwrap();

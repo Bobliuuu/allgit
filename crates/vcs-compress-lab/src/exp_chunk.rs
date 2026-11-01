@@ -20,7 +20,13 @@ pub enum Strat {
 }
 impl Strat {
     pub fn name(&self) -> String {
-        let k = |n: usize| if n >= 1 << 20 { format!("{}M", n >> 20) } else { format!("{}K", n >> 10) };
+        let k = |n: usize| {
+            if n >= 1 << 20 {
+                format!("{}M", n >> 20)
+            } else {
+                format!("{}K", n >> 10)
+            }
+        };
         match self {
             Strat::Whole => "whole".into(),
             Strat::Fixed(n) => format!("fixed{}", k(*n)),
@@ -89,7 +95,7 @@ const MANIFEST_HDR: u64 = 16; // per multi-chunk file manifest header
 const MANIFEST_ENTRY: u64 = 36; // 32-byte chunk id + 4-byte length
 const INDEX_ENTRY: u64 = 44; // 32-byte id + 8-byte pack offset + 4-byte stored length
 
-pub fn run(c: &Corpus, reps: usize, threads: usize) -> Value {
+pub fn run(c: &Corpus, reps: usize, threads: usize, zone_depth: usize) -> Value {
     let strats = all_strats();
     let rb = Rabin::new();
     let total_unique: usize = c.blobs.iter().map(|b| b.data.len()).sum();
@@ -124,7 +130,7 @@ pub fn run(c: &Corpus, reps: usize, threads: usize) -> Value {
     let results: Vec<Value> = std::thread::scope(|sc| {
         let mut out: Vec<Value> = Vec::new();
         for batch in strats.chunks(threads.max(1)) {
-            let hs: Vec<_> = batch.iter().map(|s| sc.spawn(|| analyze(c, s, &rb))).collect();
+            let hs: Vec<_> = batch.iter().map(|s| sc.spawn(|| analyze(c, s, &rb, zone_depth))).collect();
             for h in hs {
                 out.push(h.join().unwrap());
             }
@@ -138,12 +144,12 @@ pub fn run(c: &Corpus, reps: usize, threads: usize) -> Value {
         r["chunk_pass_peak_rss_delta_KiB"] = json!(pk);
         rows.push(r);
     }
-    json!({"experiment": "chunking", "dataset": c.summary(), "compression_after_chunking": "zstd3 per unique chunk",
+    json!({"experiment": "chunking", "zone_depth": zone_depth, "zones": c.revs.iter().flat_map(|r| r.iter().map(|e| Corpus::zone_of(&e.path, zone_depth))).collect::<HashSet<_>>().len(), "dataset": c.summary(), "compression_after_chunking": "zstd3 per unique chunk",
            "overhead_model": {"manifest_hdr_bytes": MANIFEST_HDR, "manifest_entry_bytes": MANIFEST_ENTRY, "index_entry_bytes": INDEX_ENTRY},
            "strategies": rows})
 }
 
-fn analyze(c: &Corpus, s: &Strat, rb: &Rabin) -> Value {
+fn analyze(c: &Corpus, s: &Strat, rb: &Rabin, zone_depth: usize) -> Value {
     let t0 = Instant::now();
     let mut z = Engine::new(Codec::Zstd(3));
     // per blob: chunk list (key, len); global chunk map key -> (raw len, comp len, class)
@@ -170,7 +176,7 @@ fn analyze(c: &Corpus, s: &Strat, rb: &Rabin) -> Value {
         let mut seen: HashSet<u128> = HashSet::new();
         let (mut logical, mut new_raw, mut new_comp, mut st_raw, mut st_comp) = (0u64, 0u64, 0u64, 0u64, 0u64);
         for e in rev {
-            let zone = Corpus::zone_of(&e.path);
+            let zone = Corpus::zone_of(&e.path, zone_depth);
             for &(k, l) in &bchunks[e.blob] {
                 logical += l as u64;
                 let comp = map[&k].1 as u64;
@@ -182,7 +188,7 @@ fn analyze(c: &Corpus, s: &Strat, rb: &Rabin) -> Value {
                     new_raw += l as u64;
                     new_comp += comp;
                 }
-                zoned.insert((zone.to_string(), k));
+                zoned.insert((zone.clone(), k));
             }
         }
         sum_standalone_raw += st_raw;
