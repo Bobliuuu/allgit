@@ -178,7 +178,7 @@ vcs lock --lease-secs 60 main.rs && vcs locks   # advisory lock recorded on the 
 | Garbage collection | 🟡 | `vcs gc` really deletes unreachable objects older than a grace period (local); `gc --remote --yes` works for **directory remotes only**. S3 and HTTP remote GC is not built ([gc.md](docs/gc.md)) |
 | Git interop | 🟡 | `import-git` (fast-export, with symlinks and tags), `export-git` (incremental), and a `git-remote-allgit` helper so `git` can talk to an allgit repo ([interop.md](docs/interop.md)) |
 | Perforce | 🟡 | `import-p4` reads recorded `p4` output from a fixture directory. Tested on hand-written fixtures only ([import-p4.md](docs/import-p4.md)) |
-| Speed work | 🟡 | commit-graph cache, directory-listing cache for `status`, stat-cache `add`, cache-tree `commit`, parallel checkout/fsck. See [Performance](#-performance) |
+| Speed work | 🟡 | commit-graph cache, directory-listing cache for `status`, stat-cache `add`, cache-tree `commit`, parallel checkout/fsck. Some cells are still slower than git: see [Performance](#-performance) |
 | Hardening | 🟡 | fuzz targets for decoders, import and S3 list parsing; threat review in [security.md](docs/security.md) |
 | Windows | ⬜ | CI only *compiles* for Windows (advisory job). The code has never been run there |
 
@@ -188,47 +188,71 @@ Known gaps are listed in [docs/architecture.md](docs/architecture.md#known-limit
 
 - **S3 was measured once**: one run against real AWS S3 (us-east-1) from a Mac, about 2,700 requests. Other clouds (R2, GCS, B2) are unmeasured.
 - **No cloud TLS interop test.** HTTPS for `s3://` and for `vcs-server` is implemented with rustls, but only exercised against local servers, not against a real cloud endpoint or a public CA.
+- **The tables comparing vcs with Perforce, walgit, Jujutsu, Sapling, Mercurial and others use an older `vcs` build (`28e2980`)** and were not re-run; only the git comparison is current.
 - **Perforce was run once, on loopback only.** Real `p4d` 2026.1 on the same box, no network latency, journal off, shared noisy machine. The importer was validated against real `p4` output and found real bugs ([details](docs/research/perforce-benchmark.md)).
-- **walgit was measured only on remote workflows, on loopback, with a local RustFS** (see [vs Perforce and walgit](#vs-perforce-and-walgit)); No cloud numbers.
+- **walgit was measured only on remote workflows, on loopback, with a local RustFS** (see [Compared with other version control tools](#compared-with-other-version-control-tools)); no cloud numbers.
 - **Windows has never been run**, only compiled.
 - **The Claude merge assistant has never been called live.** No quality or cost numbers exist.
 - **Structural and rename-aware merge** are measured on generated and replayed histories, not on a large body of real-world merges.
-- **No remote GC for S3/HTTP**, no pack compression or delta compression, no filesystem monitor, and `status` on 100k-file flat repos is still slower than git (see below).
+- **No remote GC for S3/HTTP**, no pack compression or delta compression, and the optional status watcher (feature `watcher`) is not part of the published numbers. `status` and some other cells are slower than git (see [Performance](#-performance)).
 - Locks are not enforced without `vcs-server` in front of the storage.
 
 ## ⚡ Performance
 
-Numbers come from [docs/benchmarks.md](docs/benchmarks.md) and [docs/research/storage/s3-aws-results.md](docs/research/storage/s3-aws-results.md); nothing is estimated. Method, raw runs and caveats are there.
+**Short version: we do not claim that vcs is faster than git.** Interleaved, same-box measurements (below) show vcs ahead of git in some cells and behind in others, and the cells where it is behind are listed explicitly. Every number in this section comes from a script in `scripts/` and a raw data file in `docs/research/`; if a number has no table behind it, it is not claimed. Method for the table below: [interleaved-comparison.md](docs/research/interleaved-comparison.md).
 
-**100k files, vcs vs git** (Linux box, AMD EPYC 7J13, ext4, git 2.34.1, 5 runs, median, warm cache, 2026-11-01). The vcs runs happened at higher machine load than the git runs, so they are pessimistic for vcs. Median ms, git / vcs:
+### vcs vs git, 100k files
 
-| workflow | flat | deep | binary (4 KiB files) |
+Build: current `origin/main` at `08ff4cc`, release. Layout: **flat, 100,000 files** (`datagen flat 100000`, seed 42), warm cache, 5 interleaved runs per cell (every round runs git and vcs once in random order), median of 5. Ratio = median of the per-run vcs/git ratios with a bootstrap 95% interval; **below 1 means vcs used less, above 1 means vcs used more.** CPU = user+sys of the command and its children; wall is shown too. Harness: `scripts/bench_compare.sh`; raw runs: [docs/research/interleaved-data/readmefix/](docs/research/interleaved-data/readmefix/).
+
+**Box 1: AWS c6i.4xlarge, 16 vCPU, quiet except for the benchmark's own data generation (load1 3 to 8 during the timed rounds, a few rounds up to 22), git 2.43.0, 2026-11-01. This is the run to trust.**
+
+| cell (flat 100k) | git CPU ms | vcs CPU ms | CPU ratio vcs/git | git wall ms | vcs wall ms | wall ratio |
+|---|---|---|---|---|---|---|
+| add . (fresh index) | 4,825 | 1,896 | 0.40 [0.37, 0.41] | 7,954 | 661 | 0.08 [0.04, 0.13] |
+| commit (all staged) | 461 | 273 | 0.58 [0.57, 0.60] | 355 | 260 | 0.74 [0.39, 0.99] |
+| status, clean | 175 | 303 | **1.73** [1.68, 2.02] | 64 | 70 | 1.10 [1.02, 1.21] |
+| status, 1% modified | 181 | 311 | **1.72** [1.66, 1.80] | 67 | 66 | 0.99 [0.95, 1.01] |
+| log (50 commits) | 3 | 3 | 1.03 [0.93, 1.04] | 3 | 3 | 1.03 [0.91, 1.06] |
+| checkout (1% differ) | 351 | 474 | **1.33** [1.11, 1.39] | 237 | 235 | 0.88 [0.82, 1.96] |
+
+**Box 2 (cross-check): shared 30-core Lambda box, load1 13 to 48 (very noisy; CPU max/min per cell up to 6x), git 2.56.0**, same build and method:
+
+| cell (flat 100k) | git CPU ms | vcs CPU ms | CPU ratio vcs/git | git wall ms | vcs wall ms | wall ratio |
+|---|---|---|---|---|---|---|
+| add . (fresh index) | 12,249 | 2,988 | 0.26 [0.22, 0.45] | 27,948 | 1,709 | 0.07 [0.03, 0.11] |
+| commit (all staged) | 2,014 | 324 | 0.16 [0.10, 0.37] | 1,307 | 343 | 0.19 [0.15, 0.49] |
+| status, clean | 1,501 | 1,487 | 0.99 [0.95, 1.67] | 234 | 245 | 1.02 [0.97, 1.10] |
+| status, 1% modified | 1,520 | 1,544 | 1.02 [0.92, 1.40] | 237 | 245 | 0.96 [0.90, 1.04] |
+| log (50 commits) | 12 | 15 | 1.22 [1.11, 1.40] | 26 | 42 | 1.51 [0.64, 1.77] |
+| checkout (1% differ) | 634 | 725 | 1.14 [0.33, 3.48] | 562 | 397 | 0.54 [0.40, 0.75] |
+
+**What this says, and what it does not**
+
+- vcs used less CPU than git for `add` and `commit` on flat 100k on both boxes.
+- **Cells where vcs is slower than git (CPU):** clean and modified `status` on the quiet box (about 1.7x git; on the noisy box about equal, with intervals that include 1), `checkout` (1.33x on the quiet box; the noisy box's interval is too wide to say), and `log` on the noisy box (1.2x; equal on the quiet box). Wall time for `status` is within 10% of git on both boxes; vcs spends more CPU to get there.
+- An earlier version of this README said vcs was faster than git on `checkout` (285 vs 584 ms) and `log`. Interleaved runs do **not** reproduce that, so those claims are removed.
+- **Not re-measured:** the deep and binary layouts (the old numbers for them were not reproduced either and are dropped), 10k-file repos (see [interleaved-comparison.md](docs/research/interleaved-comparison.md) for an older, noisy 10k run), a git with fsmonitor, vcs with the optional `watcher` feature, cold cache, and any machine other than these two.
+
+### Compared with other version control tools
+
+Everything below was measured **earlier, with older `vcs` builds and often on other machines**. The `vcs` columns in these tables are **stale**: they predate the interleaved re-run above and must not be compared with it. Each table says which tool versions, machine and build it used. The git/vcs table above is the only current vcs-vs-git comparison.
+
+**Perforce (Helix Core)**, real `p4d` 2026.1 server on loopback, same 100k-file datasets, median of 5 runs, ms wall, Lambda box (30 cores) at load1 18 to 87, 2026-11-01. Perforce is client/server, so every command is a round trip to a server process; git and vcs are local programs. **This is not apples to apples** and the table has no git or vcs column on purpose: the old git/vcs numbers it used to sit next to were not reproduced by later interleaved runs. Do not read differences below about 2x as real.
+
+| workflow | Perforce flat | deep | binary |
 |---|---|---|---|
-| add . (fresh index) | 9,562 / 12,510 | 11,593 / 14,676 | 22,252 / 13,959 |
-| commit (all staged) | 647 / 291 | 15,861 / 12,517 | 639 / 344 |
-| status, clean | 106 / 188 | 1,032 / 508 | 104 / 521 |
-| log (50 commits) | 19.9 / 4.3 | 35.0 / 4.5 | 21.4 / 4.1 |
-| checkout (1% differ) | 584 / 285 | 748 / 497 | 577 / 297 |
+| add everything (`reconcile -a`) | 5,348 | 20,233 | 7,694 |
+| initial submit / commit (100k files) | 67,985 | 105,148 | 64,297 |
+| status, clean (`reconcile -n`) | 2,303 | 5,578 | 2,983 |
+| submit 1 changed file | 44 | 21 | 13 |
+| log, 50 entries (`changes -m 50`) | 54 | 50 | 49 |
+| checkout, 1% differ (`sync @1->@2`) | 719 | 653 | 405 |
+| full clone (`sync` into empty workspace) | 32,203 | 37,013 | 16,564 |
 
-So: vcs wins `commit`, `log` and `checkout` here, git still wins `add` on text and `status` on flat and binary. An earlier run on the same box had vcs 2x to 4x slower in several of these cells ([before and after](docs/benchmarks.md#100k-files-again-on-current-main-git-vs-vcs-2026-11-01-before-and-after)); that run was at different machine load, so treat the size of the gain as approximate.
+What this says: Perforce's "add and submit everything" costs 64 to 105 s because the server copies and stores every file; status takes seconds because it compares the whole workspace with the server's have list. A one-file submit is fast (13 to 44 ms). Perforce's submit includes the work of git's `add` plus `commit`, so it cannot be set against either alone. Not measured: remote server latency, multiple clients, `p4 sync --parallel`, cold cache. Full method, licence notes and disk usage: [perforce-benchmark.md](docs/research/perforce-benchmark.md).
 
-### vs other version control
-
-**Perforce (Helix Core)**, real `p4d` 2026.1 server on loopback, same 100k-file datasets, median of 5 runs, ms. Perforce is client/server, so every command is a round trip to a server process; git and vcs are local programs. **This is not apples to apples**, and the Perforce run was on a different day and at much higher machine load (load1 18 to 87) than the git/vcs table above. Do not read differences below about 2x as real.
-
-| workflow | Perforce flat | deep | binary | git / vcs flat (table above) |
-|---|---|---|---|---|
-| add everything (`reconcile -a`) | 5,348 | 20,233 | 7,694 | 9,562 / 12,510 |
-| initial submit / commit (100k files) | 67,985 | 105,148 | 64,297 | 647 / 291 (`commit` only, after `add`) |
-| status, clean (`reconcile -n`) | 2,303 | 5,578 | 2,983 | 106 / 188 |
-| submit 1 changed file | 44 | 21 | 13 | not measured at 100k |
-| log, 50 entries (`changes -m 50`) | 54 | 50 | 49 | 19.9 / 4.3 |
-| checkout, 1% differ (`sync @1->@2`) | 719 | 653 | 405 | 584 / 285 |
-| full clone (`sync` into empty workspace) | 32,203 | 37,013 | 16,564 | not measured |
-
-What this says: Perforce's "add and submit everything" costs 64 to 105 s because the server copies and stores every file; status takes seconds because it compares the whole workspace with the server's have list. A one-file submit is fast (13 to 44 ms). The `commit` cells are not the same work (git/vcs `commit` follows an `add`), so compare sums only against the doc. Not measured: remote server latency, multiple clients, `p4 sync --parallel`, cold cache. Full method, licence notes and disk usage: [perforce-benchmark.md](docs/research/perforce-benchmark.md).
-
-**walgit** ([tobi/walgit](https://github.com/tobi/walgit), rev `80e9a20b29e2`) is a Git *server*; it has no client. Its `add`, `commit`, `status`, `log` and `checkout` are stock `git` and cost what the git column of the local table in [docs/benchmarks.md](docs/benchmarks.md) says; there is nothing walgit-specific to time there. What was measured is the remote path: git over HTTP to walgit-server backed by a local RustFS (S3-compatible, same box, loopback), against `vcs` through `vcs-server` backed by the same RustFS, and plain git to a bare repo on local disk (`file://`, the lower bound). Format per cell: **git / walgit / vcs-server**, milliseconds, median of 5 (10k) or 3 (100k); history of 50 one-file commits; git 2.56.0; 30-core shared box, load1 at start 12 to 22 (min-max per cell are in the JSON); warm caches.
+**walgit** ([tobi/walgit](https://github.com/tobi/walgit), rev `80e9a20b29e2`) is a Git *server*; it has no client. Its `add`, `commit`, `status`, `log` and `checkout` are stock `git` and cost what plain git costs (see the git column above); there is nothing walgit-specific to time there. What was measured is the remote path: git over HTTP to walgit-server backed by a local RustFS (S3-compatible, same box, loopback), against `vcs` (build `28e2980`, **stale**) through `vcs-server` backed by the same RustFS, and plain git to a bare repo on local disk (`file://`, the lower bound). Format per cell: **git / walgit / vcs-server**, milliseconds, median of 5 (10k) or 3 (100k); history of 50 one-file commits; git 2.56.0; 30-core shared Lambda box, load1 at start 12 to 22 (min-max per cell are in the JSON); warm caches; measured 2026-11-01; not re-run on current main.
 
 | ms, median | flat 10k | deep 10k | binary 10k | flat 100k | deep 100k | binary 100k |
 |---|---|---|---|---|---|---|
@@ -238,9 +262,9 @@ What this says: Perforce's "add and submit everything" costs 64 to 105 s because
 | partial clone, 10% (warm) | 169 / 556 / 274 | 551 / 506 / 821 | 184 / 207 / 336 | 1456 / 1425 / 1849 | 2613 / 3071 / 3860 | 1713 / 2004 / 2464 |
 | fetch 1 commit (warm) | 27 / 52 / 199 | 59 / 72 / 331 | 27 / 37 / 212 | 84 / 102 / 1463 | 203 / 231 / 1196 | 170 / 121 / 686 |
 
-Reading it: for pushes and clones walgit is within noise of plain git or somewhat slower (flat 10k initial push 2.9 s vs 2.0 s, 1-file push 102 ms vs 30 ms); it serves reads from a local copy on the server (a warm full clone is 4 conditional GETs and 0 payload bytes at the object store, but a cold server fetches the whole 42 MiB pack set once). `vcs` publishes faster (loose objects uploaded in 4 PUTs; git must pack first) but its full clone is 2.5x to 4.3x slower than git and its fetch of one commit is 4x to 17x slower and reads tens of MiB from the store on 100k files: a measured weakness, cause not yet diagnosed. The `vcs` 10% column is a zone subscription (only that zone's history); the git/walgit one is `--filter=blob:none` plus a sparse cone (full history, lazy blobs), so they are not the same operation. The binary-100k `vcs` column needed `vcs-server --max-body` raised: the default 256 MiB limit made the 390 MiB publish fail with a connection reset. Not measured: real networks or clouds, TLS, concurrent clients. With git 2.34.1, 9 of walgit's 57 server tests failed; with 2.56.0, 56 pass and 1 fails (needs the web UI build). Details, request counts, CPU and caveats: [docs/research/walgit-benchmark.md](docs/research/walgit-benchmark.md). Design comparison: [walgit-analysis.md](docs/research/storage/walgit-analysis.md).
+Reading it: for pushes and clones walgit is within noise of plain git or somewhat slower (flat 10k initial push 2.9 s vs 2.0 s, 1-file push 102 ms vs 30 ms); it serves reads from a local copy on the server (a warm full clone is 4 conditional GETs and 0 payload bytes at the object store, but a cold server fetches the whole 42 MiB pack set once). In this older measurement `vcs` had the lower time in all 6 initial-push cells and 5 of 6 one-file-push cells (flat 10k: 37 ms vs git 30 ms), but its full clone is 2.5x to 4.3x slower than git and its fetch of one commit is 4x to 17x slower and reads tens of MiB from the store on 100k files: a measured weakness, cause not yet diagnosed. The `vcs` 10% column is a zone subscription (only that zone's history); the git/walgit one is `--filter=blob:none` plus a sparse cone (full history, lazy blobs), so they are not the same operation. The binary-100k `vcs` column needed `vcs-server --max-body` raised: the default 256 MiB limit made the 390 MiB publish fail with a connection reset. Not measured: real networks or clouds, TLS, concurrent clients. With git 2.34.1, 9 of walgit's 57 server tests failed; with 2.56.0, 56 pass and 1 fails (needs the web UI build). Details, request counts, CPU and caveats: [docs/research/walgit-benchmark.md](docs/research/walgit-benchmark.md). Design comparison: [walgit-analysis.md](docs/research/storage/walgit-analysis.md).
 
-**Jujutsu (jj 0.46.0, git backend, official Linux binary)**, same 100k-file datasets, one 8 vCPU AWS box (AMD EPYC 7R32, load1 1 to 10), git 2.43.0, interleaved runs, median of 5, ms wall. jj has no staging area, so its "add" is the first snapshot (`jj status`). Format: **git / vcs / jj**.
+**Jujutsu (jj 0.46.0, git backend, official Linux binary)**, same 100k-file datasets, one 8 vCPU AWS box (AMD EPYC 7R32, load1 1 to 10), git 2.43.0, `vcs` build `28e2980` (**stale**: not re-run, because the AWS boxes were unavailable), interleaved runs, median of 5, ms wall. jj has no staging area, so its "add" is the first snapshot (`jj status`). Format: **git / vcs / jj**.
 
 | workflow | flat | deep | binary |
 |---|---|---|---|
@@ -250,11 +274,11 @@ Reading it: for pushes and clones walgit is within noise of plain git or somewha
 | checkout, 1% differ | 343 / 541 / 382 | 476 / 579 / 1,442 | 352 / 540 / 380 |
 | undo last commit (git: `reset --hard`; vcs: `op undo`; jj: `undo`) | 268 / 632 / 130 | 571 / 3,087 / 1,025 | 272 / 633 / 131 |
 
-jj pays a large one-time cost to snapshot 100k files (2 to 7 minutes, single-threaded) and then has the fastest clean `status` on flat and binary, but a dirty `status` and `log` are slower than git and vcs. `vcs op undo` is the slowest of the three undo paths here. jj's store was 2x to 12x larger on disk (cause not investigated). Qualitatively jj is the closest design relative: operation log with undo for the whole repo view, conflicts stored in commits, working copy as a commit; allgit has a narrower op log, explicit staging, and conflicts as in-progress merge state, but adds zones, lazy fetch and a CAS-manifest remote. The `vcs` build here is newer than the one behind the table above. Not measured: colocated jj repos, fsmonitor, networked remotes, jj rebase/conflicts. Raw runs, method and caveats: [jujutsu-benchmark.md](docs/research/jujutsu-benchmark.md).
+jj pays a large one-time cost to snapshot 100k files (2 to 7 minutes, single-threaded) and then has the fastest clean `status` on flat and binary, but a dirty `status` and `log` are slower than git and vcs. `vcs op undo` is the slowest of the three undo paths here. Qualitatively jj is the closest design relative: operation log with undo for the whole repo view, conflicts stored in commits, working copy as a commit; allgit has a narrower op log, explicit staging, and conflicts as in-progress merge state, but adds zones, lazy fetch and a CAS-manifest remote. Not measured: colocated jj repos, fsmonitor, networked remotes, jj rebase/conflicts. Raw runs, method and caveats: [jujutsu-benchmark.md](docs/research/jujutsu-benchmark.md).
 
 **Real S3** (client on a Mac over home internet to us-east-1, one run, 20 to 40 requests per cell): every request costs about 150 ms regardless of kind or size (p50: HEAD 153, 1 KiB GET 156, manifest compare-and-swap 176 ms). That is why remote packs matter: a one-file publish into a 5,000-entry directory went from 5,009 to 6 requests in the counting harness (an in-memory count, not a timed publish). The same run found that S3's ETag repeats for identical bytes, which is safe only because the manifest embeds an ever-growing generation number.
 
-**Sapling** (Meta `sl` 0.2.20261028, official prebuilt Linux x64 binary, SHA-256 checked against GitHub's published digest; **Git-backed store** via `sl init --git`), same 100k-file datasets, 5 runs interleaved with git 2.43.0 and vcs, 8-vCPU AWS box. Median ms, **git / vcs / Sapling**. The **binary** run was on a quiet box (load1 1.8 to 3); the flat and deep runs shared the machine and its disk with other jobs (load1 13 to 29), so only CPU is quoted for those:
+**Sapling** (Meta `sl` 0.2.20261028, official prebuilt Linux x64 binary, SHA-256 checked against GitHub's published digest; **Git-backed store** via `sl init --git`), same 100k-file datasets, 5 runs interleaved with git 2.43.0 and `vcs` build `28e2980` (**stale**, not re-run), 8-vCPU AWS box. Median ms, **git / vcs / Sapling**. The **binary** run was on a quiet box (load1 1.8 to 3); the flat and deep runs shared the machine and its disk with other jobs (load1 13 to 29), so only CPU is quoted for those:
 
 | workflow | binary wall | binary CPU | flat CPU | deep CPU |
 |---|---|---|---|---|
@@ -265,9 +289,9 @@ jj pays a large one-time cost to snapshot 100k files (2 to 7 minutes, single-thr
 | checkout (1% differ) | 360 / 503 / 984 | 521 / 1,032 / 1,627 | 548 / 1,100 / 1,631 | 906 / 1,507 / 4,088 |
 | clone, 50 commits | 9,856 / 9,138 / 10,412 | 10,077 / 17,244 / 14,547 | 6,016 / 12,551 / 10,557 | 8,401 / 17,241 / 17,865 |
 
-What this says: Sapling's Git store has the cheapest `add` of the three on random binary data, but `commit` of 100k files takes about 31 s because it writes every Git object loose (git and vcs: under 1 s), its local store stays unpacked (818 MB vs 415 / 421 MB on binary, `du`), and every Sapling command pays about 0.3 s of start-up (`log` 298 ms vs 5 and 11 ms). Not measured: Sapling's native store, EdenFS, Watchman, remotes, cold cache, merges; one machine, one build of each. Wall times on flat and deep are disk-contended and noisy (single runs vary up to 10x). Method, raw runs, verification and caveats: [sapling-benchmark.md](docs/research/sapling-benchmark.md).
+What this says: Sapling's Git store has the cheapest `add` of the three on random binary data, but `commit` of 100k files takes about 31 s because it writes every Git object loose (git and vcs: under 1 s), and every Sapling command pays about 0.3 s of start-up (`log` 298 ms vs 5 and 11 ms). Not measured: Sapling's native store, EdenFS, Watchman, remotes, cold cache, merges; one machine, one build of each. Wall times on flat and deep are disk-contended and noisy (single runs vary up to 10x). Method, raw runs, verification and caveats: [sapling-benchmark.md](docs/research/sapling-benchmark.md).
 
-**Mercurial, Subversion, Fossil, Breezy, Pijul and git variants** (Lambda box, 30 cores, git 2.56.0, hg 7.1.2, svn 1.15.0, Fossil 2.28, Breezy 3.3.17, Pijul 1.0.0-beta.26; same 100k-file datasets; runs interleaved round-robin over the tools, median of 5, 3 or 1 for very slow cells; wall ms). Add, commit and clone ran at load1 3.5 to 37 with three layouts at once, so absolute times are inflated; status, log and checkout are from a second pass at load1 1 to 15. Flat layout (deep and binary, CPU times, disk use and raw runs: [other-vcs-benchmark.md](docs/research/other-vcs-benchmark.md)):
+**Mercurial, Subversion, Fossil, Breezy, Pijul and git variants** (Lambda box, 30 cores, git 2.56.0, `vcs` build `28e2980` (**stale**), hg 7.1.2, svn 1.15.0, Fossil 2.28, Breezy 3.3.17, Pijul 1.0.0-beta.26; same 100k-file datasets; runs interleaved round-robin over the tools, median of 5, 3 or 1 for very slow cells; wall ms). Add, commit and clone ran at load1 3.5 to 37 with three layouts at once, so absolute times are inflated; status, log and checkout are from a second pass at load1 1 to 15. Flat layout (deep and binary, CPU times, disk use and raw runs: [other-vcs-benchmark.md](docs/research/other-vcs-benchmark.md)):
 
 | flat, 100k files | vcs | git | git + fsmonitor | Mercurial | Subversion | Fossil | Breezy | Pijul |
 |---|---|---|---|---|---|---|---|---|
@@ -278,7 +302,7 @@ What this says: Sapling's Git store has the cheapest `add` of the three on rando
 | checkout, 1% differ | 441 | 350 | 347 | 748 | 2,459 | 12,228 | 12,033 | no equivalent |
 | full clone | 3,966 | 6,269 | n/a | 54,406 | 56,716 | 17,895 | 879,512 (1 run) | 22,925 |
 
-What this says: for committing 100k files vcs and git are far ahead of everything else (Subversion 5 to 15 minutes, Fossil about 17); for `status` git with its built-in fsmonitor is the fastest of all (28 ms), plain git and vcs are next, and Pijul is slowest (3.5 s, 25 s of CPU). Mercurial, Fossil, Breezy and Pijul hash files at `commit`, not `add`, so compare the sum. Not measured: Git LFS, tuned Mercurial or Subversion setups, remote servers. Breezy did not finish a deep-layout clone in 30 minutes.
+What this says (with the stale `vcs` build): for committing 100k files git and vcs were far ahead of everything else (Subversion 5 to 15 minutes, Fossil about 17); for `status` git with its built-in fsmonitor is the fastest of all (28 ms), plain git and vcs are next, and Pijul is slowest (3.5 s, 25 s of CPU). Mercurial, Fossil, Breezy and Pijul hash files at `commit`, not `add`, so compare the sum. Not measured: Git LFS, tuned Mercurial or Subversion setups, remote servers. Breezy did not finish a deep-layout clone in 30 minutes.
 
 ## 🛡️ Why you can trust it
 
