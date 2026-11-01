@@ -1783,8 +1783,14 @@ impl Repo {
     pub(crate) fn transition_check_paths_ws(&self, ws: &Workspace, zone: &str, zones: &Zones, old: &Flat, new: &Flat) -> Result<()> {
         let changed: Vec<&String> = new.iter().filter(|(p, v)| old.get(*p) != Some(v)).map(|(p, _)| p).collect();
         let mut dirs: HashMap<String, DirState> = HashMap::new();
+        let win_root = crate::portable::windows_checks_enabled().then(|| self.worktree.as_os_str().len());
         for p in &changed {
             validate_path(p)?;
+            if let Some(n) = win_root {
+                if let Some(why) = crate::portable::windows_path_problem(n, p) {
+                    return msg(format!("refusing to check out {p:?}: {why} (VCS_PROTECT_WINDOWS)"));
+                }
+            }
             if zones.owner(p) != zone {
                 return msg(format!(
                     "branch content for zone {zone:?} contains {p:?}, which belongs to zone {:?}",
