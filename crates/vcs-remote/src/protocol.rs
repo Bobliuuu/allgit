@@ -5,11 +5,19 @@
 //! ```text
 //! Collect  walk local closure of new heads, stopping at objects the remote already has
 //!          (invariant: a remote object's whole closure is present – upload is post-order)
-//! Upload   put_if_absent each object, dependencies first
+//! Upload   packed (default): PutPack `packs/<name>.pack`, then PutIdx `packs/<name>.idx`
+//!          (the index is the commit point of the pack: no index, no objects; an orphan
+//!          pack is ignored). Legacy/tiny: put_if_absent each loose object, dependencies first
 //! PutTx    put_if_absent tx/<txid>
 //! Load     read manifest; if txid already applied -> done; check every update.old == current
 //! Cas      conditional manifest write  <-- linearization point
 //! ```
+//! Packed Collect asks the remote nothing per object. What the remote has is derived from
+//! heads it is known to have (every `update.old`, checked again by the CAS in `Load`, plus all
+//! manifest heads when a branch is new): their closures are present, so the commit walk stops
+//! at them and a new tree is diffed against the same-named tree of a present parent, pruning
+//! every entry that tree already lists. Argument and model-checked tests: docs/remote-packs.md.
+//!
 //! `Unavailable` at any step re-runs that step (bounded); after a CAS error we always go
 //! back to `Load`, which detects "applied but ack lost". Exhausted retries yield
 //! `PublishError::Unknown`: the outcome is undetermined and re-running the same transaction
@@ -18,8 +26,9 @@
 use crate::backend::{Backend, BackendError};
 use crate::manifest::{self, Manifest, MAX_APPLIED};
 use crate::packfetch;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use vcs_objects::{id_of_encoded, EntryMode, Object, ObjectId, Transaction};
+use vcs_store::pack::{build_pack, BuiltPack};
 use vcs_store::{ObjectStore, StoreError};
 
 pub const MAX_RETRIES: u32 = 8;
@@ -86,6 +95,8 @@ pub enum Step {
 enum State {
     Collect,
     Upload(usize),
+    PutPack,
+    PutIdx,
     PutTx,
     Load,
     Cas { expected_tag: Option<String>, new: Box<Manifest> },
@@ -99,6 +110,9 @@ pub struct Publisher<'a> {
     txid: ObjectId,
     state: State,
     to_upload: Vec<ObjectId>,
+    /// Packed mode: the bundle of this transaction's new objects, built once in Collect.
+    built: Option<BuiltPack>,
+    packed: bool,
     retries: u32,
     zones: BTreeMap<String, String>,
     labels: BTreeMap<String, String>,
@@ -191,6 +205,8 @@ impl<'a> Publisher<'a> {
             txid,
             state: State::Collect,
             to_upload: vec![],
+            built: None,
+            packed: true,
             retries: 0,
             zones: BTreeMap::new(),
             labels: BTreeMap::new(),
@@ -203,6 +219,12 @@ impl<'a> Publisher<'a> {
             }),
             fault: None,
         }
+    }
+    /// Write every object as its own key (`objects/xx/...`, one HEAD per dependency) instead of
+    /// one pack. The legacy layout; readers handle both, so this only exists for old-layout tests.
+    pub fn with_loose_objects(mut self) -> Self {
+        self.packed = false;
+        self
     }
     /// The authenticated identity lock decisions are made for (NOT `Transaction.author`).
     pub fn with_principal(mut self, p: impl Into<String>) -> Self {
@@ -266,9 +288,156 @@ impl<'a> Publisher<'a> {
         }
     }
 
+    /// Packed Collect: the new objects (id, encoded), dependencies first, found without asking
+    /// the remote about individual objects. See the module docs for why pruning is sound.
+    fn collect_packed(&self) -> Result<Vec<(ObjectId, Vec<u8>)>, PublishError> {
+        // Objects whose whole closure is on the remote (or will be, see `Load`).
+        let mut known: HashSet<ObjectId> = self.tx.updates.iter().filter_map(|u| u.old).collect();
+        if self.tx.updates.iter().any(|u| u.old.is_none()) {
+            // A new branch has no `old` to lean on: its parent may be any current head.
+            let (m, _) = load_manifest(self.backend)?;
+            known.extend(m.branches.values().copied());
+        }
+        let remote_has_history = !known.is_empty();
+        let heads_known = known.clone();
+        let mut ancestors: Option<HashSet<ObjectId>> = None;
+        // new tree/file id -> id of the same-named entry in a present parent (its closure is present)
+        let mut hint: HashMap<ObjectId, ObjectId> = HashMap::new();
+        let mut done: HashSet<ObjectId> = HashSet::new();
+        let mut out: Vec<(ObjectId, Vec<u8>)> = Vec::new();
+        let local = self.local;
+
+        let mut commit_on_remote = |id: &ObjectId, known: &HashSet<ObjectId>| -> Result<bool, PublishError> {
+            if known.contains(id) {
+                return Ok(true);
+            }
+            let anc = ancestors.get_or_insert_with(|| {
+                let mut seen: HashSet<ObjectId> = HashSet::new();
+                let mut stack: Vec<ObjectId> = heads_known.iter().copied().collect();
+                while let Some(c) = stack.pop() {
+                    if !seen.insert(c) {
+                        continue;
+                    }
+                    if let Ok(Object::Commit(c)) = local.get(&c) {
+                        stack.extend(c.parents.iter().copied());
+                    }
+                }
+                seen
+            });
+            if anc.contains(id) {
+                return Ok(true);
+            }
+            // Not derivable from the heads: maybe a legacy loose upload. One HEAD for a commit.
+            Ok(self.backend.exists(&object_key(id))?)
+        };
+
+        let heads: BTreeSet<ObjectId> = self.tx.updates.iter().map(|u| u.new).collect();
+        for h in heads {
+            let mut stack: Vec<(ObjectId, Option<Object>)> = vec![(h, None)];
+            while let Some((id, obj)) = stack.pop() {
+                if known.contains(&id) || done.contains(&id) {
+                    continue;
+                }
+                if let Some(o) = obj {
+                    out.push((id, o.encode()));
+                    done.insert(id);
+                    continue;
+                }
+                let o = local.get(&id)?;
+                let mut ds: Vec<ObjectId> = Vec::new();
+                match &o {
+                    Object::Commit(c) => {
+                        if remote_has_history && commit_on_remote(&id, &known)? {
+                            known.insert(id);
+                            continue;
+                        }
+                        for p in &c.parents {
+                            if remote_has_history && !done.contains(p) && commit_on_remote(p, &known)? {
+                                known.insert(*p);
+                            }
+                            if known.contains(p) {
+                                if let Ok(Object::Commit(pc)) = local.get(p) {
+                                    hint.entry(c.root).or_insert(pc.root);
+                                }
+                            }
+                        }
+                        ds.extend(c.parents.iter().copied());
+                        ds.push(c.root);
+                    }
+                    Object::Tree(t) => {
+                        let old = hint.get(&id).and_then(|oid| match local.get(oid) {
+                            Ok(Object::Tree(ot)) => Some(ot),
+                            _ => None,
+                        });
+                        let mut by_name: HashMap<&str, (&ObjectId, EntryMode)> = HashMap::new();
+                        if let Some(ot) = &old {
+                            for e in ot.entries() {
+                                known.insert(e.id);
+                                by_name.insert(e.name.as_str(), (&e.id, e.mode));
+                            }
+                        }
+                        for e in t.entries() {
+                            if known.contains(&e.id) {
+                                continue;
+                            }
+                            if let Some((oid, mode)) = by_name.get(e.name.as_str()) {
+                                if *mode == e.mode {
+                                    hint.entry(e.id).or_insert(**oid);
+                                }
+                            }
+                            ds.push(e.id);
+                        }
+                    }
+                    Object::Chunked(m) => {
+                        // an edited big file shares most chunks with its previous version
+                        if let Some(Ok(Object::Chunked(om))) = hint.get(&id).map(|oid| local.get(oid)) {
+                            known.extend(om.chunks.iter().map(|c| c.id));
+                        }
+                        ds.extend(m.chunks.iter().map(|c| c.id));
+                    }
+                    other => ds = deps(other),
+                }
+                stack.push((id, Some(o)));
+                for d in ds.into_iter().rev() {
+                    if !known.contains(&d) && !done.contains(&d) {
+                        stack.push((d, None));
+                    }
+                }
+            }
+        }
+        // Commits and trees first: a clone reads that prefix of the pack in a few big requests.
+        // Stable, and within a group still dependencies-first.
+        out.sort_by_key(|(_, enc)| match enc.first() {
+            Some(3) => 0u8,
+            Some(2) => 1,
+            _ => 2,
+        });
+        Ok(out)
+    }
+
     pub fn step(&mut self) -> Result<Step, PublishError> {
         match std::mem::replace(&mut self.state, State::Finished) {
             State::Finished => Ok(Step::Continue),
+            State::Collect if self.packed => {
+                match self.collect_packed() {
+                    Ok(staged) => {
+                        if staged.len() >= 2 {
+                            self.built = Some(build_pack(staged));
+                            self.state = State::PutPack;
+                        } else {
+                            // zero or one object: a pack would cost more than it saves
+                            self.to_upload = staged.iter().map(|s| s.0).collect();
+                            self.state = State::Upload(0);
+                        }
+                        Ok(Step::Continue)
+                    }
+                    Err(PublishError::Backend(e)) => {
+                        self.state = State::Collect;
+                        self.retry(e)
+                    }
+                    Err(e) => Err(e),
+                }
+            }
             State::Collect => {
                 let mut list = Vec::new();
                 let mut seen = HashSet::new();
@@ -297,6 +466,34 @@ impl<'a> Publisher<'a> {
                 }
                 self.to_upload = list;
                 self.state = State::Upload(0);
+                Ok(Step::Continue)
+            }
+            State::PutPack => {
+                let b = self.built.as_ref().expect("built in Collect");
+                match self
+                    .backend
+                    .put_if_absent(&format!("{}{}.pack", packfetch::PACK_PREFIX, b.name), &b.pack)
+                {
+                    Ok(_) => self.state = State::PutIdx,
+                    Err(e) => {
+                        self.state = State::PutPack;
+                        return self.retry(e);
+                    }
+                }
+                Ok(Step::Continue)
+            }
+            State::PutIdx => {
+                let b = self.built.as_ref().expect("built in Collect");
+                match self
+                    .backend
+                    .put_if_absent(&format!("{}{}.idx", packfetch::PACK_PREFIX, b.name), &b.idx)
+                {
+                    Ok(_) => self.state = State::PutTx,
+                    Err(e) => {
+                        self.state = State::PutIdx;
+                        return self.retry(e);
+                    }
+                }
                 Ok(Step::Continue)
             }
             State::Upload(i) => {
@@ -596,6 +793,17 @@ fn fetch_heads_impl(
     let (m, _) = load_manifest(backend)?;
     let mut out = Vec::new();
     let mut seen = HashSet::new();
+    // Packs are listed and indexed once, on first need. A lazy walk (commits and trees) reads the
+    // leading metadata of each pack it touches in a few large requests; a full walk of every
+    // zone reads whole packs; a zone-filtered full walk reads object ranges.
+    let ahead = if skip_files {
+        packfetch::ReadAhead::Metadata
+    } else if zones.is_none() {
+        packfetch::ReadAhead::Whole
+    } else {
+        packfetch::ReadAhead::None
+    };
+    let mut src = packfetch::RemoteSource::new(backend, ahead);
     for ((a, b), id) in &m.branches {
         if zones.is_some_and(|w| !w.iter().any(|x| x == a)) {
             continue;
@@ -603,7 +811,15 @@ fn fetch_heads_impl(
         post_order(
             *id,
             &mut |i| Ok(local.contains(i)?),
-            &mut |i| fetch_object(backend, i),
+            &mut |i| {
+                let data = src
+                    .fetch(i)?
+                    .ok_or_else(|| PublishError::Remote(format!("object {i} missing on remote")))?;
+                if id_of_encoded(&data) != *i {
+                    return Err(PublishError::Remote(format!("object {i} fails hash verification")));
+                }
+                Object::decode(&data).map_err(|e| PublishError::Remote(format!("object {i}: {e}")))
+            },
             &mut |_, o| {
                 local.put(o)?;
                 Ok(())

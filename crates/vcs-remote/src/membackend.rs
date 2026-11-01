@@ -52,6 +52,29 @@ impl MemBackend {
     pub fn keys(&self) -> Vec<String> {
         self.inner.lock().unwrap().objects.keys().cloned().collect()
     }
+    /// Test hook: corrupt object `id` wherever it lives. A loose object is replaced by `evil`;
+    /// inside a pack the object's bytes are flipped in place (the pack keeps its length).
+    #[doc(hidden)]
+    pub fn tamper_object(&self, id: &vcs_objects::ObjectId, evil: Vec<u8>) {
+        let h = id.to_hex();
+        let loose = format!("objects/{}/{}", &h[..2], &h[2..]);
+        if self.keys().contains(&loose) {
+            return self.tamper(&loose, evil);
+        }
+        for k in self.keys().into_iter().filter(|k| k.starts_with("packs/") && k.ends_with(".idx")) {
+            let idx = self.inner.lock().unwrap().objects[&k].0.clone();
+            let idx = vcs_store::pack::PackIndex::parse(&idx, std::path::Path::new(&k)).unwrap();
+            if let Some((off, len)) = idx.find(id) {
+                let pk = format!("{}.pack", k.trim_end_matches(".idx"));
+                let mut data = self.inner.lock().unwrap().objects[&pk].0.clone();
+                for b in &mut data[off as usize..off as usize + len as usize] {
+                    *b ^= 0x5A;
+                }
+                return self.tamper(&pk, data);
+            }
+        }
+        panic!("tamper_object: {id} not on the remote");
+    }
     /// Test hook: overwrite raw bytes (simulate tampering / corruption).
     pub fn tamper(&self, key: &str, data: Vec<u8>) {
         let mut g = self.inner.lock().unwrap();

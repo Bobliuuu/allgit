@@ -98,19 +98,53 @@ fn obj_key(id: &ObjectId) -> String {
     format!("objects/{}/{}", &h[..2], &h[2..])
 }
 
-fn check_backend(b: &MemBackend, ctx: &str) -> Manifest {
-    // closure invariant: every stored object is intact and all its dependencies are stored
-    for k in b.keys().into_iter().filter(|k| k.starts_with("objects/")) {
-        let data = b.get(&k).unwrap().unwrap().data;
-        let o = Object::decode(&data).unwrap_or_else(|e| panic!("{ctx}: undecodable {k}: {e}"));
-        assert_eq!(obj_key(&id_of_encoded(&data)), k, "{ctx}: hash mismatch");
-        for d in deps_of(&o) {
-            assert!(
-                b.exists(&obj_key(&d)).unwrap(),
-                "{ctx}: object {k} present but dependency {d} missing (closure invariant broken)"
-            );
+/// Replay every write in order and check, after EACH write, that everything a reader could
+/// see (loose objects, plus the objects of every pack whose index is visible) is intact and
+/// has its whole dependency set visible. This is the dependency-first invariant, checked at
+/// every instant rather than only at the end, for loose and packed layouts alike.
+fn check_closure_over_time(b: &MemBackend, ctx: &str) {
+    use std::collections::{BTreeMap, HashMap};
+    let mut visible: HashMap<ObjectId, Vec<u8>> = HashMap::new();
+    let mut packs: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    for (i, (k, data)) in b.history().into_iter().enumerate() {
+        if k.starts_with("objects/") {
+            let id = id_of_encoded(&data);
+            assert_eq!(obj_key(&id), k, "{ctx}: loose object hash mismatch");
+            visible.insert(id, data);
+        } else if k.starts_with("packs/") && k.ends_with(".pack") {
+            packs.insert(k.clone(), data); // invisible until its index lands
+        } else if let Some(stem) = k.strip_suffix(".idx").filter(|_| k.starts_with("packs/")) {
+            let pack = packs
+                .get(&format!("{stem}.pack"))
+                .unwrap_or_else(|| panic!("{ctx}: index {k} visible before its pack"));
+            let idx = vcs_store::pack::PackIndex::parse(&data, std::path::Path::new(&k)).unwrap();
+            for (id, off, len) in idx.entries() {
+                let bytes = pack[*off as usize..*off as usize + *len as usize].to_vec();
+                assert_eq!(id_of_encoded(&bytes), *id, "{ctx}: pack object hash mismatch");
+                visible.insert(*id, bytes);
+            }
+        } else {
+            continue;
+        }
+        for (id, data) in &visible {
+            let o = Object::decode(data).unwrap_or_else(|e| panic!("{ctx}: undecodable {id}: {e}"));
+            for d in deps_of(&o) {
+                assert!(
+                    visible.contains_key(&d),
+                    "{ctx}: after write #{i} ({k}) object {id} is visible but dependency {d} is not (closure invariant broken)"
+                );
+            }
         }
     }
+    for (_, m) in b.history().into_iter().filter(|(k, _)| k == "manifest") {
+        for id in Manifest::decode(&m).unwrap().branches.values() {
+            assert!(visible.contains_key(id), "{ctx}: manifest head {id} not readable");
+        }
+    }
+}
+
+fn check_backend(b: &MemBackend, ctx: &str) -> Manifest {
+    check_closure_over_time(b, ctx);
     // manifest history: each version = previous + exactly one whole transaction
     let hist: Vec<Manifest> = b
         .history()
@@ -151,10 +185,6 @@ fn check_backend(b: &MemBackend, ctx: &str) -> Manifest {
         assert_eq!(&expect, m, "{ctx}: manifest step is not exactly one whole transaction (atomicity)");
         prev = m.clone();
     }
-    // every head's closure is present
-    for id in prev.branches.values() {
-        assert!(b.exists(&obj_key(id)).unwrap(), "{ctx}: head object missing");
-    }
     prev
 }
 
@@ -162,10 +192,19 @@ struct Stats {
     leaves: u64,
 }
 
-fn run_schedule(sc: &Scenario, sched: &[Choice]) -> Option<Vec<Choice>> {
+fn new_pub<'a>(b: &'a MemBackend, s: &'a MemoryStore, t: Transaction, packed: bool) -> Publisher<'a> {
+    let p = Publisher::new(b, s, t);
+    if packed {
+        p
+    } else {
+        p.with_loose_objects()
+    }
+}
+
+fn run_schedule(sc: &Scenario, packed: bool, sched: &[Choice]) -> Option<Vec<Choice>> {
     let writers = (sc.build)();
     let backend = MemBackend::new();
-    let mut pubs: Vec<Option<Publisher>> = writers.iter().map(|(s, t)| Some(Publisher::new(&backend, s, t.clone()))).collect();
+    let mut pubs: Vec<Option<Publisher>> = writers.iter().map(|(s, t)| Some(new_pub(&backend, s, t.clone(), packed))).collect();
     let mut st = vec![W::Running; writers.len()];
     let mut special = false;
     let step = |w: usize, pubs: &mut Vec<Option<Publisher>>, st: &mut Vec<W>| match pubs[w].as_mut().unwrap().step() {
@@ -206,11 +245,11 @@ fn run_schedule(sc: &Scenario, sched: &[Choice]) -> Option<Vec<Choice>> {
         return Some(avail);
     }
     // terminal: recovery by retrying the same transaction (fault-free)
-    let ctx = format!("{} schedule {:?}", sc.name, sched);
+    let ctx = format!("{} packed={packed} schedule {:?}", sc.name, sched);
     let mut ok: Vec<bool> = st.iter().map(|s| matches!(s, W::Done(true))).collect();
     for w in 0..writers.len() {
         if st[w] == W::Crashed {
-            ok[w] = match Publisher::new(&backend, &writers[w].0, writers[w].1.clone()).run() {
+            ok[w] = match new_pub(&backend, &writers[w].0, writers[w].1.clone(), packed).run() {
                 Ok(_) => true,
                 Err(PublishError::Diverged { .. }) => false,
                 Err(e) => panic!("{ctx}: recovery failed: {e}"),
@@ -233,13 +272,13 @@ fn run_schedule(sc: &Scenario, sched: &[Choice]) -> Option<Vec<Choice>> {
     None
 }
 
-fn explore(sc: &Scenario, sched: &mut Vec<Choice>, stats: &mut Stats) {
-    match run_schedule(sc, sched) {
+fn explore(sc: &Scenario, packed: bool, sched: &mut Vec<Choice>, stats: &mut Stats) {
+    match run_schedule(sc, packed, sched) {
         None => stats.leaves += 1,
         Some(avail) => {
             for c in avail {
                 sched.push(c);
-                explore(sc, sched, stats);
+                explore(sc, packed, sched, stats);
                 sched.pop();
             }
         }
@@ -247,10 +286,13 @@ fn explore(sc: &Scenario, sched: &mut Vec<Choice>, stats: &mut Stats) {
 }
 
 fn go(sc: Scenario) {
-    let mut stats = Stats { leaves: 0 };
-    explore(&sc, &mut vec![], &mut stats);
-    println!("{}: {} complete schedules checked", sc.name, stats.leaves);
-    assert!(stats.leaves > 1000, "exploration suspiciously small");
+    // legacy loose layout and the packed layout face the same schedules and invariants
+    for packed in [false, true] {
+        let mut stats = Stats { leaves: 0 };
+        explore(&sc, packed, &mut vec![], &mut stats);
+        println!("{} (packed={packed}): {} complete schedules checked", sc.name, stats.leaves);
+        assert!(stats.leaves > 1000, "exploration suspiciously small");
+    }
 }
 
 #[test]

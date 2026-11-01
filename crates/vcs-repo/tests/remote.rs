@@ -62,7 +62,7 @@ fn sparse_clone_downloads_and_materializes_only_requested_zones() {
     let b = Repo::clone_from(&remote, "mem", &d.path().join("b"), Some(&["engine".to_string()])).unwrap();
     let read_bytes = remote.bytes_read() - before;
     assert!(
-        read_bytes < 5_000,
+        read_bytes < 8_000, // packs: up to 4 KiB of read-ahead past the metadata
         "sparse clone read {read_bytes} bytes; the 50KB asset must not be fetched"
     );
     assert_eq!(read(&b, "engine/core.rs"), "core v1");
@@ -281,8 +281,7 @@ fn corrupt_remote_object_is_rejected_and_never_stored() {
     let b = Repo::clone_from(&remote, "mem", &d.path().join("b"), Some(&["engine".to_string()])).unwrap();
     let blob = core_blob(&b);
     fs::remove_file(object_path(&b, &blob)).unwrap();
-    let key = vcs_remote::protocol::object_key(&blob);
-    remote.tamper(&key, vcs_objects::Object::Blob(b"evil".to_vec()).encode());
+    remote.tamper_object(&blob, vcs_objects::Object::Blob(b"evil".to_vec()).encode());
     let err = b.fetch_missing(&remote, &blob).unwrap_err().to_string();
     assert!(err.contains("hash verification"), "{err}");
     assert!(!b.store().contains(&blob).unwrap());
