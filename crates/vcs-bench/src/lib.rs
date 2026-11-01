@@ -1,6 +1,11 @@
 //! Deterministic dataset generation for the benchmark harness. No external data,
 //! no clock, no OS randomness: the same (layout, n, seed) always yields identical bytes.
 
+pub mod harness;
+pub mod json;
+pub mod stats;
+pub mod workloads;
+
 use std::fs;
 use std::io;
 use std::path::Path;
