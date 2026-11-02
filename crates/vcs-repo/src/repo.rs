@@ -254,7 +254,7 @@ fn is_not_a_directory(e: &std::io::Error) -> bool {
     cfg!(unix) && e.raw_os_error() == Some(20)
 }
 
-fn zones_fp(zones: &Zones) -> ObjectId {
+pub(crate) fn zones_fp(zones: &Zones) -> ObjectId {
     vcs_objects::blob_id(&zones.encode())
 }
 
