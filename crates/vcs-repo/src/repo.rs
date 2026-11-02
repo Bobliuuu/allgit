@@ -2002,10 +2002,36 @@ impl Repo {
         let Some(target) = refs.head(zone, branch) else {
             return msg(format!("no such branch {zone}/{branch}"));
         };
+        // Same commit on both branches: nothing in the index or the working tree changes. Only
+        // the staged rule needs checking, and the index's cached tree id for the zone proves it
+        // (it equals HEAD's tree exactly when nothing is staged) without decoding any entry.
+        let same = self.current_head(zone, &ws, &refs) == Some(target);
+        if same && self.merge_state()?.is_none() {
+            let root = self.commit_obj(&target)?.root;
+            let prefix = zones.path_of(zone).unwrap();
+            if self.index_file()?.cached_tree(&zones_fp(&zones), prefix)? == Some(root) {
+                ws.subs.insert(zone.into(), branch.into());
+                self.save_ws(&ws)?;
+                if cur == vcs_objects::names::DETACHED_BRANCH {
+                    self.drop_detached_ref(zone)?;
+                }
+                self.record_op(&format!("checkout {zone}/{branch}"), None)?;
+                return Ok(());
+            }
+        }
         let mut ix = self.index()?;
         // Only staged/unstaged/merge state matters here, so skip the untracked-file walk.
         let st = self.status_inner(StatusOpts::default(), &ix, false, None)?;
-        self.require_clean(zone, &st)?;
+        if same {
+            // the cached tree was missing or stale: an unstaged edit still cannot be lost here
+            let mut st = st;
+            for a in st.zones.iter_mut() {
+                a.unstaged.clear();
+            }
+            self.require_clean(zone, &st)?;
+        } else {
+            self.require_clean(zone, &st)?;
+        }
         let prefix = zones.path_of(zone).unwrap();
         let old_root = match self.current_head(zone, &ws, &refs) {
             Some(h) => Some(self.commit_obj(&h)?.root),
@@ -2018,6 +2044,12 @@ impl Repo {
         // The index now equals the new tree (it equalled the old one: no staged or unstaged
         // change), so the directories read on the way give the next status/commit their tree ids.
         ix.entries.store_trees(zones_fp(&zones), diff.new_trees.iter().cloned().collect());
+        if same && matches!(self.store.get(&new_root)?, Object::Tree(t) if !t.entries().is_empty()) {
+            // staged-clean was just established, so the index's tree for the zone is HEAD's: keep
+            // it, and the next same-commit switch is answered from the cache alone
+            ix.entries
+                .store_trees(zones_fp(&zones), std::iter::once((prefix.to_owned(), new_root)).collect());
+        }
         ws.subs.insert(zone.into(), branch.into());
         self.save_index(&mut ix)?;
         self.save_ws(&ws)?;
