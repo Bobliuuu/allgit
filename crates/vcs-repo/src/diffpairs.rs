@@ -42,6 +42,11 @@ impl Repo {
                 if old == new && om == nm {
                     continue;
                 }
+                if let (Some(o), Some(n), Some(e)) = (old, new, ix.entries.get(p)) {
+                    if om == nm && self.same_bytes_other_layout(e.size, &o, &n)? {
+                        continue;
+                    }
+                }
                 out.push(FilePair {
                     path: p.clone(),
                     old: old.map(|i| self.store.get_content(&i)).transpose()?,
@@ -56,6 +61,11 @@ impl Repo {
                     continue;
                 }
                 let abs = self.worktree.join(p);
+                if let Ok(m) = std::fs::symlink_metadata(&abs) {
+                    if m.is_file() && e.mode != EntryMode::Symlink && self.large_unchanged(&abs, e.size, m.len(), &e.id)? {
+                        continue;
+                    }
+                }
                 let cur = match std::fs::symlink_metadata(&abs) {
                     Ok(m) if m.file_type().is_symlink() && e.mode == EntryMode::Symlink => {
                         Some(crate::repo::read_link_bytes(&abs).map_err(|source| crate::Error::Io { path: abs.clone(), source })?)

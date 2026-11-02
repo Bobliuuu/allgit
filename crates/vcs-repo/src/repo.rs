@@ -28,6 +28,12 @@ pub(crate) const FORMAT_TEXT: &str = "all-git repository format 1\n";
 const STREAM_CHECKOUT_MIN: u64 = 8 << 20;
 const RACY_NS: u64 = 2_000_000_000;
 
+/// See [`Repo::content_or_stream`].
+pub(crate) enum FileContent {
+    Bytes(Vec<u8>),
+    Streamed(IndexEntry),
+}
+
 #[derive(Default)]
 struct WalkOut {
     untracked: Vec<String>,
@@ -282,6 +288,7 @@ impl Repo {
         }
         io(&vcs, fs::create_dir_all(vcs.join("objects")))?;
         let store = LocalStore::open(vcs.join("objects"))?;
+        store.set_large_feature_mark(vcs.join(FEATURES_FILE), FEATURE_LARGE_CHUNKED);
         let r = Repo {
             wfs: Arc::new(RealFs::new(worktree.clone())),
             worktree,
@@ -324,6 +331,7 @@ impl Repo {
                     }
                 }
                 let store = LocalStore::open(common.join("objects"))?;
+                store.set_large_feature_mark(common.join(FEATURES_FILE), FEATURE_LARGE_CHUNKED);
                 return Ok(Repo {
                     wfs: Arc::new(RealFs::new(cur.clone())),
                     worktree: cur,
@@ -909,6 +917,105 @@ impl Repo {
         write_atomic(&p, format!("{cur}{name}\n").as_bytes())
     }
 
+    /// Content of file `id` for writing at `p`: bytes, or (a regular file of `STREAM_CHECKOUT_MIN` bytes and up
+    /// on a filesystem with file handles) already written and published at `p` chunk by chunk in parallel,
+    /// never assembled in memory. The caller replaces `p` in the index with the returned entry.
+    pub(crate) fn content_or_stream(&self, p: &str, id: &ObjectId, mode: EntryMode) -> Result<FileContent> {
+        let data = match self.store.get(id)? {
+            Object::Blob(b) => b,
+            Object::Chunked(cm) => {
+                if mode != EntryMode::Symlink && cm.total_len >= STREAM_CHECKOUT_MIN {
+                    let stash: std::sync::Mutex<Option<vcs_store::StoreError>> = std::sync::Mutex::new(None);
+                    let r = self.wfs.write_with(p, cm.total_len, mode, &|f| {
+                        vcs_store::bigfile::write_manifest_to(&self.store, id, &cm, f).map_err(|e| {
+                            *stash.lock().unwrap() = Some(e);
+                            std::io::Error::other("chunk write failed")
+                        })
+                    });
+                    if let Some(e) = stash.into_inner().unwrap() {
+                        return Err(e.into());
+                    }
+                    if let Some(m) = io(&self.worktree.join(p), r)? {
+                        return Ok(FileContent::Streamed(IndexEntry {
+                            id: *id,
+                            mode,
+                            size: m.len,
+                            mtime_ns: m.mtime_ns,
+                            ctime_ns: m.ctime_ns,
+                        }));
+                    }
+                }
+                vcs_store::bigfile::read_manifest_range(&self.store, id, &cm, 0, cm.total_len)?
+            }
+            _ => return msg(format!("object {id} is not file content")),
+        };
+        Ok(FileContent::Bytes(data))
+    }
+
+    /// True when the regular file at `abs` (`file_len` bytes) is byte-identical to the chunked content `id`, found by
+    /// comparing chunk hashes in parallel instead of reading the file into memory. `idx_size` is the size the
+    /// index recorded for it; only files of `CHUNK_THRESHOLD` bytes and up can be manifests, anything else is `false`.
+    pub(crate) fn large_unchanged(&self, abs: &Path, idx_size: u64, file_len: u64, id: &ObjectId) -> Result<bool> {
+        if idx_size < vcs_objects::CHUNK_THRESHOLD as u64 || idx_size != file_len {
+            return Ok(false);
+        }
+        let Ok(Object::Chunked(m)) = self.store.get(id) else {
+            return Ok(false);
+        };
+        let f = io(abs, fs::File::open(abs))?;
+        self.counters.content_reads.fetch_add(1, Ordering::Relaxed);
+        io(abs, vcs_store::bigfile::file_matches(&m, &f))
+    }
+
+    /// True when ids `a` and `b` of a file of `size` bytes are different layouts of the same bytes.
+    pub(crate) fn same_bytes_other_layout(&self, size: u64, a: &ObjectId, b: &ObjectId) -> Result<bool> {
+        if size < vcs_objects::CHUNK_THRESHOLD as u64 {
+            return Ok(false);
+        }
+        crate::largeeq::same_content(&self.store, a, b)
+    }
+
+    /// Remove from staged `Modified` entries those whose HEAD and index ids are the same bytes in two layouts.
+    fn drop_layout_only(
+        &self,
+        staged: Vec<Change>,
+        head_root: Option<ObjectId>,
+        zones: &Zones,
+        zone: &str,
+        ix: &Index,
+    ) -> Result<Vec<Change>> {
+        let Some(root) = head_root else { return Ok(staged) };
+        let prefix = zones.path_of(zone).unwrap_or("");
+        let mut out = Vec::with_capacity(staged.len());
+        for c in staged {
+            if c.kind == ChangeKind::Modified {
+                if let Some(e) = ix.entries.get(&c.path).filter(|e| e.size >= vcs_objects::CHUNK_THRESHOLD as u64) {
+                    let rel = if prefix.is_empty() {
+                        c.path.as_str()
+                    } else {
+                        c.path.strip_prefix(prefix).map_or(c.path.as_str(), |r| r.trim_start_matches('/'))
+                    };
+                    if let Some((m, hid)) = treeops::entry_at(&self.store, root, rel)? {
+                        if m == e.mode && self.same_bytes_other_layout(e.size, &hid, &e.id)? {
+                            continue;
+                        }
+                    }
+                }
+            }
+            out.push(c);
+        }
+        Ok(out)
+    }
+
+    /// Length of the content `id` names, without reassembling a chunked file.
+    pub(crate) fn content_len(&self, id: &ObjectId) -> Result<u64> {
+        match self.store.get(id)? {
+            Object::Blob(b) => Ok(b.len() as u64),
+            Object::Chunked(cm) => Ok(cm.total_len),
+            _ => msg(format!("object {id} is not file content")),
+        }
+    }
+
     // ---------- status ----------
 
     pub(crate) fn wt_state(&self, path: &str, e: &IndexEntry, written_ns: u64) -> Result<Wt> {
@@ -1135,6 +1242,7 @@ impl Repo {
                 .into_iter()
                 .map(|(path, kind)| Change { path, kind })
                 .collect();
+            let staged = self.drop_layout_only(staged, head_root, &zones, zone, &ix)?;
             let (unstaged, clean) = match inc {
                 Some(i) => (
                     i.dirty
@@ -1480,6 +1588,11 @@ impl Repo {
                 if old == new && heads.get(p).map(|h| h.0) == ix.entries.get(p).map(|e| e.mode) {
                     continue;
                 }
+                if let (Some(o), Some(n), Some(e)) = (old, new, ix.entries.get(p)) {
+                    if heads.get(p).map(|h| h.0) == Some(e.mode) && self.same_bytes_other_layout(e.size, &o, &n)? {
+                        continue;
+                    }
+                }
                 let o = old.map(|i| self.store.get_content(&i)).transpose()?;
                 let n = new.map(|i| self.store.get_content(&i)).transpose()?;
                 out.push_str(&diff::unified(p, o.as_deref(), n.as_deref()));
@@ -1491,6 +1604,11 @@ impl Repo {
                     continue;
                 }
                 let abs = self.worktree.join(p);
+                if let Ok(m) = fs::symlink_metadata(&abs) {
+                    if m.is_file() && e.mode != EntryMode::Symlink && self.large_unchanged(&abs, e.size, m.len(), &e.id)? {
+                        continue; // large file equal to its manifest: nothing to diff, nothing read into memory
+                    }
+                }
                 let cur = match fs::symlink_metadata(&abs) {
                     Ok(m) if m.file_type().is_symlink() && e.mode == EntryMode::Symlink => Some(io(&abs, read_link_bytes(&abs))?),
                     Ok(m) if m.is_file() && e.mode != EntryMode::Symlink => Some(io(&abs, fs::read(&abs))?),
@@ -2010,34 +2128,9 @@ impl Repo {
         let write_one = |p: &String| -> Result<IndexEntry> {
             let (mode, id) = new[p];
             let abs = || self.worktree.join(p);
-            let data = match self.store.get(&id)? {
-                Object::Blob(b) => b,
-                Object::Chunked(cm) => {
-                    if mode != EntryMode::Symlink && cm.total_len >= STREAM_CHECKOUT_MIN {
-                        // large file: chunks are fetched, verified and written at their offsets in parallel
-                        let stash: std::sync::Mutex<Option<vcs_store::StoreError>> = std::sync::Mutex::new(None);
-                        let r = self.wfs.write_with(p, cm.total_len, mode, &|f| {
-                            vcs_store::bigfile::write_manifest_to(&self.store, &id, &cm, f).map_err(|e| {
-                                *stash.lock().unwrap() = Some(e);
-                                std::io::Error::other("chunk write failed")
-                            })
-                        });
-                        if let Some(e) = stash.into_inner().unwrap() {
-                            return Err(e.into());
-                        }
-                        if let Some(m) = io(&abs(), r)? {
-                            return Ok(IndexEntry {
-                                id,
-                                mode,
-                                size: m.len,
-                                mtime_ns: m.mtime_ns,
-                                ctime_ns: m.ctime_ns,
-                            });
-                        }
-                    }
-                    vcs_store::bigfile::read_manifest_range(&self.store, &id, &cm, 0, cm.total_len)?
-                }
-                _ => return msg(format!("object {id} is not file content")),
+            let data = match self.content_or_stream(p, &id, mode)? {
+                FileContent::Streamed(e) => return Ok(e),
+                FileContent::Bytes(b) => b,
             };
             let m = if mode == EntryMode::Symlink {
                 io(&abs(), self.wfs.symlink(&data, p))?

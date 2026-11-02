@@ -1423,7 +1423,12 @@ mod incompressible_tests {
             .collect();
         assert!(looks_incompressible(&random));
         assert!(!looks_incompressible(&random[..100_000]), "small inputs are always tried");
-        let text: Vec<u8> = b"fn main() { println!(\"hello\"); }\n".iter().cycle().take(1 << 20).copied().collect();
+        let text: Vec<u8> = b"fn main() { println!(\"hello\"); }\n"
+            .iter()
+            .cycle()
+            .take(1 << 20)
+            .copied()
+            .collect();
         assert!(!looks_incompressible(&text));
         // a random entry is stored raw (codec byte + bytes), a text entry is compressed
         assert_eq!(encode_payload(PackFormat::V2, &random).len(), random.len() + 1);

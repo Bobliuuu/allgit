@@ -105,13 +105,24 @@ impl Repo {
                             continue;
                         }
                     }
-                    let data = self.store.get_content(&id)?;
-                    let st = if m == EntryMode::Symlink {
+                    let st = if m != EntryMode::Symlink {
+                        match self.content_or_stream(p, &id, m)? {
+                            crate::repo::FileContent::Streamed(e) => {
+                                ix.entries.remove(p);
+                                ix.insert(p, e)?;
+                                files_changed += 1;
+                                if !same {
+                                    index_changed += 1;
+                                }
+                                continue;
+                            }
+                            crate::repo::FileContent::Bytes(data) => io(&self.worktree.join(p), self.wfs.write(p, &data, m))?,
+                        }
+                    } else {
+                        let data = self.store.get_content(&id)?;
                         crate::portable::check_symlink_target(p, &data)
                             .or_else(|why| msg(format!("refusing to restore symlink {p:?}: {why}")))?;
                         io(&self.worktree.join(p), self.wfs.symlink(&data, p))?
-                    } else {
-                        io(&self.worktree.join(p), self.wfs.write(p, &data, m))?
                     };
                     ix.entries.remove(p);
                     ix.insert(
@@ -129,7 +140,7 @@ impl Repo {
                         index_changed += 1;
                     }
                 } else if !same {
-                    let size = self.store.get_content(&id)?.len() as u64;
+                    let size = self.content_len(&id)?;
                     ix.entries.remove(p);
                     // mtime 0 never matches the file's, so status re-reads it instead of trusting a stale stat
                     ix.insert(

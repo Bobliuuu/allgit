@@ -31,7 +31,10 @@ fn server(route: fn(&str) -> &'static str) -> String {
                 } else {
                     ""
                 };
-                let r = format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                let r = format!(
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
                 let _ = s.write_all(r.as_bytes());
             });
         }
@@ -57,11 +60,23 @@ fn probe_reports_denied_allowed_and_inconclusive() {
         other => panic!("{other:?}"),
     }
     // an authorised writer sees a failed precondition (412) and nothing is written
-    let ep = server(|l| if l.starts_with("PUT") { "412 Precondition Failed" } else { "200 OK" });
-    assert!(matches!(client(&ep).probe_manifest_write().unwrap(), ManifestWriteProbe::Allowed(_)));
+    let ep = server(|l| {
+        if l.starts_with("PUT") {
+            "412 Precondition Failed"
+        } else {
+            "200 OK"
+        }
+    });
+    assert!(matches!(
+        client(&ep).probe_manifest_write().unwrap(),
+        ManifestWriteProbe::Allowed(_)
+    ));
     // anything else (a missing bucket, say) is inconclusive and must not pass as "denied"
     let ep = server(|_| "404 Not Found");
-    let e = client(&ep).probe_manifest_write().err().expect("404 on the multipart route is inconclusive");
+    let e = client(&ep)
+        .probe_manifest_write()
+        .err()
+        .expect("404 on the multipart route is inconclusive");
     assert!(e.to_string().contains("inconclusive"), "{e}");
 }
 
@@ -72,7 +87,10 @@ fn bucket_policy_denies_manifest_writes_on_a_real_s3_server() {
         return;
     };
     let var = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_owned());
-    let (ak, sk) = (var("VCS_TEST_S3_ACCESS_KEY", "minioadmin"), var("VCS_TEST_S3_SECRET_KEY", "minioadmin"));
+    let (ak, sk) = (
+        var("VCS_TEST_S3_ACCESS_KEY", "minioadmin"),
+        var("VCS_TEST_S3_SECRET_KEY", "minioadmin"),
+    );
     let bucket = format!("manifest-deny-{}", std::process::id());
     let mut c = S3Config::new(&ep, &bucket, &ak, &sk);
     c.prefix = "repo/".into();

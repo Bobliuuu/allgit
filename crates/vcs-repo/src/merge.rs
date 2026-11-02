@@ -142,6 +142,69 @@ pub struct MergeOpts {
 }
 
 impl Repo {
+    /// The same bytes can have two ids (v3 manifest, kind 9 manifest). For every path whose present sides all have
+    /// different ids, a side whose content is byte-identical to `ours` (or to `base` when `ours` lacks the path) gets
+    /// that id, so the merge sees no change there. Borrowed unchanged when nothing needs it (the common case).
+    fn unify_layouts<'a>(
+        &self,
+        base: &'a Flat,
+        ours: &'a Flat,
+        theirs: &'a Flat,
+    ) -> (std::borrow::Cow<'a, Flat>, std::borrow::Cow<'a, Flat>, std::borrow::Cow<'a, Flat>) {
+        use std::borrow::Cow;
+        let same = |a: &ObjectId, b: &ObjectId| crate::largeeq::same_content(&self.store, a, b).unwrap_or(false);
+        let (mut rb, mut rr): (Vec<(&String, ObjectId)>, Vec<(&String, ObjectId)>) = (Vec::new(), Vec::new());
+        for p in ours.keys().chain(theirs.keys().filter(|p| !ours.contains_key(*p))) {
+            let (b, l, r) = (base.get(p), ours.get(p), theirs.get(p));
+            let present = [b, l, r].into_iter().flatten().count();
+            if present < 2 {
+                continue;
+            }
+            let ids: Vec<&ObjectId> = [b, l, r].into_iter().flatten().map(|e| &e.1).collect();
+            if (0..ids.len()).any(|i| (i + 1..ids.len()).any(|j| ids[i] == ids[j])) {
+                continue;
+            }
+            match (b, l, r) {
+                (Some(b), Some(l), r) => {
+                    if b.0 == l.0 && same(&b.1, &l.1) {
+                        rb.push((p, l.1));
+                    }
+                    if let Some(r) = r {
+                        if r.0 == l.0 && same(&r.1, &l.1) {
+                            rr.push((p, l.1));
+                        } else if r.0 == b.0 && same(&r.1, &b.1) {
+                            rr.push((p, b.1));
+                        }
+                    }
+                }
+                (Some(b), None, Some(r)) => {
+                    if b.0 == r.0 && same(&b.1, &r.1) {
+                        rr.push((p, b.1));
+                    }
+                }
+                (None, Some(l), Some(r)) => {
+                    if l.0 == r.0 && same(&l.1, &r.1) {
+                        rr.push((p, l.1));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let patch = |f: &'a Flat, v: Vec<(&String, ObjectId)>| -> Cow<'a, Flat> {
+            if v.is_empty() {
+                return Cow::Borrowed(f);
+            }
+            let mut m = f.clone();
+            for (p, id) in v {
+                if let Some(e) = m.get_mut(p) {
+                    e.1 = id;
+                }
+            }
+            Cow::Owned(m)
+        };
+        (patch(base, rb), Cow::Borrowed(ours), patch(theirs, rr))
+    }
+
     /// Three-way tree merge honouring the structural and rename-detection settings.
     pub(crate) fn tree3_plain(
         &self,
@@ -149,7 +212,9 @@ impl Repo {
         ours: &Flat,
         theirs: &Flat,
     ) -> std::result::Result<vcs_merge::TreeMerge, vcs_merge::MergeError> {
+        let (base_u, ours_u, theirs_u) = self.unify_layouts(base, ours, theirs);
         let blobs = StoreBlobs(&self.store);
+        let (base, ours, theirs) = (&*base_u, &*ours_u, &*theirs_u);
         if self.renames {
             return Ok(merge_flat_renames(
                 &blobs,

@@ -135,13 +135,19 @@ fn s3_env(tag: &str) -> Option<(String, String, String, String)> {
         return None;
     };
     let var = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_owned());
-    let (ak, sk) = (var("VCS_TEST_S3_ACCESS_KEY", "minioadmin"), var("VCS_TEST_S3_SECRET_KEY", "minioadmin"));
+    let (ak, sk) = (
+        var("VCS_TEST_S3_ACCESS_KEY", "minioadmin"),
+        var("VCS_TEST_S3_SECRET_KEY", "minioadmin"),
+    );
     let bucket = var("VCS_TEST_S3_BUCKET", "vcs-test");
     vcs_store_s3::S3Backend::new_unchecked(vcs_store_s3::S3Config::new(&ep, &bucket, &ak, &sk))
         .unwrap()
         .ensure_bucket()
         .unwrap();
-    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
     Some((format!("s3://{bucket}/{tag}-{nanos}?endpoint={ep}"), ak, sk, bucket))
 }
 
@@ -245,7 +251,11 @@ fn shelves_on_vcs_server_are_private_until_a_shelve_read_rule() {
 fn shelves_on_vcs_server_over_s3_are_private_until_a_shelve_read_rule() {
     let Some((url, ak, sk, _)) = s3_env("shelve-srv") else { return };
     let t = tempfile::tempdir().unwrap();
-    private_shelves(t.path(), &["--backend", &url], &[("AWS_ACCESS_KEY_ID", ak), ("AWS_SECRET_ACCESS_KEY", sk)]);
+    private_shelves(
+        t.path(),
+        &["--backend", &url],
+        &[("AWS_ACCESS_KEY_ID", ak), ("AWS_SECRET_ACCESS_KEY", sk)],
+    );
 }
 
 fn private_shelves(root: &Path, backend: &[&str], envs: &[(&str, String)]) {

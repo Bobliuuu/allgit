@@ -278,13 +278,14 @@ Blob objects. `FORMAT_VERSION` stays 3: no existing id changes. Files from 1 MiB
 - Compatibility. Old objects and ids are unchanged and readable. A v3 manifest of a file of 16 MiB or more stays valid:
   `add` keeps the old id while the file's chunks still match it (so an old repository shows no phantom changes), and
   uses the new layout only when the content changes. Consequence: the same bytes can have two ids (v3 manifest, kind 9
-  manifest); merges compare ids, so a file that is byte-identical on both sides but stored in different layouts is
-  seen as differing. `VCS_CHUNK_LAYOUT=v3` makes `add` keep writing v3 manifests (whole file in memory) for repositories
+  manifest); merge, diff and status compare such content byte-wise (chunk by chunk, `largeeq`), so a file that is byte-identical
+  on both sides but stored in different layouts is equal, not a conflict or a change. `VCS_CHUNK_LAYOUT=v3` makes `add` keep writing v3 manifests (whole file in memory) for repositories
   that must stay readable by older releases.
 - Min-reader. A release without kind 9 fails on such an object with `DecodeError::Kind(9)`. The first time a repository
   stores a kind 9 manifest it writes `<common>/features` containing `large-chunked`; a release that knows the file
-  refuses to open a repository naming a feature it does not know. Releases that predate the file ignore it. Objects
-  fetched from a remote do not write the file (only local adds do).
+  refuses to open a repository naming a feature it does not know. Releases that predate the file ignore it. The store
+  writes the file the first time any kind 9 manifest is stored through it, so objects that arrive by fetch, clone or
+  lazy fetch record the feature as well as local adds.
 - Streaming add (`vcs_store::bigfile::put_file`): 64 MiB read windows, parallel read, boundary search, hashing and chunk
   stores; peak memory is the window plus the store's pending budget, independent of file size. Chunks of 1 MiB and up are
   written straight to their own temporary file at `put` and published as loose files at `sync` (never copied into a pack).
@@ -292,7 +293,7 @@ Blob objects. `FORMAT_VERSION` stays 3: no existing id changes. Files from 1 MiB
   re-chunk only the changed stretches up to the first old boundary the new cuts rejoin; the result is bit-identical to a full pass.
 - Status: a file whose size/mtime/ctime match the index is not read. Otherwise a different length is `Modified` without reading,
   and the same length is compared chunk by chunk with the stored manifest in parallel (no chunking, no store writes).
-- Checkout (`write_manifest_to` through `WorktreeFs::write_with`): temporary file in the target directory, `fallocate`, chunks
+- Checkout, `restore` and `reset --hard` (`write_manifest_to` through `WorktreeFs::write_with`): temporary file in the target directory, `fallocate`, chunks
   fetched, verified and `pwrite`n at their offsets by parallel workers, then an atomic rename; a failure removes the temporary
   file and leaves the existing file alone. `get_content_range` reads only the chunks overlapping a byte range (a missing chunk
   is `NotFound(chunk)`, so lazy fetch pulls just those).

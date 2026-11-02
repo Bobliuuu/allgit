@@ -106,7 +106,9 @@ pub fn check_client_cannot_write_manifest(url: &str, env: &dyn Fn(&str) -> Optio
         "AWS_SESSION_TOKEN" => env("VCS_CLIENT_SESSION_TOKEN"),
         other => env(other),
     };
-    let cfg = s3_config(url, &mapped).map_err(|e| format!("{e} (the self-check reads the CLIENT credential from VCS_CLIENT_ACCESS_KEY_ID / VCS_CLIENT_SECRET_ACCESS_KEY)"))?;
+    let cfg = s3_config(url, &mapped).map_err(|e| {
+        format!("{e} (the self-check reads the CLIENT credential from VCS_CLIENT_ACCESS_KEY_ID / VCS_CLIENT_SECRET_ACCESS_KEY)")
+    })?;
     let c = S3Backend::new_unchecked(cfg).map_err(|e| e.to_string())?;
     match c.probe_manifest_write().map_err(|e| e.to_string())? {
         vcs_store_s3::ManifestWriteProbe::Denied => Ok(()),
