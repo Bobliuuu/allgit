@@ -85,6 +85,31 @@ impl W {
         v.extend(args);
         self.vcs(d, who, &v)
     }
+    /// `vcs p4 <args>` with `input` on stdin, must succeed
+    fn p4_stdin(&self, args: &[&str], input: &str) -> String {
+        use std::io::Write;
+        let mut child = Command::new(env!("CARGO_BIN_EXE_vcs"))
+            .arg("p4")
+            .args(args)
+            .current_dir(&self.a)
+            .env("VCS_AUTHOR_NAME", "alice")
+            .env("VCS_AUTHOR_EMAIL", "alice@example.com")
+            .env("VCS_PRINCIPAL", "alice")
+            .env("VCS_NO_HOOKS", "1")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+        let o = child.wait_with_output().unwrap();
+        assert!(o.status.success(), "vcs p4 {args:?} failed: {}", text(&o));
+        text(&o)
+    }
+    /// `vcs p4 <args>`, stdout and stderr together (same as `p4`; named for the notes it checks)
+    fn p4_stderr(&self, args: &[&str]) -> String {
+        self.p4(args)
+    }
     /// `vcs p4 <args>` must fail; returns its output
     fn p4_fail(&self, args: &[&str]) -> String {
         self.p4_fail_in(&self.a, "alice", args)
@@ -138,9 +163,35 @@ fn sync_n(w: &W) {
     assert_eq!(before, w.vcs(&w.b, "bob", &["rev-parse", "HEAD"]));
     assert_eq!(w.read(&w.b, "a.txt"), "one\n");
 }
-fn sync_rev_missing(w: &W) {
-    assert!(w.p4_fail(&["sync", "//depot/...@5"]).contains("changelist number"));
-    assert!(w.p4_fail(&["sync", "//depot/...@v1"]).contains("no vcs equivalent"));
+fn sync_rev(w: &W) {
+    w.vcs(&w.a, "alice", &["tag", "v1"]);
+    w.commit_edit("a.txt", "two\n", "second");
+    w.commit_edit("n.txt", "new\n", "third");
+    // preview changes nothing
+    let o = w.p4(&["sync", "-n", "a.txt@v1"]);
+    assert!(o.contains("would update to"), "{o}");
+    assert_eq!(w.read(&w.a, "a.txt"), "two\n");
+    // a label for the whole workspace: files of the tag, files the tag lacks are removed
+    w.p4(&["sync", "//depot/...@v1"]);
+    assert_eq!(w.read(&w.a, "a.txt"), "one\n");
+    assert!(!w.a.join("n.txt").exists());
+    assert!(w.status().contains("a.txt"), "HEAD did not move, so the files show as edits");
+    w.vcs(&w.a, "alice", &["restore", "."]);
+    assert_eq!(w.read(&w.a, "a.txt"), "two\n");
+    assert!(w.a.join("n.txt").exists());
+    // a single path
+    w.p4(&["sync", "a.txt@v1"]);
+    assert_eq!(w.read(&w.a, "a.txt"), "one\n");
+    assert!(w.a.join("n.txt").exists());
+    // never over local changes (a.txt is still at the old revision, so b.txt is the dirty one)
+    w.vcs(&w.a, "alice", &["restore", "."]);
+    w.write(&w.a, "b.txt", "dirty\n");
+    let e = w.p4_fail(&["sync", "@v1"]);
+    assert!(e.contains("refusing to overwrite") && e.contains("b.txt"), "{e}");
+    assert_eq!(w.read(&w.a, "b.txt"), "dirty\n");
+    assert!(w.p4_fail(&["sync", "@nope"]).contains("nope"));
+    assert!(w.p4_fail(&["sync", "//depot/...@5"]).contains("changelist number 5"));
+    assert!(w.p4_fail(&["sync", "a.txt#2"]).contains("revision numbers"));
 }
 fn edit_plain(w: &W) {
     assert!(w.p4(&["edit", "a.txt"]).contains("open for edit"));
@@ -328,10 +379,164 @@ fn integrate(w: &W) {
     assert!(w.p4_fail(&["integrate", "dev", "main"]).contains("target is always"));
     assert!(w.p4_fail(&["integrate", "-n", "dev"]).contains("no vcs equivalent"));
 }
-fn copy_missing(w: &W) {
+fn copy(w: &W) {
+    w.p4(&["branch", "dev"]);
+    w.p4(&["switch", "dev"]);
+    w.commit_edit("a.txt", "dev\n", "dev edit");
+    w.commit_edit("d.txt", "d\n", "dev add");
+    w.p4(&["switch", "main"]);
+    w.commit_edit("m.txt", "main only\n", "main add");
+    let o = w.p4(&["copy", "-n", "//depot/dev/..."]);
+    assert!(o.contains("would copy") && o.contains("would delete"), "{o}");
+    assert_eq!(w.read(&w.a, "a.txt"), "one\n");
+    assert!(w.p4_fail(&["copy", "dev", "dev"]).contains("target is always"));
+    w.p4(&["copy", "//depot/dev/...", "//depot/main/..."]);
+    assert_eq!(w.read(&w.a, "a.txt"), "dev\n");
+    assert_eq!(w.read(&w.a, "d.txt"), "d\n");
+    assert!(!w.a.join("m.txt").exists(), "files only the target has are removed");
+    let st = w.status();
+    assert!(st.contains("d.txt") && st.contains("m.txt"), "{st}");
+    // nothing left to copy once equal and committed
+    w.p4(&["submit", "-d", "copy dev"]);
+    assert!(w.vcs(&w.a, "alice", &["log", "-n", "1", "--oneline"]).contains("copy dev"));
+    assert!(w.p4(&["copy", "dev"]).contains("nothing to copy"));
+    // refuses over local changes
+    w.write(&w.a, "b.txt", "dirty\n");
+    assert!(w.p4_fail(&["copy", "dev"]).contains("refusing to overwrite"));
+    assert!(w.p4_fail(&["copy", "nosuchbranch"]).contains("nosuchbranch"));
+}
+fn change_numbered(w: &W) {
+    assert!(w.p4(&["change", "-m", "fix things"]).contains("Change 1 created"));
+    let o = w.p4(&["change", "-o", "1"]);
+    assert!(o.contains("Change 1 pending") && o.contains("fix things"), "{o}");
+    let o = w.p4_stdin(&["change", "-i"], "Change:\tnew\n\nDescription:\n\tfrom spec\n\tsecond line\n");
+    assert!(o.contains("Change 2 created"), "{o}");
+    let o = w.p4(&["change", "-o", "2"]);
+    assert!(o.contains("from spec") && o.contains("second line"), "{o}");
+    w.p4_stdin(&["change", "-i"], "Change:\t2\nDescription:\n\treworded\n");
+    let o = w.p4(&["change", "-o", "2"]);
+    assert!(o.contains("reworded") && !o.contains("second line"), "{o}");
+    let o = w.p4(&["changes", "-s", "pending"]);
+    assert!(o.contains("Change 1 pending") && o.contains("Change 2 pending"), "{o}");
+    assert!(w.p4(&["change", "-d", "2"]).contains("Change 2 deleted"));
+    assert!(w.p4_fail(&["change", "-d", "2"]).contains("does not exist"));
+    assert!(w.p4_fail(&["change", "-o", "9"]).contains("no pending changelist 9"));
+    // numbers are never reused
+    assert!(w.p4(&["change", "-m", "again"]).contains("Change 3 created"));
+}
+fn numbered_open(w: &W) {
+    w.p4(&["change", "-m", "work"]);
+    w.p4(&["change", "-m", "other"]);
+    w.write(&w.a, "a.txt", "changed\n");
+    w.write(&w.a, "n.txt", "n\n");
+    assert!(w.p4(&["add", "-c", "1", "n.txt"]).contains("opened for add in change 1"));
+    assert!(!w.status().contains("new file:  n.txt"), "opening into a changelist stages nothing");
+    w.p4(&["edit", "-c", "1", "a.txt"]);
+    let o = w.p4(&["opened", "-c", "1"]);
+    assert!(
+        o.contains("//depot/a.txt - edit change 1") && o.contains("//depot/n.txt - add change 1"),
+        "{o}"
+    );
+    assert!(w.p4_fail(&["add", "-c", "2", "n.txt"]).contains("already opened in changelist 1"));
+    assert!(w.p4_fail(&["add", "-c", "1", "b.txt"]).contains("already under version control"));
+    assert!(w.p4_fail(&["add", "-c", "99", "n.txt"]).contains("pending changelist 99"));
+    assert!(w.p4_fail(&["add", "-c", "1", "gone.txt"]).contains("not found"));
+    assert!(w.p4_fail(&["move", "-c", "1", "a.txt", "z.txt"]).contains("does not take -c N"));
+    // the default changelist leaves them alone
+    assert!(w.p4(&["reconcile"]).contains("nothing to stage"));
+    assert!(!w.status().contains("new file:"), "{}", w.status());
+    w.p4(&["delete", "-c", "1", "b.txt"]);
+    assert!(!w.a.join("b.txt").exists());
+    assert!(w.p4(&["opened", "-c", "1"]).contains("//depot/b.txt - delete change 1"));
+    assert!(w.p4_fail(&["change", "-d", "1"]).contains("open file"));
+    // revert a subset, then the rest
+    w.p4(&["revert", "-c", "1", "n.txt"]);
+    assert!(!w.p4(&["opened", "-c", "1"]).contains("n.txt"));
+    w.p4(&["revert", "-c", "1"]);
+    assert_eq!(w.read(&w.a, "a.txt"), "one\n");
+    assert!(w.a.join("b.txt").exists());
+    assert!(w.p4(&["opened", "-c", "1"]).contains("not opened"));
+    assert!(w.p4(&["change", "-d", "1"]).contains("deleted"));
+}
+fn reopen(w: &W) {
+    w.p4(&["change", "-m", "one"]);
+    w.p4(&["change", "-m", "two"]);
+    w.write(&w.a, "a.txt", "changed\n");
+    w.p4(&["edit", "-c", "1", "a.txt"]);
+    assert!(w.p4(&["reopen", "-c", "2", "a.txt"]).contains("reopened; change 2"));
+    assert!(w.p4(&["opened", "-c", "1"]).contains("not opened"));
+    assert!(w.p4(&["opened", "-c", "2"]).contains("a.txt"));
+    assert!(w.p4(&["reopen", "-c", "default", "a.txt"]).contains("default change"));
+    assert!(w.p4(&["opened", "-c", "2"]).contains("not opened"));
+    // a file the default changelist has open (changed on disk) moves into a numbered one
+    assert!(w.p4(&["reopen", "-c", "1", "a.txt"]).contains("change 1"));
+    assert!(w.p4(&["opened", "-c", "1"]).contains("//depot/a.txt - edit change 1"));
+    assert!(w.p4_fail(&["reopen", "-c", "1", "b.txt"]).contains("not opened"));
+    assert!(w.p4_fail(&["reopen", "a.txt"]).contains("-c"));
+    assert!(w.p4_fail(&["reopen", "-c", "7", "a.txt"]).contains("pending changelist 7"));
     assert!(w
-        .p4_fail(&["copy", "//depot/dev/...", "//depot/main/..."])
+        .p4_fail(&["reopen", "-t", "text", "-c", "1", "a.txt"])
         .contains("no vcs equivalent"));
+}
+fn submit_numbered(w: &W) {
+    w.p4(&["change", "-m", "numbered work"]);
+    w.write(&w.a, "a.txt", "one\nnum\n");
+    w.write(&w.a, "n.txt", "n\n");
+    w.write(&w.a, "b.txt", "bee\nstray\n");
+    w.p4(&["add", "-c", "1", "n.txt"]);
+    w.p4(&["edit", "-c", "1", "a.txt"]);
+    // something else already staged blocks the submit (it would be committed too)
+    w.vcs(&w.a, "alice", &["add", "b.txt"]);
+    let e = w.p4_fail(&["submit", "-c", "1"]);
+    assert!(e.contains("outside the changelist") && e.contains("b.txt"), "{e}");
+    w.vcs(&w.a, "alice", &["restore", "--staged", "b.txt"]);
+    assert!(w.p4_fail(&["submit", "-c", "1", "a.txt"]).contains("submitted whole"));
+    let o = w.p4(&["submit", "-c", "1"]);
+    assert!(o.contains("Change 1 submitted"), "{o}");
+    let show = w.vcs(&w.a, "alice", &["show", "--name-status", "HEAD"]);
+    assert!(
+        show.contains("numbered work") && show.contains("a.txt") && show.contains("n.txt") && !show.contains("b.txt"),
+        "{show}"
+    );
+    assert_eq!(w.read(&w.a, "b.txt"), "bee\nstray\n", "the stray edit was left alone");
+    w.p4_in(&w.b, "bob", &["sync"]);
+    assert_eq!(w.read(&w.b, "n.txt"), "n\n");
+    assert_eq!(w.read(&w.b, "b.txt"), "bee\n");
+    assert!(w.p4_fail(&["submit", "-c", "1"]).contains("pending changelist 1"));
+    // empty and undescribed changelists
+    w.p4(&["change", "-m", "empty"]);
+    assert!(w.p4_fail(&["submit", "-c", "2"]).contains("no open files"));
+    w.p4_stdin(&["change", "-i"], "Change:\tnew\nDescription:\n");
+    w.p4(&["edit", "-c", "3", "b.txt"]);
+    assert!(w.p4_fail(&["submit", "-c", "3"]).contains("no description"));
+    assert!(w.p4(&["submit", "-c", "3", "-d", "given"]).contains("Change 3 submitted"));
+}
+fn changelist_numbers(w: &W) {
+    w.write(&w.a, "a.txt", "two\n");
+    assert!(w.p4(&["submit", "-d", "first numbered"]).contains("Change 1 submitted"));
+    w.write(&w.a, "a.txt", "three\n");
+    assert!(w.p4(&["submit", "-d", "second numbered"]).contains("Change 2 submitted"));
+    let d = w.p4(&["describe", "-s", "1"]);
+    assert!(
+        d.contains("first numbered") && d.contains("a.txt") && !d.contains("second numbered"),
+        "{d}"
+    );
+    assert!(w.p4(&["-q", "print", "-q", "a.txt@1"]).ends_with("two\n"));
+    assert!(w.p4(&["-q", "print", "-q", "a.txt@2"]).ends_with("three\n"));
+    assert!(w.p4(&["diff2", "a.txt@1", "a.txt@2"]).contains("+three"));
+    assert!(w.p4(&["changes"]).contains("Change 2 = commit"));
+    w.p4(&["sync", "//depot/...@1"]);
+    assert_eq!(w.read(&w.a, "a.txt"), "two\n");
+    w.vcs(&w.a, "alice", &["restore", "."]);
+    assert_eq!(w.read(&w.a, "a.txt"), "three\n");
+    // a pending number describes the changelist
+    w.p4(&["change", "-m", "pend"]);
+    assert!(w.p4(&["describe", "3"]).contains("Change 3 pending"));
+    // unknown numbers and file revision numbers stay refused, with the reason
+    assert!(w.p4_fail(&["describe", "77"]).contains("changelist number 77"));
+    assert!(w.p4_fail(&["print", "-q", "a.txt#2"]).contains("revision numbers"));
+    // the ledger is local to a repository: bob's clone has no changelist 1
+    assert!(w.p4_fail_in(&w.b, "bob", &["describe", "1"]).contains("changelist number 1"));
 }
 fn resolve(w: &W) {
     setup_conflict(w);
@@ -453,14 +658,14 @@ fn clean(w: &W) {
     assert!(w.a.join("u.txt").exists(), "untracked files are kept and the note says so");
 }
 fn change(w: &W) {
-    let o = w.p4(&["change", "-o"]);
-    assert!(o.contains("no numbered pending changelists"), "{o}");
+    let o = w.p4_stderr(&["change", "-o"]);
+    assert!(o.contains("the default changelist is the index"), "{o}");
 }
 fn verify(w: &W) {
     w.p4(&["verify"]);
 }
 fn missing_cmds(w: &W) {
-    for c in ["reopen", "obliterate", "jobs", "fix"] {
+    for c in ["obliterate", "jobs", "fix"] {
         assert!(w.p4_fail(&[c]).contains("no vcs equivalent"), "{c}");
     }
     let e = w.p4_fail(&["frobnicate"]);
@@ -483,7 +688,7 @@ const CASES: &[Case] = &[
     ("sync", sync),
     ("sync_f", sync_f),
     ("sync_n", sync_n),
-    ("sync_rev_missing", sync_rev_missing),
+    ("sync_rev", sync_rev),
     ("edit_plain", edit_plain),
     ("edit_lockable", edit_lockable),
     ("add", add),
@@ -507,7 +712,7 @@ const CASES: &[Case] = &[
     ("print", print),
     ("have", have),
     ("integrate", integrate),
-    ("copy_missing", copy_missing),
+    ("copy", copy),
     ("resolve", resolve),
     ("shelve", shelve),
     ("label", label),
@@ -524,6 +729,11 @@ const CASES: &[Case] = &[
     ("grep", grep),
     ("clean", clean),
     ("change", change),
+    ("change_numbered", change_numbered),
+    ("numbered_open", numbered_open),
+    ("reopen", reopen),
+    ("submit_numbered", submit_numbered),
+    ("changelist_numbers", changelist_numbers),
     ("verify", verify),
     ("missing_cmds", missing_cmds),
     ("protect_missing", protect_missing),
@@ -572,4 +782,23 @@ fn explain_prints_the_translation_and_runs_nothing() {
     assert!(w.a.join("b.txt").exists());
     let o = w.p4(&["-d", w.b.to_str().unwrap(), "--explain", "where", "a.txt"]);
     assert!(o.contains("print"), "{o}");
+}
+
+#[test]
+fn reverse_table_names_every_vcs_command() {
+    let w = W::new();
+    let help = w.vcs(&w.a, "alice", &["--help"]);
+    let doc = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/vcs-to-git-p4.md")).unwrap();
+    let mut n = 0;
+    for line in help.lines().skip_while(|l| !l.starts_with("Commands:")).skip(1) {
+        if !line.starts_with("  ") {
+            break;
+        }
+        let cmd = line.split_whitespace().next().unwrap();
+        // `vcs help` and the multi-word rows are matched on the command word
+        assert!(doc.contains(&format!("`vcs {cmd}")), "docs/vcs-to-git-p4.md lacks `vcs {cmd}`");
+        n += 1;
+    }
+    assert!(n >= 60, "{n}");
+    assert!(doc.contains("p4-to-vcs.md") && doc.contains("git-to-vcs.md"));
 }

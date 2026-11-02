@@ -750,7 +750,7 @@ depots	zone list	renamed	depots
 sync	sync	different-semantics	sync
 sync -f	sync; restore .	different-semantics	sync_f
 sync -n	fetch	different-semantics	sync_n
-sync path@rev / sync @label	(none)	missing	sync_rev_missing
+sync path@rev / @label / @N	(computed) write the files of that commit into the workspace	different-semantics	sync_rev
 edit	lock (lockable files); nothing otherwise	different-semantics	edit_plain
 add	add	exact	add
 delete	rm	renamed	delete
@@ -773,7 +773,7 @@ fstat	log -n 1 --format ... -- file	different-semantics	fstat
 print	cat-file -p rev:path	renamed	print
 have	ls-files	renamed	have
 integrate / merge	merge	different-semantics	integrate
-copy	(none)	missing	copy_missing
+copy source-branch	(computed) make the tracked files equal to that branch, staged	different-semantics	copy
 resolve [-at -ay -af -n]	resolve --theirs/--ours/--mark; conflict list	renamed	resolve
 shelve [-c name] [-d]	shelve [name] [--delete]	different-semantics	shelve
 unshelve -s name	unshelve name	different-semantics	shelve
@@ -793,8 +793,13 @@ init / fetch / push / clone	init / fetch / publish / clone	renamed	push
 grep	grep	exact	grep
 clean	restore --staged .; restore .	different-semantics	clean
 change / changelist	status	different-semantics	change
+change -m desc / -i / -d N / -o N	(local ledger) numbered pending changelists	different-semantics	change_numbered
+add / edit / delete / revert / opened -c N	(local ledger) open files in changelist N	different-semantics	numbered_open
+reopen -c N	(local ledger) move files between changelists	different-semantics	reopen
+submit -c N	add (the changelist's files); commit; publish	different-semantics	submit_numbered
+describe N / @N	show <commit recorded for N>	different-semantics	changelist_numbers
 verify	fsck	renamed	verify
-reopen / obliterate / jobs / fix	(none)	missing	missing_cmds
+obliterate / jobs / fix	(none)	missing	missing_cmds
 protect / groups / group / user / passwd	(none: vcs-server tokens)	missing	protect_missing
 ```
 
