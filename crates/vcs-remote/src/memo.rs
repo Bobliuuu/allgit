@@ -29,6 +29,7 @@ pub struct MemoBackend {
     held: std::sync::atomic::AtomicUsize,
     cap: usize,
     write_through: bool,
+    disk: Option<std::sync::Arc<crate::clientcache::ClientCache>>,
 }
 
 #[derive(Default)]
@@ -53,6 +54,7 @@ impl MemoBackend {
             held: Default::default(),
             cap: 256 << 20,
             write_through: false,
+            disk: None,
         }
     }
 
@@ -62,6 +64,13 @@ impl MemoBackend {
     pub fn with_write_through(mut self, cap: usize) -> Self {
         self.write_through = true;
         self.cap = cap;
+        self
+    }
+
+    /// Add a persistent disk layer under the memory memo: immutable reads (indexes, objects, pack
+    /// ranges) are served from it when intact and written to it after a miss.
+    pub fn with_disk(mut self, disk: std::sync::Arc<crate::clientcache::ClientCache>) -> Self {
+        self.disk = Some(disk);
         self
     }
 
@@ -117,9 +126,21 @@ impl Backend for MemoBackend {
             if let Some(v) = self.imm.lock().unwrap().get(key) {
                 return Ok(Some(v.clone()));
             }
-            let r = self.inner.get(key)?;
+            if let Some(d) = &self.disk {
+                if let Some((data, tag)) = d.get(key, 0, u64::MAX) {
+                    let v = Versioned { data, tag };
+                    if self.room(v.data.len()) {
+                        self.imm.lock().unwrap().insert(key.to_owned(), v.clone());
+                    }
+                    return Ok(Some(v));
+                }
+            }
+                    let r = self.inner.get(key)?;
             match &r {
                 Some(v) => {
+                    if let Some(d) = &self.disk {
+                        d.put(key, 0, u64::MAX, &v.tag, &v.data);
+                    }
                     if self.room(v.data.len()) {
                         self.imm.lock().unwrap().insert(key.to_owned(), v.clone());
                     }
@@ -156,14 +177,30 @@ impl Backend for MemoBackend {
         if let Some(v) = self.ranges.lock().unwrap().get(&k) {
             return Ok(Some(v.clone()));
         }
+        if let Some(d) = &self.disk {
+            if let Some((data, _)) = d.get(key, offset, len) {
+                if self.room(data.len()) {
+                    self.ranges.lock().unwrap().insert(k, data.clone());
+                }
+                return Ok(Some(data));
+            }
+        }
         let r = self.inner.get_range(key, offset, len)?;
         match &r {
             Some(v) if v.len() as u64 == len => {
+                if let Some(d) = &self.disk {
+                    d.put(key, offset, len, "", v);
+                }
                 if self.room(v.len()) {
                     self.ranges.lock().unwrap().insert(k, v.clone());
                 }
             }
-            Some(_) => {}
+            Some(v) => {
+                // clamped at the end of an immutable pack: the same (offset, len) always answers the same bytes
+                if let Some(d) = &self.disk {
+                    d.put(key, offset, len, "", v);
+                }
+            }
             None => self.drop_live(),
         }
         Ok(r)
@@ -307,5 +344,49 @@ mod tests {
         b.list("packs/").unwrap();
         b.get("packs/p1.idx").unwrap();
         assert_eq!(tl.requests(), 5);
+    }
+
+    #[test]
+    fn disk_layer_makes_a_second_process_send_no_immutable_requests() {
+        let m = MemBackend::new();
+        m.put_if_absent("packs/p.idx", b"idx").unwrap();
+        m.put_if_absent("packs/p.pack", b"0123456789").unwrap();
+        m.put_if_absent("objects/o", b"obj").unwrap();
+        let tl = Arc::new(TimelineBackend::new(Arc::new(m), Duration::ZERO));
+        let dir = tempfile::tempdir().unwrap();
+        let mk = || {
+            let d = Arc::new(crate::ClientCache::open(dir.path(), "r", 1 << 20).unwrap());
+            MemoBackend::new(Box::new(tl.clone()), false).with_disk(d)
+        };
+        let run = |b: &MemoBackend| {
+            assert_eq!(b.get("packs/p.idx").unwrap().unwrap().data, b"idx");
+            assert_eq!(b.get("objects/o").unwrap().unwrap().data, b"obj");
+            assert_eq!(b.get_range("packs/p.pack", 2, 3).unwrap().unwrap(), b"234");
+        };
+        run(&mk());
+        assert_eq!(tl.requests(), 3);
+        run(&mk()); // fresh memo, same disk: zero new requests
+        assert_eq!(tl.requests(), 3);
+        // a corrupted entry is refetched, not trusted
+        for e in walk(dir.path()) {
+            let mut raw = std::fs::read(&e).unwrap();
+            let n = raw.len() - 1;
+            raw[n] ^= 1;
+            std::fs::write(&e, raw).unwrap();
+        }
+        run(&mk());
+        assert_eq!(tl.requests(), 6);
+    }
+
+    fn walk(p: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut v = Vec::new();
+        for e in std::fs::read_dir(p).unwrap().flatten() {
+            if e.path().is_dir() {
+                v.extend(walk(&e.path()));
+            } else {
+                v.push(e.path());
+            }
+        }
+        v
     }
 }
