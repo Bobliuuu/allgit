@@ -2341,7 +2341,7 @@ impl Repo {
                 ctime_ns: m.ctime_ns,
             })
         };
-        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
+        let threads = crate::writer_threads::for_dir(&self.worktree, changed.iter().map(|p| p.as_str()));
         let written: Vec<Result<IndexEntry>> = if threads <= 1 || changed.len() < 64 {
             changed.iter().map(|p| write_one(p)).collect()
         } else {
