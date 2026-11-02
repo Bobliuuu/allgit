@@ -144,7 +144,7 @@ Status: exact (same command and flags), renamed (other spelling, same meaning), 
 semantics differ as the notes say), missing (no equivalent; the notes name the native route).
 
 <!-- BEGIN GENERATED TABLE -->
-255 rows: 141 exact, 39 renamed, 28 different, 47 missing.
+261 rows: 145 exact, 39 renamed, 33 different, 44 missing.
 
 | git | vcs | status | notes | test |
 |---|---|---|---|---|
@@ -265,7 +265,8 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git revert -n HEAD` | none | missing | a revert always commits | translation |
 | `git cherry-pick feature` | `vcs cherry-pick feature` | exact |  | `pick` |
 | `git cherry-pick --continue` | `vcs commit` | exact |  | translation |
-| `git cherry-pick A..B` | none | missing | one `vcs cherry-pick` per commit | translation |
+| `git cherry-pick A..B` | `vcs cherry-pick A..B` | exact | oldest first in one run; merge commits in the range are refused up front; a pick that changes nothing is skipped; a conflict stops the run, prints the commits left to pick, and is finished with `vcs commit` | translation |
+| `git cherry main feature` | `vcs cherry main feature` | different | `+`/`-` per commit by patch id (the diff against the first parent, line numbers ignored, context included); prints full ids, or `-v` short id and subject | translation |
 | `git merge feature` | `vcs merge feature` | exact | fast-forward when possible, else a merge commit | `merge` |
 | `git merge --abort` | `vcs merge --abort` | exact |  | `merge` |
 | `git merge --continue` | `vcs commit` | exact |  | translation |
@@ -281,6 +282,9 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git rebase -i --autosquash HEAD~3` | `vcs rebase -i --autosquash HEAD~3` | exact | `fixup! X` and `squash! X` commits move next to X | `rebase_i` |
 | `git rebase -x "test -f f.txt" main` | `vcs rebase -x test -f f.txt main` | exact | runs the command after each replayed commit; a failure stops the rebase (fix, commit, `--continue`) | `rebase_i` |
 | `git rebase --skip` | `vcs rebase --skip` | exact | drops the commit that stopped with conflicts | `merge` |
+| `git rebase --onto main A` | `vcs rebase --onto main A` | exact | replays the commits A lacks onto main (any revision); not combinable with -i/-x; the branch to rebase must be checked out | translation |
+| `git rebase --onto main --root` | `vcs rebase --onto main --root` | exact | replays the whole branch, root commit included; linear history only | translation |
+| `git rebase --rebase-merges main` | none | missing | replay is linear: a range containing a merge commit is refused before anything changes; rebase each linear side, or `vcs merge` | translation |
 | `git rebase origin/main` | none | missing | `vcs sync`, then `vcs rebase <local branch>` | translation |
 | `git stash` | `vcs stash push` | exact | tracked changes only; untracked files stay | `stash` |
 | `git stash push -m wip` | `vcs stash push -m wip` | exact |  | `stash` |
@@ -315,7 +319,9 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git push --force-with-lease=main:abc123 origin` | `vcs publish --force-with-lease=main:abc123` | exact | the id may be a prefix of the remote head you expect | translation |
 | `git push origin --delete feature` | `vcs publish --delete feature` | different | deletes the remote branch only if it is still the head you last fetched; the old head is recoverable with `vcs branch <name> --at <id>` | `push-force` |
 | `git push origin :feature` | `vcs publish --delete feature` | different | same as `--delete` | translation |
-| `git push --tags` | none | missing | tags travel with `vcs publish` | translation |
+| `git push --tags` | `vcs publish --tags` | exact | publishes only the tags, no branch moves (a plain `vcs publish` sends both); a tag that exists on the remote at another target is reported, not moved | translation |
+| `git push --prune` | `vcs publish --prune` | different | also deletes remote branches of subscribed zones that have no local branch; each deletion needs the head you last fetched (or your lease), is one atomic transaction, and is in the op log and server audit log | translation |
+| `git push --mirror` | `vcs publish --mirror` | different | forces every checked-out branch with a lease (stale info refuses, nothing changed), prunes remote branches with no local one, sends tags; remote tags are never deleted | translation |
 | `git blame f.txt` | `vcs blame f.txt` | exact |  | `history` |
 | `git blame -M f.txt` | `vcs blame -M f.txt` | exact |  | `history` |
 | `git blame HEAD~1 -- f.txt` | `vcs blame --rev HEAD~1 f.txt` | exact |  | `history` |
@@ -390,13 +396,13 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git am --continue` | `vcs am --continue` | exact | commits what you staged for the stopped patch | translation |
 | `git am --skip` | `vcs am --skip` | exact |  | translation |
 | `git am --abort` | `vcs am --abort` | exact |  | translation |
-| `git am -3 x.patch` | none | missing | three-way application: a patch carries no blob ids to merge against; edit the patch or `vcs cherry-pick` after `vcs fetch` | translation |
+| `git am -3 x.patch` | `vcs am -3 x.patch` | different | a patch has no blob ids, so each hunk that does not fit is merged against its own pre-image (text merge); overlapping edits stop the run with markers in the file (resolve, `vcs add`, `vcs am --continue`) | translation |
 | `git apply x.patch` | `vcs apply x.patch` | exact | unified diffs from git, `vcs diff` and `vcs show`; all hunks must fit (offsets are searched, no fuzz) or nothing changes; binary patches are refused | `patch` |
 | `git apply --check x.patch` | `vcs apply --check x.patch` | exact |  | `patch` |
 | `git apply --index x.patch` | `vcs apply --index x.patch` | exact | the touched files must match the index first | `patch` |
 | `git apply -R x.patch` | `vcs apply -R x.patch` | exact |  | `patch` |
 | `git apply -p0 x.patch` | `vcs apply -p 0 x.patch` | exact |  | translation |
-| `git apply -3 x.patch` | none | missing | three-way application is not supported | translation |
+| `git apply -3 x.patch` | `vcs apply -3 x.patch` | different | same hunk-local three-way merge as `am -3`; conflicts leave markers, are not staged, and exit non-zero | translation |
 | `git apply --cached x.patch` | none | missing | index-only application: `vcs apply --index` then `vcs restore` the file | translation |
 | `git apply --stat x.patch` | none | missing | no summary modes; `vcs apply --check -v x.patch` lists the files | translation |
 | `git mergetool` | none | missing | `vcs conflict show <path>`, edit, `vcs resolve --mark <path>` | translation |

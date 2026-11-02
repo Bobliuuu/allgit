@@ -383,8 +383,22 @@ enum Cmd {
     /// Re-apply the change of one commit onto the checked-out branch
     #[command(name = "cherry-pick")]
     CherryPick {
-        /// Commit id (or unique prefix), branch name or HEAD
-        rev: String,
+        /// Commit id (or unique prefix), branch name, HEAD, or a range `A..B` (the commits of B that A lacks, oldest first); several allowed
+        #[arg(required = true)]
+        revs: Vec<String>,
+        /// Zone (default: the zone containing the current directory)
+        #[arg(long)]
+        zone: Option<String>,
+    },
+    /// List the commits of a branch with `+` (no equivalent patch upstream) or `-` (an upstream commit has the same patch)
+    Cherry {
+        /// Branch or revision to compare against
+        upstream: String,
+        /// Commits to list (default HEAD)
+        head: Option<String>,
+        /// Print the subject after each id
+        #[arg(short = 'v', long)]
+        verbose: bool,
         /// Zone (default: the zone containing the current directory)
         #[arg(long)]
         zone: Option<String>,
@@ -423,6 +437,12 @@ enum Cmd {
         /// Run this shell command after each replayed commit (repeatable); a failure stops the rebase
         #[arg(short = 'x', long = "exec", value_name = "COMMAND")]
         exec: Vec<String>,
+        /// Replay onto NEWBASE (any revision) the commits that the positional upstream lacks (`git rebase --onto`)
+        #[arg(long = "onto", value_name = "NEWBASE")]
+        new_base: Option<String>,
+        /// With --onto: replay every commit of the branch, root commit included (no upstream)
+        #[arg(long, requires = "new_base")]
+        root: bool,
         /// Do not use the structural Rust merge (only matters when built with `--features structural`)
         #[arg(long)]
         no_structural: bool,
@@ -537,6 +557,17 @@ enum Cmd {
         /// Delete this remote branch (only if it is the head you last fetched; repeatable)
         #[arg(long = "delete", value_name = "BRANCH")]
         delete: Vec<String>,
+        /// Publish only the tags, move no branch (`git push --tags`)
+        #[arg(long, conflicts_with_all = ["mirror", "delete"])]
+        tags: bool,
+        /// Also delete every remote branch of a subscribed zone that has no local branch (`git push --prune`);
+        /// each deletion needs the head you last fetched (or your lease) and is audited
+        #[arg(long)]
+        prune: bool,
+        /// Make the remote match this repo: force every checked-out branch (leased, like --force-with-lease),
+        /// prune remote branches with no local one, and publish tags (`git push --mirror`)
+        #[arg(long, conflicts_with_all = ["tags", "delete"])]
+        mirror: bool,
     },
     /// Lock files on the remote so others cannot publish changes to them
     Lock {
@@ -874,6 +905,29 @@ fn print_pick(zone: &str, out: MergeOutcome, verb: &str) -> Result<(), Error> {
             return Err(Error::Msg(format!("{verb} has conflicts")));
         }
         MergeOutcome::UpToDate | MergeOutcome::FastForward { .. } | MergeOutcome::Squashed { .. } => println!("nothing to do"),
+    }
+    Ok(())
+}
+
+fn print_pick_seq(zone: &str, seq: vcs_repo::PickSeq) -> Result<(), Error> {
+    for (src, new) in &seq.done {
+        println!("{zone}: cherry-picked {} as {}", src.short(), new.short());
+    }
+    for src in &seq.skipped {
+        println!("{zone}: skipped {} (its change is already here)", src.short());
+    }
+    if let Some((src, paths, rest)) = seq.stopped {
+        println!("cherry-pick stopped at {}: {} conflict(s)", src.short(), paths.len());
+        for p in &paths {
+            println!("  conflict: {p}");
+        }
+        println!("\nResolve the files, `vcs add` each one, then `vcs commit -m <message>`.");
+        if !rest.is_empty() {
+            let ids: Vec<String> = rest.iter().map(|i| i.to_hex()).collect();
+            println!("Then pick the rest: vcs cherry-pick {}", ids.join(" "));
+        }
+        println!("Inspect with `vcs conflict list|show <path>`; give up with `vcs merge --abort`.");
+        return Err(Error::Msg("cherry-pick has conflicts".into()));
     }
     Ok(())
 }
@@ -1499,11 +1553,32 @@ fn run(cli: Cli) -> Result<(), Error> {
                 }
             }
         }
-        Cmd::CherryPick { rev, zone } => {
+        Cmd::CherryPick { revs, zone } => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
-            let out = repo.cherry_pick(&zone, &rev, author()?)?;
-            print_pick(&zone, out, "cherry-pick")?;
+            if revs.len() == 1 && !revs[0].contains("..") {
+                let out = repo.cherry_pick(&zone, &revs[0], author()?)?;
+                print_pick(&zone, out, "cherry-pick")?;
+            } else {
+                print_pick_seq(&zone, repo.cherry_pick_many(&zone, &revs, author()?)?)?;
+            }
+        }
+        Cmd::Cherry {
+            upstream,
+            head,
+            verbose,
+            zone,
+        } => {
+            let (repo, cwd) = open()?;
+            let zone = zone_of_cwd(&repo, &cwd, zone)?;
+            for (id, equivalent, subject) in repo.cherry(&zone, &upstream, head.as_deref().unwrap_or("HEAD"))? {
+                let sign = if equivalent { '-' } else { '+' };
+                if verbose {
+                    println!("{sign} {} {subject}", id.short());
+                } else {
+                    println!("{sign} {}", id.to_hex());
+                }
+            }
         }
         Cmd::Revert { rev, zone } => {
             let (repo, cwd) = open()?;
@@ -1520,6 +1595,8 @@ fn run(cli: Cli) -> Result<(), Error> {
             interactive,
             autosquash,
             exec,
+            new_base,
+            root,
             no_structural,
             renames,
             assist,
@@ -1536,6 +1613,18 @@ fn run(cli: Cli) -> Result<(), Error> {
             }
             let out = if cont || skip {
                 rebase_i::resume(&repo, skip, author()?)?
+            } else if let Some(nb) = new_base {
+                if interactive || !exec.is_empty() {
+                    return Err(Error::Msg("--onto cannot be combined with -i or -x yet".into()));
+                }
+                if root == onto.is_some() {
+                    return Err(Error::Msg(
+                        "usage: vcs rebase --onto <newbase> <upstream> | vcs rebase --onto <newbase> --root".into(),
+                    ));
+                }
+                let zone = zone_of_cwd(&repo, &cwd, zone)?;
+                hooks::fire_simple(&repo, &zone, "pre-rebase", std::slice::from_ref(&nb))?;
+                repo.rebase_onto(&zone, &nb, onto.as_deref(), author()?)?
             } else if interactive || !exec.is_empty() {
                 let Some(onto) = onto else {
                     return Err(Error::Msg(
@@ -1940,6 +2029,9 @@ fn run(cli: Cli) -> Result<(), Error> {
             force_with_lease,
             force_without_lease,
             delete,
+            tags,
+            prune,
+            mirror,
         } => {
             let (repo, _) = open()?;
             let backend = remote::open_backend(&need_remote(&repo)?)?;
@@ -1953,8 +2045,10 @@ fn run(cli: Cli) -> Result<(), Error> {
                 branches,
                 force: None,
                 delete,
+                tags_only: tags,
+                prune: prune || mirror,
             };
-            if force || force_without_lease || !force_with_lease.is_empty() {
+            if force || mirror || force_without_lease || !force_with_lease.is_empty() {
                 let mut spec = vcs_repo::ForceSpec {
                     without_lease: force_without_lease,
                     expect: Default::default(),

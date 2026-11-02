@@ -56,7 +56,8 @@ pub struct ApplyArgs {
     /// Strip N leading path components (default 1)
     #[arg(short = 'p', value_name = "N")]
     pub strip: Option<usize>,
-    /// Three-way application is not supported (refused)
+    /// Three-way application: a hunk that does not fit is merged against its own pre-image;
+    /// overlapping edits leave conflict markers in the file
     #[arg(short = '3', long = "3way")]
     pub three_way: bool,
     /// Print the files that were (or would be) changed
@@ -77,7 +78,8 @@ pub struct AmArgs {
     /// Go back to the branch heads from before `vcs am`
     #[arg(long)]
     pub abort: bool,
-    /// Three-way application is not supported (refused)
+    /// Three-way application: a hunk that does not fit is merged against its own pre-image; the
+    /// run stops on overlapping edits with conflict markers (resolve, `vcs add`, `vcs am --continue`)
     #[arg(short = '3', long = "3way")]
     pub three_way: bool,
 }
@@ -159,14 +161,12 @@ pub fn format_patch(repo: &Repo, cwd: &Path, a: FormatPatchArgs) -> Result<(), E
 }
 
 pub fn apply(repo: &Repo, a: ApplyArgs) -> Result<(), Error> {
-    if a.three_way {
-        return err("apply -3/--3way is not supported: a patch carries no blob ids to merge against. Apply it with `vcs apply`, or fetch the commits (`vcs fetch`, `vcs bundle`) and use `vcs merge`/`vcs cherry-pick`");
-    }
     let opts = ApplyOpts {
         check: a.check,
         index: a.index,
         reverse: a.reverse,
         strip: a.strip,
+        three_way: a.three_way,
     };
     let mut total = 0;
     for data in read_input(&a.files)? {
@@ -182,6 +182,12 @@ pub fn apply(repo: &Repo, a: ApplyArgs) -> Result<(), Error> {
             }
         }
         total += rep.files.len();
+        if !rep.conflicts.is_empty() {
+            for c in &rep.conflicts {
+                eprintln!("conflict: {c} (markers written; resolve them, then `vcs add`)");
+            }
+            return err(format!("{} file(s) applied with conflicts", rep.conflicts.len()));
+        }
     }
     if a.verbose {
         println!("{} file(s) {}", total, if a.check { "would apply" } else { "applied" });
@@ -205,7 +211,11 @@ fn show_am(out: AmOutcome) -> Result<(), Error> {
     }
     if let Some((n, t, subject, reason)) = stop {
         eprintln!("patch {n}/{t} ({subject}) did not apply: {reason}");
-        eprintln!("The working tree is as before this patch. Make the change by hand, `vcs add` it, then `vcs am --continue`;");
+        if reason.starts_with("applied with conflicts") {
+            eprintln!("Resolve the markers, `vcs add` each file, then `vcs am --continue`;");
+        } else {
+            eprintln!("The working tree is as before this patch. Make the change by hand, `vcs add` it, then `vcs am --continue`;");
+        }
         eprintln!("or `vcs am --skip` to drop this patch, or `vcs am --abort` to go back.");
         return Err(Error::Msg("am stopped".into()));
     }
@@ -213,9 +223,6 @@ fn show_am(out: AmOutcome) -> Result<(), Error> {
 }
 
 pub fn am(repo: &Repo, a: AmArgs) -> Result<(), Error> {
-    if a.three_way {
-        return err("am -3/--3way is not supported (see `vcs apply --help`)");
-    }
     if a.abort {
         repo.am_abort()?;
         println!("am aborted; branches and working tree restored");
@@ -228,5 +235,5 @@ pub fn am(repo: &Repo, a: AmArgs) -> Result<(), Error> {
         return show_am(repo.am_skip()?);
     }
     let inputs = read_input(&a.files)?;
-    show_am(repo.am_start(&inputs)?)
+    show_am(repo.am_start_with(&inputs, a.three_way)?)
 }

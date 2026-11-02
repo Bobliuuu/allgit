@@ -321,8 +321,9 @@ fn apply_check_index_reverse_and_atomic() {
     let e = fail(&a, &["apply", p.to_str().unwrap()]);
     assert!(e.contains("dir/b.txt") && e.contains("does not apply"), "{e}");
     assert!(read(&a, "a.txt").starts_with("one\n"));
-    // 3-way and unsafe paths and binary are refused loudly
-    assert!(fail(&a, &["apply", "-3", p.to_str().unwrap()]).contains("not supported"));
+    // -3 cannot place the hunk either, and still changes nothing; unsafe paths and binary are refused loudly
+    assert!(fail(&a, &["apply", "-3", p.to_str().unwrap()]).contains("cannot be placed"));
+    assert!(read(&a, "a.txt").starts_with("one\n"));
     std::fs::write(&p, "--- a/../evil\n+++ b/../evil\n@@ -0,0 +1 @@\n+x\n").unwrap();
     assert!(fail(&a, &["apply", p.to_str().unwrap()]).contains("unsafe path"));
     std::fs::write(

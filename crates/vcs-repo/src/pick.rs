@@ -119,10 +119,20 @@ impl Repo {
         self.pick(zone, rev, PickKind::Revert, author)
     }
 
+    /// [`Repo::cherry_pick`] for a commit id that is already resolved.
+    pub fn cherry_pick_id(&self, zone: &str, target: ObjectId, author: Signature) -> Result<MergeOutcome> {
+        self.pick_id(zone, target, PickKind::CherryPick, author)
+    }
+
     fn pick(&self, zone: &str, rev: &str, kind: PickKind, author: Signature) -> Result<MergeOutcome> {
         let zone = self.resolve_zone(zone)?;
+        let target = self.resolve_commit(&zone, rev)?;
+        self.pick_id(&zone, target, kind, author)
+    }
+
+    fn pick_id(&self, zone: &str, target: ObjectId, kind: PickKind, author: Signature) -> Result<MergeOutcome> {
+        let zone = self.resolve_zone(zone)?;
         let zone = zone.as_str();
-        let target = self.resolve_commit(zone, rev)?;
         let _l = self.lock()?;
         let verb = if kind == PickKind::Revert { "revert" } else { "cherry-pick" };
         self.rebase_guard(verb)?;
