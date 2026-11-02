@@ -141,3 +141,31 @@ fn bisect_finds_the_same_commit_with_the_graph() {
         drop_caches(&d);
     }
 }
+
+/// A path-limited `log --name-status` lists only the changes inside the pathspec (git's behaviour),
+/// not every file of each commit; `--follow` and `--name-only` do the same.
+#[test]
+fn path_limited_name_status_lists_only_the_spec() {
+    let (_t, d) = history(12);
+    for args in [
+        vec!["log", "-n", "100", "--name-status", "--format=%s", "--", "hot.txt"],
+        vec!["log", "-n", "100", "--name-status", "--format=%s", "--follow", "--", "hot.txt"],
+    ] {
+        let out = ok(&d, &args);
+        let lines: Vec<&str> = out.lines().filter(|l| l.contains('\t')).collect();
+        assert!(!lines.is_empty(), "{args:?}");
+        assert!(lines.iter().all(|l| l.ends_with("\thot.txt")), "{args:?}: {out}");
+        // the first commit added hot.txt; later ones modified it
+        assert!(
+            lines.iter().any(|l| l.starts_with("A\t")) && lines.iter().any(|l| l.starts_with("M\t")),
+            "{out}"
+        );
+    }
+    // a directory spec lists the files under it only
+    let out = ok(&d, &["log", "-n", "100", "--name-only", "--format=%s", "--", "d1"]);
+    let files: Vec<&str> = out.lines().filter(|l| l.contains('/')).collect();
+    assert!(!files.is_empty() && files.iter().all(|l| l.starts_with("d1/")), "{out}");
+    // without a spec the whole commit is listed
+    let all = ok(&d, &["log", "-n", "100", "--name-only", "--format=%s"]);
+    assert!(all.contains("hot.txt") && all.contains("d2/"), "{all}");
+}
