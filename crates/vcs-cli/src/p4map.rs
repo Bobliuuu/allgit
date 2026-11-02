@@ -2196,9 +2196,39 @@ pub fn run(a: &P4Args) -> Result<(), Error> {
     for st in &plan.steps {
         exec(st, quiet)?;
     }
-    crate::lockable_cmd::refresh(Path::new("."));
+    // Commands that change no file have no read-only bits to restore: skip the second repo open.
+    if !READ_ONLY.contains(&cmd.as_str()) {
+        crate::lockable_cmd::refresh(Path::new("."));
+    }
     Ok(())
 }
+
+/// p4 commands whose plan never writes a working-tree file.
+const READ_ONLY: &[&str] = &[
+    "info",
+    "where",
+    "opened",
+    "filelog",
+    "annotate",
+    "fstat",
+    "print",
+    "changes",
+    "describe",
+    "files",
+    "have",
+    "users",
+    "depots",
+    "clients",
+    "workspaces",
+    "labels",
+    "branches",
+    "streams",
+    "diff",
+    "diff2",
+    "grep",
+    "verify",
+    "locks",
+];
 
 #[cfg(test)]
 mod tests {

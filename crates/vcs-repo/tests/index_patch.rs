@@ -132,3 +132,38 @@ fn a_torn_index_is_detected_and_rebuilt_at_open_never_read_as_empty() {
         assert!(vcs_repo::Repo::discover(&root).is_ok() && fs::read(&index).unwrap().starts_with(b"AGI"));
     }
 }
+
+/// The "index names no attribute file" marker must follow every kind of index write: a patch
+/// (`rm`, `restore --staged`) and a full rewrite (`add`) never leave a stale "none".
+#[test]
+fn attrs_marker_follows_index_writes() {
+    let d = tempfile::tempdir().unwrap();
+    let r = Repo::init(&d.path().join("r")).unwrap();
+    for k in 0..600u32 {
+        let p = format!("d{:02}/f{k:05}.txt", k % 7);
+        let abs = r.worktree().join(&p);
+        fs::create_dir_all(abs.parent().unwrap()).unwrap();
+        fs::write(abs, format!("file {k}\n")).unwrap();
+    }
+    r.add(&s("")).unwrap();
+    r.commit("base", sig()).unwrap();
+    let lockable = |r: &Repo, p: &str| r.attrs().unwrap().lookup(p).lockable;
+    assert!(!lockable(&r, "d01/x.psd"));
+    assert!(!lockable(&r, "d01/x.psd")); // second call runs on the marker
+
+    // a patch write keeps the marker valid; the next index write that adds the file must drop it
+    r.rm(&s("d00/f00000.txt"), true, false).unwrap();
+    assert!(!lockable(&r, "d01/x.psd"));
+    fs::write(r.worktree().join("d01/.vcsattributes"), "*.psd lockable\n").unwrap();
+    r.add(&s("d01/.vcsattributes")).unwrap();
+    assert!(lockable(&r, "d01/x.psd"), "attribute file added to the index is seen");
+    assert!(!lockable(&r, "d02/x.psd"));
+
+    // removing it again (patch) makes the directory plain; the working file is gone too
+    r.rm(&s("d01/.vcsattributes"), false, true).unwrap();
+    assert!(!lockable(&r, "d01/x.psd"));
+    // and the marker never hides one that comes back
+    fs::write(r.worktree().join("d01/.vcsattributes"), "*.psd lockable\n").unwrap();
+    r.add(&s("d01/.vcsattributes")).unwrap();
+    assert!(lockable(&r, "d01/x.psd"));
+}

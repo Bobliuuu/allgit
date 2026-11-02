@@ -351,7 +351,10 @@ impl crate::repo::Repo {
     /// blobs it names are made durable first).
     pub(crate) fn write_index_bytes(&self, bytes: &[u8]) -> Result<()> {
         self.store.sync()?;
-        crate::meta::write_atomic_nosync(&self.vcs.join("index"), bytes)
+        let clean = self.index_holds_no_attrs();
+        crate::meta::write_atomic_nosync(&self.vcs.join("index"), bytes)?;
+        self.carry_attrs_marker(clean, bytes);
+        Ok(())
     }
 }
 
@@ -365,37 +368,49 @@ pub(crate) fn index_looks_whole(path: &std::path::Path) -> bool {
     let Ok(len) = f.metadata().map(|m| m.len() as usize) else {
         return true;
     };
-    let mut head = vec![0u8; len.min(1 << 20)];
-    if f.read_exact(&mut head).is_err() {
-        return false;
-    }
-    if !head.starts_with(b"AGI3") && !head.starts_with(b"AGI4") {
-        return !head.is_empty() && (head.starts_with(b"AGI2") || head.starts_with(b"AGIX"));
-    }
-    let v4 = head.starts_with(b"AGI4");
-    let mut r = Reader::new(&head[5.min(head.len())..]);
-    let parsed = (|| -> std::result::Result<usize, vcs_objects::DecodeError> {
-        r.varint()?;
-        let n = r.varint()? as usize;
-        let mut total = 0usize;
-        if v4 {
-            let nb = r.varint()? as usize;
-            for _ in 0..nb {
-                total += r.varint()? as usize;
-                r.varint()?;
-            }
-        } else {
-            r.varint()?;
-            let nb = r.varint()? as usize;
-            for _ in 0..nb {
-                total += r.varint()? as usize;
-            }
+    // The block table is small (about a byte per 100 entries): read a few KiB first and widen only when
+    // the table does not fit.
+    let mut want = len.min(16 << 10);
+    let (head, v4, r_rem, parsed) = loop {
+        let mut head = vec![0u8; want];
+        if f.seek(SeekFrom::Start(0)).is_err() || f.read_exact(&mut head).is_err() {
+            return false;
         }
-        let _ = n;
-        Ok(total)
-    })();
+        if !head.starts_with(b"AGI3") && !head.starts_with(b"AGI4") {
+            return !head.is_empty() && (head.starts_with(b"AGI2") || head.starts_with(b"AGIX"));
+        }
+        let v4 = head.starts_with(b"AGI4");
+        let mut r = Reader::new(&head[5.min(head.len())..]);
+        let parsed = (|| -> std::result::Result<usize, vcs_objects::DecodeError> {
+            r.varint()?;
+            let n = r.varint()? as usize;
+            let mut total = 0usize;
+            if v4 {
+                let nb = r.varint()? as usize;
+                for _ in 0..nb {
+                    total += r.varint()? as usize;
+                    r.varint()?;
+                }
+            } else {
+                r.varint()?;
+                let nb = r.varint()? as usize;
+                for _ in 0..nb {
+                    total += r.varint()? as usize;
+                }
+            }
+            let _ = n;
+            Ok(total)
+        })();
+        if parsed.is_err() && want < len {
+            want = (want * 16).min(len);
+            continue;
+        }
+        let rem = r.remaining();
+        break (head, v4, rem, parsed);
+    };
+    let _ = v4;
     let Ok(blocks_len) = parsed else { return false };
-    let off = 5 + (head.len() - 5 - r.remaining()) + blocks_len;
+    let off = 5 + (head.len() - 5 - r_rem) + blocks_len;
     if off >= len {
         return false;
     }
