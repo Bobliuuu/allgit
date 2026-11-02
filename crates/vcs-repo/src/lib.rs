@@ -20,6 +20,7 @@ pub mod ignore;
 pub mod import;
 pub mod import_p4;
 pub mod index;
+mod index_file;
 mod largeeq;
 pub mod lockable;
 pub mod manage;

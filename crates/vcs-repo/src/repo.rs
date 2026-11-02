@@ -462,7 +462,9 @@ impl Repo {
         // Durability barrier (no-op if nothing pending): blobs the index names must be durable.
         self.store.sync()?;
         ix.written_ns = ix.settled_written_ns(now_ns(), self.index_racy_ns, verified);
-        write_atomic(&self.vcs.join("index"), &ix.encode())
+        // No fsync of the temp file (like git): the rename is atomic, and the blobs the index
+        // names were made durable just above.
+        crate::meta::write_atomic_nosync(&self.vcs.join("index"), &ix.encode())
     }
     pub(crate) fn save_ws(&self, ws: &Workspace) -> Result<()> {
         // Backstop for every path that changes a subscription: a branch of a zone is checked out
@@ -487,6 +489,36 @@ impl Repo {
     pub(crate) fn current_head(&self, zone: &str, ws: &Workspace, refs: &Refs) -> Option<ObjectId> {
         let b = ws.subs.get(zone).map(String::as_str).unwrap_or(DEFAULT_BRANCH);
         refs.head(zone, b)
+    }
+
+    /// Root tree of the commit `zone`'s checked-out branch points at (`None`: no commits yet).
+    pub(crate) fn head_root(&self, zone: &str, ws: &Workspace, refs: &Refs) -> Result<Option<ObjectId>> {
+        match self.current_head(zone, ws, refs) {
+            Some(h) => Ok(Some(self.commit_obj(&h)?.root)),
+            None => Ok(None),
+        }
+    }
+
+    /// What HEAD of `zone` (tree `root`) holds at the file `path`: the same answer as
+    /// `head_flat(..).get(path)` without reading every tree.
+    pub(crate) fn head_entry(
+        &self,
+        root: Option<ObjectId>,
+        zones: &Zones,
+        zone: &str,
+        path: &str,
+    ) -> Result<Option<(EntryMode, ObjectId)>> {
+        let Some(root) = root else { return Ok(None) };
+        let zp = zones.path_of(zone).unwrap_or("");
+        let rel = if zp.is_empty() {
+            path
+        } else {
+            match path.strip_prefix(zp).and_then(|r| r.strip_prefix('/')) {
+                Some(r) => r,
+                None => return Ok(None),
+            }
+        };
+        Ok(treeops::entry_at(&self.store, root, rel)?.filter(|e| e.0 != EntryMode::Directory))
     }
 
     pub(crate) fn head_flat(&self, zone: &str, zones: &Zones, ws: &Workspace, refs: &Refs) -> Result<Flat> {

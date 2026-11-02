@@ -63,10 +63,11 @@ impl Repo {
         }
         let old = refs.head(zone, &branch);
         let prefix = zones.path_of(zone).unwrap_or("").to_owned();
-        let new = treeops::flatten(&self.store, Some(tc.root), &prefix)?;
         let mut index_changed = 0;
         let mut files_changed = 0;
         if mode != ResetMode::Soft {
+            // (a soft reset moves only the branch: it never needs the target's files)
+            let new = treeops::flatten(&self.store, Some(tc.root), &prefix)?;
             let mut ix = self.index()?;
             let owned: Vec<String> = ix.under("").into_iter().filter(|p| zones.owner(p) == zone).collect();
             let mut dirs = BTreeSet::new();

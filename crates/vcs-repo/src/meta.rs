@@ -17,13 +17,22 @@ pub const DEFAULT_BRANCH: &str = "main";
 pub(crate) const STATE_VERSION: u8 = 1;
 
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    write_atomic_inner(path, bytes, true)
+    write_atomic_inner(path, bytes, true, true)
+}
+
+/// [`write_atomic`] without the fsync of the temp file, for state that is replaced by rename and
+/// that git itself never syncs (the index). A crash of the process still leaves the old file or
+/// the new one, never a mix (the rename is atomic); only a power cut right after the rename can
+/// leave a short file on a file system that does not flush replaced-by-rename data (ext4 and XFS
+/// do). Crash injection still counts these writes.
+pub(crate) fn write_atomic_nosync(path: &Path, bytes: &[u8]) -> Result<()> {
+    write_atomic_inner(path, bytes, true, false)
 }
 
 /// Like [`write_atomic`] for pure caches (never state): crash injection does not count these
 /// writes, because a failed cache write is ignored by design.
 pub(crate) fn write_cache_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    write_atomic_inner(path, bytes, false)
+    write_atomic_inner(path, bytes, false, true)
 }
 
 /// Like [`write_cache_atomic`] without the fsync, for caches whose readers validate (and ignore)
@@ -34,7 +43,7 @@ pub(crate) fn write_cache_nosync(path: &Path, bytes: &[u8]) -> Result<()> {
     io(path, fs::rename(&tmp, path))
 }
 
-fn write_atomic_inner(path: &Path, bytes: &[u8], inject: bool) -> Result<()> {
+fn write_atomic_inner(path: &Path, bytes: &[u8], inject: bool, sync: bool) -> Result<()> {
     let tmp = path.with_extension(format!("tmp{}", std::process::id()));
     if inject && crate::failpoint::tick() {
         // Simulated crash mid-write: a torn temp file is left behind, the target is untouched.
@@ -47,7 +56,9 @@ fn write_atomic_inner(path: &Path, bytes: &[u8], inject: bool) -> Result<()> {
     {
         let mut f = io(&tmp, fs::File::create(&tmp))?;
         io(&tmp, f.write_all(bytes))?;
-        io(&tmp, f.sync_all())?;
+        if sync {
+            io(&tmp, f.sync_all())?;
+        }
     }
     io(path, fs::rename(&tmp, path))
 }
