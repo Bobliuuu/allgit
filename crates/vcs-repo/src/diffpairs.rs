@@ -23,6 +23,12 @@ impl Repo {
     /// Changed files of the same comparison as [`Repo::diff`] (`staged`: index vs branch heads,
     /// otherwise working tree vs index), as structured pairs, sorted by path.
     pub fn diff_pairs(&self, staged: bool) -> Result<Vec<FilePair>> {
+        self.diff_pairs_limited(staged, &[])
+    }
+
+    /// The reference implementation of [`Repo::diff_pairs`]: reads every tracked file. The fast
+    /// path in `diffscan` must return exactly this.
+    pub fn diff_pairs_full(&self, staged: bool) -> Result<Vec<FilePair>> {
         let zones = self.zones()?;
         let ws = self.workspace()?;
         let refs = self.refs()?;
@@ -103,6 +109,19 @@ impl Repo {
     /// file exists on that side. Enough for listings of names and add/delete/modify status.
     pub fn commit_pairs_names(&self, zone: &str, id: &ObjectId) -> Result<Vec<FilePair>> {
         self.commit_pairs_inner(zone, id, false)
+    }
+
+    /// The file list of [`Repo::commit_pairs_names`] as `(path, b'A' | b'D' | b'M')`, sorted by path, without
+    /// building per-file pairs.
+    pub fn commit_changes(&self, zone: &str, id: &ObjectId) -> Result<Vec<(String, u8)>> {
+        let zone = self.resolve_zone(zone)?;
+        let prefix = self.zones()?.path_of(&zone).unwrap_or("").to_owned();
+        let commit = self.commit_obj(id)?;
+        let parent = match commit.parents.first() {
+            Some(p) => Some(self.commit_obj(p)?.root),
+            None => None,
+        };
+        treeops::diff_trees_status(&self.store, parent, Some(commit.root), &prefix)
     }
 
     fn commit_pairs_inner(&self, zone: &str, id: &ObjectId, content: bool) -> Result<Vec<FilePair>> {

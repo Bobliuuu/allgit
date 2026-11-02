@@ -254,7 +254,7 @@ fn is_not_a_directory(e: &std::io::Error) -> bool {
     cfg!(unix) && e.raw_os_error() == Some(20)
 }
 
-fn zones_fp(zones: &Zones) -> ObjectId {
+pub(crate) fn zones_fp(zones: &Zones) -> ObjectId {
     vcs_objects::blob_id(&zones.encode())
 }
 
@@ -776,7 +776,12 @@ impl Repo {
             // a joined PathBuf and a CString per file spend more time on its lock than on the stat.
             let m = match self.wfs.stat(rel) {
                 Ok(m) => m, // stat BEFORE read: later edits change mtime/size
-                Err(source) => return Err(Error::Io { path: self.worktree.join(rel), source }),
+                Err(source) => {
+                    return Err(Error::Io {
+                        path: self.worktree.join(rel),
+                        source,
+                    })
+                }
             };
             if m.kind == FileKind::Symlink {
                 let abs = self.worktree.join(rel);
@@ -1030,8 +1035,29 @@ impl Repo {
 
     /// [`Self::wt_state`] plus whether the verdict came from reading the file's content.
     pub(crate) fn wt_state_read(&self, path: &str, e: &IndexEntry, written_ns: u64) -> Result<(Wt, bool)> {
+        self.wt_state_from(path, e, written_ns, self.wfs.stat(path))
+    }
+
+    /// [`Self::wt_state_read`] for a scan over sorted paths (`cur` keeps the current directory open).
+    pub(crate) fn wt_state_seq(
+        &self,
+        cur: &mut crate::worktree_fs::StatCursor,
+        path: &str,
+        e: &IndexEntry,
+        written_ns: u64,
+    ) -> Result<(Wt, bool)> {
+        self.wt_state_from(path, e, written_ns, self.wfs.stat_seq(cur, path))
+    }
+
+    fn wt_state_from(
+        &self,
+        path: &str,
+        e: &IndexEntry,
+        written_ns: u64,
+        stat: std::io::Result<crate::worktree_fs::FsStat>,
+    ) -> Result<(Wt, bool)> {
         let abs = || self.worktree.join(path);
-        let m = match self.wfs.stat(path) {
+        let m = match stat {
             Ok(m) => m,
             // A path whose parent became a file (`a/b` tracked, `a` replaced by a file) is ENOTDIR.
             Err(x) if x.kind() == std::io::ErrorKind::NotFound || is_not_a_directory(&x) => return Ok((Wt::Deleted, false)),
@@ -1326,8 +1352,9 @@ impl Repo {
     pub(crate) fn unstaged_changes(&self, list: &[(&String, &IndexEntry)], written_ns: u64) -> Result<(Vec<Change>, Vec<String>)> {
         let check = |part: &[(&String, &IndexEntry)]| -> Result<(Vec<Change>, Vec<String>)> {
             let (mut out, mut clean) = (Vec::new(), Vec::new());
+            let mut cur = crate::worktree_fs::StatCursor::default();
             for (p, e) in part {
-                let (state, read) = self.wt_state_read(p, e, written_ns)?;
+                let (state, read) = self.wt_state_seq(&mut cur, p, e, written_ns)?;
                 match state {
                     Wt::Clean => {
                         if read {
@@ -1576,6 +1603,15 @@ impl Repo {
 
     /// Unified diff: working tree vs index, or (staged) index vs branch heads.
     pub fn diff(&self, staged: bool) -> Result<String> {
+        let mut out = String::new();
+        for p in self.diff_pairs(staged)? {
+            out.push_str(&diff::unified(&p.path, p.old.as_deref(), p.new.as_deref()));
+        }
+        Ok(out)
+    }
+
+    /// [`Repo::diff`] by reading every tracked file (the reference for the fast path).
+    pub fn diff_full(&self, staged: bool) -> Result<String> {
         let zones = self.zones()?;
         let ws = self.workspace()?;
         let refs = self.refs()?;

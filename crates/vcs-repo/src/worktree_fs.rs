@@ -45,7 +45,20 @@ pub struct DirEnt {
     pub kind: FileKind,
 }
 
+/// State for a run of [`WorktreeFs::stat_seq`] calls over paths in sorted order: the last directory,
+/// opened once so each file costs one name lookup instead of a walk from the worktree root.
+/// Create one per thread per scan; never keep it across operations that may replace directories.
+#[derive(Default)]
+pub struct StatCursor {
+    #[cfg(unix)]
+    dir: Option<(String, Option<fs::File>)>,
+}
+
 pub trait WorktreeFs: Send + Sync {
+    /// [`WorktreeFs::stat`] for a caller walking sorted paths; same result, possibly cheaper.
+    fn stat_seq(&self, _cur: &mut StatCursor, path: &str) -> io::Result<FsStat> {
+        self.stat(path)
+    }
     /// Entries of `dir` (no `.` / `..`), in no particular order. Non-UTF-8 names are lossily
     /// converted, as status always did.
     fn read_dir(&self, dir: &str) -> io::Result<Vec<DirEnt>>;
@@ -147,6 +160,26 @@ fn stat_of(m: &fs::Metadata) -> FsStat {
     }
 }
 
+/// Open directory `path` below `root` without following a link at its last component.
+#[cfg(unix)]
+fn open_dir_at(root: &fs::File, path: &str) -> Option<fs::File> {
+    use std::os::unix::io::{AsRawFd, FromRawFd};
+    let c = std::ffi::CString::new(path).ok()?;
+    // SAFETY: `c` is NUL-terminated and `root` is a valid fd; a returned fd is owned by the new File.
+    let fd = unsafe {
+        libc::openat(
+            root.as_raw_fd(),
+            c.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        None
+    } else {
+        Some(unsafe { fs::File::from_raw_fd(fd) })
+    }
+}
+
 /// `lstat` of `path` relative to the open directory `dir`; `None` if the path cannot be passed to
 /// the kernel (embedded NUL), in which case the caller uses the std path.
 #[cfg(unix)]
@@ -209,6 +242,28 @@ impl WorktreeFs for RealFs {
             });
         }
         Ok(v)
+    }
+    fn stat_seq(&self, cur: &mut StatCursor, path: &str) -> io::Result<FsStat> {
+        #[cfg(not(unix))]
+        let _ = &cur;
+        #[cfg(unix)]
+        if let Some(i) = path.rfind('/') {
+            let (d, name) = (&path[..i], &path[i + 1..]);
+            if cur.dir.as_ref().is_none_or(|(cd, _)| cd != d) {
+                let f = self
+                    .root_fd
+                    .get_or_init(|| fs::File::open(&self.root).ok())
+                    .as_ref()
+                    .and_then(|r| open_dir_at(r, d));
+                cur.dir = Some((d.to_owned(), f));
+            }
+            if let Some((_, Some(fd))) = &cur.dir {
+                if let Some(r) = stat_at(fd, name) {
+                    return r;
+                }
+            }
+        }
+        self.stat(path)
     }
     fn stat(&self, path: &str) -> io::Result<FsStat> {
         #[cfg(unix)]
