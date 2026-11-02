@@ -360,42 +360,56 @@ impl crate::repo::Repo {
 /// cache-tree section does not end exactly at the end of the file (a torn write). Other layouts
 /// are not checked here (they are decoded in full anyway).
 pub(crate) fn index_looks_whole(path: &std::path::Path) -> bool {
+    looks_whole_from(path, 4096)
+}
+
+fn looks_whole_from(path: &std::path::Path, first_read: usize) -> bool {
     use std::io::{Read, Seek, SeekFrom};
     let Ok(mut f) = std::fs::File::open(path) else { return true };
     let Ok(len) = f.metadata().map(|m| m.len() as usize) else {
         return true;
     };
-    let mut head = vec![0u8; len.min(1 << 20)];
-    if f.read_exact(&mut head).is_err() {
-        return false;
-    }
-    if !head.starts_with(b"AGI3") && !head.starts_with(b"AGI4") {
-        return !head.is_empty() && (head.starts_with(b"AGI2") || head.starts_with(b"AGIX"));
-    }
-    let v4 = head.starts_with(b"AGI4");
-    let mut r = Reader::new(&head[5.min(head.len())..]);
-    let parsed = (|| -> std::result::Result<usize, vcs_objects::DecodeError> {
-        r.varint()?;
-        let n = r.varint()? as usize;
-        let mut total = 0usize;
-        if v4 {
-            let nb = r.varint()? as usize;
-            for _ in 0..nb {
-                total += r.varint()? as usize;
-                r.varint()?;
-            }
-        } else {
-            r.varint()?;
-            let nb = r.varint()? as usize;
-            for _ in 0..nb {
-                total += r.varint()? as usize;
-            }
+    // The block table is a few bytes per block: read a small head first and widen only if the table
+    // does not fit (a 1 MiB read costs more page faults than git's whole run).
+    let cap = len.min(1 << 20);
+    let mut size = cap.min(first_read);
+    let (blocks_len, hlen_used) = loop {
+        let mut head = vec![0u8; size];
+        if f.seek(SeekFrom::Start(0)).is_err() || f.read_exact(&mut head).is_err() {
+            return false;
         }
-        let _ = n;
-        Ok(total)
-    })();
-    let Ok(blocks_len) = parsed else { return false };
-    let off = 5 + (head.len() - 5 - r.remaining()) + blocks_len;
+        if !head.starts_with(b"AGI3") && !head.starts_with(b"AGI4") {
+            return !head.is_empty() && (head.starts_with(b"AGI2") || head.starts_with(b"AGIX"));
+        }
+        let v4 = head.starts_with(b"AGI4");
+        let mut r = Reader::new(&head[5.min(head.len())..]);
+        let parsed = (|| -> std::result::Result<usize, vcs_objects::DecodeError> {
+            r.varint()?;
+            let n = r.varint()? as usize;
+            let mut total = 0usize;
+            if v4 {
+                let nb = r.varint()? as usize;
+                for _ in 0..nb {
+                    total += r.varint()? as usize;
+                    r.varint()?;
+                }
+            } else {
+                r.varint()?;
+                let nb = r.varint()? as usize;
+                for _ in 0..nb {
+                    total += r.varint()? as usize;
+                }
+            }
+            let _ = n;
+            Ok(total)
+        })();
+        match parsed {
+            Ok(total) => break (total, head.len() - r.remaining()),
+            Err(_) if size < cap => size = (size * 16).min(cap),
+            Err(_) => return false,
+        }
+    };
+    let off = hlen_used + blocks_len;
     if off >= len {
         return false;
     }
@@ -617,5 +631,22 @@ mod tests {
         let enc = ix.encode();
         assert!(IndexFile::parse(enc).unwrap().is_some());
         assert!(IndexFile::parse(b"AGI2\x01\x00\x00\x00".to_vec()).unwrap().is_none());
+    }
+
+    /// The whole-file check gives the same verdict whatever size its first read is, for a good
+    /// index and for every truncation of it.
+    #[test]
+    fn whole_file_check_is_independent_of_the_first_read_size() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("index");
+        let good = big().encode();
+        for cut in (0..good.len()).step_by(1.max(good.len() / 150)).chain([good.len() - 1, good.len()]) {
+            std::fs::write(&p, &good[..cut]).unwrap();
+            let want = looks_whole_from(&p, 1 << 20);
+            for first in [16usize, 64, 777, 4096] {
+                assert_eq!(looks_whole_from(&p, first), want, "cut {cut} first {first}");
+            }
+            assert_eq!(want, cut == good.len(), "cut {cut}");
+        }
     }
 }
