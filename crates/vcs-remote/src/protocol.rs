@@ -7,16 +7,17 @@
 //!          (invariant: a remote object's whole closure is present – upload is post-order)
 //! Guard    (only on backends with `supports_gc`) the handshake that makes remote garbage
 //!          collection safe, protocol G1 in docs/gc.md. For every remote key this publish relies
-//!          on but did not just create (a legacy loose object Collect pruned at; a pack or
-//!          index that `put_if_absent` found already there): Touch it, then check no
+//!          on but did not just create (a legacy loose object the loose-layout Collect pruned at;
+//!          a pack or index that `put_if_absent` found already there): Touch it, then check no
 //!          `tomb/...` exists for it, then check it still exists. Loose objects are guarded
 //!          BEFORE anything is uploaded (nothing that depends on them is visible while they can
 //!          still be swept); a deduplicated pack right after PutIdx. A failed check, or the
 //!          hold-time fence in front of the CAS ([`Publisher::with_hold_ms`]), restarts at Collect.
 //! Upload   packed (default): PutPack `packs/<name>.pack`, then PutIdx `packs/<name>.idx`
 //!          (the index is the commit point of the pack: no index, no objects; an orphan
-//!          pack is ignored). Legacy/tiny: put_if_absent each loose object, dependencies first
-//! PutTx    put_if_absent tx/<txid>
+//!          pack is ignored) together with `tx/<txid>` (create-only, idempotent, not read
+//!          except through the manifest). Legacy/tiny: put_if_absent each loose object,
+//!          dependencies first, then PutTx
 //! Load     read manifest; if txid already applied -> done; check every update.old == current
 //! Cas      conditional manifest write  <-- linearization point
 //! ```
@@ -121,6 +122,8 @@ enum Then {
     PutPack,
     Upload,
     PutTx,
+    /// Everything this transaction needs is uploaded: read the manifest and CAS.
+    Load,
 }
 
 pub fn object_key(id: &ObjectId) -> String {
@@ -175,6 +178,8 @@ pub struct Publisher<'a> {
     /// Packed mode: the bundle of this transaction's new objects, built once in Collect.
     built: Option<BuiltPack>,
     packed: bool,
+    /// Probe the remote for legacy loose copies of new commits (see [`Publisher::with_loose_probe`]).
+    loose_probe: bool,
     retries: u32,
     zones: BTreeMap<String, String>,
     labels: BTreeMap<String, String>,
@@ -402,6 +407,7 @@ impl<'a> Publisher<'a> {
             to_upload: vec![],
             built: None,
             packed: true,
+            loose_probe: false,
             retries: 0,
             zones: BTreeMap::new(),
             labels: BTreeMap::new(),
@@ -470,6 +476,16 @@ impl<'a> Publisher<'a> {
     /// one pack. The legacy layout; readers handle both, so this only exists for old-layout tests.
     pub fn with_loose_objects(mut self) -> Self {
         self.packed = false;
+        self
+    }
+    /// Ask the remote (one HEAD per commit it cannot derive as present) whether a commit this
+    /// publish would upload already exists as a legacy loose object, and if so prune there and run
+    /// the GC handshake on it instead of uploading it again. Off by default: on a remote written
+    /// by this layout (packs) it never finds anything, and it costs one sequential request per new
+    /// commit. Only useful against old loose-layout remotes, and in the GC model tests, which
+    /// need a publisher that adopts a loose orphan.
+    pub fn with_loose_probe(mut self) -> Self {
+        self.loose_probe = true;
         self
     }
     /// The authenticated identity lock decisions are made for (NOT `Transaction.author`).
@@ -591,7 +607,8 @@ impl<'a> Publisher<'a> {
     /// the remote about individual objects. See the module docs for why pruning is sound.
     #[allow(clippy::type_complexity)]
     fn collect_packed(&self) -> Result<(Vec<(ObjectId, Vec<u8>)>, Vec<ObjectId>), PublishError> {
-        // Legacy loose objects this walk pruned at (they need the GC handshake).
+        // Legacy loose objects this walk pruned at (they need the GC handshake). Only filled with
+        // `with_loose_probe`.
         let loose_pruned = std::cell::RefCell::new(Vec::<ObjectId>::new());
         // Objects whose whole closure is on the remote (or will be, see `Load`).
         let mut known: HashSet<ObjectId> = self.tx.updates.iter().filter_map(|u| u.old).collect();
@@ -632,7 +649,13 @@ impl<'a> Publisher<'a> {
             if anc.contains(id) {
                 return Ok(true);
             }
-            // Not derivable from the heads: maybe a legacy loose upload. One HEAD for a commit.
+            // Not derivable from the heads, so the commit is new. By default that is the answer: a
+            // legacy loose copy of it (left by an abandoned loose-layout publish) is not probed for,
+            // because one HEAD per new commit, in sequence, would buy only a skipped re-upload, and
+            // uploading it again inside the pack is always safe. `with_loose_probe` asks anyway.
+            if !self.loose_probe {
+                return Ok(false);
+            }
             let here = self.backend.exists(&object_key(id))?;
             if here {
                 loose_pruned.borrow_mut().push(*id);
@@ -742,6 +765,7 @@ impl<'a> Publisher<'a> {
                 Then::PutPack => State::PutPack,
                 Then::Upload => State::Upload(0),
                 Then::PutTx => State::PutTx,
+                Then::Load => State::Load,
             };
         }
         self.guard = keys;
@@ -764,6 +788,7 @@ impl<'a> Publisher<'a> {
                     Then::PutPack => State::PutPack,
                     Then::Upload => State::Upload(0),
                     Then::PutTx => State::PutTx,
+                    Then::Load => State::Load,
                 };
                 return Ok(Step::Continue);
             }
@@ -956,18 +981,34 @@ impl<'a> Publisher<'a> {
                 Ok(Step::Continue)
             }
             State::PutIdx => {
+                // The index is the commit point of the pack, so it follows the pack. The transaction
+                // record does not depend on it for anything the CAS needs: a record whose objects are
+                // not visible yet is as harmless as the one a lost CAS leaves behind (nothing reads
+                // `tx/` except through the manifest's applied window, and the GC never deletes it).
+                // Both are create-only and idempotent, so they go up together: one round trip fewer.
                 let b = self.built.as_ref().expect("built in Collect");
                 let (name, idx) = (b.name.clone(), &b.idx);
                 let key = format!("{}{name}.idx", packfetch::PACK_PREFIX);
-                match self.backend.put_if_absent(&key, idx) {
-                    Ok(created) => {
+                let (tkey, tbytes) = (tx_key(&self.txid), Object::Transaction(self.tx.clone()).encode());
+                let backend = self.backend;
+                let mut res = vcs_objects::chunk::par_map_with(2, 2, |k| {
+                    if k == 0 {
+                        backend.put_if_absent(&key, idx)
+                    } else {
+                        backend.put_if_absent(&tkey, &tbytes)
+                    }
+                });
+                let tx_res = res.pop().expect("two results");
+                let idx_res = res.pop().expect("two results");
+                match (idx_res, tx_res) {
+                    (Ok(created), Ok(_)) => {
                         if !created {
                             self.dedup.push((key, pack_tomb_key(&name)));
                         }
                         let keys = std::mem::take(&mut self.dedup);
-                        self.state = self.guard_then(keys, Then::PutTx);
+                        self.state = self.guard_then(keys, Then::Load);
                     }
-                    Err(e) => {
+                    (Err(e), _) | (_, Err(e)) => {
                         self.state = State::PutIdx;
                         return self.retry(e);
                     }

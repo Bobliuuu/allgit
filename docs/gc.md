@@ -66,7 +66,7 @@ that died between PutPack and PutIdx) is a unit with no objects and is deleted o
 old/new heads of every transaction in the manifest's applied window (the retention window), and the base commits of every unexpired shelf (`shelves/*/*/meta`, docs/shelves.md). Expired shelves are deleted by a non-dry-run sweep. Never deleted: the manifest, `tx/` and the packs of live shelves.
 
 Publisher side (`Publisher`, only against GC-capable backends). What a publish relies on without having just created it is
-guarded: a legacy loose object Collect pruned at (`commit_on_remote`), and a pack or index that `put_if_absent` found already there
+guarded: a legacy loose object Collect pruned at (`commit_on_remote`; only with `Publisher::with_loose_probe`, off by default because it costs one sequential HEAD per new commit and a pack-layout remote never has one), and a pack or index that `put_if_absent` found already there
 (a retry of an aborted publish re-creates the identical, content-named pack: the dedup hole, for packs). Guard = touch, then check
 no `tomb/<unit>` exists, then check the key still exists; loose objects are guarded BEFORE anything is uploaded, a deduplicated
 pack right after PutIdx. The CAS is fenced to `hold_ms` (default 1 h) after Collect. A failed check or the fence restarts at
