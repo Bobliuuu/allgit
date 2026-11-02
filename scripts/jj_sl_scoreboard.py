@@ -8,6 +8,7 @@ WIN: ratio >= 1.10; LOSS: ratio <= 1/1.10; TIE otherwise. N/A: vcs or the other 
 import json, os, statistics, sys
 
 RES, IMG, MD = sys.argv[1], sys.argv[2], sys.argv[3]
+NOTE = sys.argv[4] if len(sys.argv) > 4 else "Box c (16 vCPU, shared), 100k files, interleaved runs."
 TIE = 1.10
 LAYOUTS = ["flat", "deep", "binary"]
 NAME = {"jj": "Jujutsu (jj)", "sl": "Sapling (sl)"}
@@ -99,7 +100,7 @@ def svg(other):
          f'<rect class="bg" width="{W}" height="{H}"/>',
          f'<text class="t h" x="12" y="26" font-size="17">allgit vcs vs {NAME[other]}: per-command scoreboard</text>',
          f'<text class="t sm" x="12" y="46">cell = {other} median wall / vcs median wall (ratio; above 1 means vcs is faster). WIN &gt;= 1.10, LOSS &lt;= 0.91, else TIE.</text>',
-         f'<text class="t sm" x="12" y="62">N/A = no equivalent command or failed. Box c (16 vCPU, shared), 100k files, interleaved runs.</text>']
+         f'<text class="t sm" x="12" y="62">N/A = no equivalent command or failed. {NOTE}</text>']
     for j, l in enumerate(data):
         s.append(f'<text class="t h" x="{lw + cw*j + cw/2}" y="{top-8}" text-anchor="middle">{l}</text>')
     for i, c in enumerate(order):

@@ -99,6 +99,7 @@ results = []
 def cell(name, prepf, cmdf, tools=None):
     if ONLY and not any(name.startswith(o) for o in ONLY): return
     tools = [t for t in (tools or TOOLS) if t in TOOLS]
+    if not tools: return
     w = {t: [] for t in tools}; c = {t: [] for t in tools}; fails = {t: 0 for t in tools}
     l0 = load1(); runs = RUNS; i = 0; worst_first = 0
     while i < runs:
@@ -120,7 +121,8 @@ def cell(name, prepf, cmdf, tools=None):
               + (f" FAILED x{fails[t]}" if fails[t] else ""), flush=True)
 
 def ver(cmd):
-    return subprocess.run(cmd, shell=True, env=env, capture_output=True, text=True).stdout.strip().splitlines()[0]
+    out = subprocess.run(cmd, shell=True, env=env, capture_output=True, text=True).stdout.strip().splitlines()
+    return out[0] if out else "not installed"
 
 meta = {}
 try:

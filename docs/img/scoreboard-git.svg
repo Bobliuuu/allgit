@@ -3,404 +3,404 @@
 <rect width="1300" height="1940" fill="#ffffff" class="bg"/>
 <text x="20" y="30" class="t" fill="#1b1f24">vcs vs git, per command (docs/git-to-vcs.md)</text>
 <text x="20" y="50" class="s" fill="#57606a">ratio = vcs/git wall; WIN/LOSS need wall and CPU beyond 10%; flat 100k, c6i.4xlarge</text>
-<rect x="20" y="66" width="12" height="12" rx="3" class="WIN" fill="#1a7f37"/><text x="38" y="77" fill="#1b1f24">WIN 30</text>
-<rect x="107" y="66" width="12" height="12" rx="3" class="TIE" fill="#9a6700"/><text x="125" y="77" fill="#1b1f24">TIE 52</text>
-<rect x="194" y="66" width="12" height="12" rx="3" class="LOSS" fill="#cf222e"/><text x="212" y="77" fill="#1b1f24">LOSS 49</text>
+<rect x="20" y="66" width="12" height="12" rx="3" class="WIN" fill="#1a7f37"/><text x="38" y="77" fill="#1b1f24">WIN 46</text>
+<rect x="107" y="66" width="12" height="12" rx="3" class="TIE" fill="#9a6700"/><text x="125" y="77" fill="#1b1f24">TIE 68</text>
+<rect x="194" y="66" width="12" height="12" rx="3" class="LOSS" fill="#cf222e"/><text x="212" y="77" fill="#1b1f24">LOSS 17</text>
 <rect x="290" y="66" width="12" height="12" rx="3" class="NM" fill="#6e7781"/><text x="308" y="77" fill="#1b1f24">NOT-MEASURED 93</text>
 <rect x="458" y="66" width="12" height="12" rx="3" class="MIS" fill="#8250df"/><text x="476" y="77" fill="#1b1f24">MISSING 44</text>
 <rect x="20" y="100" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
 <text x="36" y="111" fill="#1b1f24">add -u</text>
-<text x="412" y="111" text-anchor="end" class="r" fill="#57606a">1.32x</text>
+<text x="412" y="111" text-anchor="end" class="r" fill="#57606a">1.3→1.2x</text>
 <rect x="440" y="100" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
 <text x="456" y="111" fill="#1b1f24">branch -d feature</text>
-<text x="832" y="111" text-anchor="end" class="r" fill="#57606a">4.24x</text>
+<text x="832" y="111" text-anchor="end" class="r" fill="#57606a">4.2→4.3x</text>
 <rect x="860" y="100" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
 <text x="876" y="111" fill="#1b1f24">branch -m main trunk</text>
-<text x="1252" y="111" text-anchor="end" class="r" fill="#57606a">4.47x</text>
+<text x="1252" y="111" text-anchor="end" class="r" fill="#57606a">4.5→4.5x</text>
 <rect x="20" y="120" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
 <text x="36" y="131" fill="#1b1f24">branch feature</text>
-<text x="412" y="131" text-anchor="end" class="r" fill="#57606a">4.51x</text>
+<text x="412" y="131" text-anchor="end" class="r" fill="#57606a">4.5→4.7x</text>
 <rect x="440" y="120" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
 <text x="456" y="131" fill="#1b1f24">bundle create f.bundle main</text>
-<text x="832" y="131" text-anchor="end" class="r" fill="#57606a">1.52x</text>
+<text x="832" y="131" text-anchor="end" class="r" fill="#57606a">1.5→1.6x</text>
 <rect x="860" y="120" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
 <text x="876" y="131" fill="#1b1f24">bundle verify f.bundle</text>
-<text x="1252" y="131" text-anchor="end" class="r" fill="#57606a">363.84x</text>
+<text x="1252" y="131" text-anchor="end" class="r" fill="#57606a">364→372x</text>
 <rect x="20" y="140" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="36" y="151" fill="#1b1f24">cat-file -p HEAD:f.txt</text>
-<text x="412" y="151" text-anchor="end" class="r" fill="#57606a">46.80x</text>
+<text x="36" y="151" fill="#1b1f24">commit -a -m &quot;msg&quot;</text>
+<text x="412" y="151" text-anchor="end" class="r" fill="#57606a">1.5→1.5x</text>
 <rect x="440" y="140" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="456" y="151" fill="#1b1f24">clean -fd</text>
-<text x="832" y="151" text-anchor="end" class="r" fill="#57606a">1.23x</text>
+<text x="456" y="151" fill="#1b1f24">gc</text>
+<text x="832" y="151" text-anchor="end" class="r" fill="#57606a">2.1→1.8x</text>
 <rect x="860" y="140" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="876" y="151" fill="#1b1f24">commit -a -m &quot;msg&quot;</text>
-<text x="1252" y="151" text-anchor="end" class="r" fill="#57606a">1.54x</text>
+<text x="876" y="151" fill="#1b1f24">grep -F a.b -- src</text>
+<text x="1252" y="151" text-anchor="end" class="r" fill="#57606a">2.8→1.7x</text>
 <rect x="20" y="160" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="36" y="171" fill="#1b1f24">diff</text>
-<text x="412" y="171" text-anchor="end" class="r" fill="#57606a">10.22x</text>
+<text x="36" y="171" fill="#1b1f24">log --stat</text>
+<text x="412" y="171" text-anchor="end" class="r" fill="#57606a">148→1.8x</text>
 <rect x="440" y="160" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="456" y="171" fill="#1b1f24">diff (clean tree) *</text>
-<text x="832" y="171" text-anchor="end" class="r" fill="#57606a">29.61x</text>
+<text x="456" y="171" fill="#1b1f24">ls-files</text>
+<text x="832" y="171" text-anchor="end" class="r" fill="#57606a">2.9→1.2x</text>
 <rect x="860" y="160" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="876" y="171" fill="#1b1f24">diff -- f.txt</text>
-<text x="1252" y="171" text-anchor="end" class="r" fill="#57606a">62.89x</text>
+<text x="876" y="171" fill="#1b1f24">ls-tree HEAD</text>
+<text x="1252" y="171" text-anchor="end" class="r" fill="#57606a">47→19x</text>
 <rect x="20" y="180" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="36" y="191" fill="#1b1f24">diff --cached</text>
-<text x="412" y="191" text-anchor="end" class="r" fill="#57606a">14.02x</text>
+<text x="36" y="191" fill="#1b1f24">mv a.txt b.txt</text>
+<text x="412" y="191" text-anchor="end" class="r" fill="#57606a">0.92→1.9x</text>
 <rect x="440" y="180" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="456" y="191" fill="#1b1f24">diff --name-only</text>
-<text x="832" y="191" text-anchor="end" class="r" fill="#57606a">20.95x</text>
+<text x="456" y="191" fill="#1b1f24">switch -c feature</text>
+<text x="832" y="191" text-anchor="end" class="r" fill="#57606a">36→41x</text>
 <rect x="860" y="180" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="876" y="191" fill="#1b1f24">diff --name-status</text>
-<text x="1252" y="191" text-anchor="end" class="r" fill="#57606a">21.97x</text>
+<text x="876" y="191" fill="#1b1f24">tag -a v1 -m rel</text>
+<text x="1252" y="191" text-anchor="end" class="r" fill="#57606a">4.9→5.7x</text>
 <rect x="20" y="200" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="36" y="211" fill="#1b1f24">diff --staged</text>
-<text x="412" y="211" text-anchor="end" class="r" fill="#57606a">14.02x</text>
+<text x="36" y="211" fill="#1b1f24">tag -d v1</text>
+<text x="412" y="211" text-anchor="end" class="r" fill="#57606a">5.7→5.8x</text>
 <rect x="440" y="200" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="456" y="211" fill="#1b1f24">diff --stat</text>
-<text x="832" y="211" text-anchor="end" class="r" fill="#57606a">12.25x</text>
-<rect x="860" y="200" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="876" y="211" fill="#1b1f24">diff HEAD</text>
-<text x="1252" y="211" text-anchor="end" class="r" fill="#57606a">9.55x</text>
-<rect x="20" y="220" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="36" y="231" fill="#1b1f24">diff HEAD~1 HEAD</text>
-<text x="412" y="231" text-anchor="end" class="r" fill="#57606a">127.62x</text>
-<rect x="440" y="220" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="456" y="231" fill="#1b1f24">diff main..feature</text>
-<text x="832" y="231" text-anchor="end" class="r" fill="#57606a">3.53x</text>
-<rect x="860" y="220" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="876" y="231" fill="#1b1f24">gc</text>
-<text x="1252" y="231" text-anchor="end" class="r" fill="#57606a">2.07x</text>
-<rect x="20" y="240" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="36" y="251" fill="#1b1f24">grep -F a.b -- src</text>
-<text x="412" y="251" text-anchor="end" class="r" fill="#57606a">2.83x</text>
-<rect x="440" y="240" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="456" y="251" fill="#1b1f24">init</text>
-<text x="832" y="251" text-anchor="end" class="r" fill="#57606a">5.17x</text>
-<rect x="860" y="240" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="876" y="251" fill="#1b1f24">init proj</text>
-<text x="1252" y="251" text-anchor="end" class="r" fill="#57606a">5.17x</text>
-<rect x="20" y="260" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="36" y="271" fill="#1b1f24">log --name-status</text>
-<text x="412" y="271" text-anchor="end" class="r" fill="#57606a">1.62x</text>
-<rect x="440" y="260" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="456" y="271" fill="#1b1f24">log --stat</text>
-<text x="832" y="271" text-anchor="end" class="r" fill="#57606a">147.72x</text>
-<rect x="860" y="260" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="876" y="271" fill="#1b1f24">ls-files</text>
-<text x="1252" y="271" text-anchor="end" class="r" fill="#57606a">2.86x</text>
-<rect x="20" y="280" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="36" y="291" fill="#1b1f24">ls-files -s</text>
-<text x="412" y="291" text-anchor="end" class="r" fill="#57606a">2.02x</text>
-<rect x="440" y="280" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="456" y="291" fill="#1b1f24">ls-tree -r --name-only HEAD</text>
-<text x="832" y="291" text-anchor="end" class="r" fill="#57606a">2.76x</text>
-<rect x="860" y="280" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="876" y="291" fill="#1b1f24">ls-tree HEAD</text>
-<text x="1252" y="291" text-anchor="end" class="r" fill="#57606a">46.53x</text>
-<rect x="20" y="300" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="36" y="311" fill="#1b1f24">pull</text>
-<text x="412" y="311" text-anchor="end" class="r" fill="#57606a">2.77x</text>
-<rect x="440" y="300" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="456" y="311" fill="#1b1f24">reflog</text>
-<text x="832" y="311" text-anchor="end" class="r" fill="#57606a">2.78x</text>
-<rect x="860" y="300" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="876" y="311" fill="#1b1f24">reflog -n 5</text>
-<text x="1252" y="311" text-anchor="end" class="r" fill="#57606a">4.26x</text>
-<rect x="20" y="320" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="36" y="331" fill="#1b1f24">reset --hard HEAD~1</text>
-<text x="412" y="331" text-anchor="end" class="r" fill="#57606a">1.37x</text>
-<rect x="440" y="320" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="456" y="331" fill="#1b1f24">reset --soft HEAD~1</text>
-<text x="832" y="331" text-anchor="end" class="r" fill="#57606a">5.58x</text>
-<rect x="860" y="320" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="876" y="331" fill="#1b1f24">restore --staged f.txt</text>
-<text x="1252" y="331" text-anchor="end" class="r" fill="#57606a">1.96x</text>
-<rect x="20" y="340" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="36" y="351" fill="#1b1f24">restore . (1% modified) *</text>
-<text x="412" y="351" text-anchor="end" class="r" fill="#57606a">2.32x</text>
-<rect x="440" y="340" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="456" y="351" fill="#1b1f24">rm --cached f.txt</text>
-<text x="832" y="351" text-anchor="end" class="r" fill="#57606a">1.88x</text>
-<rect x="860" y="340" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="876" y="351" fill="#1b1f24">rm f.txt</text>
-<text x="1252" y="351" text-anchor="end" class="r" fill="#57606a">1.88x</text>
-<rect x="20" y="360" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="36" y="371" fill="#1b1f24">show</text>
-<text x="412" y="371" text-anchor="end" class="r" fill="#57606a">58.33x</text>
-<rect x="440" y="360" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="456" y="371" fill="#1b1f24">show --stat HEAD</text>
-<text x="832" y="371" text-anchor="end" class="r" fill="#57606a">59.34x</text>
-<rect x="860" y="360" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="876" y="371" fill="#1b1f24">show HEAD:f.txt</text>
-<text x="1252" y="371" text-anchor="end" class="r" fill="#57606a">43.28x</text>
-<rect x="20" y="380" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="36" y="391" fill="#1b1f24">show HEAD~1</text>
-<text x="412" y="391" text-anchor="end" class="r" fill="#57606a">58.33x</text>
-<rect x="440" y="380" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="456" y="391" fill="#1b1f24">stash list</text>
-<text x="832" y="391" text-anchor="end" class="r" fill="#57606a">5.88x</text>
-<rect x="860" y="380" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="876" y="391" fill="#1b1f24">switch -c feature</text>
-<text x="1252" y="391" text-anchor="end" class="r" fill="#57606a">36.16x</text>
-<rect x="20" y="400" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="36" y="411" fill="#1b1f24">tag -a v1 -m rel</text>
-<text x="412" y="411" text-anchor="end" class="r" fill="#57606a">4.87x</text>
-<rect x="440" y="400" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="456" y="411" fill="#1b1f24">tag -d v1</text>
-<text x="832" y="411" text-anchor="end" class="r" fill="#57606a">5.74x</text>
-<rect x="860" y="400" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="876" y="411" fill="#1b1f24">tag v1</text>
-<text x="1252" y="411" text-anchor="end" class="r" fill="#57606a">4.98x</text>
-<rect x="20" y="420" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
-<text x="36" y="431" fill="#1b1f24">worktree list</text>
-<text x="412" y="431" text-anchor="end" class="r" fill="#57606a">5.48x</text>
+<text x="456" y="211" fill="#1b1f24">tag v1</text>
+<text x="832" y="211" text-anchor="end" class="r" fill="#57606a">5→4.8x</text>
+<rect x="860" y="200" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="876" y="211" fill="#1b1f24">add f.txt</text>
+<text x="1252" y="211" text-anchor="end" class="r" fill="#57606a">0.88→0.86x</text>
+<rect x="20" y="220" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="36" y="231" fill="#1b1f24">branch</text>
+<text x="412" y="231" text-anchor="end" class="r" fill="#57606a">1.7→1.2x</text>
+<rect x="440" y="220" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="456" y="231" fill="#1b1f24">cat-file -p HEAD:f.txt</text>
+<text x="832" y="231" text-anchor="end" class="r" fill="#57606a">47→1.2x</text>
+<rect x="860" y="220" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="876" y="231" fill="#1b1f24">cat-file -t HEAD</text>
+<text x="1252" y="231" text-anchor="end" class="r" fill="#57606a">1.8→1.3x</text>
+<rect x="20" y="240" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="36" y="251" fill="#1b1f24">checkout -- f.txt</text>
+<text x="412" y="251" text-anchor="end" class="r" fill="#57606a">1→0.95x</text>
+<rect x="440" y="240" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="456" y="251" fill="#1b1f24">checkout --detach v1.0</text>
+<text x="832" y="251" text-anchor="end" class="r" fill="#57606a">0.84→0.81x</text>
+<rect x="860" y="240" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="876" y="251" fill="#1b1f24">checkout -b feature</text>
+<text x="1252" y="251" text-anchor="end" class="r" fill="#57606a">0.87→0.89x</text>
+<rect x="20" y="260" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="36" y="271" fill="#1b1f24">clean -fd</text>
+<text x="412" y="271" text-anchor="end" class="r" fill="#57606a">1.2→0.77x</text>
+<rect x="440" y="260" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="456" y="271" fill="#1b1f24">clean -n</text>
+<text x="832" y="271" text-anchor="end" class="r" fill="#57606a">1→0.71x</text>
+<rect x="860" y="260" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="876" y="271" fill="#1b1f24">commit --amend --no-edit</text>
+<text x="1252" y="271" text-anchor="end" class="r" fill="#57606a">3→1.4x</text>
+<rect x="20" y="280" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="36" y="291" fill="#1b1f24">commit --amend -m &quot;msg&quot;</text>
+<text x="412" y="291" text-anchor="end" class="r" fill="#57606a">3→1.4x</text>
+<rect x="440" y="280" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="456" y="291" fill="#1b1f24">config --list</text>
+<text x="832" y="291" text-anchor="end" class="r" fill="#57606a">1.8→1.6x</text>
+<rect x="860" y="280" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="876" y="291" fill="#1b1f24">config user.name</text>
+<text x="1252" y="291" text-anchor="end" class="r" fill="#57606a">1.9→1.6x</text>
+<rect x="20" y="300" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="36" y="311" fill="#1b1f24">describe --always</text>
+<text x="412" y="311" text-anchor="end" class="r" fill="#57606a">1.1→1.3x</text>
+<rect x="440" y="300" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="456" y="311" fill="#1b1f24">describe --tags</text>
+<text x="832" y="311" text-anchor="end" class="r" fill="#57606a">1.1→1.2x</text>
+<rect x="860" y="300" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="876" y="311" fill="#1b1f24">diff</text>
+<text x="1252" y="311" text-anchor="end" class="r" fill="#57606a">10→0.44x</text>
+<rect x="20" y="320" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="36" y="331" fill="#1b1f24">diff (clean tree) *</text>
+<text x="412" y="331" text-anchor="end" class="r" fill="#57606a">30→0.8x</text>
+<rect x="440" y="320" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="456" y="331" fill="#1b1f24">diff --name-only</text>
+<text x="832" y="331" text-anchor="end" class="r" fill="#57606a">21→0.8x</text>
+<rect x="860" y="320" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="876" y="331" fill="#1b1f24">diff --name-status</text>
+<text x="1252" y="331" text-anchor="end" class="r" fill="#57606a">22→0.82x</text>
+<rect x="20" y="340" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="36" y="351" fill="#1b1f24">diff --stat</text>
+<text x="412" y="351" text-anchor="end" class="r" fill="#57606a">12→0.53x</text>
+<rect x="440" y="340" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="456" y="351" fill="#1b1f24">diff HEAD</text>
+<text x="832" y="351" text-anchor="end" class="r" fill="#57606a">9.6→0.72x</text>
+<rect x="860" y="340" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="876" y="351" fill="#1b1f24">diff HEAD~1 HEAD</text>
+<text x="1252" y="351" text-anchor="end" class="r" fill="#57606a">128→1.7x</text>
+<rect x="20" y="360" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="36" y="371" fill="#1b1f24">format-patch -1 --stdout</text>
+<text x="412" y="371" text-anchor="end" class="r" fill="#57606a">1.1→1.3x</text>
+<rect x="440" y="360" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="456" y="371" fill="#1b1f24">init</text>
+<text x="832" y="371" text-anchor="end" class="r" fill="#57606a">5.2→5.1x</text>
+<rect x="860" y="360" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="876" y="371" fill="#1b1f24">init proj</text>
+<text x="1252" y="371" text-anchor="end" class="r" fill="#57606a">5.2→5.1x</text>
+<rect x="20" y="380" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="36" y="391" fill="#1b1f24">log</text>
+<text x="412" y="391" text-anchor="end" class="r" fill="#57606a">1.1→1.2x</text>
+<rect x="440" y="380" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="456" y="391" fill="#1b1f24">log (full, all 32 commits) *</text>
+<text x="832" y="391" text-anchor="end" class="r" fill="#57606a">1.1→1.2x</text>
+<rect x="860" y="380" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="876" y="391" fill="#1b1f24">log --author=Dev --since=2024-01-01</text>
+<text x="1252" y="391" text-anchor="end" class="r" fill="#57606a">0.94→1x</text>
+<rect x="20" y="400" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="36" y="411" fill="#1b1f24">log --format=%h</text>
+<text x="412" y="411" text-anchor="end" class="r" fill="#57606a">1.3→1.4x</text>
+<rect x="440" y="400" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="456" y="411" fill="#1b1f24">log --graph --oneline</text>
+<text x="832" y="411" text-anchor="end" class="r" fill="#57606a">1.1→1.2x</text>
+<rect x="860" y="400" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="876" y="411" fill="#1b1f24">log --grep=fix</text>
+<text x="1252" y="411" text-anchor="end" class="r" fill="#57606a">1.1→1.2x</text>
+<rect x="20" y="420" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="36" y="431" fill="#1b1f24">log -5</text>
+<text x="412" y="431" text-anchor="end" class="r" fill="#57606a">1.4→1.5x</text>
 <rect x="440" y="420" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="456" y="431" fill="#1b1f24">add f.txt</text>
-<text x="832" y="431" text-anchor="end" class="r" fill="#57606a">0.88x</text>
+<text x="456" y="431" fill="#1b1f24">log -n 5 --oneline</text>
+<text x="832" y="431" text-anchor="end" class="r" fill="#57606a">1.4→1.5x</text>
 <rect x="860" y="420" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="876" y="431" fill="#1b1f24">branch</text>
-<text x="1252" y="431" text-anchor="end" class="r" fill="#57606a">1.68x</text>
+<text x="876" y="431" fill="#1b1f24">log ^main feature</text>
+<text x="1252" y="431" text-anchor="end" class="r" fill="#57606a">1.3→1.5x</text>
 <rect x="20" y="440" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="36" y="451" fill="#1b1f24">cat-file -t HEAD</text>
-<text x="412" y="451" text-anchor="end" class="r" fill="#57606a">1.79x</text>
+<text x="36" y="451" fill="#1b1f24">log feature --not main</text>
+<text x="412" y="451" text-anchor="end" class="r" fill="#57606a">1.3→1.5x</text>
 <rect x="440" y="440" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="456" y="451" fill="#1b1f24">checkout -- f.txt</text>
-<text x="832" y="451" text-anchor="end" class="r" fill="#57606a">1.00x</text>
+<text x="456" y="451" fill="#1b1f24">log main...feature</text>
+<text x="832" y="451" text-anchor="end" class="r" fill="#57606a">1.3→1.5x</text>
 <rect x="860" y="440" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="876" y="451" fill="#1b1f24">checkout --detach v1.0</text>
-<text x="1252" y="451" text-anchor="end" class="r" fill="#57606a">0.84x</text>
+<text x="876" y="451" fill="#1b1f24">log main..feature</text>
+<text x="1252" y="451" text-anchor="end" class="r" fill="#57606a">1.3→1.5x</text>
 <rect x="20" y="460" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="36" y="471" fill="#1b1f24">checkout -b feature</text>
-<text x="412" y="471" text-anchor="end" class="r" fill="#57606a">0.87x</text>
+<text x="36" y="471" fill="#1b1f24">ls-files -s</text>
+<text x="412" y="471" text-anchor="end" class="r" fill="#57606a">2→0.86x</text>
 <rect x="440" y="460" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="456" y="471" fill="#1b1f24">checkout main</text>
-<text x="832" y="471" text-anchor="end" class="r" fill="#57606a">0.77x</text>
+<text x="456" y="471" fill="#1b1f24">ls-tree -r --name-only HEAD</text>
+<text x="832" y="471" text-anchor="end" class="r" fill="#57606a">2.8→1.1x</text>
 <rect x="860" y="460" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="876" y="471" fill="#1b1f24">clean -n</text>
-<text x="1252" y="471" text-anchor="end" class="r" fill="#57606a">1.01x</text>
+<text x="876" y="471" fill="#1b1f24">merge-base main feature</text>
+<text x="1252" y="471" text-anchor="end" class="r" fill="#57606a">1.4→1.6x</text>
 <rect x="20" y="480" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="36" y="491" fill="#1b1f24">clone /srv/app.git</text>
-<text x="412" y="491" text-anchor="end" class="r" fill="#57606a">0.47x</text>
+<text x="36" y="491" fill="#1b1f24">pull</text>
+<text x="412" y="491" text-anchor="end" class="r" fill="#57606a">2.8→0.68x</text>
 <rect x="440" y="480" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="456" y="491" fill="#1b1f24">clone ssh://host/app.git proj</text>
-<text x="832" y="491" text-anchor="end" class="r" fill="#57606a">0.47x</text>
+<text x="456" y="491" fill="#1b1f24">reflog</text>
+<text x="832" y="491" text-anchor="end" class="r" fill="#57606a">2.8→0.73x</text>
 <rect x="860" y="480" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="876" y="491" fill="#1b1f24">commit --amend --no-edit</text>
-<text x="1252" y="491" text-anchor="end" class="r" fill="#57606a">2.97x</text>
+<text x="876" y="491" fill="#1b1f24">reflog -n 5</text>
+<text x="1252" y="491" text-anchor="end" class="r" fill="#57606a">4.3→1.6x</text>
 <rect x="20" y="500" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="36" y="511" fill="#1b1f24">commit --amend -m &quot;msg&quot;</text>
-<text x="412" y="511" text-anchor="end" class="r" fill="#57606a">2.97x</text>
+<text x="36" y="511" fill="#1b1f24">remote -v</text>
+<text x="412" y="511" text-anchor="end" class="r" fill="#57606a">1.9→2.2x</text>
 <rect x="440" y="500" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="456" y="511" fill="#1b1f24">config --list</text>
-<text x="832" y="511" text-anchor="end" class="r" fill="#57606a">1.77x</text>
+<text x="456" y="511" fill="#1b1f24">reset --hard HEAD~1</text>
+<text x="832" y="511" text-anchor="end" class="r" fill="#57606a">1.4→0.35x</text>
 <rect x="860" y="500" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="876" y="511" fill="#1b1f24">config user.name</text>
-<text x="1252" y="511" text-anchor="end" class="r" fill="#57606a">1.88x</text>
+<text x="876" y="511" fill="#1b1f24">reset --soft HEAD~1</text>
+<text x="1252" y="511" text-anchor="end" class="r" fill="#57606a">5.6→0.8x</text>
 <rect x="20" y="520" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="36" y="531" fill="#1b1f24">describe --always</text>
-<text x="412" y="531" text-anchor="end" class="r" fill="#57606a">1.09x</text>
+<text x="36" y="531" fill="#1b1f24">restore f.txt</text>
+<text x="412" y="531" text-anchor="end" class="r" fill="#57606a">1→0.95x</text>
 <rect x="440" y="520" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="456" y="531" fill="#1b1f24">describe --tags</text>
-<text x="832" y="531" text-anchor="end" class="r" fill="#57606a">1.09x</text>
+<text x="456" y="531" fill="#1b1f24">rev-list --all</text>
+<text x="832" y="531" text-anchor="end" class="r" fill="#57606a">1→1.2x</text>
 <rect x="860" y="520" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="876" y="531" fill="#1b1f24">format-patch -1 --stdout</text>
-<text x="1252" y="531" text-anchor="end" class="r" fill="#57606a">1.11x</text>
+<text x="876" y="531" fill="#1b1f24">rev-list --count main..feature</text>
+<text x="1252" y="531" text-anchor="end" class="r" fill="#57606a">1.4→1.5x</text>
 <rect x="20" y="540" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="36" y="551" fill="#1b1f24">log</text>
-<text x="412" y="551" text-anchor="end" class="r" fill="#57606a">1.08x</text>
+<text x="36" y="551" fill="#1b1f24">rev-parse --short HEAD</text>
+<text x="412" y="551" text-anchor="end" class="r" fill="#57606a">1.8→2x</text>
 <rect x="440" y="540" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="456" y="551" fill="#1b1f24">log (full, all 32 commits) *</text>
-<text x="832" y="551" text-anchor="end" class="r" fill="#57606a">1.08x</text>
+<text x="456" y="551" fill="#1b1f24">rev-parse --show-toplevel</text>
+<text x="832" y="551" text-anchor="end" class="r" fill="#57606a">1.9→2.1x</text>
 <rect x="860" y="540" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="876" y="551" fill="#1b1f24">log --author=Dev --since=2024-01-01</text>
-<text x="1252" y="551" text-anchor="end" class="r" fill="#57606a">0.94x</text>
+<text x="876" y="551" fill="#1b1f24">rev-parse HEAD</text>
+<text x="1252" y="551" text-anchor="end" class="r" fill="#57606a">2→2.1x</text>
 <rect x="20" y="560" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="36" y="571" fill="#1b1f24">log --format=%h</text>
-<text x="412" y="571" text-anchor="end" class="r" fill="#57606a">1.31x</text>
+<text x="36" y="571" fill="#1b1f24">revert --no-edit HEAD~2</text>
+<text x="412" y="571" text-anchor="end" class="r" fill="#57606a">0.96→0.95x</text>
 <rect x="440" y="560" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="456" y="571" fill="#1b1f24">log --graph --oneline</text>
-<text x="832" y="571" text-anchor="end" class="r" fill="#57606a">1.08x</text>
+<text x="456" y="571" fill="#1b1f24">revert HEAD</text>
+<text x="832" y="571" text-anchor="end" class="r" fill="#57606a">0.96→0.95x</text>
 <rect x="860" y="560" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="876" y="571" fill="#1b1f24">log --grep=fix</text>
-<text x="1252" y="571" text-anchor="end" class="r" fill="#57606a">1.13x</text>
+<text x="876" y="571" fill="#1b1f24">shortlog -sn</text>
+<text x="1252" y="571" text-anchor="end" class="r" fill="#57606a">2.2→2.4x</text>
 <rect x="20" y="580" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="36" y="591" fill="#1b1f24">log -5</text>
-<text x="412" y="591" text-anchor="end" class="r" fill="#57606a">1.37x</text>
+<text x="36" y="591" fill="#1b1f24">show</text>
+<text x="412" y="591" text-anchor="end" class="r" fill="#57606a">58→0.93x</text>
 <rect x="440" y="580" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="456" y="591" fill="#1b1f24">log -n 5 --oneline</text>
-<text x="832" y="591" text-anchor="end" class="r" fill="#57606a">1.37x</text>
+<text x="456" y="591" fill="#1b1f24">show --stat HEAD</text>
+<text x="832" y="591" text-anchor="end" class="r" fill="#57606a">59→1.5x</text>
 <rect x="860" y="580" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="876" y="591" fill="#1b1f24">log ^main feature</text>
-<text x="1252" y="591" text-anchor="end" class="r" fill="#57606a">1.35x</text>
+<text x="876" y="591" fill="#1b1f24">show HEAD:f.txt</text>
+<text x="1252" y="591" text-anchor="end" class="r" fill="#57606a">43→1.1x</text>
 <rect x="20" y="600" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="36" y="611" fill="#1b1f24">log feature --not main</text>
-<text x="412" y="611" text-anchor="end" class="r" fill="#57606a">1.35x</text>
+<text x="36" y="611" fill="#1b1f24">show HEAD~1</text>
+<text x="412" y="611" text-anchor="end" class="r" fill="#57606a">58→0.93x</text>
 <rect x="440" y="600" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="456" y="611" fill="#1b1f24">log main...feature</text>
-<text x="832" y="611" text-anchor="end" class="r" fill="#57606a">1.30x</text>
+<text x="456" y="611" fill="#1b1f24">stash list</text>
+<text x="832" y="611" text-anchor="end" class="r" fill="#57606a">5.9→1.3x</text>
 <rect x="860" y="600" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="876" y="611" fill="#1b1f24">log main..feature</text>
-<text x="1252" y="611" text-anchor="end" class="r" fill="#57606a">1.35x</text>
+<text x="876" y="611" fill="#1b1f24">status</text>
+<text x="1252" y="611" text-anchor="end" class="r" fill="#57606a">0.83→0.88x</text>
 <rect x="20" y="620" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="36" y="631" fill="#1b1f24">merge-base main feature</text>
-<text x="412" y="631" text-anchor="end" class="r" fill="#57606a">1.43x</text>
+<text x="36" y="631" fill="#1b1f24">status (1% of files modified) *</text>
+<text x="412" y="631" text-anchor="end" class="r" fill="#57606a">0.7→0.66x</text>
 <rect x="440" y="620" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="456" y="631" fill="#1b1f24">mv a.txt b.txt</text>
-<text x="832" y="631" text-anchor="end" class="r" fill="#57606a">0.92x</text>
+<text x="456" y="631" fill="#1b1f24">status --porcelain</text>
+<text x="832" y="631" text-anchor="end" class="r" fill="#57606a">0.77→0.78x</text>
 <rect x="860" y="620" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="876" y="631" fill="#1b1f24">remote -v</text>
-<text x="1252" y="631" text-anchor="end" class="r" fill="#57606a">1.87x</text>
+<text x="876" y="631" fill="#1b1f24">status -s</text>
+<text x="1252" y="631" text-anchor="end" class="r" fill="#57606a">0.79→0.79x</text>
 <rect x="20" y="640" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="36" y="651" fill="#1b1f24">reset</text>
-<text x="412" y="651" text-anchor="end" class="r" fill="#57606a">2.07x</text>
+<text x="36" y="651" fill="#1b1f24">switch --detach HEAD~1</text>
+<text x="412" y="651" text-anchor="end" class="r" fill="#57606a">0.84→0.81x</text>
 <rect x="440" y="640" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="456" y="651" fill="#1b1f24">reset --mixed HEAD~1</text>
-<text x="832" y="651" text-anchor="end" class="r" fill="#57606a">2.07x</text>
+<text x="456" y="651" fill="#1b1f24">tag</text>
+<text x="832" y="651" text-anchor="end" class="r" fill="#57606a">1.8→1.3x</text>
 <rect x="860" y="640" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="876" y="651" fill="#1b1f24">reset HEAD -- f.txt</text>
-<text x="1252" y="651" text-anchor="end" class="r" fill="#57606a">1.45x</text>
+<text x="876" y="651" fill="#1b1f24">worktree add ../wt feature</text>
+<text x="1252" y="651" text-anchor="end" class="r" fill="#57606a">0.26→0.27x</text>
 <rect x="20" y="660" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="36" y="671" fill="#1b1f24">restore f.txt</text>
-<text x="412" y="671" text-anchor="end" class="r" fill="#57606a">1.00x</text>
-<rect x="440" y="660" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="456" y="671" fill="#1b1f24">rev-list --all</text>
-<text x="832" y="671" text-anchor="end" class="r" fill="#57606a">1.05x</text>
-<rect x="860" y="660" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="876" y="671" fill="#1b1f24">rev-list --count main..feature</text>
-<text x="1252" y="671" text-anchor="end" class="r" fill="#57606a">1.36x</text>
-<rect x="20" y="680" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="36" y="691" fill="#1b1f24">rev-parse --short HEAD</text>
-<text x="412" y="691" text-anchor="end" class="r" fill="#57606a">1.77x</text>
-<rect x="440" y="680" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="456" y="691" fill="#1b1f24">rev-parse --show-toplevel</text>
-<text x="832" y="691" text-anchor="end" class="r" fill="#57606a">1.89x</text>
-<rect x="860" y="680" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="876" y="691" fill="#1b1f24">rev-parse HEAD</text>
-<text x="1252" y="691" text-anchor="end" class="r" fill="#57606a">1.97x</text>
-<rect x="20" y="700" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="36" y="711" fill="#1b1f24">revert --no-edit HEAD~2</text>
-<text x="412" y="711" text-anchor="end" class="r" fill="#57606a">0.96x</text>
-<rect x="440" y="700" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="456" y="711" fill="#1b1f24">revert HEAD</text>
-<text x="832" y="711" text-anchor="end" class="r" fill="#57606a">0.96x</text>
-<rect x="860" y="700" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="876" y="711" fill="#1b1f24">shortlog -sn</text>
-<text x="1252" y="711" text-anchor="end" class="r" fill="#57606a">2.22x</text>
-<rect x="20" y="720" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="36" y="731" fill="#1b1f24">status</text>
-<text x="412" y="731" text-anchor="end" class="r" fill="#57606a">0.83x</text>
-<rect x="440" y="720" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="456" y="731" fill="#1b1f24">status (1% of files modified) *</text>
-<text x="832" y="731" text-anchor="end" class="r" fill="#57606a">0.70x</text>
-<rect x="860" y="720" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="876" y="731" fill="#1b1f24">status --porcelain</text>
-<text x="1252" y="731" text-anchor="end" class="r" fill="#57606a">0.77x</text>
-<rect x="20" y="740" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="36" y="751" fill="#1b1f24">status -s</text>
-<text x="412" y="751" text-anchor="end" class="r" fill="#57606a">0.79x</text>
-<rect x="440" y="740" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="456" y="751" fill="#1b1f24">switch --detach HEAD~1</text>
-<text x="832" y="751" text-anchor="end" class="r" fill="#57606a">0.84x</text>
-<rect x="860" y="740" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="876" y="751" fill="#1b1f24">switch main</text>
-<text x="1252" y="751" text-anchor="end" class="r" fill="#57606a">0.77x</text>
-<rect x="20" y="760" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="36" y="771" fill="#1b1f24">tag</text>
-<text x="412" y="771" text-anchor="end" class="r" fill="#57606a">1.82x</text>
-<rect x="440" y="760" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
-<text x="456" y="771" fill="#1b1f24">worktree add ../wt feature</text>
-<text x="832" y="771" text-anchor="end" class="r" fill="#57606a">0.26x</text>
+<text x="36" y="671" fill="#1b1f24">worktree list</text>
+<text x="412" y="671" text-anchor="end" class="r" fill="#57606a">5.5→1.2x</text>
+<rect x="440" y="660" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="456" y="671" fill="#1b1f24">add -A</text>
+<text x="832" y="671" text-anchor="end" class="r" fill="#57606a">0.11→0.11x</text>
+<rect x="860" y="660" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="876" y="671" fill="#1b1f24">add .</text>
+<text x="1252" y="671" text-anchor="end" class="r" fill="#57606a">0.11→0.11x</text>
+<rect x="20" y="680" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="36" y="691" fill="#1b1f24">archive -o out.tar HEAD</text>
+<text x="412" y="691" text-anchor="end" class="r" fill="#57606a">0.5→0.48x</text>
+<rect x="440" y="680" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="456" y="691" fill="#1b1f24">blame HEAD~1 -- f.txt</text>
+<text x="832" y="691" text-anchor="end" class="r" fill="#57606a">0.55→0.57x</text>
+<rect x="860" y="680" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="876" y="691" fill="#1b1f24">blame f.txt</text>
+<text x="1252" y="691" text-anchor="end" class="r" fill="#57606a">0.21→0.21x</text>
+<rect x="20" y="700" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="36" y="711" fill="#1b1f24">checkout main</text>
+<text x="412" y="711" text-anchor="end" class="r" fill="#57606a">0.77→0.62x</text>
+<rect x="440" y="700" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="456" y="711" fill="#1b1f24">cherry main feature</text>
+<text x="832" y="711" text-anchor="end" class="r" fill="#57606a">0.79→0.8x</text>
+<rect x="860" y="700" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="876" y="711" fill="#1b1f24">cherry-pick feature</text>
+<text x="1252" y="711" text-anchor="end" class="r" fill="#57606a">0.68→0.67x</text>
+<rect x="20" y="720" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="36" y="731" fill="#1b1f24">clone /srv/app.git</text>
+<text x="412" y="731" text-anchor="end" class="r" fill="#57606a">0.47→0.051x</text>
+<rect x="440" y="720" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="456" y="731" fill="#1b1f24">clone ssh://host/app.git proj</text>
+<text x="832" y="731" text-anchor="end" class="r" fill="#57606a">0.47→0.051x</text>
+<rect x="860" y="720" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="876" y="731" fill="#1b1f24">commit (1 staged file) *</text>
+<text x="1252" y="731" text-anchor="end" class="r" fill="#57606a">0.86→0.89x</text>
+<rect x="20" y="740" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="36" y="751" fill="#1b1f24">commit (all 100k files staged, initial)…</text>
+<text x="412" y="751" text-anchor="end" class="r" fill="#57606a">0.83→0.45x</text>
+<rect x="440" y="740" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="456" y="751" fill="#1b1f24">commit -m &quot;msg&quot;</text>
+<text x="832" y="751" text-anchor="end" class="r" fill="#57606a">0.86→0.89x</text>
+<rect x="860" y="740" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="876" y="751" fill="#1b1f24">diff -- f.txt</text>
+<text x="1252" y="751" text-anchor="end" class="r" fill="#57606a">63→0.63x</text>
+<rect x="20" y="760" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="36" y="771" fill="#1b1f24">diff --cached</text>
+<text x="412" y="771" text-anchor="end" class="r" fill="#57606a">14→0.58x</text>
+<rect x="440" y="760" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="456" y="771" fill="#1b1f24">diff --staged</text>
+<text x="832" y="771" text-anchor="end" class="r" fill="#57606a">14→0.58x</text>
 <rect x="860" y="760" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="876" y="771" fill="#1b1f24">add -A</text>
-<text x="1252" y="771" text-anchor="end" class="r" fill="#57606a">0.11x</text>
+<text x="876" y="771" fill="#1b1f24">diff main..feature</text>
+<text x="1252" y="771" text-anchor="end" class="r" fill="#57606a">3.5→0.54x</text>
 <rect x="20" y="780" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="36" y="791" fill="#1b1f24">add .</text>
-<text x="412" y="791" text-anchor="end" class="r" fill="#57606a">0.11x</text>
+<text x="36" y="791" fill="#1b1f24">diff-tree -r A B</text>
+<text x="412" y="791" text-anchor="end" class="r" fill="#57606a">0.56→0.57x</text>
 <rect x="440" y="780" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="456" y="791" fill="#1b1f24">archive -o out.tar HEAD</text>
-<text x="832" y="791" text-anchor="end" class="r" fill="#57606a">0.50x</text>
+<text x="456" y="791" fill="#1b1f24">fast-export</text>
+<text x="832" y="791" text-anchor="end" class="r" fill="#57606a">0.0039→0.0043x</text>
 <rect x="860" y="780" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="876" y="791" fill="#1b1f24">blame HEAD~1 -- f.txt</text>
-<text x="1252" y="791" text-anchor="end" class="r" fill="#57606a">0.55x</text>
+<text x="876" y="791" fill="#1b1f24">fetch</text>
+<text x="1252" y="791" text-anchor="end" class="r" fill="#57606a">0.41→0.42x</text>
 <rect x="20" y="800" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="36" y="811" fill="#1b1f24">blame f.txt</text>
-<text x="412" y="811" text-anchor="end" class="r" fill="#57606a">0.21x</text>
+<text x="36" y="811" fill="#1b1f24">fetch origin</text>
+<text x="412" y="811" text-anchor="end" class="r" fill="#57606a">0.41→0.42x</text>
 <rect x="440" y="800" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="456" y="811" fill="#1b1f24">cherry main feature</text>
-<text x="832" y="811" text-anchor="end" class="r" fill="#57606a">0.79x</text>
+<text x="456" y="811" fill="#1b1f24">fsck</text>
+<text x="832" y="811" text-anchor="end" class="r" fill="#57606a">0.5→0.5x</text>
 <rect x="860" y="800" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="876" y="811" fill="#1b1f24">cherry-pick feature</text>
-<text x="1252" y="811" text-anchor="end" class="r" fill="#57606a">0.68x</text>
+<text x="876" y="811" fill="#1b1f24">grep -i -e needle HEAD</text>
+<text x="1252" y="811" text-anchor="end" class="r" fill="#57606a">0.16→0.17x</text>
 <rect x="20" y="820" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="36" y="831" fill="#1b1f24">commit (1 staged file) *</text>
-<text x="412" y="831" text-anchor="end" class="r" fill="#57606a">0.86x</text>
+<text x="36" y="831" fill="#1b1f24">grep -n needle</text>
+<text x="412" y="831" text-anchor="end" class="r" fill="#57606a">0.15→0.13x</text>
 <rect x="440" y="820" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="456" y="831" fill="#1b1f24">commit (all 100k files staged, initial)…</text>
-<text x="832" y="831" text-anchor="end" class="r" fill="#57606a">0.83x</text>
+<text x="456" y="831" fill="#1b1f24">log --follow -- f.txt</text>
+<text x="832" y="831" text-anchor="end" class="r" fill="#57606a">0.094→0.097x</text>
 <rect x="860" y="820" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="876" y="831" fill="#1b1f24">commit -m &quot;msg&quot;</text>
-<text x="1252" y="831" text-anchor="end" class="r" fill="#57606a">0.86x</text>
+<text x="876" y="831" fill="#1b1f24">log --name-status</text>
+<text x="1252" y="831" text-anchor="end" class="r" fill="#57606a">1.6→0.59x</text>
 <rect x="20" y="840" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="36" y="851" fill="#1b1f24">diff-tree -r A B</text>
-<text x="412" y="851" text-anchor="end" class="r" fill="#57606a">0.56x</text>
+<text x="36" y="851" fill="#1b1f24">log -S needle</text>
+<text x="412" y="851" text-anchor="end" class="r" fill="#57606a">0.29→0.3x</text>
 <rect x="440" y="840" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="456" y="851" fill="#1b1f24">fast-export</text>
-<text x="832" y="851" text-anchor="end" class="r" fill="#57606a">0.00x</text>
+<text x="456" y="851" fill="#1b1f24">log main -- f.txt</text>
+<text x="832" y="851" text-anchor="end" class="r" fill="#57606a">0.56→0.57x</text>
 <rect x="860" y="840" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="876" y="851" fill="#1b1f24">fetch</text>
-<text x="1252" y="851" text-anchor="end" class="r" fill="#57606a">0.41x</text>
+<text x="876" y="851" fill="#1b1f24">merge --no-ff feature</text>
+<text x="1252" y="851" text-anchor="end" class="r" fill="#57606a">0.55→0.57x</text>
 <rect x="20" y="860" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="36" y="871" fill="#1b1f24">fetch origin</text>
-<text x="412" y="871" text-anchor="end" class="r" fill="#57606a">0.41x</text>
+<text x="36" y="871" fill="#1b1f24">merge --squash feature</text>
+<text x="412" y="871" text-anchor="end" class="r" fill="#57606a">0.54→0.52x</text>
 <rect x="440" y="860" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="456" y="871" fill="#1b1f24">fsck</text>
-<text x="832" y="871" text-anchor="end" class="r" fill="#57606a">0.50x</text>
+<text x="456" y="871" fill="#1b1f24">merge feature</text>
+<text x="832" y="871" text-anchor="end" class="r" fill="#57606a">0.55→0.55x</text>
 <rect x="860" y="860" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="876" y="871" fill="#1b1f24">grep -i -e needle HEAD</text>
-<text x="1252" y="871" text-anchor="end" class="r" fill="#57606a">0.16x</text>
+<text x="876" y="871" fill="#1b1f24">push</text>
+<text x="1252" y="871" text-anchor="end" class="r" fill="#57606a">0.24→0.23x</text>
 <rect x="20" y="880" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="36" y="891" fill="#1b1f24">grep -n needle</text>
-<text x="412" y="891" text-anchor="end" class="r" fill="#57606a">0.15x</text>
+<text x="36" y="891" fill="#1b1f24">push -u origin main</text>
+<text x="412" y="891" text-anchor="end" class="r" fill="#57606a">0.24→0.23x</text>
 <rect x="440" y="880" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="456" y="891" fill="#1b1f24">log --follow -- f.txt</text>
-<text x="832" y="891" text-anchor="end" class="r" fill="#57606a">0.09x</text>
+<text x="456" y="891" fill="#1b1f24">rebase main</text>
+<text x="832" y="891" text-anchor="end" class="r" fill="#57606a">0.21→0.21x</text>
 <rect x="860" y="880" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="876" y="891" fill="#1b1f24">log -S needle</text>
-<text x="1252" y="891" text-anchor="end" class="r" fill="#57606a">0.29x</text>
+<text x="876" y="891" fill="#1b1f24">repack -ad</text>
+<text x="1252" y="891" text-anchor="end" class="r" fill="#57606a">0.0072→0.0078x</text>
 <rect x="20" y="900" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="36" y="911" fill="#1b1f24">log main -- f.txt</text>
-<text x="412" y="911" text-anchor="end" class="r" fill="#57606a">0.56x</text>
+<text x="36" y="911" fill="#1b1f24">reset</text>
+<text x="412" y="911" text-anchor="end" class="r" fill="#57606a">2.1→0.72x</text>
 <rect x="440" y="900" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="456" y="911" fill="#1b1f24">merge --no-ff feature</text>
-<text x="832" y="911" text-anchor="end" class="r" fill="#57606a">0.55x</text>
+<text x="456" y="911" fill="#1b1f24">reset --mixed HEAD~1</text>
+<text x="832" y="911" text-anchor="end" class="r" fill="#57606a">2.1→0.72x</text>
 <rect x="860" y="900" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="876" y="911" fill="#1b1f24">merge --squash feature</text>
-<text x="1252" y="911" text-anchor="end" class="r" fill="#57606a">0.54x</text>
+<text x="876" y="911" fill="#1b1f24">reset HEAD -- f.txt</text>
+<text x="1252" y="911" text-anchor="end" class="r" fill="#57606a">1.5→0.41x</text>
 <rect x="20" y="920" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="36" y="931" fill="#1b1f24">merge feature</text>
-<text x="412" y="931" text-anchor="end" class="r" fill="#57606a">0.55x</text>
+<text x="36" y="931" fill="#1b1f24">restore --staged f.txt</text>
+<text x="412" y="931" text-anchor="end" class="r" fill="#57606a">2→0.64x</text>
 <rect x="440" y="920" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="456" y="931" fill="#1b1f24">push</text>
-<text x="832" y="931" text-anchor="end" class="r" fill="#57606a">0.24x</text>
+<text x="456" y="931" fill="#1b1f24">restore . (1% modified) *</text>
+<text x="832" y="931" text-anchor="end" class="r" fill="#57606a">2.3→0.62x</text>
 <rect x="860" y="920" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="876" y="931" fill="#1b1f24">push -u origin main</text>
-<text x="1252" y="931" text-anchor="end" class="r" fill="#57606a">0.24x</text>
+<text x="876" y="931" fill="#1b1f24">rm --cached f.txt</text>
+<text x="1252" y="931" text-anchor="end" class="r" fill="#57606a">1.9→0.57x</text>
 <rect x="20" y="940" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="36" y="951" fill="#1b1f24">rebase main</text>
-<text x="412" y="951" text-anchor="end" class="r" fill="#57606a">0.21x</text>
+<text x="36" y="951" fill="#1b1f24">rm f.txt</text>
+<text x="412" y="951" text-anchor="end" class="r" fill="#57606a">1.9→0.51x</text>
 <rect x="440" y="940" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="456" y="951" fill="#1b1f24">repack -ad</text>
-<text x="832" y="951" text-anchor="end" class="r" fill="#57606a">0.01x</text>
+<text x="456" y="951" fill="#1b1f24">stash</text>
+<text x="832" y="951" text-anchor="end" class="r" fill="#57606a">0.88→0.84x</text>
 <rect x="860" y="940" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="876" y="951" fill="#1b1f24">stash</text>
-<text x="1252" y="951" text-anchor="end" class="r" fill="#57606a">0.88x</text>
+<text x="876" y="951" fill="#1b1f24">stash push -m wip</text>
+<text x="1252" y="951" text-anchor="end" class="r" fill="#57606a">0.88→0.84x</text>
 <rect x="20" y="960" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
-<text x="36" y="971" fill="#1b1f24">stash push -m wip</text>
-<text x="412" y="971" text-anchor="end" class="r" fill="#57606a">0.88x</text>
+<text x="36" y="971" fill="#1b1f24">switch main</text>
+<text x="412" y="971" text-anchor="end" class="r" fill="#57606a">0.77→0.62x</text>
 <rect x="440" y="960" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
 <text x="456" y="971" fill="#1b1f24">switch side (1% differ) *</text>
-<text x="832" y="971" text-anchor="end" class="r" fill="#57606a">0.71x</text>
+<text x="832" y="971" text-anchor="end" class="r" fill="#57606a">0.71→0.77x</text>
 <rect x="860" y="960" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
 <text x="876" y="971" fill="#1b1f24">am --abort</text>
 <text x="1252" y="971" text-anchor="end" class="r" fill="#57606a"></text>
