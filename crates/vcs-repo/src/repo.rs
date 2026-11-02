@@ -466,7 +466,11 @@ impl Repo {
         ix.written_ns = ix.settled_written_ns(now_ns(), self.index_racy_ns, verified);
         // No fsync of the temp file (like git): the rename is atomic, and the blobs the index
         // names were made durable just above.
-        crate::meta::write_atomic_nosync(&self.vcs.join("index"), &ix.encode())
+        let clean = self.index_holds_no_attrs();
+        let bytes = ix.encode();
+        crate::meta::write_atomic_nosync(&self.vcs.join("index"), &bytes)?;
+        self.carry_attrs_marker(clean, &bytes);
+        Ok(())
     }
     pub(crate) fn save_ws(&self, ws: &Workspace) -> Result<()> {
         // Backstop for every path that changes a subscription: a branch of a zone is checked out
