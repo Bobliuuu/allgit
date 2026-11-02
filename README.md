@@ -27,6 +27,9 @@ share one history and where nobody wants to download everything. The command is 
    one atomic publish: all heads move, or none
 ```
 
+<p align="center"><img src="docs/img/object-model.svg" alt="Object model: one global content-addressed DAG, zones with their own commit DAGs, CAS manifest" width="900"></p>
+<p align="center"><sub>The object model: one store, per-zone histories, one manifest that orders publishes.</sub></p>
+
 - 🧬 **One global content-addressed DAG.** Every object (file chunk, tree, commit, transaction, operation) is named by
   its BLAKE3 hash and stored once, whichever zone or branch uses it.
 - 🧩 **Zones.** A zone owns a path prefix (say `engine/` or `assets/`) and has its **own branches and history**. Zones
@@ -49,6 +52,9 @@ share one history and where nobody wants to download everything. The command is 
   streaming, with no separate large-file tool. See [Large files](#-large-files).
 - 🧹 **Garbage collection.** `vcs gc` deletes unreachable objects older than a grace period, locally and on remotes.
 
+<p align="center"><img src="docs/img/atomic-publish.svg" alt="Animation: objects upload, then one conditional manifest write moves all zone heads" width="900"></p>
+<p align="center"><sub>An atomic cross-zone publish (animated): objects first, then a single compare-and-swap of the manifest.</sub></p>
+
 ### 🌱 It does not use git, Perforce or walgit
 
 vcs has its own object format, packs, index and wire protocol. At runtime it needs no `git` binary, no libgit2, no
@@ -67,6 +73,9 @@ What it offers for people coming from those tools:
 - 📥 Moving history: `vcs import-git` reads a `git fast-export` stream (you run git to produce it), `vcs export-git`
   writes one, `vcs import-p4` reads recorded `p4` output. See [docs/import-git.md](docs/import-git.md),
   [docs/import-p4.md](docs/import-p4.md) and [docs/interop.md](docs/interop.md).
+
+<p align="center"><img src="docs/img/frontends.svg" alt="vcs git and vcs p4 rewrite to native vcs commands" width="900"></p>
+<p align="center"><sub><code>vcs git</code> and <code>vcs p4</code> (animated): an argument rewrite to native vcs, no git or p4 involved.</sub></p>
 
 ## 🛠️ Install and build
 
@@ -125,6 +134,9 @@ from real runs, is the [user guide](docs/guide/README.md).
 
 ## ☁️ Remotes and the server
 
+<p align="center"><img src="docs/img/remote-architecture.svg" alt="Remote architecture: clients, vcs-server, backend layout, GC" width="900"></p>
+<p align="center"><sub>Remote architecture (animated): clients, the optional vcs-server, the backend layout and the GC handshake.</sub></p>
+
 A repository has one remote, set with `vcs remote set`:
 
 | Kind | URL | Use |
@@ -139,6 +151,9 @@ vcs-server --root /srv/repo --tokens tokens.txt --listen 127.0.0.1:8480
 vcs login http://host:8480 && vcs clone http://host:8480 work
 ```
 
+<p align="center"><img src="docs/img/sparse-clone.svg" alt="Animation: sparse clone of one zone" width="900"></p>
+<p align="center"><sub>Sparse subscription (animated): only the zones and paths you ask for are downloaded.</sub></p>
+
 `vcs fetch` downloads and updates remote-tracking refs, `vcs sync` fetches and fast-forwards where safe (it reports
 dirty or diverged zones instead of touching them), and a publish that would overwrite someone else's work is
 refused. Offline: `vcs bundle`. Details: [docs/s3.md](docs/s3.md), [docs/server.md](docs/server.md),
@@ -146,6 +161,9 @@ refused. Offline: `vcs bundle`. Details: [docs/s3.md](docs/s3.md), [docs/server.
 [guide chapter 5](docs/guide/05-remotes.md), [guide chapter 10](docs/guide/10-operating-a-server.md).
 
 ## 🐘 Large files
+
+<p align="center"><img src="docs/img/local-store.svg" alt="Local store: loose objects, packs, compaction, chunked large files" width="900"></p>
+<p align="center"><sub>Local store (animated): loose objects, pack v2, compaction, pack v3, and large-file chunking.</sub></p>
 
 Files of 1 MiB and up are stored as chunk manifests; files of **16 MiB and up** use the large-file layout (kind 9):
 content-defined chunks of 512 KiB to 8 MiB over ordinary blob objects, no format bump. Add, checkout and `restore`
