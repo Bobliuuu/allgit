@@ -23,8 +23,8 @@
 
 mod admin;
 mod gcops;
-pub use gcops::parse_iso_ms;
 pub use admin::ManifestWriteProbe;
+pub use gcops::parse_iso_ms;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -303,7 +303,15 @@ impl S3Backend {
             Ok(resp) => {
                 let status = resp.status();
                 let etag = resp.header("etag").map(str::to_owned);
-                let mut buf = Vec::new();
+                // Presize from Content-Length: growing by doubling copies a pack range several times and
+                // leaves up to 2x capacity resident. Capped so a lying server cannot force a huge
+                // reservation (untouched capacity costs no RSS; the cap bounds address space).
+                let want = resp
+                    .header("content-length")
+                    .and_then(|v| v.trim().parse::<usize>().ok())
+                    .unwrap_or(0)
+                    .min(256 << 20);
+                let mut buf = Vec::with_capacity(want);
                 std::io::Read::read_to_end(&mut resp.into_reader(), &mut buf)
                     .map_err(|e| BackendError::Unavailable(format!("read body: {e}")))?;
                 self.bytes_read.fetch_add(buf.len() as u64, Ordering::Relaxed);

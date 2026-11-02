@@ -31,14 +31,30 @@ pub struct Response {
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+    /// Large payload sent after `body` without copying (a window into a memoized pack).
+    pub shared: Option<vcs_remote::SharedBytes>,
 }
 
 impl Response {
+    /// A 200-style response whose body is shared bytes (sent zero-copy).
+    pub fn shared(status: u16, bytes: vcs_remote::SharedBytes) -> Self {
+        Self {
+            status,
+            headers: vec![],
+            body: Vec::new(),
+            shared: Some(bytes),
+        }
+    }
+    /// Total payload length.
+    pub fn body_len(&self) -> usize {
+        self.body.len() + self.shared.as_ref().map_or(0, |s| s.len())
+    }
     pub fn new(status: u16, body: impl Into<Vec<u8>>) -> Self {
         Self {
             status,
             headers: vec![],
             body: body.into(),
+            shared: None,
         }
     }
     pub fn with(mut self, k: &str, v: impl Into<String>) -> Self {
@@ -79,21 +95,52 @@ pub fn write_response(w: &mut dyn Write, r: &Response, head_only: bool) -> std::
 /// Like [`write_response`]; `keep_alive` advertises that the connection stays open.
 pub fn write_response_ka(w: &mut dyn Write, r: &Response, head_only: bool, keep_alive: bool) -> std::io::Result<()> {
     use std::fmt::Write as _;
-    // One buffer, one write: separate head and body writes would trip Nagle against the client's
-    // delayed ACK (a ~40 ms stall per request on a persistent connection).
+    // Small responses: one buffer, one write (separate head and body writes would trip Nagle against
+    // the client's delayed ACK; connections also set TCP_NODELAY). Large bodies are not copied into
+    // the head buffer: head and body go out in one vectored write.
     let mut head = String::with_capacity(256);
     let _ = write!(head, "HTTP/1.1 {} {}\r\n", r.status, reason(r.status));
     for (k, v) in &r.headers {
         let _ = write!(head, "{k}: {v}\r\n");
     }
     let conn = if keep_alive { "keep-alive" } else { "close" };
-    let _ = write!(head, "Content-Length: {}\r\nConnection: {conn}\r\n\r\n", r.body.len());
-    let mut out = head.into_bytes();
-    if !head_only {
-        out.extend_from_slice(&r.body);
+    let _ = write!(head, "Content-Length: {}\r\nConnection: {conn}\r\n\r\n", r.body_len());
+    let mut head = head.into_bytes();
+    if head_only {
+        w.write_all(&head)?;
+        return w.flush();
     }
-    w.write_all(&out)?;
+    let big = r.shared.is_some() || r.body.len() > 16 * 1024;
+    if !big {
+        head.extend_from_slice(&r.body);
+        w.write_all(&head)?;
+        return w.flush();
+    }
+    let tail: &[u8] = match &r.shared {
+        Some(s) => s,
+        None => &r.body,
+    };
+    write_all_vectored(w, &head, tail)?;
     w.flush()
+}
+
+/// `write_all(a ++ b)` without concatenating, using `write_vectored` (one `writev` on a socket).
+fn write_all_vectored(w: &mut dyn Write, mut a: &[u8], mut b: &[u8]) -> std::io::Result<()> {
+    use std::io::IoSlice;
+    while !a.is_empty() || !b.is_empty() {
+        let n = if a.is_empty() {
+            w.write(b)?
+        } else {
+            w.write_vectored(&[IoSlice::new(a), IoSlice::new(b)])?
+        };
+        if n == 0 {
+            return Err(std::io::ErrorKind::WriteZero.into());
+        }
+        let from_a = n.min(a.len());
+        a = &a[from_a..];
+        b = &b[n - from_a..];
+    }
+    Ok(())
 }
 
 pub fn pct_decode(s: &str) -> Option<String> {
@@ -256,11 +303,21 @@ pub fn read_request(
         if n > body_limit(&req) {
             return Err(ParseError::TooLarge);
         }
-        // Grow as data arrives: a client that announces a large body and stalls costs no memory.
-        let mut body = Vec::with_capacity(n.min(64 * 1024));
-        r.take(n as u64).read_to_end(&mut body).map_err(ParseError::Io)?;
-        if body.len() != n {
-            return Err(ParseError::Io(std::io::ErrorKind::UnexpectedEof.into()));
+        // Grow as data arrives (a client that announces a large body and stalls costs no memory), by
+        // doubling up to exactly `n`: no over-allocation and no probe read past the end.
+        let mut body: Vec<u8> = Vec::with_capacity(n.min(64 * 1024));
+        let mut chunk = vec![0u8; 64 * 1024];
+        while body.len() < n {
+            if body.len() == body.capacity() {
+                body.reserve_exact(body.capacity().max(64 * 1024).min(n - body.len()));
+            }
+            let want = chunk.len().min(n - body.len());
+            match r.read(&mut chunk[..want]) {
+                Ok(0) => return Err(ParseError::Io(std::io::ErrorKind::UnexpectedEof.into())),
+                Ok(k) => body.extend_from_slice(&chunk[..k]),
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(ParseError::Io(e)),
+            }
         }
         req.body = body;
     }
