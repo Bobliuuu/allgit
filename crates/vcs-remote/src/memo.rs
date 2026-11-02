@@ -14,6 +14,7 @@ use crate::backend::{Backend, BackendError, Conditional, Versioned};
 use crate::manifest;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use vcs_objects::id_of_encoded;
 
 type Range = (String, u64, u64);
 
@@ -113,6 +114,48 @@ impl MemoBackend {
                 });
             }
         });
+    }
+
+    /// Write-through: the pack this process just wrote and its index (`idx_key`, `idx`) are both
+    /// held, so remember the commits and trees in it as if they were loose objects. Validating the
+    /// publish that follows then reads a new commit from memory, not by listing and probing the
+    /// store. Only small packs and small objects (a clone-sized pack is not worth the copy); every
+    /// object is hash-verified before it is remembered. Best effort: anything odd is skipped.
+    fn index_new_pack(&self, idx_key: &str, idx: &[u8]) {
+        const MAX_PACK: usize = 4 << 20;
+        const MAX_OBJECT: u32 = 256 << 10;
+        let Some(stem) = idx_key.strip_suffix(".idx") else { return };
+        let pack = {
+            let g = self.packs.lock().unwrap();
+            match g.get(&format!("{stem}.pack")) {
+                Some(p) if p.len() <= MAX_PACK => p.clone(),
+                _ => return,
+            }
+        };
+        let Ok(index) = vcs_store::pack::PackIndex::parse(idx, std::path::Path::new(stem)) else {
+            return;
+        };
+        if index.pack_len != pack.len() as u64 {
+            return;
+        }
+        for (id, off, len) in index.iter() {
+            let (Some(end), true) = (off.checked_add(len as u64), len <= MAX_OBJECT) else {
+                continue;
+            };
+            let Some(payload) = pack.get(off as usize..end as usize) else {
+                continue;
+            };
+            let Ok(enc) = index.decode_entry(&id, payload) else { continue };
+            // commits (3) and trees (2): what a validator reads. Blobs are never needed here.
+            if !matches!(enc.first(), Some(2 | 3)) || id_of_encoded(&enc) != id || !self.room(enc.len()) {
+                continue;
+            }
+            let v = Versioned {
+                tag: blake3::hash(&enc).to_hex().to_string(),
+                data: enc.into_owned(),
+            };
+            self.imm.lock().unwrap().insert(crate::protocol::object_key(&id), v);
+        }
     }
 
     fn drop_live(&self) {
@@ -224,6 +267,9 @@ impl Backend for MemoBackend {
                         tag: blake3::hash(data).to_hex().to_string(),
                     },
                 );
+                if key.starts_with("packs/") {
+                    self.index_new_pack(key, data);
+                }
             }
         }
         Ok(created)
