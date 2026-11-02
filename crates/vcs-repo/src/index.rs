@@ -333,6 +333,16 @@ impl Index {
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self> {
+        Ok(Self::decode_impl(bytes, false)?.0)
+    }
+
+    /// The entries in path order, validated exactly as [`Index::decode`] does, without building the
+    /// map: for listings that only walk the entries once.
+    pub fn decode_list(bytes: &[u8]) -> Result<Vec<(String, IndexEntry)>> {
+        Ok(Self::decode_impl(bytes, true)?.1.unwrap_or_default())
+    }
+
+    fn decode_impl(bytes: &[u8], keep_list: bool) -> Result<(Self, Option<Vec<(String, IndexEntry)>>)> {
         let c = |e: vcs_objects::DecodeError| Error::Corrupt(format!("index: {e}"));
         let v3 = bytes.starts_with(b"AGI3");
         // AGIX: legacy entries without a ctime.
@@ -382,9 +392,14 @@ impl Index {
         // Entries are written in key order, so build the map in one pass and check file/directory
         // conflicts afterwards: a conflict is always "an ancestor directory of K is itself a key".
         let sorted = list.windows(2).all(|w| w[0].0 < w[1].0);
+        let mut kept = None;
         if sorted {
             check_no_conflicts(&list)?;
-            idx.entries.map = list.into_iter().collect();
+            if keep_list {
+                kept = Some(list);
+            } else {
+                idx.entries.map = list.into_iter().collect();
+            }
         } else {
             for (p, e) in list {
                 if idx.entries.map.contains_key(&p) {
@@ -420,7 +435,10 @@ impl Index {
         }
         r.finish().map_err(c)?;
         idx.entries.rev = 0;
-        Ok(idx)
+        if keep_list && kept.is_none() {
+            kept = Some(std::mem::take(&mut idx.entries.map).into_iter().collect());
+        }
+        Ok((idx, kept))
     }
 }
 

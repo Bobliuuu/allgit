@@ -70,7 +70,7 @@ pub fn rev_parse(a: &RevParseArgs, json: bool) -> Result<(), Error> {
 
 // ---------- ls-files ----------
 
-#[derive(Args, Clone)]
+#[derive(Args, Clone, Debug)]
 pub struct LsFilesArgs {
     /// Show mode, object id and path
     #[arg(short = 's', long)]
@@ -90,6 +90,14 @@ fn mode_str(m: vcs_objects::EntryMode) -> &'static str {
     }
 }
 
+fn push_hex(out: &mut String, id: &vcs_objects::ObjectId) {
+    const H: &[u8; 16] = b"0123456789abcdef";
+    for x in id.as_bytes() {
+        out.push(H[(x >> 4) as usize] as char);
+        out.push(H[(x & 15) as usize] as char);
+    }
+}
+
 pub fn ls_files(a: &LsFilesArgs, json: bool) -> Result<(), Error> {
     let (repo, cwd) = open()?;
     let filters: Vec<String> = a.paths.iter().map(|p| repo.rel_path(&cwd, p)).collect::<Result<_, _>>()?;
@@ -99,21 +107,27 @@ pub fn ls_files(a: &LsFilesArgs, json: bool) -> Result<(), Error> {
                 .iter()
                 .any(|f| f.is_empty() || p == f || p.strip_prefix(f.as_str()).is_some_and(|r| r.starts_with('/')))
     };
-    let files: Vec<_> = match &a.rev {
-        Some(r) => repo.rev_files(r)?.into_iter().map(|(p, (m, i))| (p, m, i)).collect(),
+    let mut files: Vec<_> = match &a.rev {
+        Some(r) => repo.rev_file_list(r)?,
         None => repo.tracked_files()?,
     };
-    let files: Vec<_> = files.into_iter().filter(|(p, _, _)| keep(p)).collect();
-    let text: String = files
-        .iter()
-        .map(|(p, m, i)| {
+    if !filters.is_empty() {
+        files.retain(|(p, _, _)| keep(p));
+    }
+    let mut text = String::new();
+    if !json {
+        text.reserve(files.len() * if a.stage { 100 } else { 32 });
+        for (p, m, i) in &files {
             if a.stage {
-                format!("{} {} {p}\n", mode_str(*m), i.to_hex())
-            } else {
-                format!("{p}\n")
+                text.push_str(mode_str(*m));
+                text.push(' ');
+                push_hex(&mut text, i);
+                text.push(' ');
             }
-        })
-        .collect();
+            text.push_str(p);
+            text.push('\n');
+        }
+    }
     out(json, text, || {
         let list = files
             .iter()
@@ -131,7 +145,7 @@ pub fn ls_files(a: &LsFilesArgs, json: bool) -> Result<(), Error> {
 
 // ---------- cat-file ----------
 
-#[derive(Args, Clone)]
+#[derive(Args, Clone, Debug)]
 pub struct CatFileArgs {
     /// An object id (64 hex digits), a revision, or `<rev>:<path>` for a file
     pub object: String,
@@ -151,9 +165,8 @@ pub struct CatFileArgs {
 fn locate(repo: &Repo, cwd: &std::path::Path, a: &CatFileArgs) -> Result<ObjectId, Error> {
     if let Some((rev, path)) = a.object.split_once(':') {
         let rel = repo.rel_path(cwd, path)?;
-        let files = repo.rev_files(if rev.is_empty() { "HEAD" } else { rev })?;
-        return match files.get(&rel) {
-            Some((_, id)) => Ok(*id),
+        return match repo.rev_file_entry(if rev.is_empty() { "HEAD" } else { rev }, &rel)? {
+            Some((_, id)) => Ok(id),
             None => bad(format!("{path:?} is not a file in {}", if rev.is_empty() { "HEAD" } else { rev })),
         };
     }

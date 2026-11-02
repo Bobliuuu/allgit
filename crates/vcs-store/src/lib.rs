@@ -288,6 +288,9 @@ pub struct LocalStore {
     spill: Mutex<Option<std::sync::Arc<SpillFile>>>,
     seq: AtomicU64,
     packs: RwLock<Vec<Pack>>,
+    /// `packs` holds the pack directory's contents. Loaded on first use: a command that only reads
+    /// refs (`branch`, `tag`, `stash list`) never opens a pack index.
+    packs_ready: std::sync::atomic::AtomicBool,
     /// Dedup hits on objects older than this refresh their age; see [`DEFAULT_TOUCH_AFTER`].
     touch_after: std::time::Duration,
     /// Test hook: simulate a crash at a point of [`LocalStore::sweep`].
@@ -449,7 +452,6 @@ impl LocalStore {
     pub fn open(dir: impl Into<PathBuf>) -> Result<Self, StoreError> {
         let dir = dir.into();
         io(&dir, fs::create_dir_all(dir.join("tmp")))?;
-        let packs = Self::load_packs(&dir)?;
         Ok(Self {
             dir,
             pending: Mutex::new(HashMap::new()),
@@ -458,7 +460,8 @@ impl LocalStore {
             #[cfg(unix)]
             spill: Mutex::new(None),
             seq: AtomicU64::new(0),
-            packs: RwLock::new(packs),
+            packs: RwLock::new(Vec::new()),
+            packs_ready: std::sync::atomic::AtomicBool::new(false),
             touch_after: DEFAULT_TOUCH_AFTER,
             sweep_crash: Mutex::new(None),
             fan_at_open: std::sync::OnceLock::new(),
@@ -506,8 +509,38 @@ impl LocalStore {
     }
     fn reload_packs(&self) -> Result<(), StoreError> {
         let fresh = Self::load_packs(&self.dir)?;
-        *self.packs.write().unwrap() = fresh;
+        let mut g = self.packs.write().unwrap();
+        *g = fresh;
+        self.packs_ready.store(true, Ordering::Release);
         Ok(())
+    }
+    fn ensure_packs(&self) -> Result<(), StoreError> {
+        if self.packs_ready.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let mut g = self.packs.write().unwrap();
+        if !self.packs_ready.load(Ordering::Relaxed) {
+            *g = Self::load_packs(&self.dir)?;
+            self.packs_ready.store(true, Ordering::Release);
+        }
+        Ok(())
+    }
+    fn packs_r(&self) -> Result<std::sync::RwLockReadGuard<'_, Vec<Pack>>, StoreError> {
+        self.ensure_packs()?;
+        Ok(self.packs.read().unwrap())
+    }
+    fn packs_w(&self) -> Result<std::sync::RwLockWriteGuard<'_, Vec<Pack>>, StoreError> {
+        self.ensure_packs()?;
+        Ok(self.packs.write().unwrap())
+    }
+    /// Register a pack that was just written into the pack directory. Not loaded yet: the lazy
+    /// load will find it on disk (adding it here as well would list it twice).
+    fn add_pack(&self, pack: Pack) {
+        let mut g = self.packs.write().unwrap();
+        // A concurrent lazy load may already have listed it (it was on disk before this call).
+        if self.packs_ready.load(Ordering::Relaxed) && !g.iter().any(|p| p.pack_path == pack.pack_path) {
+            g.push(pack);
+        }
     }
     /// Only refresh a deduplicated object's age if it is older than `d` (zero: always).
     pub fn set_touch_after(&mut self, d: std::time::Duration) {
@@ -537,7 +570,7 @@ impl LocalStore {
     }
     fn packed(&self, id: &ObjectId) -> Result<Option<Vec<u8>>, StoreError> {
         let scan = || -> Result<Option<Vec<u8>>, StoreError> {
-            for p in self.packs.read().unwrap().iter() {
+            for p in self.packs_r()?.iter() {
                 if let Some(b) = p.read(id)? {
                     return Ok(Some(b));
                 }
@@ -567,7 +600,7 @@ impl LocalStore {
         self.sync()?;
         let mut st = SweepStats::default();
         {
-            let mut guard = self.packs.write().unwrap();
+            let mut guard = self.packs_w()?;
             let mut work: Vec<Pack> = std::mem::take(&mut *guard);
             let mut done: Vec<Pack> = Vec::new();
             let res = (|| -> Result<(), StoreError> {
@@ -674,7 +707,7 @@ impl LocalStore {
         Ok(st)
     }
     fn in_pack(&self, id: &ObjectId) -> bool {
-        self.packs.read().unwrap().iter().any(|p| p.contains(id))
+        self.packs_r().map(|g| g.iter().any(|p| p.contains(id))).unwrap_or(false)
     }
     /// Move every loose object into one new pack (default write format), then delete the loose
     /// files. Returns the number of objects packed (0 if there were none, in which case no pack
@@ -700,7 +733,7 @@ impl LocalStore {
             objs.push((*id, b));
         }
         let pack = pack::write_pack_fmt(&self.dir.join("pack"), &self.dir.join("tmp"), objs, fmt)?;
-        self.packs.write().unwrap().push(pack);
+        self.add_pack(pack);
         for id in &loose {
             let _ = fs::remove_file(self.path_of(id));
         }
@@ -709,7 +742,7 @@ impl LocalStore {
     /// Rewrite every pack not already in `fmt`. Same crash order as a sweep: new pack (pack file
     /// first, index last), then old index, then old pack, so nothing is ever missing.
     fn convert_packs(&self, fmt: pack::PackFormat) -> Result<usize, StoreError> {
-        let mut guard = self.packs.write().unwrap();
+        let mut guard = self.packs_w()?;
         let old = std::mem::take(&mut *guard);
         let mut out = Vec::with_capacity(old.len());
         let (mut n, mut res) = (0, Ok(()));
@@ -787,7 +820,7 @@ impl LocalStore {
             return Ok(0);
         }
         let pack = pack::write_pack(&self.dir.join("pack"), &self.dir.join("tmp"), objs)?;
-        self.packs.write().unwrap().push(pack);
+        self.add_pack(pack);
         for id in &ids {
             let p = self.path_of(id);
             let _ = fs::remove_file(&p);
@@ -799,7 +832,10 @@ impl LocalStore {
     }
     /// Whole-pack verification for fsck (checksums, framing, every object hash).
     pub fn verify_packs(&self) -> Vec<String> {
-        self.packs.read().unwrap().iter().flat_map(|p| p.verify()).collect()
+        match self.packs_r() {
+            Ok(g) => g.iter().flat_map(|p| p.verify()).collect(),
+            Err(e) => vec![e.to_string()],
+        }
     }
     /// Write `head || tail` (already identified as `id`) as a pending loose object unless it exists.
     /// Fan-out dirs seen at first use plus those this instance created since (see `fan_at_open`).
@@ -855,9 +891,7 @@ impl LocalStore {
         // Packs are immutable and shared, so an old packed object is re-adopted by writing a fresh
         // loose copy below (which `modified` prefers); an object in a recent pack needs nothing.
         let packed_recent = self
-            .packs
-            .read()
-            .unwrap()
+            .packs_r()?
             .iter()
             .find(|pk| pk.contains(&id))
             .map(|pk| !self.is_stale(pk.modified()));
@@ -964,7 +998,7 @@ impl LocalStore {
                 Ok((**id, bytes))
             }),
         )?;
-        self.packs.write().unwrap().push(pack);
+        self.add_pack(pack);
         Ok(())
     }
     fn path_of(&self, id: &ObjectId) -> PathBuf {
@@ -1030,7 +1064,7 @@ impl ObjectStore for LocalStore {
             return Ok(());
         }
         let in_files = pending.values().filter(|p| matches!(p, Pend::File(_))).count();
-        if pending.len() - in_files >= pack_min() && self.packs.read().unwrap().len() < MAX_BARRIER_PACKS {
+        if pending.len() - in_files >= pack_min() && self.packs_r()?.len() < MAX_BARRIER_PACKS {
             self.sync_as_pack(&mut pending)?;
             pending.retain(|_, p| matches!(p, Pend::File(_)));
             self.pend_mem.store(0, Ordering::Relaxed);
@@ -1138,7 +1172,7 @@ impl ObjectStore for LocalStore {
         let p = self.path_of(id);
         match fs::metadata(&p) {
             Ok(m) => Ok(m.modified().ok()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => match self.packs.read().unwrap().iter().find(|pk| pk.contains(id)) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => match self.packs_r()?.iter().find(|pk| pk.contains(id)) {
                 Some(pk) => Ok(pk.modified()),
                 None => Err(StoreError::NotFound(*id)),
             },
@@ -1148,7 +1182,7 @@ impl ObjectStore for LocalStore {
 
     fn list(&self) -> Result<Vec<ObjectId>, StoreError> {
         let mut out = self.list_loose()?;
-        for p in self.packs.read().unwrap().iter() {
+        for p in self.packs_r()?.iter() {
             out.extend(p.ids());
         }
         out.sort();
@@ -1535,6 +1569,23 @@ mod tests {
     }
 
     #[test]
+    fn packs_load_lazily_and_a_pack_written_before_the_load_is_listed_once() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("o");
+        let s = LocalStore::open(&dir).unwrap();
+        assert!(!s.packs_ready.load(Ordering::Relaxed), "open must not read the pack directory");
+        let id = s.put_blob(b"one").unwrap();
+        assert_eq!(s.repack().unwrap(), 1);
+        assert_eq!(s.pack_count(), 1, "the new pack is found by the lazy load, not added twice");
+        assert_eq!(s.get_blob(&id).unwrap(), b"one");
+        let s2 = LocalStore::open(&dir).unwrap();
+        assert!(!s2.packs_ready.load(Ordering::Relaxed));
+        assert_eq!(s2.get_blob(&id).unwrap(), b"one");
+        assert!(s2.packs_ready.load(Ordering::Relaxed));
+        assert_eq!(s2.pack_count(), 1);
+    }
+
+    #[test]
     fn repack_reads_back_across_reopen_and_removes_loose() {
         let (_d, dir, ids) = packed_store();
         for reopen in [false, true] {
@@ -1576,22 +1627,27 @@ mod tests {
         assert!(!s.verify_packs().is_empty());
     }
 
+    /// Packs are opened on first use, not by `open`: a damaged one is refused by the first object operation.
+    fn opens_and_lists(dir: &Path) -> Result<(), StoreError> {
+        LocalStore::open(dir)?.list().map(|_| ())
+    }
+
     #[test]
-    fn truncated_pack_and_damaged_index_are_refused_at_open() {
+    fn truncated_pack_and_damaged_index_are_refused_on_first_use() {
         let (_d, dir, _ids) = packed_store();
         let pp = pack_file(&dir, "pack");
         let b = fs::read(&pp).unwrap();
         fs::write(&pp, &b[..b.len() - 10]).unwrap();
-        assert!(LocalStore::open(&dir).is_err(), "truncated pack");
+        assert!(opens_and_lists(&dir).is_err(), "truncated pack");
         fs::write(&pp, &b).unwrap();
-        assert!(LocalStore::open(&dir).is_ok());
+        assert!(opens_and_lists(&dir).is_ok());
         let ip = pack_file(&dir, "idx");
         let mut i = fs::read(&ip).unwrap();
         i[60] ^= 1;
         fs::write(&ip, &i).unwrap();
-        assert!(LocalStore::open(&dir).is_err(), "bad index checksum");
+        assert!(opens_and_lists(&dir).is_err(), "bad index checksum");
         fs::write(&ip, &i[..30]).unwrap();
-        assert!(LocalStore::open(&dir).is_err(), "truncated index");
+        assert!(opens_and_lists(&dir).is_err(), "truncated index");
     }
 
     #[test]
