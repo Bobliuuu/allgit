@@ -61,7 +61,7 @@ fn warm_cache_serves_clone_without_remote_pack_reads_and_rejects_corruption() {
     }
     use std::os::unix::fs::PermissionsExt;
     for f in &hidden {
-        std::fs::set_permissions(f, std::fs::Permissions::from_mode(0)).unwrap();
+        std::fs::set_permissions(f, std::fs::Permissions::from_mode(0o000)).unwrap();
     }
     let o = vcs(root, &cache, &["clone", r, "c"]);
     assert!(o.status.success(), "warm clone must not read remote bytes: {}", String::from_utf8_lossy(&o.stderr));
