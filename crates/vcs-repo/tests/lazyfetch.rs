@@ -273,7 +273,9 @@ struct DropsMidFetch<'a> {
 }
 impl DropsMidFetch<'_> {
     fn gate(&self, key: &str) -> Result<(), vcs_remote::BackendError> {
-        if (key.starts_with("objects/") || key.starts_with("packs/")) && self.allow.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) <= 0 {
+        if (key.starts_with("objects/") || key.starts_with("packs/"))
+            && self.allow.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) <= 0
+        {
             return Err(vcs_remote::BackendError::Unavailable("connection dropped mid-fetch".into()));
         }
         Ok(())
@@ -322,10 +324,7 @@ fn backend_failing_mid_fetch_leaves_no_partial_worktree_write_on_sync() {
             .map(|i| fs::read_to_string(b.worktree().join(format!("engine/f{i}.rs"))).unwrap())
             .collect();
         let head_before = b.refs().unwrap().head("engine", "main");
-        let flaky = DropsMidFetch {
-            inner: &remote,
-            allow: std::sync::atomic::AtomicI64::new(allow),
-        };
+        let flaky = DropsMidFetch { inner: &remote, allow: std::sync::atomic::AtomicI64::new(allow) };
         let err = match b.sync(&flaky) {
             Err(e) => e.to_string(),
             Ok(r) => panic!("allow={allow}: sync succeeded: {:?}", r.actions),
