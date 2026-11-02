@@ -193,6 +193,19 @@ impl Backend for MemoBackend {
             }
             return Ok(r);
         }
+        if let (Some(d), true) = (&self.disk, key.starts_with("packs/") && key.ends_with(".pack")) {
+            // whole-pack read (small packs of a clone): disk only, the catalog holds it in memory.
+            // Callers verify the pack trailer against the index checksum, as before.
+            if let Some((data, tag)) = d.get(key, 0, u64::MAX) {
+                return Ok(Some(Versioned { data, tag }));
+            }
+            let r = self.inner.get(key)?;
+            match &r {
+                Some(v) => d.put(key, 0, u64::MAX, &v.tag, &v.data),
+                None => self.drop_live(),
+            }
+            return Ok(r);
+        }
         if self.snapshot && key == manifest::KEY {
             if let Some(v) = self.live.lock().unwrap().manifest.clone() {
                 return Ok(Some(v));
@@ -417,11 +430,12 @@ mod tests {
             assert_eq!(b.get("packs/p.idx").unwrap().unwrap().data, b"idx");
             assert_eq!(b.get("objects/o").unwrap().unwrap().data, b"obj");
             assert_eq!(b.get_range("packs/p.pack", 2, 3).unwrap().unwrap(), b"234");
+            assert_eq!(b.get("packs/p.pack").unwrap().unwrap().data, b"0123456789");
         };
         run(&mk());
-        assert_eq!(tl.requests(), 3);
+        assert_eq!(tl.requests(), 4);
         run(&mk()); // fresh memo, same disk: zero new requests
-        assert_eq!(tl.requests(), 3);
+        assert_eq!(tl.requests(), 4);
         // a corrupted entry is refetched, not trusted
         for e in walk(dir.path()) {
             let mut raw = std::fs::read(&e).unwrap();
@@ -430,7 +444,7 @@ mod tests {
             std::fs::write(&e, raw).unwrap();
         }
         run(&mk());
-        assert_eq!(tl.requests(), 6);
+        assert_eq!(tl.requests(), 8);
     }
 
     fn walk(p: &std::path::Path) -> Vec<std::path::PathBuf> {
