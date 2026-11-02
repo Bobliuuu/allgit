@@ -55,6 +55,7 @@ pub mod treeops;
 pub mod watcher;
 pub mod worktree;
 pub mod worktree_fs;
+mod writer_threads;
 mod zone_batch;
 pub mod zonedetect;
 mod zonesplit;
