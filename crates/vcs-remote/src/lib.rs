@@ -4,6 +4,7 @@
 //! The publish protocol is an explicit step machine ([`Publisher::step`]) so that the
 //! model-checking test can interleave writers and inject crashes between any two steps.
 
+pub mod autocompact;
 pub mod backend;
 pub mod compact;
 pub mod diskcache;
@@ -21,6 +22,7 @@ pub mod retry;
 #[cfg(feature = "sharded")]
 pub mod shard;
 pub mod shelf;
+pub mod smallpack;
 pub mod stats;
 pub mod timeline;
 

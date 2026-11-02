@@ -963,7 +963,7 @@ impl Repo {
                 None => defs.names().map(str::to_owned).collect(),
             };
             repo.save_ws(&Workspace::default())?;
-            let cat = Arc::new(PackCatalog::new());
+            let cat = Arc::new(PackCatalog::for_clone());
             let got = fetch_heads_lazy_shared(backend, &repo.store, Some(&want), &m, &cat).map_err(publish_err)?;
             let mut rr = Refs::default();
             let mut local = Refs::default();
