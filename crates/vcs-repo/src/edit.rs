@@ -132,6 +132,58 @@ impl Repo {
         Ok(out)
     }
 
+    /// [`Self::match_index`] without copying every path: the matching entries in path order, borrowed
+    /// from the index (`restore .` on 100k files would otherwise clone 100k strings twice).
+    fn match_index_list<'a>(
+        &self,
+        specs: &[String],
+        zones: &Zones,
+        ws: &Workspace,
+        ix: &'a Index,
+        what: &str,
+    ) -> Result<Vec<(&'a String, &'a IndexEntry)>> {
+        let mut out: Vec<(&String, &IndexEntry)> = Vec::new();
+        for p in specs {
+            self.require_subscribed(zones, ws, p)?;
+            let (mut owned, mut hits) = (0usize, 0usize);
+            let mut take = |k: &'a String, e: &'a IndexEntry| {
+                let zone = zones.owner(k);
+                if ws.subs.contains_key(zone) {
+                    owned += 1;
+                    if !ws.skips(zone, k) {
+                        hits += 1;
+                        out.push((k, e));
+                    }
+                }
+            };
+            if p.is_empty() {
+                for (k, e) in ix.entries.iter() {
+                    take(k, e);
+                }
+            } else {
+                if let Some((k, e)) = ix.entries.get_key_value(p.as_str()) {
+                    take(k, e);
+                }
+                for (k, e) in ix.entries.range(format!("{p}/")..format!("{p}0")) {
+                    take(k, e);
+                }
+            }
+            if hits == 0 && owned > 0 {
+                return msg(format!(
+                    "pathspec {p:?} is outside this workspace's sparse set (not materialized); `vcs sparse add` it first"
+                ));
+            }
+            if hits == 0 && !p.is_empty() {
+                return msg(format!("pathspec {p:?} did not match any {what} files"));
+            }
+        }
+        if specs.len() > 1 {
+            out.sort_unstable_by(|a, b| a.0.cmp(b.0));
+            out.dedup_by(|a, b| std::ptr::eq(a.0, b.0));
+        }
+        Ok(out)
+    }
+
     fn unresolved_conflicts(&self) -> Result<BTreeSet<String>> {
         Ok(self
             .merge_state()?
@@ -163,11 +215,11 @@ impl Repo {
 
     fn restore_worktree(&self, specs: &[String], zones: &Zones, ws: &Workspace, ix: &mut Index) -> Result<usize> {
         use crate::repo::ChangeKind;
-        let paths = self.match_index(specs, zones, ws, ix, "tracked")?;
         // 1. decide and validate everything first. The stat of every matched path (and the
         // content check of a racy one) runs on the status worker pool.
-        let list: Vec<(&String, &IndexEntry)> = paths.iter().map(|p| (p, &ix.entries[p])).collect();
+        let list = self.match_index_list(specs, zones, ws, ix, "tracked")?;
         let (changed, _clean) = self.unstaged_changes(&list, ix.written_ns)?;
+        drop(list);
         let mut ok_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut todo: Vec<(String, bool)> = Vec::with_capacity(changed.len()); // (path, known absent)
         for c in &changed {
@@ -207,7 +259,17 @@ impl Repo {
                     r => io(&abs(), r)?,
                 }
             } else {
-                io(&abs(), self.wfs.write(p, &data, mode))?
+                // Replacing local edits: unlink and create in place, like git. A rename over the
+                // old file makes ext4 flush the new data before returning, which dominates when
+                // many files are restored. (A crash in between leaves the file missing; it shows as
+                // deleted and `restore` brings it back.)
+                match self.wfs.remove(p) {
+                    Ok(()) => match self.wfs.create_new(p, &data, mode) {
+                        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => io(&abs(), self.wfs.write(p, &data, mode))?,
+                        r => io(&abs(), r)?,
+                    },
+                    Err(_) => io(&abs(), self.wfs.write(p, &data, mode))?,
+                }
             };
             Ok(IndexEntry {
                 id,
