@@ -122,6 +122,9 @@ fn tampered_head_blob_fails_the_batch_prefetch_and_the_clone() {
 
 #[test]
 fn lazy_clone_downloads_fewer_bytes_than_eager_fetch() {
+    // Small packs are read whole by default (fewer requests, more bytes: see docs/remote-packs.md);
+    // this test is about the ranged path that skips history blobs.
+    std::env::set_var("VCS_SMALL_PACK_BYTES", "0");
     let d = tempfile::tempdir().unwrap();
     let remote = MemBackend::new();
     seeded(&remote, d.path());
