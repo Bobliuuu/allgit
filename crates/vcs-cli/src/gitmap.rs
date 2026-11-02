@@ -2232,32 +2232,7 @@ fn status_short(branch: bool) -> Result<(), Error> {
     Ok(())
 }
 
-fn flat_pairs(
-    repo: &vcs_repo::Repo,
-    old: &vcs_repo::treeops::Flat,
-    new: &vcs_repo::treeops::Flat,
-) -> Result<Vec<vcs_repo::FilePair>, Error> {
-    let mut keys: std::collections::BTreeSet<&String> = old.keys().collect();
-    keys.extend(new.keys());
-    let mut out = vec![];
-    for k in keys {
-        let (o, n) = (old.get(k), new.get(k));
-        if o == n {
-            continue;
-        }
-        out.push(vcs_repo::FilePair {
-            path: k.clone(),
-            old: o.map(|(_, id)| repo.content(id)).transpose()?,
-            new: n.map(|(_, id)| repo.content(id)).transpose()?,
-            old_mode: o.map(|(m, _)| *m),
-            new_mode: n.map(|(m, _)| *m),
-        });
-    }
-    Ok(out)
-}
-
 fn diff_specs(staged: bool, specs: &[String], flags: &[String]) -> Result<(), Error> {
-    use vcs_repo::treeops::Flat;
     let (repo, cwd) = open()?;
     let mut full = vec!["vcs".to_owned(), "diff".to_owned()];
     full.extend(flags.iter().cloned());
@@ -2297,60 +2272,23 @@ fn diff_specs(staged: bool, specs: &[String], flags: &[String]) -> Result<(), Er
     let mut revs: Vec<String> = vec![];
     let mut paths: Vec<String> = path_part.to_vec();
     for (i, s) in revs_part.iter().enumerate() {
-        if revs.len() < 2
-            && i == revs.len()
-            && repo.rev_files(s).is_ok()
-            && !(cwd.join(s).exists() && path_part.is_empty() && revs_part.len() == 1 && repo.rev_files(s).is_err())
-        {
+        if revs.len() < 2 && i == revs.len() && repo.rev_resolves(s) {
             revs.push(s.clone());
         } else {
             paths.push(s.clone());
         }
     }
     let rels: Vec<String> = paths.iter().map(|p| repo.rel_path(&cwd, p)).collect::<Result<_, _>>()?;
-    let keep = |p: &str| rels.is_empty() || rels.iter().any(|f| f.is_empty() || p == f || p.starts_with(&format!("{f}/")));
-    let mut pairs = match (revs.len(), staged) {
-        (0, _) => repo.diff_pairs(staged)?,
-        (1, false) => {
-            // revision against the working tree, for tracked files
-            let old = repo.rev_files(&revs[0])?;
-            let mut keys: std::collections::BTreeSet<String> = old.keys().cloned().collect();
-            keys.extend(repo.tracked_files()?.into_iter().map(|(p, _, _)| p));
-            let mut out = vec![];
-            for k in keys {
-                let new = std::fs::read(repo.worktree().join(&k)).ok();
-                let o = old.get(&k);
-                let same = match (&o, &new) {
-                    (Some((_, id)), Some(n)) => &repo.content(id)? == n,
-                    (None, None) => true,
-                    _ => false,
-                };
-                if same {
-                    continue;
-                }
-                out.push(vcs_repo::FilePair {
-                    path: k.clone(),
-                    old: o.map(|(_, id)| repo.content(id)).transpose()?,
-                    old_mode: o.map(|(m, _)| *m),
-                    new_mode: new.as_ref().map(|_| o.map_or(vcs_objects::EntryMode::File, |(m, _)| *m)),
-                    new: new,
-                });
-            }
-            out
-        }
-        (1, true) => {
-            let old = repo.rev_files(&revs[0])?;
-            let new: Flat = repo.tracked_files()?.into_iter().map(|(p, m, id)| (p, (m, id))).collect();
-            flat_pairs(&repo, &old, &new)?
-        }
+    let pairs = match (revs.len(), staged) {
+        (0, _) => repo.diff_pairs_limited(staged, &rels)?,
+        (1, _) => repo.rev_diff_pairs(&revs[0], staged, &rels)?,
         (_, _) => {
             if staged {
                 return Err(missing("diff --staged A B", "--staged with two revisions", "`vcs git diff A B`"));
             }
-            flat_pairs(&repo, &repo.rev_files(&revs[0])?, &repo.rev_files(&revs[1])?)?
+            repo.rev_rev_pairs(&revs[0], &revs[1], &rels)?
         }
     };
-    pairs.retain(|p| keep(&p.path));
     print!("{}", crate::difftool::render_pairs(pairs, &opts));
     Ok(())
 }
@@ -2385,12 +2323,17 @@ fn log_patch(log_argv: &[String], stat: bool) -> Result<(), Error> {
         trust: None,
     };
     let (shown, _) = crate::logfmt::select(&repo, &cwd, &zone, branch.as_deref(), limit, &opts)?;
+    // the options of `vcs show <id> [--stat]`, parsed once; each commit is shown in this process
+    let mut a = vec!["vcs".to_owned(), "show".to_owned(), "HEAD".to_owned()];
+    if stat {
+        a.push("--stat".into());
+    }
+    let crate::Cmd::Show { opts: show_opts, .. } = crate::Cli::try_parse_from(a).map_err(|e| Error::Msg(e.to_string()))?.cmd else {
+        unreachable!()
+    };
+    let show_zone = zone_of_cwd(&repo, &cwd, None)?;
     for (id, _) in shown {
-        let mut a = vec!["show".to_owned(), id.to_string()];
-        if stat {
-            a.push("--stat".into());
-        }
-        native(&a, false)?;
+        crate::difftool::print_show(&repo, &show_zone, &id.to_string(), &show_opts)?;
         println!();
     }
     Ok(())

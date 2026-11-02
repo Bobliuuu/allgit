@@ -632,6 +632,42 @@ pub fn show_diff(repo: &Repo, rep: &vcs_repo::ShowReport, a: &DiffArgs) -> Resul
     Ok(render_pairs(repo.commit_pairs(&rep.commit.zone, &rep.id)?, a))
 }
 
+/// `vcs show <rev>`: the commit header, then its diff (or stat / name list) against the first parent.
+pub fn print_show(repo: &Repo, zone: &str, rev: &str, opts: &DiffArgs) -> Result<(), Error> {
+    let rep = repo.show(zone, rev)?;
+    let defs = repo.zones()?;
+    if let Some(t) = &rep.tag {
+        println!("tag {}", t.name);
+        println!("Tagger: {} <{}>", t.tagger.name, t.tagger.email);
+        println!("Date:   {}", t.tagger.timestamp);
+        if !t.signature.is_empty() {
+            let trust = crate::signing_cmd::load_trust(&crate::config::Config::load()?)?;
+            println!(
+                "Signature: {}",
+                crate::signing_cmd::describe(&vcs_objects::signing::verify_tag(t, &trust))
+            );
+        }
+        for l in t.message.lines() {
+            println!("    {l}");
+        }
+        println!();
+    }
+    let c = &rep.commit;
+    println!("commit {}", rep.id);
+    println!("change {}   zone {}", c.change_id, defs.label(&c.zone));
+    for p in &c.parents {
+        println!("parent {p}");
+    }
+    println!("Author: {} <{}>", c.author.name, c.author.email);
+    println!("Date:   {}", c.author.timestamp);
+    for l in vcs_objects::signing::strip_commit_signature(&c.message).lines() {
+        println!("    {l}");
+    }
+    println!();
+    print!("{}", show_diff(repo, &rep, opts)?);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

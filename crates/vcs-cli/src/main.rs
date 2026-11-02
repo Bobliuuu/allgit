@@ -1397,34 +1397,7 @@ fn run(cli: Cli) -> Result<(), Error> {
         Cmd::Show { rev, zone, opts } => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
-            let rep = repo.show(&zone, rev.as_deref().unwrap_or("HEAD"))?;
-            let defs = repo.zones()?;
-            if let Some(t) = &rep.tag {
-                println!("tag {}", t.name);
-                println!("Tagger: {} <{}>", t.tagger.name, t.tagger.email);
-                println!("Date:   {}", t.tagger.timestamp);
-                if !t.signature.is_empty() {
-                    let trust = signing_cmd::load_trust(&config::Config::load()?)?;
-                    println!("Signature: {}", signing_cmd::describe(&vcs_objects::signing::verify_tag(t, &trust)));
-                }
-                for l in t.message.lines() {
-                    println!("    {l}");
-                }
-                println!();
-            }
-            let c = &rep.commit;
-            println!("commit {}", rep.id);
-            println!("change {}   zone {}", c.change_id, defs.label(&c.zone));
-            for p in &c.parents {
-                println!("parent {p}");
-            }
-            println!("Author: {} <{}>", c.author.name, c.author.email);
-            println!("Date:   {}", c.author.timestamp);
-            for l in vcs_objects::signing::strip_commit_signature(&c.message).lines() {
-                println!("    {l}");
-            }
-            println!();
-            print!("{}", difftool::show_diff(&repo, &rep, &opts)?);
+            difftool::print_show(&repo, &zone, rev.as_deref().unwrap_or("HEAD"), &opts)?;
         }
         Cmd::Blame {
             path,

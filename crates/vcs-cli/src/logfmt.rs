@@ -207,21 +207,35 @@ pub fn render_with(
     let mut out = String::new();
     for (id, c) in commits {
         let mut body = body_lines(id, c, &label, o);
+        let mut list: Option<&Vec<String>> = None;
         if let Some(n) = notes.get(id).filter(|n| !n.is_empty()) {
             // keep the blank separator after the message, then the list, then another blank
             let blank = body.last().is_some_and(String::is_empty);
             if !blank && !o.graph && !o.oneline && o.x.format.is_none() {
                 body.push(String::new());
             }
-            body.extend(n.iter().cloned());
-            if !o.oneline && o.x.format.is_none() {
-                body.push(String::new());
+            if o.graph {
+                body.extend(n.iter().cloned());
+                if !o.oneline && o.x.format.is_none() {
+                    body.push(String::new());
+                }
+            } else {
+                list = Some(n); // printed straight from the notes: a big file list is not copied
             }
         }
         if !o.graph {
             for l in body {
                 out.push_str(&l);
                 out.push('\n');
+            }
+            if let Some(n) = list {
+                for l in n {
+                    out.push_str(l);
+                    out.push('\n');
+                }
+                if !o.oneline && o.x.format.is_none() {
+                    out.push('\n');
+                }
             }
             continue;
         }

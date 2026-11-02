@@ -192,6 +192,16 @@ impl LogExtra {
         }
         let a = self.diff_args();
         for (id, _) in shown {
+            if !a.detect() {
+                // no rename detection: the file list straight from the tree diff
+                let lines = repo
+                    .commit_changes(zone, id)?
+                    .into_iter()
+                    .map(|(p, l)| if self.name_status { format!("{}\t{p}", l as char) } else { p })
+                    .collect();
+                out.insert(*id, lines);
+                continue;
+            }
             // contents matter only for rename / copy detection
             let pairs = if a.detect() {
                 repo.commit_pairs(zone, id)?
