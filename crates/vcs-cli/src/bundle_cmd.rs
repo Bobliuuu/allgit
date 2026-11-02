@@ -18,8 +18,14 @@ pub enum BundleCmd {
         #[arg(long)]
         since: Option<String>,
     },
-    /// Check a bundle's hashes, structure and completeness (needs no repository)
-    Verify { file: PathBuf },
+    /// Check a bundle (needs no repository). By default only its header, refs, lengths and
+    /// prerequisites are checked, in about a millisecond; --full also hashes and decodes every object
+    Verify {
+        file: PathBuf,
+        /// Hash the whole file and decode every object (what fetch and clone always do)
+        #[arg(long)]
+        full: bool,
+    },
 }
 
 fn describe(info: &BundleInfo) {
@@ -44,10 +50,16 @@ pub fn run(cmd: BundleCmd) -> Result<(), Error> {
             println!("wrote {}", file.display());
             describe(&info);
         }
-        BundleCmd::Verify { file } => {
-            let info = bundle::verify_file(&file)?;
+        BundleCmd::Verify { file, full } => {
+            let info = if full {
+                bundle::verify_file(&file)?
+            } else {
+                bundle::verify_quick(&file)?
+            };
             describe(&info);
-            if let Some(repo) = std::env::current_dir().ok().and_then(|c| Repo::discover(&c).ok()) {
+            // only a bundle with prerequisites needs a repository to be checked against
+            if info.prerequisites.is_empty() {
+            } else if let Some(repo) = std::env::current_dir().ok().and_then(|c| Repo::discover(&c).ok()) {
                 let missing = repo.bundle_missing_prerequisites(&file, &info)?;
                 if missing.is_empty() {
                     println!("prerequisites: all present in this repository");
@@ -57,7 +69,11 @@ pub fn run(cmd: BundleCmd) -> Result<(), Error> {
                     }
                 }
             }
-            println!("ok");
+            if full {
+                println!("ok");
+            } else {
+                println!("ok (header, refs and lengths; pack contents not hashed, use --full)");
+            }
         }
     }
     Ok(())

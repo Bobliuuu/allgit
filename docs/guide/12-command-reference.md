@@ -2466,7 +2466,7 @@ Usage: vcs bundle [OPTIONS] <COMMAND>
 
 Commands:
   create  Write a bundle of branches or zones (default: every branch) to a file
-  verify  Check a bundle's hashes, structure and completeness (needs no repository)
+  verify  Check a bundle (needs no repository). By default only its header, refs, lengths and prerequisites are checked, in about a millisecond; --full also hashes and decodes every object
   help    Print this message or the help of the given subcommand(s)
 
 Options:
@@ -2500,7 +2500,7 @@ Options:
 #### `vcs bundle verify`
 
 ```text
-Check a bundle's hashes, structure and completeness (needs no repository)
+Check a bundle (needs no repository). By default only its header, refs, lengths and prerequisites are checked, in about a millisecond; --full also hashes and decodes every object
 
 Usage: vcs bundle verify [OPTIONS] <FILE>
 
@@ -2509,6 +2509,7 @@ Arguments:
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --full           Hash the whole file and decode every object (what fetch and clone always do)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
