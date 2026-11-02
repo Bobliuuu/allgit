@@ -82,6 +82,7 @@ fn opts() -> RemoteGcOptions {
         lock_ttl_ms: 6 * HOUR,
         owner: "sweeper".into(),
         allow_short_grace: false,
+        rewrite_packs: true,
     }
 }
 

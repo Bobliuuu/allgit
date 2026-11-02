@@ -82,6 +82,7 @@ fn opts() -> RemoteGcOptions {
         lock_ttl_ms: 60_000,
         owner: "test".into(),
         allow_short_grace: true,
+        rewrite_packs: true,
     }
 }
 

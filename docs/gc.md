@@ -48,15 +48,20 @@ the client reports `supports_gc` only if the server answers `/v1/clock` (an olde
 before). Tested: `s3_conformance_gc` and `s3_sweeper_deletes_old_garbage_keeps_the_head_and_touch_protects` in
 `crates/vcs-store-s3/tests/gc_s3.rs` (gated on `VCS_TEST_S3_ENDPOINT`; run on RustFS 1.0.4 only, not AWS S3 or MinIO), and
 `gc_primitives_over_http_follow_roles_and_the_backend` in `crates/vcs-server/tests/server.rs` (HTTP over a directory backend, `conformance_gc`).
-The interleaving/model tests (`gc_real.rs`, `model_gc.rs`) run on `MemBackend`; nothing here re-runs them against S3 timing. **Still not
-done:** remote pack rewriting (a pack with any live object stays whole) and renewal of the sweeper's lock lease during a very long sweep.
+The interleaving/model tests (`gc_real.rs`, `model_gc.rs`) run on `MemBackend`; nothing here re-runs them against S3 timing. **Pack
+rewriting and lease renewal** are done (below).
 `delete` itself is implemented for all four (S3 `DeleteObject`; HTTP `DELETE /v1/o/<key>`, admin token only, never the manifest).
 **S3 has no conditional delete** (no `If-Match` on DELETE), so deletes are unconditional and the tombstone handshake is what makes
 them safe.
 
 Deletion units are a loose object (`objects/xx/...`) or a whole pack (`packs/<name>.idx` + `.pack`, index deleted first, so no
-reader is pointed at a vanishing pack). A pack is deleted only if none of its objects is needed; a pack holding any live
-object is kept whole (`packs_with_garbage_kept` in the report; **no remote pack rewriting**). A `.pack` with no index (a publisher
+reader is pointed at a vanishing pack). A pack is deleted only if none of its objects is needed; a pack holding both live and old unreachable objects is a *rewrite* unit: tombed like the others, and if the remark leaves it
+untouched, a new pack with only its kept objects is uploaded (pack, index, read back), then the old index, then the old pack
+(`packs_rewritten` in the report; a crash leaves duplicates, never a missing live object). Packs that are too young, touched, or over
+512 MiB stay whole (`packs_with_garbage_kept`). The sweeper renews `gc/lock` by compare-and-set at each phase and every 32 units; if the
+lock was taken over or removed it stops with `LeaseLost` before the next delete. Tests: `gc_real.rs` (`a_pack_with_garbage_is_rewritten_without_it`,
+`rewrite_is_crash_safe_at_every_step`, `a_touched_pack_survives_the_rewrite_remark`, `the_sweeper_renews_its_lease`,
+`a_sweeper_that_lost_its_lease_stops_before_deleting`); the interleaving search is unchanged. A `.pack` with no index (a publisher
 that died between PutPack and PutIdx) is a unit with no objects and is deleted once old. Roots: branch heads, snapshots, tags, and the
 old/new heads of every transaction in the manifest's applied window (the retention window), and the base commits of every unexpired shelf (`shelves/*/*/meta`, docs/shelves.md). Expired shelves are deleted by a non-dry-run sweep. Never deleted: the manifest, `tx/` and the packs of live shelves.
 
@@ -82,9 +87,9 @@ interleavings of publisher steps and sweeper phases (four variants: packed publi
 adopting the orphan as the head, and re-publishing an aborted pack; a few hundred thousand schedules), invariant G-REACH after every
 phase, and all seven model mutations ported as `GcQuirks` switches that must each produce a violation. Plus fault injection (lost
 delete, crashed sweeper's stale tombstones, held and expired lock, damaged remote left untouched, unsafe grace, unsupported
-backend) and pack tests (old orphan pack deleted, young one kept, pack with a live object kept whole, index-less pack).
+backend) and pack tests (old orphan pack deleted, young one kept, pack with a live object rewritten, index-less pack).
 
-Still not covered: rewriting a pack to drop its garbage (compaction below merges, it does not filter); sweeper that outlives its lock TTL; readers (fetch/clone) slower than the grace period
+Still not covered: readers (fetch/clone) slower than the grace period
 can lose objects of a replaced head; clock-rate skew (A1 is assumed, not tested); real S3.
 
 ## Roots
@@ -160,7 +165,7 @@ The remote is S3-like: create-only PUT, CAS on `manifest`, no multi-key transact
    copy, because packs are shared and immutable. Tested by `readopted_old_orphan_is_kept_after_dedup_put` and the store
    unit tests; cost in `docs/benchmarks.md`. `MemoryStore` reports no age, so GC keeps its objects anyway.
 3. (done) Local `vcs gc` sweep under the repo lock, with crash tests.
-4. (done, directory remotes) Remote design items 1-7 as protocol G1, model test first, then implementation. S3 / HTTP touch, age and clock: done (#232). Open: remote pack rewriting, sweeper lease renewal.
+4. (done, directory remotes) Remote design items 1-7 as protocol G1, model test first, then implementation. S3 / HTTP touch, age and clock: done (#232). Remote pack rewriting and sweeper lease renewal: done.
 
 ## Limits of the dry run
 
