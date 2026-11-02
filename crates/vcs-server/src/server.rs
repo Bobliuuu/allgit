@@ -131,6 +131,11 @@ struct Shared {
     #[cfg(feature = "tls")]
     tls: RwLock<Option<Arc<rustls::ServerConfig>>>,
     read_index: Mutex<crate::readguard::ReadIndex>,
+    /// The manifest version this process last read or wrote: (version tag, bytes). A manifest write
+    /// that names exactly this tag in `If-Match` is validated against these bytes instead of reading
+    /// the store again; the store's own compare-and-swap on that tag still decides whether it
+    /// commits, so a stale entry (another replica wrote meanwhile) costs a 412, never a wrong accept.
+    manifest_cache: Mutex<Option<(String, Arc<Vec<u8>>)>>,
     limiter: Option<Limiter>,
     fail_throttle: Option<crate::ratelimit::FailThrottle>,
     per_ip: Mutex<std::collections::HashMap<std::net::IpAddr, usize>>,
@@ -219,6 +224,7 @@ impl Server {
             #[cfg(feature = "tls")]
             tls: RwLock::new(cfg.tls.clone()),
             read_index: Mutex::new(Default::default()),
+            manifest_cache: Mutex::new(None),
             cfg,
             active: AtomicUsize::new(0),
             stop: AtomicBool::new(false),
@@ -969,6 +975,22 @@ fn read_allowed(sh: &Shared, who: &Principal, key: &str) -> Result<bool, Backend
     Ok(!idx.denied_only(&id, &|z| policy.read_zone_allowed(&who.name, z)))
 }
 
+/// Largest manifest the server keeps a copy of.
+const MANIFEST_CACHE_MAX: usize = 8 << 20;
+
+impl Shared {
+    fn manifest_cached(&self, tag: &str) -> Option<Arc<Vec<u8>>> {
+        let g = self.manifest_cache.lock().unwrap_or_else(|e| e.into_inner());
+        g.as_ref().filter(|(t, _)| t == tag).map(|(_, b)| b.clone())
+    }
+    fn manifest_remember(&self, tag: &str, data: Option<&[u8]>) {
+        let mut g = self.manifest_cache.lock().unwrap_or_else(|e| e.into_inner());
+        *g = data
+            .filter(|d| d.len() <= MANIFEST_CACHE_MAX)
+            .map(|d| (tag.to_owned(), Arc::new(d.to_vec())));
+    }
+}
+
 fn object_read(sh: &Shared, req: &Request, who: &Principal, key: &str, head: bool) -> Response {
     let is_shelf = key.starts_with(vcs_remote::shelf::SHELF_PREFIX);
     if is_shelf && !shelf_read_ok(sh, who, key) {
@@ -998,7 +1020,13 @@ fn object_read(sh: &Shared, req: &Request, who: &Principal, key: &str, head: boo
             Err(e) => backend_err(e),
         };
     }
-    match sh.backend.get(key) {
+    let got = sh.backend.get(key);
+    if key == manifest::KEY {
+        if let Ok(Some(v)) = &got {
+            sh.manifest_remember(&v.tag, Some(&v.data));
+        }
+    }
+    match got {
         // Conditional GET: the caller already holds this version, send no body.
         Ok(Some(v)) if req.header("if-none-match").is_some_and(|t| unquote(t.trim()) == v.tag) => {
             Response::new(304, "").with("ETag", etag(&v.tag))
@@ -1088,25 +1116,33 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str, extra: &mu
     let mut cur = Manifest::default();
     let mut rewrites: Vec<Rewrite> = Vec::new();
     if is_manifest {
-        let v = match sh.backend.get(key) {
-            Ok(v) => v,
-            Err(e) => return backend_err(e),
-        };
-        match (&v, &if_match) {
-            (Some(v), Some(t)) => {
-                if &v.tag != t {
-                    return Response::new(412, "");
-                }
-            }
-            (Some(_), None) => return Response::new(412, ""),
-            (None, Some(_)) => return Response::new(412, ""),
-            (None, None) => {}
-        }
-        if let Some(v) = v {
-            cur = match Manifest::decode(&v.data) {
+        let cached = if_match.as_deref().and_then(|t| sh.manifest_cached(t));
+        if let Some(bytes) = &cached {
+            cur = match Manifest::decode(bytes) {
                 Ok(m) => m,
                 Err(e) => return text(500, &format!("stored manifest invalid: {e}")),
             };
+        } else {
+            let v = match sh.backend.get(key) {
+                Ok(v) => v,
+                Err(e) => return backend_err(e),
+            };
+            match (&v, &if_match) {
+                (Some(v), Some(t)) => {
+                    if &v.tag != t {
+                        return Response::new(412, "");
+                    }
+                }
+                (Some(_), None) => return Response::new(412, ""),
+                (None, Some(_)) => return Response::new(412, ""),
+                (None, None) => {}
+            }
+            if let Some(v) = v {
+                cur = match Manifest::decode(&v.data) {
+                    Ok(m) => m,
+                    Err(e) => return text(500, &format!("stored manifest invalid: {e}")),
+                };
+            }
         }
         let mut new = match Manifest::decode(&req.body) {
             Ok(m) => m,
@@ -1142,6 +1178,9 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str, extra: &mu
         body = std::borrow::Cow::Owned(new.encode());
     }
     if if_none {
+        if is_manifest {
+            sh.manifest_remember("", None); // created without a known tag
+        }
         match sh.backend.put_if_absent(key, &body) {
             Ok(true) => Response::new(201, ""),
             Ok(false) => Response::new(412, ""),
@@ -1150,11 +1189,24 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str, extra: &mu
     } else {
         match sh.backend.put_if_match(key, &body, &if_match.unwrap_or_default()) {
             Ok(Some(t)) => {
+                if is_manifest {
+                    sh.manifest_remember(&t, Some(&body));
+                }
                 audit_rewrites(sh, who, &rewrites);
                 Response::new(200, "").with("ETag", etag(&t))
             }
-            Ok(None) => Response::new(412, ""),
-            Err(e) => backend_err(e),
+            Ok(None) => {
+                if is_manifest {
+                    sh.manifest_remember("", None);
+                }
+                Response::new(412, "")
+            }
+            Err(e) => {
+                if is_manifest {
+                    sh.manifest_remember("", None);
+                }
+                backend_err(e)
+            }
         }
     }
 }

@@ -143,6 +143,8 @@ fn publish_round_trips() {
     commit_all(&f.a, "edit");
     f.a.publish(&f.tl, None, sig()).unwrap();
     dump("publish", &f.tl);
-    assert!(f.tl.requests() <= 12, "publish requests {}", f.tl.requests());
-    assert!(f.tl.depth() <= 12, "publish depth {}", f.tl.depth());
+    // manifest read, pack, then index + tx record together, then the CAS: no existence probe, no
+    // second manifest read
+    assert!(f.tl.requests() <= 5, "publish requests {}", f.tl.requests());
+    assert!(f.tl.depth() <= 4, "publish depth {}", f.tl.depth());
 }

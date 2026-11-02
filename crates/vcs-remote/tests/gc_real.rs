@@ -99,6 +99,12 @@ fn upload(b: &dyn Backend, s: &MemoryStore, id: ObjectId, seen: &mut HashSet<Obj
     b.put_if_absent(&object_key(&id), &o.encode()).unwrap();
 }
 
+/// These scenarios model a remote that still holds legacy loose objects, which a publisher adopts
+/// by probing for them (`with_loose_probe`; off by default because it costs a request per new commit).
+fn legacy_publisher<'a>(b: &'a dyn Backend, s: &'a dyn ObjectStore, t: Transaction) -> Publisher<'a> {
+    Publisher::new(b, s, t).with_loose_probe()
+}
+
 fn tx(old: Option<ObjectId>, new: ObjectId) -> Transaction {
     Transaction {
         updates: vec![RefUpdate {
@@ -136,11 +142,11 @@ fn setup(w: &World) -> MemBackend {
 fn setup_with(w: &World, orphan_pack: bool) -> MemBackend {
     let b = MemBackend::new().with_gc();
     b.set_now_ms(T0);
-    Publisher::new(&b, &w.store, tx(None, w.h0)).run().unwrap();
+    legacy_publisher(&b, &w.store, tx(None, w.h0)).run().unwrap();
     if orphan_pack {
         let mut t = tx(None, w.c);
         t.updates[0].branch = "aborted".into();
-        let mut p = Publisher::new(&b, &w.store, t);
+        let mut p = legacy_publisher(&b, &w.store, t);
         for _ in 0..3 {
             p.step().unwrap(); // Collect, PutPack, PutIdx ... then the client dies
         }
@@ -208,7 +214,7 @@ fn publisher<'a>(w: &'a World, b: &'a MemBackend, v: Variant, q: GcQuirks) -> Pu
     } else {
         w.c
     };
-    let p = Publisher::new(b, &w.store, tx(Some(w.h0), new))
+    let p = legacy_publisher(b, &w.store, tx(Some(w.h0), new))
         .with_hold_ms(HOUR)
         .with_gc_quirks(q);
     if v == Variant::AdoptLoose {
@@ -487,7 +493,7 @@ fn young_objects_and_their_dependencies_are_kept() {
 fn history_in_the_applied_window_is_a_root() {
     let (w, b) = orphan_world();
     // move the branch H0 -> C (adopting the orphan), then to P: H0's tx is still in the window
-    Publisher::new(&b, &w.store, tx(Some(w.h0), w.p)).run().unwrap();
+    legacy_publisher(&b, &w.store, tx(Some(w.h0), w.p)).run().unwrap();
     b.advance_ms(30 * DAY);
     let rep = vcs_remote::remote_gc(&b, &opts()).unwrap();
     assert!(rep.deleted.is_empty(), "old head H0 is named by a retained tx: {:?}", rep.deleted);
@@ -557,7 +563,7 @@ fn lost_delete_leaves_tombstone_and_object_and_a_rerun_finishes() {
         "interrupted sweep leaves tombstones (safe: publishers abort)"
     );
     // a publisher that would re-adopt D is blocked by the stale tombstone, not allowed through
-    let mut p = Publisher::new(&b, &w.store, tx(Some(w.h0), w.c)).with_hold_ms(HOUR);
+    let mut p = legacy_publisher(&b, &w.store, tx(Some(w.h0), w.c)).with_hold_ms(HOUR);
     for _ in 0..40 {
         if p.is_finished() || p.step().is_err() {
             break;
@@ -589,7 +595,7 @@ fn publisher_touches_what_it_adopts_and_aborts_on_tombstone() {
     let (w, b) = orphan_world();
     let before = b.modified_ms(&object_key(&w.c)).unwrap().unwrap();
     // run a publisher to completion: C adopted as head
-    Publisher::new(&b, &w.store, tx(Some(w.h0), w.c)).run().unwrap();
+    legacy_publisher(&b, &w.store, tx(Some(w.h0), w.c)).run().unwrap();
     assert!(
         b.modified_ms(&object_key(&w.c)).unwrap().unwrap() > before,
         "dedup hit must refresh the remote age"
@@ -597,7 +603,7 @@ fn publisher_touches_what_it_adopts_and_aborts_on_tombstone() {
     // with a tombstone present the publisher refuses to proceed (retries, then Unknown)
     let (w2, b2) = orphan_world();
     b2.put_if_absent(&tomb_key(&w2.c), b"gc").unwrap();
-    let e = Publisher::new(&b2, &w2.store, tx(Some(w2.h0), w2.c)).run().unwrap_err();
+    let e = legacy_publisher(&b2, &w2.store, tx(Some(w2.h0), w2.c)).run().unwrap_err();
     assert!(matches!(e, PublishError::Unknown(..)), "{e}");
     let (m, _) = load_manifest(&b2).unwrap();
     assert_eq!(m.head("z", "main"), Some(w2.h0), "nothing was published");
@@ -620,7 +626,7 @@ fn orphan_pack_from_an_aborted_publish_is_deleted_when_old_and_kept_when_young_o
     // a second aborted pack written just now: young, and it DEPENDS on the old orphan (P over C)
     let mut t = tx(None, w.p);
     t.updates[0].branch = "aborted2".into();
-    let mut p = Publisher::new(&b, &w.store, t);
+    let mut p = legacy_publisher(&b, &w.store, t);
     for _ in 0..3 {
         p.step().unwrap();
     }
@@ -842,7 +848,7 @@ fn republishing_an_old_orphan_pack_touches_it() {
         .collect();
     assert_eq!(orphan.len(), 1, "{stem:?}");
     let before = b.modified_ms(&format!("{}.idx", orphan[0])).unwrap().unwrap();
-    Publisher::new(&b, &w.store, tx(Some(w.h0), w.c)).run().unwrap();
+    legacy_publisher(&b, &w.store, tx(Some(w.h0), w.c)).run().unwrap();
     assert!(b.modified_ms(&format!("{}.pack", orphan[0])).unwrap().unwrap() > before);
     assert!(b.modified_ms(&format!("{}.idx", orphan[0])).unwrap().unwrap() > before);
     assert!(vcs_remote::remote_gc(&b, &opts()).unwrap().deleted_packs.is_empty());

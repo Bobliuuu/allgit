@@ -13,13 +13,15 @@ and `.idx`; the name is content-addressed, so re-uploading after a crash is idem
 Collect   find the new objects without asking the remote about individual objects
 PutPack   put_if_absent packs/<name>.pack
 PutIdx    put_if_absent packs/<name>.idx        <- the pack becomes visible here
-PutTx     put_if_absent tx/<txid>
+          (together with) put_if_absent tx/<txid>   one round trip: create-only, idempotent, read only
+                                                    through the manifest's applied window
 Load/Cas  manifest read, then compare-and-swap  <- the publish becomes visible here
 ```
 
 A crash after `PutPack` leaves a pack without an index: readers only enumerate `.idx` keys, so it is ignored (an orphan; there
 is no remote delete, so it stays). A crash after `PutIdx` leaves a complete, closed pack that no manifest references; also
-harmless. Zero objects: no pack. One object: a loose object (a pack would cost two requests instead of one).
+harmless; so is a `tx/` record whose objects are not visible (nothing reads `tx/` except through the manifest, and
+the GC never deletes it). The index never goes up before its pack finished. Zero objects: no pack. One object: a loose object (a pack would cost two requests instead of one).
 Objects inside the pack are ordered commits, then trees, then everything else, so a clone can read the metadata as a prefix.
 
 ### Why skipping the per-object HEAD walk is sound
