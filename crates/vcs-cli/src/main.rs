@@ -2271,13 +2271,16 @@ fn run(cli: Cli) -> Result<(), Error> {
                     r.deleted_packs.len(),
                     r.saved_by_remark
                 );
+                for (old, new) in &r.packs_rewritten {
+                    println!("  rewrote pack {old} -> {new}");
+                }
                 if r.stale_tombs_cleared > 0 {
                     println!("cleared {} stale tombstone(s) from a crashed collector", r.stale_tombs_cleared);
                 }
             }
             if r.packs_with_garbage_kept > 0 {
                 println!(
-                    "{} pack(s) hold some unreachable objects but were kept whole (remote pack rewriting is not implemented)",
+                    "{} pack(s) hold some unreachable objects but were kept whole (too young, recently used, or over 512 MiB)",
                     r.packs_with_garbage_kept
                 );
             }
