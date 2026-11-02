@@ -334,11 +334,14 @@ impl Index {
 
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         let c = |e: vcs_objects::DecodeError| Error::Corrupt(format!("index: {e}"));
-        let v3 = bytes.starts_with(b"AGI3");
+        let v4 = bytes.starts_with(b"AGI4");
+        let v3 = v4 || bytes.starts_with(b"AGI3");
         // AGIX: legacy entries without a ctime.
         let legacy = bytes.starts_with(b"AGIX");
         let body = unframe(
-            if v3 {
+            if v4 {
+                b"AGI4"
+            } else if v3 {
                 b"AGI3"
             } else if legacy {
                 b"AGIX"
@@ -356,7 +359,30 @@ impl Index {
             written_ns,
         };
         let mut list: Vec<(String, IndexEntry)>;
-        if v3 {
+        if v4 {
+            // AGI4: every block states its own byte length and entry count (a patched index has
+            // uneven blocks).
+            let nblocks = r.count(2).map_err(c)?;
+            let mut meta = Vec::with_capacity(nblocks);
+            let mut total = 0usize;
+            for _ in 0..nblocks {
+                let len = r.varint().map_err(c)? as usize;
+                let cnt = r.varint().map_err(c)? as usize;
+                if cnt == 0 || cnt > n {
+                    return Err(Error::Corrupt("index: bad block table".into()));
+                }
+                total = total.saturating_add(cnt);
+                meta.push((len, cnt));
+            }
+            if total != n {
+                return Err(Error::Corrupt("index: bad block table".into()));
+            }
+            let mut slices: Vec<(&[u8], usize)> = Vec::with_capacity(nblocks);
+            for (l, cnt) in meta {
+                slices.push((r.raw(l).map_err(c)?, cnt));
+            }
+            list = decode_blocks(&slices)?;
+        } else if v3 {
             let per = r.varint().map_err(c)? as usize;
             let nblocks = r.count(1).map_err(c)?;
             if per == 0 || per > (1 << 20) || nblocks != n.div_ceil(per) {
@@ -424,14 +450,26 @@ impl Index {
     }
 }
 
+/// Append one entry in the block encoding.
+#[inline]
+pub(crate) fn put_entry(body: &mut Vec<u8>, p: &str, e: &IndexEntry) {
+    put_varint(body, p.len() as u64);
+    body.extend_from_slice(p.as_bytes());
+    body.push(e.mode as u8);
+    body.extend_from_slice(e.id.as_bytes());
+    put_varint(body, e.size);
+    put_varint(body, e.mtime_ns);
+    put_varint(body, e.ctime_ns);
+}
+
 /// Entries per `AGI3` block.
-const BLOCK: usize = 2048;
+pub(crate) const BLOCK: usize = 2048;
 /// Below this many entries a decode stays on the calling thread.
 const PAR_MIN: usize = 16 * 1024;
 
 /// Read one entry. `prev` is the previous (already validated) path of the same block, or "":
 /// path components shared with it are not validated again.
-fn read_entry(r: &mut Reader<'_>, legacy: bool, prev: &str) -> Result<(String, IndexEntry)> {
+pub(crate) fn read_entry(r: &mut Reader<'_>, legacy: bool, prev: &str) -> Result<(String, IndexEntry)> {
     let c = |e: vcs_objects::DecodeError| Error::Corrupt(format!("index: {e}"));
     let p = r.str(4096).map_err(c)?;
     validate_path_after(prev, &p)?;
@@ -458,7 +496,7 @@ fn read_entry(r: &mut Reader<'_>, legacy: bool, prev: &str) -> Result<(String, I
 }
 
 #[inline]
-fn put_varint(buf: &mut Vec<u8>, mut v: u64) {
+pub(crate) fn put_varint(buf: &mut Vec<u8>, mut v: u64) {
     while v >= 0x80 {
         buf.push((v & 0x7f) as u8 | 0x80);
         v >>= 7;
@@ -525,7 +563,7 @@ fn decode_blocks(blocks: &[(&[u8], usize)]) -> Result<Vec<(String, IndexEntry)>>
 }
 
 /// `list` is strictly sorted: fail if some key has an ancestor directory that is itself a key.
-fn check_no_conflicts(list: &[(String, IndexEntry)]) -> Result<()> {
+pub(crate) fn check_no_conflicts(list: &[(String, IndexEntry)]) -> Result<()> {
     let check = |part: &[(String, IndexEntry)]| -> Result<()> {
         // Sorted keys cluster by directory: the ancestors of a key that are also ancestors of
         // the previous key were already looked up, so only the new ones are searched.
