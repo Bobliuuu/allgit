@@ -143,7 +143,7 @@ impl Repo {
                 .flat_map(|p| [p.old_path.as_deref(), p.new_path.as_deref()])
                 .flatten()
                 .collect();
-            let st = self.status()?;
+            let st = self.status_paths(&touched)?;
             for z in &st.zones {
                 for c in z.staged.iter().chain(z.unstaged.iter()) {
                     if touched.contains(c.path.as_str()) {
@@ -398,7 +398,7 @@ impl Repo {
     }
 
     fn require_all_clean(&self, what: &str) -> Result<()> {
-        let st = self.status()?;
+        let st = self.status_tracked()?;
         for z in &st.zones {
             if !z.staged.is_empty() || !z.unstaged.is_empty() {
                 return msg(format!(
@@ -487,7 +487,7 @@ impl Repo {
     }
 
     fn am_commit(&self, mail: &mbox::Mail) -> Result<(String, ObjectId)> {
-        let st = self.status()?;
+        let st = self.status_staged_only()?;
         if st.zones.iter().all(|z| z.staged.is_empty()) {
             return msg("the patch applies no changes (already applied?); use `vcs am --skip`");
         }
