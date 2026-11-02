@@ -152,10 +152,19 @@ fn stat_of(m: &fs::Metadata) -> FsStat {
 #[cfg(unix)]
 fn stat_at(dir: &fs::File, path: &str) -> Option<io::Result<FsStat>> {
     use std::os::unix::io::AsRawFd;
-    let c = std::ffi::CString::new(path).ok()?;
-    // SAFETY: `st` is a plain-old-data out parameter, `c` is NUL-terminated, `dir` is a valid fd.
+    // NUL-terminated copy on the stack: no allocation (and no allocator lock) per stat.
+    let mut buf = [0u8; 512];
+    let heap;
+    let cp: *const libc::c_char = if path.len() < buf.len() && !path.as_bytes().contains(&0) {
+        buf[..path.len()].copy_from_slice(path.as_bytes());
+        buf.as_ptr().cast()
+    } else {
+        heap = std::ffi::CString::new(path).ok()?;
+        heap.as_ptr()
+    };
+    // SAFETY: `st` is a plain-old-data out parameter, `cp` is NUL-terminated, `dir` is a valid fd.
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    let rc = unsafe { libc::fstatat(dir.as_raw_fd(), c.as_ptr(), &mut st, libc::AT_SYMLINK_NOFOLLOW) };
+    let rc = unsafe { libc::fstatat(dir.as_raw_fd(), cp, &mut st, libc::AT_SYMLINK_NOFOLLOW) };
     if rc != 0 {
         return Some(Err(io::Error::last_os_error()));
     }
