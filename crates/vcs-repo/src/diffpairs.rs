@@ -114,6 +114,11 @@ impl Repo {
     /// The file list of [`Repo::commit_pairs_names`] as `(path, b'A' | b'D' | b'M')`, sorted by path, without
     /// building per-file pairs.
     pub fn commit_changes(&self, zone: &str, id: &ObjectId) -> Result<Vec<(String, u8)>> {
+        self.commit_changes_only(zone, id, &[])
+    }
+
+    /// [`Self::commit_changes`] limited to the repo-relative paths in `only` (files equal to or beneath one).
+    pub fn commit_changes_only(&self, zone: &str, id: &ObjectId, only: &[String]) -> Result<Vec<(String, u8)>> {
         let zone = self.resolve_zone(zone)?;
         let prefix = self.zones()?.path_of(&zone).unwrap_or("").to_owned();
         let commit = self.commit_obj(id)?;
@@ -121,7 +126,7 @@ impl Repo {
             Some(p) => Some(self.commit_obj(p)?.root),
             None => None,
         };
-        treeops::diff_trees_status(&self.store, parent, Some(commit.root), &prefix)
+        treeops::diff_trees_status_only(&self.store, parent, Some(commit.root), &prefix, only)
     }
 
     fn commit_pairs_inner(&self, zone: &str, id: &ObjectId, content: bool) -> Result<Vec<FilePair>> {
