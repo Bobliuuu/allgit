@@ -1,0 +1,115 @@
+== vcs client after 51 commits
+
+v/.vcs: total 408.96 MiB
+  pack             395.63 MiB       2 files
+  index              6.81 MiB       1 files
+  idx                4.24 MiB       2 files
+  loose              2.29 MiB     302 files
+  other              0.00 MiB       6 files
+    other: refs 0.00 MiB
+    other: config 0.00 MiB
+    other: op_head 0.00 MiB
+    other: format 0.00 MiB
+    other: workspace 0.00 MiB
+    other: zones 0.00 MiB
+== git client after 51 commits
+
+g/.git: total 527.68 MiB
+  loose            396.48 MiB  101202 files
+  other            123.54 MiB      26 files
+  index              7.66 MiB       1 files
+    other: objects/pack 123.50 MiB
+    other: logs/HEAD 0.01 MiB
+    other: logs/refs 0.01 MiB
+== vcs remote after publish
+
+vrem: total 400.90 MiB
+  pack             396.65 MiB       1 files
+  idx                4.25 MiB       1 files
+  manifest           0.00 MiB       1 files
+  other              0.00 MiB       1 files
+    other: tx/1ec22237030911328837a71ba39537516d6433085c6d6cbcd0679209422bc56a 0.00 MiB
+== git bare after push
+
+grem.git: total 397.60 MiB
+  pack             394.49 MiB       1 files
+  idx                3.09 MiB       2 files
+  other              0.03 MiB      19 files
+== vcs fresh clone
+
+vc/.vcs: total 412.98 MiB
+  pack             397.71 MiB       2 files
+  idx                8.49 MiB       3 files
+  index              6.77 MiB       1 files
+  other              0.00 MiB       7 files
+  loose              0.00 MiB       2 files
+    other: refs 0.00 MiB
+    other: remote-refs 0.00 MiB
+    other: remote 0.00 MiB
+    other: op_head 0.00 MiB
+    other: format 0.00 MiB
+    other: workspace 0.00 MiB
+    other: zones 0.00 MiB
+== git fresh clone
+
+gc/.git: total 405.26 MiB
+  pack             394.49 MiB       1 files
+  index              7.66 MiB       1 files
+  idx                3.09 MiB       2 files
+  other              0.03 MiB      24 files
+== vcs client after repack+gc
+
+v/.vcs: total 408.72 MiB
+  pack             397.66 MiB       3 files
+  index              6.81 MiB       1 files
+  idx                4.25 MiB       3 files
+  other              0.00 MiB       8 files
+    other: refs 0.00 MiB
+    other: remote-refs 0.00 MiB
+    other: remote 0.00 MiB
+    other: config 0.00 MiB
+    other: op_head 0.00 MiB
+    other: format 0.00 MiB
+    other: workspace 0.00 MiB
+    other: zones 0.00 MiB
+== git client after gc
+
+g/.git: total 405.28 MiB
+  pack             394.49 MiB       1 files
+  index              7.66 MiB       1 files
+  idx                3.09 MiB       2 files
+  other              0.04 MiB      24 files
+  commit-graph       0.00 MiB       1 files
+    other: logs/HEAD 0.01 MiB
+    other: logs/refs 0.01 MiB
+== vcs file listing (client)
+      3 ./objects/pack/pack-H.pack
+      3 ./objects/pack/pack-H.idx
+      1 ./zones
+      1 ./workspace
+      1 ./remote-refs
+      1 ./remote
+      1 ./refs
+      1 ./op_head
+      1 ./index
+      1 ./format
+      1 ./config
+== vcs clone listing
+      2 ./objects/pack/pack-H.pack
+      2 ./objects/pack/pack-H.idx
+      1 ./zones
+      1 ./workspace
+      1 ./remote-refs
+      1 ./remote-idx/H.idx
+      1 ./remote
+      1 ./refs
+      1 ./op_head
+      1 ./objects/d0/H
+      1 ./objects/c3/H
+      1 ./index
+      1 ./format
+== vcs remote listing
+      1 ./tx/H
+      1 ./packs/pack-H.pack
+      1 ./packs/pack-H.idx
+      1 ./manifest
