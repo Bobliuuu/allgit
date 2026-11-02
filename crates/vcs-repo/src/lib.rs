@@ -4,6 +4,7 @@
 pub mod assist;
 pub mod bundle;
 pub mod cgraph;
+pub mod cherry;
 pub mod detach;
 pub mod diff;
 pub mod diffpairs;
@@ -27,6 +28,7 @@ pub mod meta;
 pub mod ops;
 pub mod p4_marshal;
 pub mod patch;
+pub mod patch3;
 pub mod patch_repo;
 mod pathbloom;
 pub mod pick;
@@ -54,6 +56,7 @@ pub mod zonedetect;
 mod zonesplit;
 
 pub use assist::{AssistResult, ProposalInfo};
+pub use cherry::PickSeq;
 pub use diffpairs::FilePair;
 pub use error::{Error, Result};
 pub use export::{ExportExt, ExportOptions, ExportReport};

@@ -65,6 +65,7 @@ Commands:
   switch         Switch branch (in the zone containing cwd, or --zone); `--detach` checks out any revision without a branch
   merge          Merge a branch into the checked-out branch (fast-forward when possible)
   cherry-pick    Re-apply the change of one commit onto the checked-out branch
+  cherry         List the commits of a branch with `+` (no equivalent patch upstream) or `-` (an upstream commit has the same patch)
   revert         Create a commit that undoes one commit
   rebase         Replay the checked-out branch onto another branch, keeping each change id
   conflict       Inspect conflicts of an in-progress merge
@@ -980,7 +981,7 @@ Options:
   -R, --reverse        Apply the patch backwards
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -p <N>               Strip N leading path components (default 1)
-  -3, --3way           Three-way application is not supported (refused)
+  -3, --3way           Three-way application: a hunk that does not fit is merged against its own pre-image; overlapping edits leave conflict markers in the file
   -v, --verbose        Print the files that were (or would be) changed
   -h, --help           Print help
 ```
@@ -1002,7 +1003,7 @@ Options:
       --skip           Drop the stopped patch and go on
       --abort          Go back to the branch heads from before `vcs am`
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
-  -3, --3way           Three-way application is not supported (refused)
+  -3, --3way           Three-way application: a hunk that does not fit is merged against its own pre-image; the run stops on overlapping edits with conflict markers (resolve, `vcs add`, `vcs am --continue`)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
@@ -1617,15 +1618,36 @@ Options:
 ```text
 Re-apply the change of one commit onto the checked-out branch
 
-Usage: vcs cherry-pick [OPTIONS] <REV>
+Usage: vcs cherry-pick [OPTIONS] <REVS>...
 
 Arguments:
-  <REV>  Commit id (or unique prefix), branch name or HEAD
+  <REVS>...  Commit id (or unique prefix), branch name, HEAD, or a range `A..B` (the commits of B that A lacks, oldest first); several allowed
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --zone <ZONE>    Zone (default: the zone containing the current directory)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+## `vcs cherry`
+
+```text
+List the commits of a branch with `+` (no equivalent patch upstream) or `-` (an upstream commit has the same patch)
+
+Usage: vcs cherry [OPTIONS] <UPSTREAM> [HEAD]
+
+Arguments:
+  <UPSTREAM>  Branch or revision to compare against
+  [HEAD]      Commits to list (default HEAD)
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+  -v, --verbose        Print the subject after each id
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --zone <ZONE>    Zone (default: the zone containing the current directory)
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
@@ -1683,6 +1705,10 @@ Options:
           With -i: move `fixup! X` / `squash! X` commits next to X and fold them
   -x, --exec <COMMAND>
           Run this shell command after each replayed commit (repeatable); a failure stops the rebase
+      --onto <NEWBASE>
+          Replay onto NEWBASE (any revision) the commits that the positional upstream lacks (`git rebase --onto`)
+      --root
+          With --onto: replay every commit of the branch, root commit included (no upstream)
       --no-structural
           Do not use the structural Rust merge (only matters when built with `--features structural`)
       --renames
@@ -2547,6 +2573,12 @@ Options:
           Replace the remote head whatever it is when the publish reads it (still one atomic compare-and-swap, but not checked against what you last fetched)
       --delete <BRANCH>
           Delete this remote branch (only if it is the head you last fetched; repeatable)
+      --tags
+          Publish only the tags, move no branch (`git push --tags`)
+      --prune
+          Also delete every remote branch of a subscribed zone that has no local branch (`git push --prune`); each deletion needs the head you last fetched (or your lease) and is audited
+      --mirror
+          Make the remote match this repo: force every checked-out branch (leased, like --force-with-lease), prune remote branches with no local one, and publish tags (`git push --mirror`)
   -h, --help
           Print help
 ```

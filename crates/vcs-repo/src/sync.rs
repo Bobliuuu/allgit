@@ -58,6 +58,12 @@ pub struct PublishOpts {
     pub force: Option<ForceSpec>,
     /// Delete these remote branches (must be the head you last fetched, or covered by `force`).
     pub delete: Vec<String>,
+    /// Publish only the tags (`git push --tags`): no branch is moved or deleted.
+    pub tags_only: bool,
+    /// Also delete every remote branch of a subscribed zone that has no local branch of that name
+    /// (`git push --prune`). Each deletion is a compare-and-swap against the head you last fetched
+    /// (or the lease in `force`), audited in the operation log and the transaction like `delete`.
+    pub prune: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -279,6 +285,9 @@ impl Repo {
             if zones.is_some_and(|w| !w.contains(zone)) || branch == vcs_objects::names::DETACHED_BRANCH {
                 continue; // a detached HEAD is never published
             }
+            if opts.tags_only {
+                continue;
+            }
             if (!opts.branches.is_empty() || !opts.delete.is_empty()) && !opts.branches.contains(branch) {
                 continue; // scoped publish: only the named branches
             }
@@ -332,7 +341,8 @@ impl Repo {
                 }
             }
         }
-        for name in &opts.delete {
+        let delete_names: &[String] = if opts.tags_only { &[] } else { &opts.delete };
+        for name in delete_names {
             let mut hit = false;
             for (zone, branch) in manifest.branches.keys() {
                 if branch != name || zones.is_some_and(|w| !w.contains(zone)) {
@@ -341,25 +351,25 @@ impl Repo {
                 hit = true;
                 let remote = manifest.head(zone, branch).expect("listed");
                 // Deleting is a compare-and-swap too: it only succeeds against a head you have seen.
-                let seen = match &opts.force {
-                    Some(spec) => {
-                        self.check_lease(spec, zone, branch, remote, tracked.head(zone, branch))?;
-                        true
-                    }
-                    None => tracked.head(zone, branch) == Some(remote),
-                };
-                if !seen {
-                    return msg(format!(
-                        "Cannot delete {zone}/{branch}: the remote head {} is not the one you last fetched ({}).\n\nOptions:\n  vcs fetch, look at it, then retry\n  vcs publish --delete {branch} --force-with-lease={branch}:{}   (delete exactly that head)",
-                        remote.short(),
-                        tracked.head(zone, branch).map(|i| i.short()).unwrap_or_else(|| "never fetched".into()),
-                        remote.short()
-                    ));
-                }
+                self.delete_lease(opts, zone, branch, remote, tracked.head(zone, branch))?;
                 deletes.push((zone.clone(), branch.clone(), remote));
             }
             if !hit {
                 return msg(format!("no branch {name:?} on the remote to delete"));
+            }
+        }
+        if opts.prune && !opts.tags_only {
+            for (zone, branch) in manifest.branches.keys() {
+                if !ws.subs.contains_key(zone)
+                    || zones.is_some_and(|w| !w.contains(zone))
+                    || refs.head(zone, branch).is_some()
+                    || deletes.iter().any(|(z, b, _)| z == zone && b == branch)
+                {
+                    continue;
+                }
+                let remote = manifest.head(zone, branch).expect("listed");
+                self.delete_lease(opts, zone, branch, remote, tracked.head(zone, branch))?;
+                deletes.push((zone.clone(), branch.clone(), remote));
             }
         }
         // Tags of the published zones (all zones when unfiltered) that the remote lacks.
@@ -482,6 +492,20 @@ impl Repo {
             forced,
             deleted: deletes,
         })
+    }
+
+    /// A deletion is allowed against the head last fetched, or the lease named in `opts.force`.
+    fn delete_lease(&self, opts: &PublishOpts, zone: &str, branch: &str, remote: ObjectId, tracked: Option<ObjectId>) -> Result<()> {
+        match &opts.force {
+            Some(spec) => self.check_lease(spec, zone, branch, remote, tracked),
+            None if tracked == Some(remote) => Ok(()),
+            None => msg(format!(
+                "Cannot delete {zone}/{branch}: the remote head {} is not the one you last fetched ({}).\n\nOptions:\n  vcs fetch, look at it, then retry\n  vcs publish --delete {branch} --force-with-lease={branch}:{}   (delete exactly that head)",
+                remote.short(),
+                tracked.map(|i| i.short()).unwrap_or_else(|| "never fetched".into()),
+                remote.short()
+            )),
+        }
     }
 
     /// The lease of a forced update (see [`ForceSpec`]): the remote head `remote` must be the
