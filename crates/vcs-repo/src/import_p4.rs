@@ -635,8 +635,7 @@ impl Repo {
             if let Some(mut i) = ix {
                 self.save_index(&mut i)?;
             }
-            write_atomic(&self.common.join("refs"), &refs.encode())?;
-            self.record_op(&message, Some(author))?;
+            self.commit_refs_op(&refs, &message, Some(author))?;
         }
         Ok(rep)
     }

@@ -170,7 +170,7 @@ impl Repo {
             ws.subs.insert((*name).to_owned(), DEFAULT_BRANCH.to_owned());
         }
         self.save_ws(&ws)?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
+        self.write_refs(&refs)?;
         let what = items.iter().map(|(n, p)| format!("{n} at {p}")).collect::<Vec<_>>().join(", ");
         self.record_op(&format!("zone split {what}"), Some(author))?;
         Ok(reps)

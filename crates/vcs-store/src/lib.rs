@@ -947,6 +947,59 @@ impl LocalStore {
         }
         Ok(tmp)
     }
+    /// Store one object as a loose file WITHOUT any fsync (write a temp file, rename it), leaving
+    /// `pending` untouched. For objects whose durable copy lives elsewhere: the operation-log
+    /// journal (`vcs-repo::journal`) re-creates them after a crash. Never use it for an object
+    /// that a ref or index will name without such a copy.
+    pub fn put_unsynced(&self, obj: &Object) -> Result<ObjectId, StoreError> {
+        let enc = obj.encode();
+        let id = vcs_objects::id_of_encoded(&enc);
+        if ObjectStore::contains(self, &id)? {
+            return Ok(id);
+        }
+        let tmp = self.write_tmp(&id, &[], &enc)?;
+        let dest = self.path_of(&id);
+        let parent = dest.parent().expect("object path has parent");
+        io(parent, fs::create_dir_all(parent))?;
+        if let Some(b) = id.as_bytes().first() {
+            self.fan_at_open()[*b as usize].store(true, Ordering::Relaxed);
+        }
+        io(&dest, fs::rename(&tmp, &dest))?;
+        Ok(id)
+    }
+
+    /// Make the given objects durable: fsync each one that exists as a loose file and the
+    /// directories holding them. Objects inside packs are already durable. Flushes `pending` first.
+    pub fn make_durable(&self, ids: &[ObjectId]) -> Result<(), StoreError> {
+        ObjectStore::sync(self)?;
+        let mut files = Vec::new();
+        let mut dirs = BTreeSet::new();
+        for id in ids {
+            let p = self.path_of(id);
+            if p.exists() {
+                if let Some(d) = p.parent() {
+                    dirs.insert(d.to_owned());
+                }
+                files.push(p);
+            }
+        }
+        par_sync_each(&files, |p| {
+            let f = io(p, fs::File::open(p))?;
+            io(p, flush_file(&f))
+        })?;
+        dirs.insert(self.dir.clone());
+        let dirs: Vec<PathBuf> = dirs.into_iter().collect();
+        par_sync_each(&dirs, |d| {
+            let f = io(d, fs::File::open(d))?;
+            io(d, flush_file(&f))
+        })?;
+        if let Some(d) = dirs.first() {
+            let f = io(d, fs::File::open(d))?;
+            io(&self.dir, hardware_flush(&f))?;
+        }
+        Ok(())
+    }
+
     /// Publish a big batch as one pack: stream every pending object into a single file, fsync it
     /// once, rename pack then index (a pack without an index is ignored), fsync the directory.
     fn sync_as_pack(&self, pending: &mut HashMap<ObjectId, Pend>) -> Result<(), StoreError> {

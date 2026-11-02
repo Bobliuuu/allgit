@@ -2,7 +2,7 @@
 //! `describe`) and the checkout used by `bisect`.
 
 use crate::error::{msg, Error, Result};
-use crate::meta::{write_atomic, ROOT_ZONE};
+use crate::meta::ROOT_ZONE;
 use crate::repo::{Repo, StatusOpts};
 use crate::treeops::{self, Flat};
 use vcs_objects::names::validate_branch_name;
@@ -103,7 +103,7 @@ impl Repo {
         }
         ws.subs.insert(zone.into(), branch.into());
         self.save_index(&mut ix)?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
+        self.write_refs(&refs)?;
         self.save_ws(&ws)?;
         self.record_op(&format!("checkout {zone}/{branch} at {}", target.short()), None)?;
         Ok(())

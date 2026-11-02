@@ -709,8 +709,7 @@ impl Repo {
         self.save_index(ix)?;
         refs.apply(&[update])?;
         self.store.sync()?; // merge commit + transaction durable before refs name them
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
-        self.record_op(&format!("{msg_prefix} into {zone}/{branch}"), None)?;
+        self.commit_refs_op(&refs, &format!("{msg_prefix} into {zone}/{branch}"), None)?;
         Ok(MergeOutcome::Merged { commit: cid })
     }
 
@@ -736,8 +735,7 @@ impl Repo {
             old: from,
             new: to,
         }])?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
-        self.record_op(&format!("merge: fast-forward {zone}/{branch}"), None)?;
+        self.commit_refs_op(&refs, &format!("merge: fast-forward {zone}/{branch}"), None)?;
         Ok(MergeOutcome::FastForward { from, to })
     }
 

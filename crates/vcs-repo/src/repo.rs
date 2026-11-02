@@ -332,7 +332,7 @@ impl Repo {
                 }
                 let store = LocalStore::open(common.join("objects"))?;
                 store.set_large_feature_mark(common.join(FEATURES_FILE), FEATURE_LARGE_CHUNKED);
-                return Ok(Repo {
+                let repo = Repo {
                     wfs: Arc::new(RealFs::new(cur.clone())),
                     worktree: cur,
                     vcs,
@@ -343,7 +343,9 @@ impl Repo {
                     use_commit_graph: true,
                     index_racy_ns: RACY_NS,
                     counters: Counters::default(),
-                });
+                };
+                repo.journal_open_check();
+                return Ok(repo);
             }
             if !cur.pop() {
                 return Err(Error::NotARepo);
@@ -406,7 +408,9 @@ impl Repo {
     // ---------- state ----------
 
     pub(crate) fn lock(&self) -> Result<LockGuard> {
-        LockGuard::acquire(self.common.join("lock"))
+        let guard = LockGuard::acquire(self.common.join("lock"))?;
+        self.journal_verify()?; // finish an interrupted journalled operation before anyone reads refs
+        Ok(guard)
     }
     /// Path of a state file: shared files live in the common directory, the rest per worktree.
     pub(crate) fn state_path(&self, name: &str) -> PathBuf {
@@ -1780,10 +1784,12 @@ impl Repo {
         refs.apply(&updates)?;
         // Durability barrier: trees, commits and the transaction are durable before refs name them.
         self.store.sync()?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?; // linearization point
-                                                                  // Remember the tree ids just computed so the next commit/status can skip unchanged
-                                                                  // directories. `written_ns` is deliberately untouched: no entry was re-verified. Best
-                                                                  // effort: a lost cache write only costs time.
+        let first = message.lines().next().unwrap_or("");
+        // linearization point: the ref move and its operation record are one journalled step
+        self.commit_refs_op(&refs, &format!("commit: {first}"), Some(op_author))?;
+        // Remember the tree ids just computed so the next commit/status can skip unchanged
+        // directories. `written_ns` is deliberately untouched: no entry was re-verified. Best
+        // effort: a lost cache write only costs time.
         if !fresh_trees.is_empty() {
             ix.entries.store_trees(fp, fresh_trees);
             let _ = crate::meta::write_cache_atomic(&self.vcs.join("index"), &ix.encode());
@@ -1791,8 +1797,6 @@ impl Repo {
         if merging.is_some() {
             self.clear_merge_state()?;
         }
-        let first = message.lines().next().unwrap_or("");
-        self.record_op(&format!("commit: {first}"), Some(op_author))?;
         Ok(CommitReport { transaction: tx, commits })
     }
 
@@ -1841,8 +1845,7 @@ impl Repo {
             old: None,
             new: head,
         }])?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
-        self.record_op(&format!("create branch {zone}/{branch}"), None)?;
+        self.commit_refs_op(&refs, &format!("create branch {zone}/{branch}"), None)?;
         Ok(head)
     }
 
@@ -1877,8 +1880,7 @@ impl Repo {
             old: None,
             new: id,
         }])?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
-        self.record_op(&format!("create branch {zone}/{branch} at {}", id.short()), None)?;
+        self.commit_refs_op(&refs, &format!("create branch {zone}/{branch} at {}", id.short()), None)?;
         Ok(id)
     }
 
@@ -2297,8 +2299,7 @@ impl Repo {
         }))?;
         refs.snapshots.insert(name.to_owned(), id);
         self.store.sync()?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
-        self.record_op(&format!("snapshot create {name}"), None)?;
+        self.commit_refs_op(&refs, &format!("snapshot create {name}"), None)?;
         Ok(id)
     }
 
