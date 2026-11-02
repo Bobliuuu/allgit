@@ -8,8 +8,12 @@
 //! nothing. Where p4 and vcs differ in meaning, a `note:` line says so; where there is no
 //! equivalent the command fails and names the native vcs command.
 
+#[path = "p4changes.rs"]
+mod p4changes;
+
 use crate::{need_remote, open};
 use clap::Args;
+use p4changes::Ledger;
 use std::path::Path;
 use vcs_repo::{ChangeKind, Error, Repo, ROOT_ZONE};
 
@@ -66,7 +70,12 @@ pub const TABLE: &[Row] = &[
     r("sync", "sync", D, "sync"),
     r("sync -f", "sync; restore .", D, "sync_f"),
     r("sync -n", "fetch", D, "sync_n"),
-    r("sync path@rev / sync @label", "(none)", M, "sync_rev_missing"),
+    r(
+        "sync path@rev / @label / @N",
+        "(computed) write the files of that commit into the workspace",
+        D,
+        "sync_rev",
+    ),
     r("edit", "lock (lockable files); nothing otherwise", D, "edit_plain"),
     r("add", "add", E, "add"),
     r("delete", "rm", R, "delete"),
@@ -89,7 +98,12 @@ pub const TABLE: &[Row] = &[
     r("print", "cat-file -p rev:path", R, "print"),
     r("have", "ls-files", R, "have"),
     r("integrate / merge", "merge", D, "integrate"),
-    r("copy", "(none)", M, "copy_missing"),
+    r(
+        "copy source-branch",
+        "(computed) make the tracked files equal to that branch, staged",
+        D,
+        "copy",
+    ),
     r(
         "resolve [-at -ay -af -n]",
         "resolve --theirs/--ours/--mark; conflict list",
@@ -114,8 +128,23 @@ pub const TABLE: &[Row] = &[
     r("grep", "grep", E, "grep"),
     r("clean", "restore --staged .; restore .", D, "clean"),
     r("change / changelist", "status", D, "change"),
+    r(
+        "change -m desc / -i / -d N / -o N",
+        "(local ledger) numbered pending changelists",
+        D,
+        "change_numbered",
+    ),
+    r(
+        "add / edit / delete / revert / opened -c N",
+        "(local ledger) open files in changelist N",
+        D,
+        "numbered_open",
+    ),
+    r("reopen -c N", "(local ledger) move files between changelists", D, "reopen"),
+    r("submit -c N", "add (the changelist's files); commit; publish", D, "submit_numbered"),
+    r("describe N / @N", "show <commit recorded for N>", D, "changelist_numbers"),
     r("verify", "fsck", R, "verify"),
-    r("reopen / obliterate / jobs / fix", "(none)", M, "missing_cmds"),
+    r("obliterate / jobs / fix", "(none)", M, "missing_cmds"),
     r(
         "protect / groups / group / user / passwd",
         "(none: vcs-server tokens)",
@@ -148,6 +177,37 @@ enum Step {
     Info,
     ResolveAll(&'static str),
     PublishIfRemote,
+    /// open files in numbered changelist `n` (ledger only; nothing is staged)
+    Open {
+        n: u64,
+        action: &'static str,
+        paths: Vec<String>,
+    },
+    RevertChange(u64, Vec<String>),
+    OpenedChange(u64),
+    Reopen {
+        n: Option<u64>,
+        paths: Vec<String>,
+    },
+    ChangeNew(String),
+    ChangeInput,
+    ChangeDelete(u64),
+    ChangeShow(u64),
+    PendingList,
+    NumberedList,
+    CheckSubmit(u64),
+    MarkHeads,
+    Record(Option<u64>),
+    SyncRev {
+        rev: String,
+        only: Vec<String>,
+        preview: bool,
+    },
+    Copy {
+        branch: String,
+        zone: Option<String>,
+        preview: bool,
+    },
 }
 
 #[derive(Default)]
@@ -247,15 +307,40 @@ impl Opts {
     fn val(&self, c: char) -> Option<&str> {
         self.flags.iter().find(|(f, _)| *f == c).and_then(|(_, v)| v.as_deref())
     }
-    /// `-c <change>`: only the default changelist exists (it is the index).
+    /// `-c <change>` for commands that cannot take a numbered changelist.
     fn default_change_only(&self) -> Result<(), Error> {
         match self.val('c') {
             None | Some("default") => Ok(()),
             Some(n) => nomap(
                 &self.cmd,
-                &format!("pending changelist {n}: vcs has one pending set (the index), no numbered pending changelists"),
-                "vcs add <files> to stage a subset, `vcs shelve <name>` to park work, one commit per zone",
+                &format!(
+                    "pending changelist {n}: `p4 {}` does not take -c N (add, edit, delete, revert, opened, reopen, submit do; the default changelist is the index)",
+                    self.cmd
+                ),
+                "vcs p4 reopen -c default <files>; vcs add <files> to stage a subset, `vcs shelve <name>` to park work",
             ),
+        }
+    }
+    /// `-c <change>`: `None` for the default changelist (the index), `Some(n)` for an existing
+    /// numbered pending changelist of the local ledger (docs/p4-to-vcs.md).
+    fn change_id(&self) -> Result<Option<u64>, Error> {
+        match self.val('c') {
+            None | Some("default") => Ok(None),
+            Some(n) => {
+                let Ok(num) = n.parse::<u64>() else {
+                    return msg(format!("p4 {}: bad changelist {n:?} (a number or `default`)", self.cmd));
+                };
+                let (repo, _) = open()?;
+                if Ledger::load(repo.worktree()).pending.contains_key(&num) {
+                    Ok(Some(num))
+                } else {
+                    nomap(
+                        &self.cmd,
+                        &format!("pending changelist {n} does not exist (numbered changelists are kept in this repository's ledger; create one with `vcs p4 change -m <description>`)"),
+                        "vcs p4 change -m <description>",
+                    )
+                }
+            }
         }
     }
     fn need_files(&self) -> Result<(), Error> {
@@ -304,11 +389,16 @@ fn split_rev(arg: &str) -> Result<(String, Option<String>), Error> {
 fn rev_name(r: &str) -> Result<String, Error> {
     let r = r.trim_start_matches('=');
     if !r.is_empty() && r.len() <= 6 && r.bytes().all(|b| b.is_ascii_digit()) {
-        return nomap(
-            "revision",
-            &format!("changelist number {r}: vcs commits have content-hash ids, there is no global counter"),
-            "vcs log --oneline (ids), then use an id prefix, a tag or a branch name",
-        );
+        let n: u64 = r.parse().unwrap_or(0);
+        let (repo, _) = open()?;
+        return match Ledger::load(repo.worktree()).submitted.get(&n) {
+            Some(id) => Ok(id.clone()),
+            None => nomap(
+                "revision",
+                &format!("changelist number {r}: not a changelist submitted through `vcs p4 submit` in this repository (vcs commit ids are content hashes, there is no global counter; `vcs p4 changes` lists the numbered ones)"),
+                "vcs log --oneline (ids), then use an id prefix, a tag or a branch name",
+            ),
+        };
     }
     Ok(r.to_owned())
 }
@@ -424,15 +514,20 @@ fn lease_secs() -> u64 {
 
 const ALL: &str = "1000000000";
 
+const OPEN_NOTE: &str =
+    "numbered changelist: the files are recorded in this repository's ledger (.vcs/p4-changes), nothing is staged until `p4 submit -c N`";
+
 // ---------- translation ----------
 
 fn translate(cmd: &str, a: &[String]) -> Result<Plan, Error> {
     match cmd {
         "add" => {
             let o = Opts::parse("add", a, "c", "nf", "vcs add --help")?;
-            o.default_change_only()?;
             o.need_files()?;
             let paths = plain_paths(&o.rest)?;
+            if let Some(n) = o.change_id()? {
+                return Ok(Plan::default().step(Step::Open { n, action: "add", paths }).note(OPEN_NOTE));
+            }
             if o.has('n') {
                 return Ok(Plan::default().step(Step::Stage {
                     edits: false,
@@ -448,13 +543,14 @@ fn translate(cmd: &str, a: &[String]) -> Result<Plan, Error> {
         }
         "edit" => {
             let o = Opts::parse("edit", a, "c", "nk", "vcs lock --help")?;
-            o.default_change_only()?;
+            let change = o.change_id()?;
             o.need_files()?;
             let (repo, cwd) = open()?;
             let attrs = repo.attrs()?;
             let mut plan = Plan::default();
             let mut locks = vec![];
-            for f in plain_paths(&o.rest)? {
+            let all = plain_paths(&o.rest)?;
+            for f in all.clone() {
                 let rel = repo.rel_path(&cwd, &f)?;
                 if attrs.lookup(&rel).lockable {
                     locks.push(f);
@@ -476,12 +572,23 @@ fn translate(cmd: &str, a: &[String]) -> Result<Plan, Error> {
                     lease_secs()
                 ));
             }
+            if let Some(n) = change {
+                plan = plan.step(Step::Open { n, action: "edit", paths: all }).note(OPEN_NOTE);
+            }
             Ok(plan)
         }
         "delete" => {
             let o = Opts::parse("delete", a, "c", "kv", "vcs rm --help")?;
-            o.default_change_only()?;
+            let change = o.change_id()?;
             o.need_files()?;
+            if let Some(n) = change {
+                if o.has('k') {
+                    return nomap("delete -k", "-k (keep the file) cannot be recorded in a changelist", "vcs rm --cached <files>");
+                }
+                return Ok(Plan::default()
+                    .step(Step::Open { n, action: "delete", paths: plain_paths(&o.rest)? })
+                    .note(OPEN_NOTE));
+            }
             let mut v = vec![s("rm")];
             if o.has('k') {
                 v.push(s("--cached"));
@@ -505,7 +612,7 @@ fn translate(cmd: &str, a: &[String]) -> Result<Plan, Error> {
         }
         "revert" => {
             let o = Opts::parse("revert", a, "c", "ank", "vcs restore --help")?;
-            o.default_change_only()?;
+            let change = o.change_id()?;
             if o.has('k') {
                 return nomap("revert -k", "there is no have list to keep", "vcs restore --staged <files> (unstage only)");
             }
@@ -513,6 +620,11 @@ fn translate(cmd: &str, a: &[String]) -> Result<Plan, Error> {
                 return Ok(Plan::default().step(Step::Say(
                     "revert -a: nothing to do (vcs never stages a file whose content equals HEAD, so there are no opened-but-unchanged files)".into(),
                 )));
+            }
+            if let Some(n) = change {
+                return Ok(Plan::default().step(Step::RevertChange(n, plain_paths(&o.rest)?)).note(
+                    "revert -c N: the files of changelist N (or the ones named) are restored and leave the changelist",
+                ));
             }
             o.need_files()?;
             if o.has('n') {
@@ -552,8 +664,11 @@ fn translate(cmd: &str, a: &[String]) -> Result<Plan, Error> {
                     .vcs(&["locks"])
                     .note("opened -a: vcs has no per-user list of opened files; showing the exclusive locks held by everyone"));
             }
-            if o.val('c').is_some() || o.val('C').is_some() || o.val('u').is_some() {
-                return nomap("opened -c/-C/-u", "no numbered changelists, clients or per-user open lists", "vcs status");
+            if o.val('C').is_some() || o.val('u').is_some() {
+                return nomap("opened -C/-u", "no clients or per-user open lists", "vcs status");
+            }
+            if let Some(n) = o.change_id()? {
+                return Ok(Plan::default().step(Step::OpenedChange(n)));
             }
             Ok(Plan::default().step(Step::Opened(plain_paths(&o.rest)?)))
         }
@@ -581,13 +696,39 @@ fn translate(cmd: &str, a: &[String]) -> Result<Plan, Error> {
                     )),
                     e => e,
                 })?;
-            o.default_change_only()?;
+            let change = o.change_id()?;
             let only = plain_paths(&o.rest)?;
+            if let Some(n) = change {
+                if !only.is_empty() {
+                    return nomap("submit -c N <files>", "a numbered changelist is submitted whole", "vcs p4 reopen -c default <files>, or `vcs p4 revert -c N <files>`");
+                }
+                let (repo, _) = open()?;
+                let l = Ledger::load(repo.worktree());
+                let ch = &l.pending[&n];
+                if ch.files.is_empty() {
+                    return msg(format!("p4 submit: changelist {n} has no open files"));
+                }
+                let desc = o.val('d').map(str::to_owned).or_else(|| Some(ch.desc.clone()).filter(|d| !d.trim().is_empty()));
+                let Some(desc) = desc else {
+                    return msg(format!("p4 submit: changelist {n} has no description: give -d <msg> or set it with `vcs p4 change -i`"));
+                };
+                let mut add = vec![s("add")];
+                add.extend(ch.files.keys().map(|f| repo.worktree().join(f).to_string_lossy().into_owned()));
+                return Ok(Plan::default()
+                    .step(Step::CheckSubmit(n))
+                    .step(Step::MarkHeads)
+                    .argv(add)
+                    .argv(vec![s("commit"), s("-m"), desc])
+                    .step(Step::PublishIfRemote)
+                    .step(Step::Record(Some(n)))
+                    .note("submit -c N: stages exactly the files of changelist N (adds, edits, deletions), commits them, publishes when a remote is configured, and records N -> commit so `@N` works"));
+            }
             let mut commit = vec![s("commit")];
             if let Some(m) = o.val('d') {
                 commit.extend([s("-m"), m.to_owned()]);
             }
             let mut plan = Plan::default()
+                .step(Step::MarkHeads)
                 .step(Step::Stage {
                     adds: false,
                     edits: true,
@@ -597,6 +738,7 @@ fn translate(cmd: &str, a: &[String]) -> Result<Plan, Error> {
                 })
                 .argv(commit)
                 .step(Step::PublishIfRemote)
+                .step(Step::Record(None))
                 .note("p4 submit is one server step; vcs commits locally, then publishes when a remote is configured. New files must be `p4 add`ed first (as in p4)");
             if !only.is_empty() {
                 plan = plan.note("files given: only those edits are staged, but anything already staged is committed too");
@@ -614,7 +756,10 @@ fn translate(cmd: &str, a: &[String]) -> Result<Plan, Error> {
             match o.val('s') {
                 None | Some("submitted") => {}
                 Some("pending") => {
-                    return Ok(Plan::default().vcs(&["status"]).note("changes -s pending: your pending set is the index; showing `vcs status`"))
+                    return Ok(Plan::default()
+                        .step(Step::PendingList)
+                        .vcs(&["status"])
+                        .note("changes -s pending: numbered changelists come from the local ledger; the default changelist is the index, shown by `vcs status`"))
                 }
                 Some("shelved") => return Ok(Plan::default().vcs(&["shelves"])),
                 Some(x) => return nomap(&format!("changes -s {x}"), "status not mapped", "vcs log; vcs shelves; vcs status"),
@@ -636,7 +781,10 @@ fn translate(cmd: &str, a: &[String]) -> Result<Plan, Error> {
                 v.push(s("--"));
                 v.extend(paths);
             }
-            Ok(Plan::default().argv(v).note("changes are listed as commit ids, not changelist numbers"))
+            Ok(Plan::default()
+                .argv(v)
+                .step(Step::NumberedList)
+                .note("changes are listed as commit ids; the changelist numbers `vcs p4 submit` assigned in this repository are listed after them"))
         }
         "describe" => {
             let o = Opts::parse("describe", a, "", "sduSa", "vcs show <rev>")?;
@@ -644,10 +792,17 @@ fn translate(cmd: &str, a: &[String]) -> Result<Plan, Error> {
                 return nomap("describe -S", "shelved diffs cannot be shown without applying them", "vcs unshelve <shelf>; vcs diff --staged");
             }
             if o.rest.is_empty() {
-                return msg("p4 describe: no change given (a commit id prefix, tag or branch)");
+                return msg("p4 describe: no change given (a changelist number, commit id prefix, tag or branch)");
             }
             let mut plan = Plan::default();
             for r in &o.rest {
+                if let Ok(n) = r.parse::<u64>() {
+                    let (repo, _) = open()?;
+                    if Ledger::load(repo.worktree()).pending.contains_key(&n) {
+                        plan = plan.step(Step::ChangeShow(n));
+                        continue;
+                    }
+                }
                 let mut v = vec![s("show"), rev_name(r)?];
                 if o.has('s') {
                     v.push(s("--name-status"));
@@ -770,11 +925,36 @@ fn translate(cmd: &str, a: &[String]) -> Result<Plan, Error> {
                 "p4 integrate opens files for a later resolve + submit; vcs merge merges whole branches, commits when clean, and stops with conflicts for `p4 resolve`",
             ))
         }
-        "copy" => nomap(
-            "copy",
-            "there is no 'make target identical to source' operation",
-            "vcs merge <branch> (fast-forwards when possible), or vcs switch",
-        ),
+        "copy" => {
+            let o = Opts::parse("copy", a, "S", "n", "vcs merge <branch>")?;
+            let src = o.val('S').map(str::to_owned).or_else(|| o.rest.first().cloned());
+            let Some(src) = src else {
+                return msg("p4 copy: name the source branch: `p4 copy //depot/dev/...` or `-S //stream`");
+            };
+            let (zone, branch) = branch_of(&src)?;
+            let target = if o.val('S').is_some() { o.rest.first() } else { o.rest.get(1) };
+            if o.rest.len() > if o.val('S').is_some() { 1 } else { 2 } {
+                return msg("p4 copy: too many arguments (source [target])");
+            }
+            if let Some(tg) = target {
+                let (tz, tb) = branch_of(tg)?;
+                let (repo, _) = open()?;
+                let zid = match tz.as_deref().or(zone.as_deref()) {
+                    Some(z) => repo.zones()?.resolve(z).unwrap_or_else(|| ROOT_ZONE.to_owned()),
+                    None => ROOT_ZONE.to_owned(),
+                };
+                if repo.current_branch(&zid)?.as_deref() != Some(tb.as_str()) {
+                    return nomap(
+                        "copy <source> <target>",
+                        "the target is always the checked-out branch of the zone",
+                        "vcs switch <target-branch>; vcs p4 copy <source-branch>",
+                    );
+                }
+            }
+            Ok(Plan::default().step(Step::Copy { branch, zone, preview: o.has('n') }).note(
+                "p4 copy makes the target tree equal to the source and stages it; no integration record is kept, so a later `p4 merge` sees plain edits. Whole branch only, no path mappings. Submit with `p4 submit`",
+            ))
+        }
         "resolve" => {
             let o = Opts::parse("resolve", a, "", "amstyfnd", "vcs resolve --help")?;
             let mode = ["t", "y", "f"].iter().find(|m| o.has(m.chars().next().unwrap()) && o.has('a'));
@@ -1021,9 +1201,34 @@ fn translate(cmd: &str, a: &[String]) -> Result<Plan, Error> {
                 .vcs(&["restore", "."])
                 .note("clean: tracked files are restored; untracked files are NOT deleted (vcs has no delete-untracked command; `vcs status` lists them)"))
         }
-        "change" | "changelist" => Ok(Plan::default().vcs(&["status"]).note(
-            "change: vcs has no numbered pending changelists; the pending set is the index (`p4 add`/`p4 reconcile` fill it) and the description is given at `p4 submit -d`",
-        )),
+        "change" | "changelist" => {
+            let o = Opts::parse(cmd, a, "m", "odi", "vcs p4 change -m <description>")?;
+            let num = |o: &Opts| -> Result<u64, Error> {
+                match o.rest.first().map(|n| n.parse::<u64>()) {
+                    Some(Ok(n)) => Ok(n),
+                    _ => msg(format!("p4 {}: give a changelist number", o.cmd)),
+                }
+            };
+            if o.has('d') {
+                return Ok(Plan::default().step(Step::ChangeDelete(num(&o)?)));
+            }
+            if o.has('i') {
+                return Ok(Plan::default()
+                    .step(Step::ChangeInput)
+                    .note("change -i: reads a spec from stdin; only `Change:` (new or a number) and `Description:` are used, `Files:` is ignored (use -c N on add/edit/delete/reopen)"));
+            }
+            if let Some(d) = o.val('m') {
+                return Ok(Plan::default()
+                    .step(Step::ChangeNew(d.to_owned()))
+                    .note("change -m is a vcs extension (p4 opens an editor): it creates numbered pending changelist N in the local ledger"));
+            }
+            if o.has('o') && !o.rest.is_empty() {
+                return Ok(Plan::default().step(Step::ChangeShow(num(&o)?)));
+            }
+            Ok(Plan::default().step(Step::PendingList).vcs(&["status"]).note(
+                "change: the default changelist is the index (`vcs status`); numbered pending changelists are created with `change -m <description>` (or `-i`), filled with `-c N` on add/edit/delete/reopen and submitted with `submit -c N`; they live in this repository only (.vcs/p4-changes)",
+            ))
+        }
         "verify" => Ok(Plan::default().vcs(&["fsck"])),
         "depots" => Ok(Plan::default().vcs(&["zone", "list"])),
         "client" | "workspace" => {
@@ -1042,15 +1247,25 @@ fn translate(cmd: &str, a: &[String]) -> Result<Plan, Error> {
         "clients" | "workspaces" => Ok(Plan::default().vcs(&["worktree", "list"])),
         "sync" => {
             let o = Opts::parse("sync", a, "", "fnq", "vcs sync; vcs fetch")?;
+            let mut rev: Option<String> = None;
+            let mut only = vec![];
             for f in &o.rest {
-                let (_, rev) = split_rev(f)?;
-                if let Some(r) = rev {
-                    return nomap(
-                        &format!("sync {f}"),
-                        &format!("a workspace cannot be synced to @{r}; vcs follows branches"),
-                        "vcs switch <branch>; vcs snapshot checkout <name>; vcs cat-file -p <rev>:<file>",
-                    );
+                let (p, r) = path_arg(f)?;
+                if let Some(r) = r {
+                    if rev.as_ref().is_some_and(|x| *x != r) {
+                        return msg("p4 sync: all paths must use the same revision");
+                    }
+                    rev = Some(r);
                 }
+                only.push(if p.is_empty() { s(".") } else { p });
+            }
+            if let Some(rev) = rev {
+                if o.has('f') {
+                    return nomap("sync -f @rev", "-f is not combined with a revision", "vcs p4 sync <path>@<rev>");
+                }
+                return Ok(Plan::default().step(Step::SyncRev { rev, only, preview: o.has('n') }).note(
+                    "sync @rev writes the files of that commit into the workspace; HEAD does not move, so `vcs status` shows them as edits and `vcs restore .` returns to HEAD. It refuses over local changes. Revision: tag, branch, commit id prefix or a changelist number recorded by `p4 submit`",
+                ));
             }
             let mut plan = Plan::default();
             if o.has('n') {
@@ -1068,7 +1283,20 @@ fn translate(cmd: &str, a: &[String]) -> Result<Plan, Error> {
             }
             Ok(plan)
         }
-        "reopen" => nomap("reopen", "files are not split into numbered pending changelists", "vcs add <files> / vcs restore --staged <files>; vcs shelve <name>"),
+        "reopen" => {
+            let o = Opts::parse("reopen", a, "ct", "", "vcs p4 reopen -c <N|default> <files>")?;
+            if o.val('t').is_some() {
+                return nomap("reopen -t", "vcs has no file types per open file (use .vcsattributes)", "vcs p4 reopen -c <N> <files>");
+            }
+            if o.val('c').is_none() {
+                return msg("p4 reopen: -c <changelist|default> is required");
+            }
+            let n = o.change_id()?;
+            o.need_files()?;
+            Ok(Plan::default()
+                .step(Step::Reopen { n, paths: plain_paths(&o.rest)? })
+                .note("reopen: moves files between numbered changelists of the local ledger; `-c default` hands them back to the default changelist (the index)"))
+        }
         "obliterate" => nomap("obliterate", "history is content-addressed and immutable; unreachable data is removed by gc", "vcs gc --dry-run"),
         "jobs" | "job" | "fix" | "fixes" => nomap(cmd, "vcs has no issue tracker", "put issue ids in the commit message and use `vcs log --grep <id>`"),
         "protect" | "groups" | "group" | "user" | "passwd" | "counters" | "triggers" | "monitor" | "admin" => nomap(
@@ -1163,7 +1391,164 @@ fn explain(st: &Step) -> String {
         Step::Info => "(print identity, root and remote)".into(),
         Step::ResolveAll(f) => format!("vcs resolve <each unresolved file> {f}"),
         Step::PublishIfRemote => "vcs publish (only if a remote is configured)".into(),
+        Step::Open { n, action, paths } => format!("(ledger) open {} for {action} in changelist {n}", paths.join(" ")),
+        Step::RevertChange(n, p) => format!("(ledger) vcs restore --staged/restore the files of changelist {n} {}", p.join(" ")),
+        Step::OpenedChange(n) => format!("(ledger) list the files of changelist {n}"),
+        Step::Reopen { n, paths } => match n {
+            Some(n) => format!("(ledger) move {} to changelist {n}", paths.join(" ")),
+            None => format!("(ledger) move {} back to the default changelist", paths.join(" ")),
+        },
+        Step::ChangeNew(d) => format!("(ledger) new numbered changelist {d:?}"),
+        Step::ChangeInput => "(ledger) read a change spec on stdin".into(),
+        Step::ChangeDelete(n) => format!("(ledger) delete empty changelist {n}"),
+        Step::ChangeShow(n) => format!("(ledger) show changelist {n}"),
+        Step::PendingList => "(ledger) list pending numbered changelists".into(),
+        Step::NumberedList => "(ledger) list numbered submitted changelists".into(),
+        Step::CheckSubmit(n) => format!("(check) nothing is staged outside changelist {n}"),
+        Step::MarkHeads => "(remember the branch heads)".into(),
+        Step::Record(Some(n)) => format!("(ledger) record changelist {n} -> the new commit"),
+        Step::Record(None) => "(ledger) assign the next changelist number to the new commit".into(),
+        Step::SyncRev { rev, only, preview } => format!(
+            "({}) write the files of {rev} under {} into the workspace",
+            if *preview {
+                "list, change nothing"
+            } else {
+                "refuses over local changes"
+            },
+            only.join(" ")
+        ),
+        Step::Copy { branch, preview, .. } => format!(
+            "({}) make the tracked files equal to branch {branch}, then vcs add",
+            if *preview {
+                "list, change nothing"
+            } else {
+                "refuses over local changes"
+            }
+        ),
     }
+}
+
+static HEADS_BEFORE: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+fn heads(repo: &Repo) -> Vec<(String, String)> {
+    let Ok(ws) = repo.workspace() else { return vec![] };
+    ws.subs
+        .keys()
+        .filter_map(|z| repo.head_commit(z).ok().flatten().map(|id| (z.clone(), id.to_hex())))
+        .collect()
+}
+
+/// Subscribed zones in which `rev` resolves (restricted to `zone` when given).
+fn rev_zones(repo: &Repo, rev: &str, zone: Option<&str>) -> Result<std::collections::BTreeSet<String>, Error> {
+    let only = match zone {
+        Some(z) => Some(repo.zones()?.resolve(z).ok_or_else(|| Error::Msg(format!("unknown zone {z}")))?),
+        None => None,
+    };
+    Ok(repo
+        .workspace()?
+        .subs
+        .keys()
+        .filter(|z| only.as_ref().is_none_or(|o| o == *z) && repo.resolve_rev(z, rev).is_ok())
+        .cloned()
+        .collect())
+}
+
+/// Paths with staged or unstaged changes that `pred` selects.
+fn dirty(repo: &Repo, pred: &dyn Fn(&str) -> bool) -> Result<Vec<String>, Error> {
+    let stat = repo.status_auto(Default::default())?;
+    let mut out = vec![];
+    for z in &stat.zones {
+        for c in z.staged.iter().chain(z.unstaged.iter()) {
+            if pred(&c.path) && !out.contains(&c.path) {
+                out.push(c.path.clone());
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn write_tree_file(repo: &Repo, rel: &str, mode: vcs_objects::EntryMode, id: &vcs_objects::ObjectId) -> Result<bool, Error> {
+    if mode == vcs_objects::EntryMode::Symlink {
+        return Ok(false);
+    }
+    let data = repo.content(id)?;
+    let abs = repo.worktree().join(rel);
+    if std::fs::read(&abs).ok().as_deref() == Some(&data[..]) {
+        return Ok(false);
+    }
+    if let Some(d) = abs.parent() {
+        std::fs::create_dir_all(d).map_err(|e| Error::Msg(format!("{}: {e}", d.display())))?;
+    }
+    if abs.symlink_metadata().is_ok() {
+        let _ = std::fs::remove_file(&abs);
+    }
+    std::fs::write(&abs, &data).map_err(|e| Error::Msg(format!("{}: {e}", abs.display())))?;
+    #[cfg(unix)]
+    if mode == vcs_objects::EntryMode::Executable {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&abs, std::fs::Permissions::from_mode(0o755));
+    }
+    Ok(true)
+}
+
+/// Write the tree of `rev` into the workspace for the paths `sel` selects, delete tracked files
+/// the revision lacks (only in zones where `rev` resolves). Returns the changed paths.
+fn materialize(
+    repo: &Repo,
+    rev: &str,
+    zone: Option<&str>,
+    sel: &dyn Fn(&str) -> bool,
+    preview: bool,
+) -> Result<Vec<(String, bool)>, Error> {
+    let zones = rev_zones(repo, rev, zone)?;
+    if zones.is_empty() {
+        return msg(format!("unknown revision {rev:?} in any subscribed zone"));
+    }
+    let zmap = repo.zones()?;
+    let in_scope = |p: &str| sel(p) && zones.contains(zmap.owner(p));
+    let files = repo.rev_files(rev)?;
+    let bad = dirty(repo, &in_scope)?;
+    if !bad.is_empty() && !preview {
+        return msg(format!(
+            "refusing to overwrite local changes: {} (commit them, or `vcs p4 revert` / `vcs restore`)",
+            bad.join(", ")
+        ));
+    }
+    let mut changed = vec![];
+    for (path, (mode, id)) in &files {
+        if !in_scope(path) {
+            continue;
+        }
+        let differs = preview && std::fs::read(repo.worktree().join(path)).ok() != Some(repo.content(id)?);
+        if preview {
+            if differs {
+                changed.push((path.clone(), false));
+            }
+        } else if write_tree_file(repo, path, *mode, id)? {
+            changed.push((path.clone(), false));
+        }
+    }
+    for (path, _, _) in repo.tracked_files()? {
+        if in_scope(&path) && !files.contains_key(&path) {
+            if !preview {
+                let _ = std::fs::remove_file(repo.worktree().join(&path));
+            }
+            changed.push((path, true));
+        }
+    }
+    Ok(changed)
+}
+
+fn action_of(k: ChangeKind) -> &'static str {
+    match k {
+        ChangeKind::Added => "add",
+        ChangeKind::Modified => "edit",
+        ChangeKind::Deleted => "delete",
+    }
+}
+
+fn first_line(s: &str) -> &str {
+    s.lines().next().unwrap_or("")
 }
 
 fn exec(st: &Step, quiet: bool) -> Result<(), Error> {
@@ -1208,6 +1593,10 @@ fn exec(st: &Step, quiet: bool) -> Result<(), Error> {
                         found.push(("add", u.clone()));
                     }
                 }
+            }
+            if !*preview {
+                let l = Ledger::load(repo.worktree());
+                found.retain(|(_, p)| l.holder(p).is_none());
             }
             if found.is_empty() {
                 println!("nothing to {}", if *preview { "reconcile" } else { "stage" });
@@ -1374,6 +1763,346 @@ fn exec(st: &Step, quiet: bool) -> Result<(), Error> {
             for p in un {
                 let abs = repo.worktree().join(p).to_string_lossy().into_owned();
                 exec(&Step::Vcs(vec![s("resolve"), abs, s(flag)]), quiet)?;
+            }
+            Ok(())
+        }
+        Step::Open { n, action, paths } => {
+            let (repo, cwd) = open()?;
+            let mut l = Ledger::load(repo.worktree());
+            let tracked: std::collections::BTreeSet<String> = repo.tracked_files()?.into_iter().map(|t| t.0).collect();
+            let mut todo = vec![];
+            for p in paths {
+                let rel = repo.rel_path(&cwd, p)?;
+                let abs = repo.worktree().join(&rel);
+                if abs.is_dir() {
+                    return msg(format!("p4: {p}: name files, not directories, when opening into changelist {n}"));
+                }
+                match *action {
+                    "add" => {
+                        if !abs.is_file() {
+                            return msg(format!("p4 add: {p}: file not found in the workspace"));
+                        }
+                        if tracked.contains(&rel) {
+                            return msg(format!("p4 add: {p}: already under version control"));
+                        }
+                    }
+                    "edit" => {
+                        if !abs.is_file() {
+                            return msg(format!("p4 edit: {p}: file not found in the workspace"));
+                        }
+                    }
+                    _ => {
+                        if !tracked.contains(&rel) {
+                            return msg(format!("p4 delete: {p}: not under version control"));
+                        }
+                    }
+                }
+                if let Some(h) = l.holder(&rel).filter(|h| h != n) {
+                    return msg(format!(
+                        "p4: {p}: already opened in changelist {h} (move it with `vcs p4 reopen -c {n} {p}`)"
+                    ));
+                }
+                todo.push((rel, abs));
+            }
+            for (rel, abs) in todo {
+                if *action == "delete" {
+                    let _ = std::fs::remove_file(&abs);
+                }
+                println!("{} - opened for {action} in change {n}", depot_path(&repo, &rel));
+                l.pending.entry(*n).or_default().files.insert(rel, (*action).to_owned());
+            }
+            l.save(repo.worktree())
+        }
+        Step::RevertChange(n, paths) => {
+            let (repo, cwd) = open()?;
+            let mut l = Ledger::load(repo.worktree());
+            let only = only_prefixes(&repo, &cwd, paths)?;
+            let members: Vec<String> = l
+                .pending
+                .get(n)
+                .map(|c| c.files.keys().filter(|f| covered(&only, f)).cloned().collect())
+                .unwrap_or_default();
+            if members.is_empty() {
+                println!("File(s) not opened in change {n}.");
+                return Ok(());
+            }
+            let abs: Vec<String> = members
+                .iter()
+                .map(|m| repo.worktree().join(m).to_string_lossy().into_owned())
+                .collect();
+            for f in abs {
+                // a recorded add was never staged, so there is nothing to unstage
+                match exec(&Step::Revert(vec![f]), quiet) {
+                    Err(Error::Msg(m)) if m.contains("did not match any tracked files") => {}
+                    r => r?,
+                }
+            }
+            if let Some(c) = l.pending.get_mut(n) {
+                for m in &members {
+                    c.files.remove(m);
+                }
+            }
+            l.save(repo.worktree())
+        }
+        Step::OpenedChange(n) => {
+            let (repo, _) = open()?;
+            let l = Ledger::load(repo.worktree());
+            let c = l.pending.get(n).ok_or_else(|| Error::Msg(format!("no pending changelist {n}")))?;
+            if c.files.is_empty() {
+                println!("File(s) not opened in change {n}.");
+            }
+            for (f, act) in &c.files {
+                println!("{} - {act} change {n}", depot_path(&repo, f));
+            }
+            Ok(())
+        }
+        Step::Reopen { n, paths } => {
+            let (repo, cwd) = open()?;
+            let mut l = Ledger::load(repo.worktree());
+            let stat = repo.status_auto(Default::default())?;
+            for p in paths {
+                let rel = repo.rel_path(&cwd, p)?;
+                let from = l.holder(&rel);
+                let action = match from {
+                    Some(h) => l.pending[&h].files[&rel].clone(),
+                    None => {
+                        let k = stat
+                            .zones
+                            .iter()
+                            .flat_map(|z| z.staged.iter().chain(z.unstaged.iter()))
+                            .find(|c| c.path == rel)
+                            .map(|c| c.kind);
+                        match k {
+                            Some(k) => action_of(k).to_owned(),
+                            None => return msg(format!("p4 reopen: {p}: file(s) not opened")),
+                        }
+                    }
+                };
+                if let Some(h) = from {
+                    if let Some(c) = l.pending.get_mut(&h) {
+                        c.files.remove(&rel);
+                    }
+                }
+                let d = depot_path(&repo, &rel);
+                match n {
+                    Some(n) => {
+                        l.pending.entry(*n).or_default().files.insert(rel, action);
+                        println!("{d} - reopened; change {n}");
+                    }
+                    None => println!("{d} - reopened; default change (staged by `p4 add`/`p4 reconcile`/`p4 submit`)"),
+                }
+            }
+            l.save(repo.worktree())
+        }
+        Step::ChangeNew(desc) => {
+            let (repo, _) = open()?;
+            let mut l = Ledger::load(repo.worktree());
+            let n = l.alloc();
+            l.pending.insert(
+                n,
+                p4changes::Pending {
+                    desc: desc.clone(),
+                    ..Default::default()
+                },
+            );
+            l.save(repo.worktree())?;
+            println!("Change {n} created.");
+            Ok(())
+        }
+        Step::ChangeInput => {
+            use std::io::Read;
+            let mut spec = String::new();
+            std::io::stdin()
+                .read_to_string(&mut spec)
+                .map_err(|e| Error::Msg(format!("cannot read stdin: {e}")))?;
+            let (mut which, mut desc, mut in_desc) = (None::<String>, vec![], false);
+            for line in spec.lines() {
+                if let Some(v) = line.strip_prefix("Change:") {
+                    which = Some(v.trim().to_owned());
+                    in_desc = false;
+                } else if line.starts_with("Description:") {
+                    in_desc = true;
+                    let rest = line["Description:".len()..].trim();
+                    if !rest.is_empty() {
+                        desc.push(rest.to_owned());
+                    }
+                } else if in_desc && (line.starts_with(char::is_whitespace) || line.is_empty()) {
+                    desc.push(line.trim().to_owned());
+                } else {
+                    in_desc = false;
+                }
+            }
+            let desc = desc.join("\n").trim().to_owned();
+            let Some(which) = which else {
+                return msg("p4 change -i: the spec has no `Change:` line (`Change: new` or a number)");
+            };
+            let (repo, _) = open()?;
+            let mut l = Ledger::load(repo.worktree());
+            let n = if which == "new" {
+                let n = l.alloc();
+                l.pending.insert(n, Default::default());
+                n
+            } else {
+                let n: u64 = which
+                    .parse()
+                    .map_err(|_| Error::Msg(format!("p4 change -i: bad Change: {which:?}")))?;
+                if !l.pending.contains_key(&n) {
+                    return msg(format!("p4 change -i: pending changelist {n} does not exist"));
+                }
+                n
+            };
+            if let Some(c) = l.pending.get_mut(&n) {
+                c.desc = desc;
+            }
+            l.save(repo.worktree())?;
+            println!("Change {n} {}.", if which == "new" { "created" } else { "updated" });
+            Ok(())
+        }
+        Step::ChangeDelete(n) => {
+            let (repo, _) = open()?;
+            let mut l = Ledger::load(repo.worktree());
+            match l.pending.get(n) {
+                None => return msg(format!("p4 change -d: pending changelist {n} does not exist")),
+                Some(c) if !c.files.is_empty() => return msg(format!(
+                    "p4 change -d: changelist {n} has {} open file(s): `vcs p4 revert -c {n}` or `vcs p4 reopen -c default <files>` first",
+                    c.files.len()
+                )),
+                Some(_) => {}
+            }
+            l.pending.remove(n);
+            l.save(repo.worktree())?;
+            println!("Change {n} deleted.");
+            Ok(())
+        }
+        Step::ChangeShow(n) => {
+            let (repo, _) = open()?;
+            let l = Ledger::load(repo.worktree());
+            let c = l.pending.get(n).ok_or_else(|| Error::Msg(format!("no pending changelist {n}")))?;
+            println!("Change {n} pending");
+            println!("Description:\n\t{}", c.desc.replace('\n', "\n\t"));
+            println!("Files:");
+            for (f, act) in &c.files {
+                println!("\t{}\t# {act}", depot_path(&repo, f));
+            }
+            Ok(())
+        }
+        Step::PendingList => {
+            let (repo, _) = open()?;
+            for (n, c) in &Ledger::load(repo.worktree()).pending {
+                println!("Change {n} pending ({} file(s)) '{}'", c.files.len(), first_line(&c.desc));
+            }
+            Ok(())
+        }
+        Step::NumberedList => {
+            let (repo, _) = open()?;
+            let l = Ledger::load(repo.worktree());
+            if !l.submitted.is_empty() {
+                println!("numbered changelists (assigned by `vcs p4 submit` in this repository):");
+                for (n, id) in l.submitted.iter().rev() {
+                    println!("Change {n} = commit {}", &id[..id.len().min(12)]);
+                }
+            }
+            Ok(())
+        }
+        Step::CheckSubmit(n) => {
+            let (repo, _) = open()?;
+            let l = Ledger::load(repo.worktree());
+            let c = l.pending.get(n).ok_or_else(|| Error::Msg(format!("no pending changelist {n}")))?;
+            let stat = repo.status_auto(Default::default())?;
+            let extra: Vec<&str> = stat
+                .zones
+                .iter()
+                .flat_map(|z| z.staged.iter())
+                .map(|c| c.path.as_str())
+                .filter(|p| !c.files.contains_key(*p))
+                .collect();
+            if !extra.is_empty() {
+                return msg(format!(
+                    "p4 submit -c {n}: the index holds files outside the changelist ({}): `vcs restore --staged <file>` them, or `vcs p4 submit` them first",
+                    extra.join(", ")
+                ));
+            }
+            Ok(())
+        }
+        Step::MarkHeads => {
+            let (repo, _) = open()?;
+            *HEADS_BEFORE.lock().unwrap() = heads(&repo);
+            Ok(())
+        }
+        Step::Record(n) => {
+            let (repo, _) = open()?;
+            let before = HEADS_BEFORE.lock().unwrap().clone();
+            let after = heads(&repo);
+            let mut changed: Vec<&(String, String)> = after.iter().filter(|h| !before.contains(h)).collect();
+            changed.sort_by_key(|(z, _)| z != ROOT_ZONE);
+            let Some((_, id)) = changed.first() else {
+                eprintln!("note: no new commit, so no changelist number was assigned");
+                return Ok(());
+            };
+            let mut l = Ledger::load(repo.worktree());
+            let num = match n {
+                Some(n) => {
+                    l.pending.remove(n);
+                    *n
+                }
+                None => l.alloc(),
+            };
+            l.submitted.insert(num, id.clone());
+            l.save(repo.worktree())?;
+            println!("Change {num} submitted (commit {}).", &id[..id.len().min(12)]);
+            if changed.len() > 1 {
+                eprintln!(
+                    "note: the commit touched {} zones; `@{num}` names the one in {}",
+                    changed.len(),
+                    changed[0].0
+                );
+            }
+            Ok(())
+        }
+        Step::SyncRev { rev, only, preview } => {
+            let (repo, cwd) = open()?;
+            let only = only_prefixes(&repo, &cwd, only)?;
+            let changed = materialize(&repo, rev, None, &|p| covered(&only, p), *preview)?;
+            if changed.is_empty() {
+                println!("File(s) up-to-date at {rev}.");
+            }
+            for (p, del) in &changed {
+                println!(
+                    "{} - {} {rev}",
+                    depot_path(&repo, p),
+                    match (preview, del) {
+                        (true, true) => "would delete for",
+                        (true, false) => "would update to",
+                        (false, true) => "deleted for",
+                        (false, false) => "updated to",
+                    }
+                );
+            }
+            Ok(())
+        }
+        Step::Copy { branch, zone, preview } => {
+            let (repo, _) = open()?;
+            let changed = materialize(&repo, branch, zone.as_deref(), &|_| true, *preview)?;
+            if changed.is_empty() {
+                println!("branch {branch}: all tracked files already equal; nothing to copy.");
+                return Ok(());
+            }
+            for (p, del) in &changed {
+                println!(
+                    "{} - {} from {branch}",
+                    depot_path(&repo, p),
+                    match (preview, del) {
+                        (true, true) => "would delete",
+                        (true, false) => "would copy",
+                        (false, true) => "deleted",
+                        (false, false) => "copied",
+                    }
+                );
+            }
+            if !*preview {
+                let mut v = vec![s("add")];
+                v.extend(changed.iter().map(|(p, _)| repo.worktree().join(p).to_string_lossy().into_owned()));
+                exec(&Step::Vcs(v), quiet)?;
             }
             Ok(())
         }
