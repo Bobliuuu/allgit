@@ -24,7 +24,6 @@ use std::fs;
 use std::path::PathBuf;
 use vcs_objects::names::validate_path;
 use vcs_objects::EntryMode;
-use vcs_store::ObjectStore;
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct RestoreReport {
@@ -193,7 +192,10 @@ impl Repo {
         // 2. write: independent per path, so a big batch runs on a bounded pool (8 threads)
         let write_one = |(p, absent): &(String, bool)| -> Result<IndexEntry> {
             let (mode, id) = (ix.entries[p].mode, ix.entries[p].id);
-            let data = self.store.get_content(&id)?;
+            let data = match self.content_or_stream(p, &id, mode)? {
+                crate::repo::FileContent::Streamed(e) => return Ok(e),
+                crate::repo::FileContent::Bytes(b) => b,
+            };
             let abs = || self.worktree.join(p);
             let m = if mode == EntryMode::Symlink {
                 crate::portable::check_symlink_target(p, &data).or_else(|why| msg(format!("refusing to restore symlink {p:?}: {why}")))?;
@@ -286,7 +288,7 @@ impl Repo {
             }
         }
         for (q, mode, id) in set {
-            let size = self.store.get_content(&id)?.len() as u64;
+            let size = self.content_len(&id)?;
             // mtime 0 never matches the file's, so status re-hashes it instead of trusting a stale stat
             ix.insert(
                 &q,

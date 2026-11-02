@@ -229,6 +229,8 @@ fn publish_clone_and_fetch_move_large_files_byte_identically() {
     let c = Repo::clone_from(&remote, "mem", &d.path().join("c"), None).unwrap();
     assert_eq!(fs::read(c.worktree().join("big.bin")).unwrap(), data);
     assert!(c.fsck().unwrap().problems.is_empty());
+    // objects that arrived by clone record the feature too, so an older release refuses the repository
+    assert_eq!(fs::read_to_string(c.worktree().join(".vcs/features")).unwrap(), "large-chunked\n");
     // publishing a second version uploads about one edited chunk, not the whole file
     let before = remote.history().len();
     let mut v2 = data.clone();

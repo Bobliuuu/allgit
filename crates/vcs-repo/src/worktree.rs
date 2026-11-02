@@ -113,12 +113,14 @@ impl Repo {
                 wt.display()
             ));
         }
+        let store = LocalStore::open(self.common.join("objects"))?;
+        store.set_large_feature_mark(self.common.join(crate::repo::FEATURES_FILE), crate::repo::FEATURE_LARGE_CHUNKED);
         Ok(Repo {
             worktree: wt.to_owned(),
             wfs: std::sync::Arc::new(crate::worktree_fs::RealFs::new(wt.to_owned())),
             vcs,
             common: self.common.clone(),
-            store: LocalStore::open(self.common.join("objects"))?,
+            store,
             structural: true,
             renames: false,
             use_commit_graph: true,

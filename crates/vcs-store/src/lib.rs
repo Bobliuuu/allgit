@@ -5,8 +5,8 @@
 //! at the network boundary; see docs/architecture.md §Storage.
 
 pub use vcs_objects::chunk;
-mod compact;
 pub mod bigfile;
+mod compact;
 pub mod delta;
 pub mod layout;
 pub mod pack;
@@ -296,6 +296,10 @@ pub struct LocalStore {
     /// can only be older than this store's view if its dir was already there, so the dedup probe
     /// of an id in a missing dir skips the failing stat.
     fan_at_open: std::sync::OnceLock<Vec<std::sync::atomic::AtomicBool>>,
+    /// `(file, feature name)`: recorded in that file (one name per line) the first time a large-file manifest
+    /// (kind 9) is stored through this handle, whether it came from a local add, a fetch or a clone.
+    feature_mark: std::sync::OnceLock<(PathBuf, String)>,
+    feature_done: std::sync::atomic::AtomicBool,
 }
 
 /// Where a simulated crash interrupts [`LocalStore::sweep`] (test support; see `gc` tests).
@@ -458,7 +462,28 @@ impl LocalStore {
             touch_after: DEFAULT_TOUCH_AFTER,
             sweep_crash: Mutex::new(None),
             fan_at_open: std::sync::OnceLock::new(),
+            feature_mark: std::sync::OnceLock::new(),
+            feature_done: std::sync::atomic::AtomicBool::new(false),
         })
+    }
+    /// Record `name` in `file` when a kind 9 (large-file) manifest is first stored through this handle.
+    pub fn set_large_feature_mark(&self, file: PathBuf, name: &str) {
+        let _ = self.feature_mark.set((file, name.to_owned()));
+    }
+    fn mark_large_feature(&self) -> Result<(), StoreError> {
+        let Some((file, name)) = self.feature_mark.get() else {
+            return Ok(());
+        };
+        if self.feature_done.swap(true, Ordering::Relaxed) {
+            return Ok(());
+        }
+        let cur = fs::read_to_string(file).unwrap_or_default();
+        if cur.lines().any(|l| l == name) {
+            return Ok(());
+        }
+        let tmp = file.with_extension(format!("tmp{}", std::process::id()));
+        io(&tmp, fs::write(&tmp, format!("{cur}{name}\n")))?;
+        io(file, fs::rename(&tmp, file))
     }
     /// Lower the in-memory budget for unsynced objects (test support: forces the spill path).
     #[doc(hidden)]
@@ -798,6 +823,9 @@ impl LocalStore {
     }
     fn store_encoded(&self, id: &ObjectId, head: &[u8], tail: &[u8]) -> Result<(), StoreError> {
         let id = *id;
+        if head.is_empty() && tail.first() == Some(&(vcs_objects::Kind::ChunkedLarge as u8)) {
+            self.mark_large_feature()?;
+        }
         // Existing objects are never rewritten. A pending object is brand new already. A published
         // one older than `touch_after` gets its modification time refreshed ("touch on dedup"), so
         // GC's age check sees a re-adopted orphan as young (docs/gc.md). Younger ones are left

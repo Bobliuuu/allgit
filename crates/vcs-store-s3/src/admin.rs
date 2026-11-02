@@ -42,13 +42,23 @@ impl S3Backend {
                 }
             }
         }
-        Ok(if allowed.is_empty() { ManifestWriteProbe::Denied } else { ManifestWriteProbe::Allowed(allowed.join("; ")) })
+        Ok(if allowed.is_empty() {
+            ManifestWriteProbe::Denied
+        } else {
+            ManifestWriteProbe::Allowed(allowed.join("; "))
+        })
     }
 
     /// Install a bucket policy (PutBucketPolicy). For deployment scripts and tests; needs a credential
     /// allowed to manage the bucket, never a client credential.
     pub fn put_bucket_policy(&self, policy_json: &str) -> Result<(), BackendError> {
-        match self.send("PUT", "", &[("policy", String::new())], &[("content-type", "application/json")], policy_json.as_bytes())? {
+        match self.send(
+            "PUT",
+            "",
+            &[("policy", String::new())],
+            &[("content-type", "application/json")],
+            policy_json.as_bytes(),
+        )? {
             Resp::Ok { .. } => Ok(()),
             Resp::Status(c, m) => Err(BackendError::Other(format!("put bucket policy: {c} {m}"))),
         }

@@ -23,8 +23,8 @@
 
 mod admin;
 mod gcops;
-pub use gcops::parse_iso_ms;
 pub use admin::ManifestWriteProbe;
+pub use gcops::parse_iso_ms;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicU64, Ordering};

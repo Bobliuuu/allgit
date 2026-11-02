@@ -331,7 +331,11 @@ impl Backend for HttpBackend {
     }
     fn modified_ms(&self, key: &str) -> Result<Option<u64>, BackendError> {
         match self.send_raw(self.req("GET", &Self::mtime_path(key)?), None)? {
-            Ok((t, _, _)) => t.trim().parse().map(Some).map_err(|_| BackendError::Other("bad mtime from server".into())),
+            Ok((t, _, _)) => t
+                .trim()
+                .parse()
+                .map(Some)
+                .map_err(|_| BackendError::Other("bad mtime from server".into())),
             Err((404, _)) => Ok(None),
             Err((c, m)) => Err(self.status_err(c, &m)),
         }
