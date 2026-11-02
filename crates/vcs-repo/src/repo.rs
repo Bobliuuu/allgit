@@ -798,7 +798,9 @@ impl Repo {
                     && ct != 0
                     && mt.max(ct).saturating_add(racy) <= old_w
                 {
-                    return Ok((None, true)); // stat cache hit
+                    // stat cache hit. Not recorded as verified: its racy edge is already <= the index's
+                    // `written_ns`, and only entries beyond that edge ever consult the verified set.
+                    return Ok((None, false));
                 }
             }
             if m.len() >= vcs_objects::LARGE_THRESHOLD as u64 {
