@@ -209,6 +209,9 @@ print("p4 changes:", len(p4("changes").stdout.splitlines()), file=sys.stderr, fl
 
 # ---- 3. cells
 vsh("{B} reset --hard base; {B} switch main")
+_rem = os.path.join(W, "vcs", "remote")  # fresh vcs remote so publish (submit_1, clone) starts from base
+shutil.rmtree(_rem, ignore_errors=True)
+vsh("{B} merge --abort; {B} clean -f -d; {B} remote set " + shlex.quote(_rem) + "; {B} publish")
 nd = lambda: None
 
 

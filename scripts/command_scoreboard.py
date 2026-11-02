@@ -41,7 +41,7 @@ def mod_files(root, rels, tag):
 def proc_cpu(pid):
     try:
         f = open(f"/proc/{pid}/stat").read().rsplit(")", 1)[1].split()
-        return (int(f[11]) + int(f[12])) / NCLK * 1000
+        return (int(f[11]) + int(f[12]) + int(f[13]) + int(f[14])) / NCLK * 1000  # own + reaped children (p4d forks per connection)
     except OSError:
         return 0.0
 
@@ -206,7 +206,7 @@ S("repack", "small", "git repack -q -ad", "{B} repack", reps=3)
 # group "remote": file remote; cumulative commits on main, no undo (last group)
 S("clone", "remote", "git clone -q ../remote dst", "{B} clone ../remote dst", prep="rm -rf dst", reps=3)
 S("clone_zone", "remote", "git clone -q ../remote dst", "{B} clone ../remote dst", prep="rm -rf dst", reps=1, note="not run: no equivalent scenario")
-S("push", "remote", "git push -q origin main", "{B} publish", prep="@mod1; {B} add {F}; {B} commit -q -m x")
+S("push", "remote", "git push -q origin main", "{B} publish", prep="@mod1; {B} add {F}; {B} commit -m x")
 S("fetch", "remote", "git fetch -q origin", "{B} fetch", prep="@srcpush")
 S("pull", "remote", "git pull -q --ff-only", "{B} sync", prep="@srcpush")
 SC[:] = [s for s in SC if s["id"] != "clone_zone"]
@@ -240,7 +240,7 @@ class Env:
         """Run a bash snippet with @helpers expanded."""
         for part in [p.strip() for p in snippet.split(";") if p.strip()]:
             if part == "@mod1":
-                mod_files(cwd, [self.state["F"]], "one")
+                mod_files(cwd, [self.state["F"]], f"one{time.time_ns()}")
             elif part == "@mod1pct":
                 mod_files(cwd, files_1pct(self.state), "pct")
             elif part == "@untracked":
@@ -261,7 +261,7 @@ def srcpush(env, t):
     """Make one new commit in the source repo and publish it to the remote (untimed)."""
     cwd = env.d(t)
     mod_files(cwd, [env.state["F"]], f"src{time.time_ns()}")
-    sh(env.fmt("{B} add {F}; {B} commit -q -m x; " + ("git push -q origin main" if t == "git" else "{B} publish"), t), cwd, BASE_ENV)
+    sh(env.fmt("{B} add {F}; {B} commit -m x; " + ("git push -q origin main" if t == "git" else "{B} publish"), t), cwd, BASE_ENV)
 
 
 def setup(a):
@@ -305,7 +305,7 @@ def setup(a):
         # remote
         rem = os.path.join(work, t, "remote")
         if t == "git":
-            sh(f"git init -q --bare {rem}; git remote add origin {rem}; git push -q origin main side", r, BASE_ENV)
+            sh(f"git init -q --bare -b main {rem}; git remote add origin {rem}; git push -q origin main side", r, BASE_ENV)
         else:
             sh(f"{B} remote set {rem}; {B} publish", r, BASE_ENV)
     print("setup done", file=sys.stderr)
@@ -326,8 +326,16 @@ def run(a):
                     "n": env.state["n"], "layout": "flat", "host": os.uname().nodename, "cores": os.cpu_count(),
                     "load1_start": load1(), "start": time.strftime("%FT%TZ", time.gmtime()), "groups": groups},
            "cells": {}}
-    for t in ("git", "vcs"):
-        run_clean_check(env, t)
+    if "remote" in groups:  # sync both repos to the remote (earlier groups and the p4 phase moved local main)
+        sh("git fetch -q origin; git reset -q --hard origin/main; git clean -fdq", env.d("git"), BASE_ENV)
+        rem = os.path.join(env.work, "vcs", "remote")
+        shutil.rmtree(rem, ignore_errors=True)
+        for t in ("git", "vcs"):
+            shutil.rmtree(os.path.join(env.work, t, "dstrepo"), ignore_errors=True)
+        sh(env.fmt("{B} merge --abort; {B} reset --hard; {B} clean -f -d; {B} remote set " + shlex.quote(rem) + "; {B} publish", "vcs"), env.d("vcs"), BASE_ENV)
+    else:
+        for t in ("git", "vcs"):
+            run_clean_check(env, t)
     for s in SC:
         if s["grp"] not in groups or (a.only and s["id"] not in a.only.split(",")):
             continue

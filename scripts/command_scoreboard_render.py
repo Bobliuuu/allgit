@@ -83,7 +83,7 @@ P4 = {
     "reconcile [-a -e -d -n]": "add_all", "status": "status_clean", "submit [-d msg]": "submit_all",
     "changes [-m -s -u -l]": "changes", "describe [-s]": "describe", "filelog": "filelog", "annotate": "annotate",
     "files": "files", "fstat": "fstat", "print": "print", "have": "have", "labels": "labels", "branches / streams": "branches",
-    "where": "where", "info": "info", "users": "users", "grep": "grep", "verify": "verify", "init / fetch / push / clone": "clone_sync",
+    "where": "where", "info": "info", "users": "users", "grep": "grep", "init / fetch / push / clone": "clone_sync",
 }
 P4_EXTRA = [("p4 reconcile -n //... (1% modified)", "vcs status", "status_1pct"),
             ("p4 submit (1 edited file)", "vcs p4 submit -d one", "submit_1")]
@@ -103,6 +103,7 @@ REASON = [
     (r"git cherry-pick A..B|git log .*--reverse|git log -n 2|git log --all|git log -p", "variant of a measured command; not run separately"),
 ]
 P4_NM = {
+    "verify": "p4 verify -q //... returned in 3 ms with no output for 100k revisions; not confirmed that it checked them, so no ratio is given",
     "client -o / workspace -o": "client spec edit; no timed counterpart",
     "sync -f": "forced re-sync; not benchmarked", "revert -a": "vcs has nothing to do (no-op by design)",
     "diff2": "not benchmarked", "opened -a": "needs a second user with open files; not benchmarked",
@@ -377,7 +378,10 @@ def main():
     if pmeta:
         md += [f"* Perforce: `{pmeta.get('p4')}` client, `{pmeta.get('p4d')}` server (binaries copied from the earlier Perforce benchmark, SHA256 re-checked against docs/research/perforce-benchmark.md), "
                "p4d on loopback, journal off, no log, free tier, a fresh server root for the initial add/submit; 1 user, 1 client. p4 is client/server, vcs is local: the comparison is p4 client plus server work "
-               "against what vcs does locally; the vcs side of submit also publishes to a local-path remote."]
+               "against what vcs does locally; the vcs side of submit also publishes to a local-path remote. "
+               "**p4 CPU is a lower bound**: it is the p4 client plus the p4d process's own and reaped-children CPU read from /proc in 10 ms ticks, so server CPU below the tick is largely missed (tiny commands show about 2 ms = client only). "
+               "Treat p4 CPU ratios of small commands as unreliable; p4 wall includes the server round trip and is the better number. p4 `grep` failed on this server (revision limit 10000 for `//...`), `p4 verify` printed nothing in 3 ms; both are NOT-MEASURED. "
+               "Cells with n=2 or 3 (clone, sync, submit, add, files, have) are small samples (each takes seconds to minutes)."]
     md += ["", "Not run, stated plainly: deep and binary layouts (this scoreboard is flat 100k only), any real network or S3, multi-user Perforce, interactive/continuation commands.", ""]
 
     have = sorted(k.replace("git-", "").replace(".json", "") for k in gmeta) + (["p4"] if pcells else [])

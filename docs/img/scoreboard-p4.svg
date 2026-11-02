@@ -1,182 +1,188 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300 520" width="1300" height="520" role="img" aria-label="vcs vs Perforce, per command (docs/p4-to-vcs.md)">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300 540" width="1300" height="540" role="img" aria-label="vcs vs Perforce, per command (docs/p4-to-vcs.md)">
 <style>:root{--bg:#fff;--fg:#1b1f24;--mut:#57606a;--win:#1a7f37;--tie:#9a6700;--loss:#cf222e;--nm:#6e7781;--mis:#8250df;--pill:#f6f8fa}@media (prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--mut:#9da7b3;--win:#3fb950;--tie:#d29922;--loss:#ff7b72;--nm:#8b949e;--mis:#bc8cff;--pill:#161b22}}text{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;fill:var(--fg)}.t{font:600 18px system-ui,sans-serif}.s{font:12px system-ui,sans-serif;fill:var(--mut)}.bg{fill:var(--bg)}.WIN{fill:var(--win)}.TIE{fill:var(--tie)}.LOSS{fill:var(--loss)}.NM{fill:var(--nm)}.MIS{fill:var(--mis)}.r{fill:var(--mut)}</style>
-<rect width="1300" height="520" fill="#ffffff" class="bg"/>
+<rect width="1300" height="540" fill="#ffffff" class="bg"/>
 <text x="20" y="30" class="t" fill="#1b1f24">vcs vs Perforce, per command (docs/p4-to-vcs.md)</text>
 <text x="20" y="50" class="s" fill="#57606a">ratio = vcs/p4 wall (p4 includes the p4d server work); flat 100k, c6i.4xlarge</text>
-<rect x="20" y="66" width="12" height="12" rx="3" class="WIN" fill="#1a7f37"/><text x="38" y="77" fill="#1b1f24">WIN 0</text>
-<rect x="107" y="66" width="12" height="12" rx="3" class="TIE" fill="#9a6700"/><text x="125" y="77" fill="#1b1f24">TIE 0</text>
-<rect x="194" y="66" width="12" height="12" rx="3" class="LOSS" fill="#cf222e"/><text x="212" y="77" fill="#1b1f24">LOSS 0</text>
-<rect x="290" y="66" width="12" height="12" rx="3" class="NM" fill="#6e7781"/><text x="308" y="77" fill="#1b1f24">NOT-MEASURED 55</text>
+<rect x="20" y="66" width="12" height="12" rx="3" class="WIN" fill="#1a7f37"/><text x="38" y="77" fill="#1b1f24">WIN 6</text>
+<rect x="107" y="66" width="12" height="12" rx="3" class="TIE" fill="#9a6700"/><text x="125" y="77" fill="#1b1f24">TIE 7</text>
+<rect x="194" y="66" width="12" height="12" rx="3" class="LOSS" fill="#cf222e"/><text x="212" y="77" fill="#1b1f24">LOSS 17</text>
+<rect x="290" y="66" width="12" height="12" rx="3" class="NM" fill="#6e7781"/><text x="308" y="77" fill="#1b1f24">NOT-MEASURED 27</text>
 <rect x="458" y="66" width="12" height="12" rx="3" class="MIS" fill="#8250df"/><text x="476" y="77" fill="#1b1f24">MISSING 2</text>
-<rect x="20" y="100" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
+<rect x="20" y="100" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
 <text x="36" y="111" fill="#1b1f24">add</text>
-<text x="412" y="111" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="440" y="100" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="456" y="111" fill="#1b1f24">add / edit / delete / revert / opened -…</text>
-<text x="832" y="111" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="860" y="100" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="876" y="111" fill="#1b1f24">annotate</text>
-<text x="1252" y="111" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="20" y="120" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="36" y="131" fill="#1b1f24">branch / stream</text>
-<text x="412" y="131" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="440" y="120" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="456" y="131" fill="#1b1f24">branches / streams</text>
-<text x="832" y="131" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="860" y="120" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="876" y="131" fill="#1b1f24">change -m desc / -i / -d N / -o N</text>
-<text x="1252" y="131" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="20" y="140" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="36" y="151" fill="#1b1f24">change / changelist</text>
-<text x="412" y="151" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="440" y="140" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="456" y="151" fill="#1b1f24">changes [-m -s -u -l]</text>
-<text x="832" y="151" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="860" y="140" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="876" y="151" fill="#1b1f24">clean</text>
-<text x="1252" y="151" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="20" y="160" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="36" y="171" fill="#1b1f24">client -o / workspace -o</text>
-<text x="412" y="171" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="440" y="160" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="456" y="171" fill="#1b1f24">clients / workspaces</text>
-<text x="832" y="171" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="860" y="160" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="876" y="171" fill="#1b1f24">copy source-branch</text>
-<text x="1252" y="171" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="20" y="180" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="36" y="191" fill="#1b1f24">delete</text>
-<text x="412" y="191" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="440" y="180" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="456" y="191" fill="#1b1f24">depots</text>
-<text x="832" y="191" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="860" y="180" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="876" y="191" fill="#1b1f24">describe N / @N</text>
-<text x="1252" y="191" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="20" y="200" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="36" y="211" fill="#1b1f24">describe [-s]</text>
-<text x="412" y="211" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="440" y="200" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="456" y="211" fill="#1b1f24">diff</text>
-<text x="832" y="211" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="860" y="200" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="876" y="211" fill="#1b1f24">diff2</text>
-<text x="1252" y="211" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="20" y="220" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="36" y="231" fill="#1b1f24">edit</text>
-<text x="412" y="231" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="440" y="220" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="456" y="231" fill="#1b1f24">filelog</text>
-<text x="832" y="231" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="860" y="220" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="876" y="231" fill="#1b1f24">files</text>
-<text x="1252" y="231" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="20" y="240" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="36" y="251" fill="#1b1f24">fstat</text>
-<text x="412" y="251" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="440" y="240" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="456" y="251" fill="#1b1f24">grep</text>
-<text x="832" y="251" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="860" y="240" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="876" y="251" fill="#1b1f24">have</text>
-<text x="1252" y="251" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="20" y="260" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="36" y="271" fill="#1b1f24">info</text>
-<text x="412" y="271" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="440" y="260" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="456" y="271" fill="#1b1f24">init / fetch / push / clone</text>
-<text x="832" y="271" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="860" y="260" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="876" y="271" fill="#1b1f24">integrate / merge</text>
-<text x="1252" y="271" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="20" y="280" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="36" y="291" fill="#1b1f24">label / tag / labelsync</text>
-<text x="412" y="291" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="440" y="280" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="456" y="291" fill="#1b1f24">labels</text>
-<text x="832" y="291" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="860" y="280" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="876" y="291" fill="#1b1f24">lock</text>
-<text x="1252" y="291" text-anchor="end" class="r" fill="#57606a"></text>
+<text x="412" y="111" text-anchor="end" class="r" fill="#57606a">15.34x</text>
+<rect x="440" y="100" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
+<text x="456" y="111" fill="#1b1f24">annotate</text>
+<text x="832" y="111" text-anchor="end" class="r" fill="#57606a">1.60x</text>
+<rect x="860" y="100" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
+<text x="876" y="111" fill="#1b1f24">clients / workspaces</text>
+<text x="1252" y="111" text-anchor="end" class="r" fill="#57606a">1.83x</text>
+<rect x="20" y="120" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
+<text x="36" y="131" fill="#1b1f24">delete</text>
+<text x="412" y="131" text-anchor="end" class="r" fill="#57606a">19.30x</text>
+<rect x="440" y="120" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
+<text x="456" y="131" fill="#1b1f24">depots</text>
+<text x="832" y="131" text-anchor="end" class="r" fill="#57606a">1.78x</text>
+<rect x="860" y="120" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
+<text x="876" y="131" fill="#1b1f24">describe [-s]</text>
+<text x="1252" y="131" text-anchor="end" class="r" fill="#57606a">29.50x</text>
+<rect x="20" y="140" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
+<text x="36" y="151" fill="#1b1f24">diff</text>
+<text x="412" y="151" text-anchor="end" class="r" fill="#57606a">174.22x</text>
+<rect x="440" y="140" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
+<text x="456" y="151" fill="#1b1f24">edit</text>
+<text x="832" y="151" text-anchor="end" class="r" fill="#57606a">2.50x</text>
+<rect x="860" y="140" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
+<text x="876" y="151" fill="#1b1f24">filelog</text>
+<text x="1252" y="151" text-anchor="end" class="r" fill="#57606a">25.32x</text>
+<rect x="20" y="160" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
+<text x="36" y="171" fill="#1b1f24">fstat</text>
+<text x="412" y="171" text-anchor="end" class="r" fill="#57606a">1.67x</text>
+<rect x="440" y="160" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
+<text x="456" y="171" fill="#1b1f24">init / fetch / push / clone</text>
+<text x="832" y="171" text-anchor="end" class="r" fill="#57606a">4.98x</text>
+<rect x="860" y="160" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
+<text x="876" y="171" fill="#1b1f24">opened</text>
+<text x="1252" y="171" text-anchor="end" class="r" fill="#57606a">15.06x</text>
+<rect x="20" y="180" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
+<text x="36" y="191" fill="#1b1f24">print</text>
+<text x="412" y="191" text-anchor="end" class="r" fill="#57606a">17.33x</text>
+<rect x="440" y="180" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
+<text x="456" y="191" fill="#1b1f24">revert</text>
+<text x="832" y="191" text-anchor="end" class="r" fill="#57606a">11.76x</text>
+<rect x="860" y="180" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
+<text x="876" y="191" fill="#1b1f24">submit (1 edited file) *</text>
+<text x="1252" y="191" text-anchor="end" class="r" fill="#57606a">23.13x</text>
+<rect x="20" y="200" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
+<text x="36" y="211" fill="#1b1f24">sync</text>
+<text x="412" y="211" text-anchor="end" class="r" fill="#57606a">4.98x</text>
+<rect x="440" y="200" width="10" height="14" rx="2" class="LOSS" fill="#cf222e"/>
+<text x="456" y="211" fill="#1b1f24">where</text>
+<text x="832" y="211" text-anchor="end" class="r" fill="#57606a">1.73x</text>
+<rect x="860" y="200" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="876" y="211" fill="#1b1f24">branches / streams</text>
+<text x="1252" y="211" text-anchor="end" class="r" fill="#57606a">0.56x</text>
+<rect x="20" y="220" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="36" y="231" fill="#1b1f24">changes [-m -s -u -l]</text>
+<text x="412" y="231" text-anchor="end" class="r" fill="#57606a">0.05x</text>
+<rect x="440" y="220" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="456" y="231" fill="#1b1f24">info</text>
+<text x="832" y="231" text-anchor="end" class="r" fill="#57606a">1.56x</text>
+<rect x="860" y="220" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="876" y="231" fill="#1b1f24">labels</text>
+<text x="1252" y="231" text-anchor="end" class="r" fill="#57606a">0.56x</text>
+<rect x="20" y="240" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="36" y="251" fill="#1b1f24">sync -n</text>
+<text x="412" y="251" text-anchor="end" class="r" fill="#57606a">0.03x</text>
+<rect x="440" y="240" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="456" y="251" fill="#1b1f24">sync path@rev / @label / @N</text>
+<text x="832" y="251" text-anchor="end" class="r" fill="#57606a">0.73x</text>
+<rect x="860" y="240" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="876" y="251" fill="#1b1f24">users</text>
+<text x="1252" y="251" text-anchor="end" class="r" fill="#57606a">0.65x</text>
+<rect x="20" y="260" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="36" y="271" fill="#1b1f24">files</text>
+<text x="412" y="271" text-anchor="end" class="r" fill="#57606a">0.55x</text>
+<rect x="440" y="260" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="456" y="271" fill="#1b1f24">have</text>
+<text x="832" y="271" text-anchor="end" class="r" fill="#57606a">0.37x</text>
+<rect x="860" y="260" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="876" y="271" fill="#1b1f24">reconcile -n //... (1% modified) *</text>
+<text x="1252" y="271" text-anchor="end" class="r" fill="#57606a">0.04x</text>
+<rect x="20" y="280" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="36" y="291" fill="#1b1f24">reconcile [-a -e -d -n]</text>
+<text x="412" y="291" text-anchor="end" class="r" fill="#57606a">0.33x</text>
+<rect x="440" y="280" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="456" y="291" fill="#1b1f24">status</text>
+<text x="832" y="291" text-anchor="end" class="r" fill="#57606a">0.04x</text>
+<rect x="860" y="280" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="876" y="291" fill="#1b1f24">submit [-d msg]</text>
+<text x="1252" y="291" text-anchor="end" class="r" fill="#57606a">0.11x</text>
 <rect x="20" y="300" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="36" y="311" fill="#1b1f24">locks</text>
+<text x="36" y="311" fill="#1b1f24">add / edit / delete / revert / opened -…</text>
 <text x="412" y="311" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="440" y="300" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="456" y="311" fill="#1b1f24">login / logout</text>
+<text x="456" y="311" fill="#1b1f24">branch / stream</text>
 <text x="832" y="311" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="860" y="300" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="876" y="311" fill="#1b1f24">move / rename</text>
+<text x="876" y="311" fill="#1b1f24">change -m desc / -i / -d N / -o N</text>
 <text x="1252" y="311" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="20" y="320" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="36" y="331" fill="#1b1f24">opened</text>
+<text x="36" y="331" fill="#1b1f24">change / changelist</text>
 <text x="412" y="331" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="440" y="320" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="456" y="331" fill="#1b1f24">opened -a</text>
+<text x="456" y="331" fill="#1b1f24">clean</text>
 <text x="832" y="331" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="860" y="320" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="876" y="331" fill="#1b1f24">print</text>
+<text x="876" y="331" fill="#1b1f24">client -o / workspace -o</text>
 <text x="1252" y="331" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="20" y="340" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="36" y="351" fill="#1b1f24">reconcile [-a -e -d -n]</text>
+<text x="36" y="351" fill="#1b1f24">copy source-branch</text>
 <text x="412" y="351" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="440" y="340" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="456" y="351" fill="#1b1f24">reopen -c N</text>
+<text x="456" y="351" fill="#1b1f24">describe N / @N</text>
 <text x="832" y="351" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="860" y="340" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="876" y="351" fill="#1b1f24">resolve [-at -ay -af -n]</text>
+<text x="876" y="351" fill="#1b1f24">diff2</text>
 <text x="1252" y="351" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="20" y="360" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="36" y="371" fill="#1b1f24">revert</text>
+<text x="36" y="371" fill="#1b1f24">grep</text>
 <text x="412" y="371" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="440" y="360" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="456" y="371" fill="#1b1f24">revert -a</text>
+<text x="456" y="371" fill="#1b1f24">integrate / merge</text>
 <text x="832" y="371" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="860" y="360" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="876" y="371" fill="#1b1f24">shelve [-c name] [-d]</text>
+<text x="876" y="371" fill="#1b1f24">label / tag / labelsync</text>
 <text x="1252" y="371" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="20" y="380" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="36" y="391" fill="#1b1f24">status</text>
+<text x="36" y="391" fill="#1b1f24">lock</text>
 <text x="412" y="391" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="440" y="380" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="456" y="391" fill="#1b1f24">submit -c N</text>
+<text x="456" y="391" fill="#1b1f24">locks</text>
 <text x="832" y="391" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="860" y="380" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="876" y="391" fill="#1b1f24">submit [-d msg]</text>
+<text x="876" y="391" fill="#1b1f24">login / logout</text>
 <text x="1252" y="391" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="20" y="400" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="36" y="411" fill="#1b1f24">switch</text>
+<text x="36" y="411" fill="#1b1f24">move / rename</text>
 <text x="412" y="411" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="440" y="400" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="456" y="411" fill="#1b1f24">sync</text>
+<text x="456" y="411" fill="#1b1f24">opened -a</text>
 <text x="832" y="411" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="860" y="400" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="876" y="411" fill="#1b1f24">sync -f</text>
+<text x="876" y="411" fill="#1b1f24">reopen -c N</text>
 <text x="1252" y="411" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="20" y="420" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="36" y="431" fill="#1b1f24">sync -n</text>
+<text x="36" y="431" fill="#1b1f24">resolve [-at -ay -af -n]</text>
 <text x="412" y="431" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="440" y="420" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="456" y="431" fill="#1b1f24">sync path@rev / @label / @N</text>
+<text x="456" y="431" fill="#1b1f24">revert -a</text>
 <text x="832" y="431" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="860" y="420" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="876" y="431" fill="#1b1f24">unlock [-f]</text>
+<text x="876" y="431" fill="#1b1f24">shelve [-c name] [-d]</text>
 <text x="1252" y="431" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="20" y="440" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="36" y="451" fill="#1b1f24">unshelve -s name</text>
+<text x="36" y="451" fill="#1b1f24">submit -c N</text>
 <text x="412" y="451" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="440" y="440" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="456" y="451" fill="#1b1f24">users</text>
+<text x="456" y="451" fill="#1b1f24">switch</text>
 <text x="832" y="451" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="860" y="440" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="876" y="451" fill="#1b1f24">verify</text>
+<text x="876" y="451" fill="#1b1f24">sync -f</text>
 <text x="1252" y="451" text-anchor="end" class="r" fill="#57606a"></text>
 <rect x="20" y="460" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
-<text x="36" y="471" fill="#1b1f24">where</text>
+<text x="36" y="471" fill="#1b1f24">unlock [-f]</text>
 <text x="412" y="471" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="440" y="460" width="10" height="14" rx="2" class="MIS" fill="#8250df"/>
-<text x="456" y="471" fill="#1b1f24">obliterate / jobs / fix</text>
+<rect x="440" y="460" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
+<text x="456" y="471" fill="#1b1f24">unshelve -s name</text>
 <text x="832" y="471" text-anchor="end" class="r" fill="#57606a"></text>
-<rect x="860" y="460" width="10" height="14" rx="2" class="MIS" fill="#8250df"/>
-<text x="876" y="471" fill="#1b1f24">protect / groups / group / user / passwd</text>
+<rect x="860" y="460" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
+<text x="876" y="471" fill="#1b1f24">verify</text>
 <text x="1252" y="471" text-anchor="end" class="r" fill="#57606a"></text>
+<rect x="20" y="480" width="10" height="14" rx="2" class="MIS" fill="#8250df"/>
+<text x="36" y="491" fill="#1b1f24">obliterate / jobs / fix</text>
+<text x="412" y="491" text-anchor="end" class="r" fill="#57606a"></text>
+<rect x="440" y="480" width="10" height="14" rx="2" class="MIS" fill="#8250df"/>
+<text x="456" y="491" fill="#1b1f24">protect / groups / group / user / passwd</text>
+<text x="832" y="491" text-anchor="end" class="r" fill="#57606a"></text>
 </svg>
