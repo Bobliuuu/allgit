@@ -8,7 +8,7 @@
 //! Policy options: `--policy <file> [--allowed-signers <file>] [--revoked-signers <file>] [--max-lease-secs N] [--skew-epsilon-ms N]` (docs/deploy.md).
 //! Operations: `--config <server.toml>` (flags override it), `--log-format json|text`, `--log-level <level>`,
 //! `--shutdown-grace <secs>`, `--metrics-token <token|@file>`, `--backend-retries N`, `--backend-timeout <secs>`,
-//! `--breaker-threshold N`, `--breaker-cooldown <secs>`. SIGTERM/SIGINT drain and exit 0; SIGHUP reloads.
+//! `--breaker-threshold N`, `--breaker-cooldown <secs>`, `--cache-dir <dir> [--cache-size <bytes>]` (disk cache of immutable reads). SIGTERM/SIGINT drain and exit 0; SIGHUP reloads.
 //! Without TLS the server speaks plain HTTP (docs/server.md).
 
 use std::path::Path;
@@ -18,7 +18,7 @@ use vcs_server::log::{Format, Level, Logger, V};
 use vcs_server::{auth, backend_url, AuditLog, Config, Policy, RateLimit, Server, TokenTable};
 
 const USAGE: &str = "usage: vcs-server (--root <dir> | --backend <s3://...|dir>) --tokens <file> [--listen host:port] [--audit-log <file> [--audit-key <file>]] \
-[--rate-limit <burst>,<per-sec>] [--max-connections <n>] [--max-conns-per-ip <n>] [--auth-fail-limit <burst>,<per-sec>] [--max-body <bytes>] [--policy <file>] [--allowed-signers <file>] [--revoked-signers <file>] [--max-lease-secs N] [--skew-epsilon-ms N] [--tls-cert <pem> --tls-key <pem> [--tls-client-ca <pem>]] \
+[--rate-limit <burst>,<per-sec>] [--max-connections <n>] [--max-conns-per-ip <n>] [--auth-fail-limit <burst>,<per-sec>] [--max-body <bytes>] [--cache-dir <dir> [--cache-size <bytes>]] [--policy <file>] [--allowed-signers <file>] [--revoked-signers <file>] [--max-lease-secs N] [--skew-epsilon-ms N] [--tls-cert <pem> --tls-key <pem> [--tls-client-ca <pem>]] \
 [--config <file>] [--log-format json|text] [--log-level error|warn|info|debug] [--shutdown-grace <secs>] [--metrics-token <token|@file>] \
 [--backend-retries N] [--backend-timeout <secs>] [--breaker-threshold N] [--breaker-cooldown <secs>] [--check-client-cannot-write-manifest]\n       \
 vcs-server hash-token <token>\n       vcs-server audit verify <file> [--key <file>]";
@@ -91,6 +91,7 @@ fn main() {
     let (mut retries, mut timeout, mut brk_n, mut brk_cool) = (None, None, None, None);
     let (mut allowed_signers, mut revoked_signers) = (None, None);
     let mut check_client = false;
+    let (mut cache_dir, mut cache_size): (Option<String>, Option<String>) = (None, None);
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         let mut val = |n: &str| it.next().unwrap_or_else(|| die(&format!("{n} needs a value")));
@@ -109,6 +110,8 @@ fn main() {
             "--tls-cert" => tls_cert = Some(val("--tls-cert")),
             "--tls-key" => tls_key = Some(val("--tls-key")),
             "--tls-client-ca" => tls_client_ca = Some(val("--tls-client-ca")),
+            "--cache-dir" => cache_dir = Some(val("--cache-dir")),
+            "--cache-size" => cache_size = Some(val("--cache-size")),
             "--backend" => backend_arg = Some(val("--backend")),
             "--policy" => policy_path = Some(val("--policy")),
             "--allowed-signers" => allowed_signers = Some(val("--allowed-signers")),
@@ -156,6 +159,15 @@ fn main() {
         backend_url::check_client_cannot_write_manifest(&backend_url, &|k| std::env::var(k).ok()).unwrap_or_else(|e| die(&e));
     }
     let backend = backend_url::open(&backend_url).unwrap_or_else(|e| die(&e));
+    // Persistent cache of immutable reads (indexes, pack blocks, objects): a restarted server
+    // answers a warm clone from disk and asks the store only for the manifest and the listing.
+    let backend: std::sync::Arc<dyn vcs_remote::Backend> = match cache_dir {
+        None => backend,
+        Some(d) => {
+            let cap = cache_size.map_or(8u64 << 30, |n| n.parse().unwrap_or_else(|_| die("--cache-size expects a number of bytes")));
+            std::sync::Arc::new(vcs_remote::DiskCacheBackend::new(backend, d, cap).unwrap_or_else(|e| die(&format!("cannot use --cache-dir: {e}"))))
+        }
+    };
     let mut cfg = Config::new(table);
     #[cfg(unix)]
     let (cfg_tokens, cfg_policy) = (tokens.clone(), policy_path.clone());

@@ -7,6 +7,7 @@
 pub mod backend;
 pub mod compact;
 pub mod clientcache;
+pub mod diskcache;
 pub mod fsbackend;
 pub mod gc;
 pub mod idxcache;
@@ -27,6 +28,7 @@ pub mod timeline;
 pub use backend::{Backend, BackendError, Conditional, Versioned};
 pub use compact::{compact, CompactOptions, CompactReport};
 pub use clientcache::ClientCache;
+pub use diskcache::DiskCacheBackend;
 pub use fsbackend::FsBackend;
 pub use gc::{remote_gc, GcError, RemoteGcOptions, RemoteGcReport};
 pub use idxcache::IdxCacheBackend;
