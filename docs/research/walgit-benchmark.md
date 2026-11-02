@@ -6,6 +6,440 @@ This supersedes the earlier run (kept at the bottom as "Earlier run"), which use
 
 **Not run (stated up front):** the 100k datasets are NOT in this document (the 100k part of this matrix was stopped on request; flat 100k is being run on a quieter box with the current build by another agent). Cloud S3, TLS, authenticated modes, concurrent clients, multiple walgit instances, LFS. Only 10k files per layout, 5 reps, 5 fresh remotes for the initial push. `vcs fsck` after repack was run on the repacked copies (all passed, flagged in the maintenance tables if not).
 
+## 2026-11-02: deep 100k and binary 100k, quiet box d, current vcs build
+
+**Machine: AWS c6i.4xlarge ("box d", 16 vCPU, same instance type and kernel 7.0.0-1014-aws as box c; box d, NOT box c, was used because c was reserved for optimisation timing), all timing under `flock ~/bench.lock`.** Same methodology as the flat 100k section below: `scripts/walgit_bench/walgit_full.py` unchanged, 3 reps interleaved (3 fresh remotes for the initial push), then a 1-rep counting pass through the counting proxy; local RustFS loopback (not S3). vcs: origin/main `eec2afc` (release build, built on d). walgit: tobi/walgit `80e9a20b29e2` binary copied from box c (same commit as #379 and the Lambda run). **git 2.56.0** copied from box c (box d's own git is 2.43.0 and was not benchmarked). RustFS binary copied from box c. Raw JSON: `docs/research/data/walgit-full-boxd/`.
+
+Load1 per dataset (timing pass, from the JSON meta, start / end): deep 100000: 1.73 / 11.57; binary 100000: 1.08 / 4.89. The deep end value (11.57) is much higher than the start; I did not find out why, and load was not sampled per cell, so treat the deep timings as taken at unquantified, probably higher load than binary. `load.txt` in the data dir has the wrapper's own samples (deep start 1.81, end 1.00; binary start 1.00, end 2.99). Labels as in the flat section: `vcs default` = no settings; `vcs best-documented` = `VCS_PACK_FORMAT=v3`; `vcs fastest-config` = `VCS_PACK_FORMAT=v1`.
+
+**Honest notes.** The first two launches on d failed (missing walgit `.git` for `rev-parse`, then an orphaned walgit-server from my killed first launch held port 19201); all outputs here come from the third, clean launch. 3 reps only: read min-max, not just medians. Ratios use a 5% tie band, no significance test. Not compared with the Lambda 10k numbers or the flat 100k section cell by cell (different datasets). Cause of the deep full-clone result below was NOT investigated.
+
+### Result (deep 100k, binary 100k, box d)
+* **Speed vs walgit (80 wall/CPU cells per vcs column): vcs default loses 7, best-doc 7, fastest 5; the rest are wins or ties.** Every loss is in two places: (1) **deep 100k full clone wall**, warm and cold, plain and after maintenance: vcs 18.5 to 23.2 s against walgit 8.1 to 10.1 s and git 7.9 to 8.6 s, i.e. about 2.3x to 2.5x slower than both; CPU of those clones is level (5.2 to 6.2 s), so the extra wall time is not extra computation (cause not investigated); (2) client+server CPU of the warm full clone (deep 6.14 s default vs walgit 5.41 s; binary after maint 8.95 s vs walgit 7.05 s). Binary 100k has exactly 1 speed loss (that CPU cell).
+* **Speed vs git (`file://`):** vcs is faster in every binary wall cell (initial push 5.3 to 6.7 s vs git 18.8 s; warm full clone 6.2 to 6.3 s vs 9.7 s; after maintenance 6.0 s vs 7.2 s). In deep the only wall losses to git are the same four full-clone cells (vcs 18.5 to 23.2 s vs git 7.9 to 8.6 s). Client CPU is higher than git for binary full clones (git 7.2 s warm / 6.6 s after maintenance vs vcs 9.3 to 9.8 s / 8.9 to 9.1 s).
+* **Where vcs is far ahead (both layouts):** initial push 4x to 11x faster than walgit (binary 5.3 to 6.7 s vs 24.2 s; deep 1.1 to 1.2 s vs 12.4 s), zone clone, fetch, cold fetch (binary cold fetch of 1 commit 245 to 277 ms vs walgit 2807 ms, git 1336 ms) and no-op fetch.
+* **Requests, traffic, RSS, store size (walgit/git still win):** warm full clone needs 8 store requests for walgit against 25 to 28 (deep) and 55 to 60 (binary) for vcs-server, and walgit's warm clone moves 0 MiB because of its local cache against 54 to 74 MiB (deep) and about 399 MiB (binary); binary initial push RSS 161 MiB walgit vs 516 MiB vcs; deep client store 61.6 MiB (git/walgit) vs 90.5 MiB (vcs, 1.47x) and deep remote store after the initial push 48.6 (walgit) vs 54.6 / 55.0 / 73.7 MiB (vcs). walgit's own store triples after its forced maintenance (binary 397 to 1193 MiB, deep 48.6 to 147.5 MiB); vcs stays flat. Full lists: the three "Cells where walgit still beats vcs" lists below (speed 22/16/20 cells incl. store requests; memory and traffic 24/24/25; space 2/2/2 for default/best-doc/fastest).
+
+### Full output of `report_full.py` for this run
+
+
+### binary 100000 files (390.6 MiB, g0 = 10000 files), reps 3, init reps 3, load1 start 1.08, end 4.89
+
+Wall ms, median (min-max). CPU = client + front-server + RustFS CPU seconds (sum of medians). srv RSS = peak VmHWM of walgit-server / vcs-server in MiB.
+
+| op | git (local bare) | walgit | vcs default | vcs best-documented (pack v3) | vcs fastest-config (pack v1, raw) |
+|---|---|---|---|---|---|
+| initial push | 18833 (16928-35538); cpu 56.92s | 24203 (23043-26755); cpu 60.06s; rss 161 | 5969 (5666-7060); cpu 6.02s; rss 516 | 5264 (5229-8516); cpu 4.73s; rss 516 | 6702 (5261-12371); cpu 3.74s; rss 516 |
+| 1-file push | 53 (47-74); cpu 0.05s | 83 (81-255); cpu 0.08s; rss 495 | 40 (32-207); cpu 0.03s; rss 17 | 35 (30-236); cpu 0.02s; rss 5 | 48 (37-170); cpu 0.02s; rss 17 |
+| full clone, warm | 9695 (7205-12283); cpu 7.21s | 15049 (7186-15219); cpu 11.19s; rss 468 | 6325 (4790-9548); cpu 9.83s; rss 351 | 6210 (4564-9171); cpu 9.60s; rss 363 | 6044 (3902-7221); cpu 9.29s; rss 349 |
+| full clone, cold | 10350 (9956-10412); cpu 7.23s | 9798 (9794-9877); cpu 8.50s; rss 551 | 7206 (6229-7231); cpu 8.58s; rss 356 | 6890 (6877-7021); cpu 8.71s; rss 342 | 6892 (6734-6948); cpu 8.56s; rss 345 |
+| partial/zone clone, warm | 1002 (997-1990); cpu 1.16s | 1017 (1015-3270); cpu 2.59s; rss 496 | 529 (374-2743); cpu 1.05s; rss 211 | 421 (419-630); cpu 1.00s; rss 274 | 390 (374-494); cpu 0.94s; rss 256 |
+| partial/zone clone, cold | 2161 (2112-3863); cpu 1.20s | 5446 (3744-6097); cpu 3.11s; rss 548 | 925 (531-1149); cpu 1.07s; rss 95 | 675 (619-1360); cpu 1.13s; rss 146 | 546 (527-1229); cpu 1.07s; rss 97 |
+| fetch 1 commit, warm | 51 (50-1020); cpu 0.05s | 56 (56-2327); cpu 0.05s; rss 604 | 38 (29-100); cpu 0.02s; rss 101 | 45 (34-76); cpu 0.03s; rss 68 | 42 (32-100); cpu 0.02s; rss 96 |
+| fetch 1 commit, cold | 1336 (1333-1554); cpu 0.11s | 2807 (2803-3540); cpu 1.34s; rss 595 | 272 (190-382); cpu 0.04s; rss 4 | 245 (167-356); cpu 0.03s; rss 4 | 277 (183-319); cpu 0.04s; rss 4 |
+| no-op fetch, warm | 15 (14-63); cpu 0.01s | 19 (18-21); cpu 0.04s; rss 69 | 5 (5-74); cpu 0.00s; rss 4 | 5 (5-15); cpu 0.00s; rss 4 | 4 (4-17); cpu 0.00s; rss 4 |
+| no-op fetch, cold | 127 (126-6293); cpu 0.02s | 1197 (1065-1213); cpu 0.56s; rss 424 | 83 (82-86); cpu 0.01s; rss 4 | 82 (80-84); cpu 0.01s; rss 4 | 86 (83-88); cpu 0.01s; rss 4 |
+| after maint: full clone, warm | 7195 (7140-7723); cpu 6.56s | 7163 (7118-8276); cpu 7.05s; rss 175 | 6054 (3776-6464); cpu 8.95s; rss 376 | 6100 (3843-7066); cpu 9.14s; rss 362 | 6032 (3838-6991); cpu 9.07s; rss 364 |
+| after maint: full clone, cold | 8209 (7380-8211); cpu 6.62s | 9945 (9938-9986); cpu 8.49s; rss 571 | 7232 (6406-7384); cpu 8.58s; rss 347 | 6735 (6719-6881); cpu 8.78s; rss 358 | 6972 (6930-6987); cpu 8.54s; rss 348 |
+| after maint: partial/zone clone, warm | 1086 (962-1946); cpu 1.06s | 1203 (1055-4995); cpu 1.19s; rss 555 | 435 (396-711); cpu 0.90s; rss 244 | 436 (428-726); cpu 0.97s; rss 323 | 479 (410-681); cpu 0.91s; rss 239 |
+| after maint: partial/zone clone, cold | 2110 (1993-2190); cpu 1.11s | 3714 (3702-3866); cpu 2.47s; rss 576 | 865 (531-871); cpu 1.01s; rss 94 | 633 (605-726); cpu 1.16s; rss 148 | 583 (555-617); cpu 1.03s; rss 96 |
+| after maint: fetch 1 commit, warm | 51 (50-963); cpu 0.05s | 56 (55-124); cpu 0.05s; rss 208 | 47 (32-86); cpu 0.02s; rss 98 | 40 (28-101); cpu 0.02s; rss 76 | 49 (40-80); cpu 0.03s; rss 99 |
+| after maint: fetch 1 commit, cold | 1033 (976-1328); cpu 0.11s | 2815 (2813-2828); cpu 1.33s; rss 592 | 168 (167-244); cpu 0.03s; rss 4 | 186 (181-272); cpu 0.03s; rss 4 | 165 (163-242); cpu 0.04s; rss 4 |
+| after maint: no-op fetch, warm | 14 (14-71); cpu 0.01s | 19 (18-22); cpu 0.04s; rss 73 | 5 (5-77); cpu 0.00s; rss 4 | 5 (5-19); cpu 0.00s; rss 4 | 5 (4-18); cpu 0.00s; rss 4 |
+| after maint: no-op fetch, cold | 141 (133-6271); cpu 0.02s | 1194 (1171-1322); cpu 0.55s; rss 438 | 86 (86-90); cpu 0.01s; rss 4 | 86 (85-88); cpu 0.01s; rss 4 | 86 (80-105); cpu 0.01s; rss 4 |
+
+Sizes (MiB; du = allocated blocks, app = apparent bytes). Side effect only: speed is the primary goal.
+
+| size | git (local bare) | walgit | vcs default | vcs best-documented (pack v3) | vcs fastest-config (pack v1, raw) |
+|---|---|---|---|---|---|
+| remote store after initial push (du / app) | 397.7 / 397.6 | 397.3 / 397.2 | 399.5 / 399.4 | 402.0 / 402.0 | 400.5 / 400.4 |
+| remote store after maintenance (du / app) | 398.2 / 398.1 | 1192.7 / 1192.3 | 399.7 / 399.5 | 402.2 / 402.1 | 400.7 / 400.5 |
+| full clone: client store (.git / .vcs) | 406.2 | 406.1 | 411.7 | 411.7 | 411.7 |
+| partial clone: files / client store | 10000 / 51.3 | 10000 / 51.3 | 10000 / 45.1 | 10000 / 45.1 | 10000 / 45.1 |
+
+Maintenance (time ms / total CPU s / result size MiB):
+
+| arm | remote maintenance | client maintenance variants |
+|---|---|---|
+| git (local bare) | gc_default: 7239 ms / 2.3 s; gc_aggressive: 132510 ms / 1010.6 s -> 398.0; before: 398.1, after: 398.2 | before 406.5; gc: 4218 ms / 406.2; gc_aggressive: 67826 ms / 406.1 |
+| walgit | ops_compact_force_base: 82351 ms / 1020.0 s; after maintainer settle: 795.2; before: 795.2, after: 1192.7 | before 406.3; gc: 4139 ms / 406.1; gc_aggressive: 67788 ms / 406.1 |
+| vcs default | compact: 385 ms / 0.2 s; before: 399.8, after: 399.7 | before 411.9; repack_default: 31 ms / 411.8; repack_v2: 28 ms / 411.8; repack_v3: 3380 ms / 413.4; repack_v4: 6013 ms / 410.4 |
+| vcs best-documented (pack v3) | compact: 367 ms / 0.1 s; before: 402.3, after: 402.2 | before 411.9; repack_v3: 3399 ms / 413.4; repack_v4: 6043 ms / 410.4 |
+| vcs fastest-config (pack v1, raw) | compact: 769 ms / 0.2 s; before: 400.8, after: 400.7 | before 411.9; repack_v1: 3221 ms / 411.7 |
+
+Object-store requests / payload bytes (counting proxy, 1 run per op; GET+PUT+other, MiB up/down):
+
+| op | walgit | vcs default | vcs best-documented (pack v3) | vcs fastest-config (pack v1, raw) |
+|---|---|---|---|---|
+| initial push | 20 (12/7/1) 397.7 / 0.0 | 9 (2/7/0) 399.4 / 0.0 | 9 (2/7/0) 402.0 / 0.0 | 9 (2/7/0) 400.4 / 0.0 |
+| 1-file push | 7 (3/4/0) 0.0 / 0.0 | 10 (4/5/1) 0.0 / 0.0 | 11 (5/5/1) 0.0 / 4.3 | 10 (4/5/1) 0.0 / 0.0 |
+| full clone, warm | 8 (7/0/1) 0.0 / 0.0 | 56 (56/0/0) 0.0 / 399.4 | 55 (55/0/0) 0.0 / 397.8 | 60 (59/0/1) 0.0 / 400.4 |
+| full clone, cold | 48 (45/0/3) 0.0 / 794.7 | 61 (61/0/0) 0.0 / 399.4 | 59 (59/0/0) 0.0 / 402.0 | 61 (61/0/0) 0.0 / 400.4 |
+| partial/zone clone, warm | 7 (7/0/0) 0.0 / 0.0 | 25 (25/0/0) 0.0 / 47.1 | 13 (13/0/0) 0.0 / 52.0 | 25 (25/0/0) 0.0 / 48.1 |
+| partial/zone clone, cold | 51 (48/0/3) 0.0 / 794.7 | 25 (25/0/0) 0.0 / 47.1 | 13 (13/0/0) 0.0 / 52.0 | 25 (25/0/0) 0.0 / 48.1 |
+| fetch 1 commit, warm | 4 (4/0/0) 0.0 / 0.0 | 2 (2/0/0) 0.0 / 0.0 | 2 (2/0/0) 0.0 / 0.0 | 2 (2/0/0) 0.0 / 0.0 |
+| fetch 1 commit, cold | 54 (51/0/3) 0.0 / 794.7 | 5 (5/0/0) 0.0 / 0.0 | 4 (4/0/0) 0.0 / 0.0 | 5 (5/0/0) 0.0 / 0.0 |
+| no-op fetch, warm | 2 (2/0/0) 0.0 / 0.0 | 1 (1/0/0) 0.0 / 0.0 | 1 (1/0/0) 0.0 / 0.0 | 1 (1/0/0) 0.0 / 0.0 |
+| no-op fetch, cold | 28 (25/0/3) 0.0 / 26.7 | 1 (1/0/0) 0.0 / 0.0 | 1 (1/0/0) 0.0 / 0.0 | 1 (1/0/0) 0.0 / 0.0 |
+| after maint: full clone, warm | 8 (7/0/1) 0.0 / 0.0 | 60 (60/0/0) 0.0 / 399.5 | 63 (62/0/1) 0.0 / 402.0 | 67 (62/4/1) 0.0 / 400.4 |
+| after maint: full clone, cold | 57 (52/0/5) 0.0 / 794.9 | 60 (60/0/0) 0.0 / 399.5 | 59 (59/0/0) 0.0 / 402.0 | 61 (61/0/0) 0.0 / 400.4 |
+| after maint: partial/zone clone, warm | 7 (7/0/0) 0.0 / 0.0 | 25 (25/0/0) 0.0 / 47.1 | 13 (13/0/0) 0.0 / 52.0 | 25 (25/0/0) 0.0 / 48.1 |
+| after maint: partial/zone clone, cold | 60 (55/0/5) 0.0 / 794.9 | 25 (25/0/0) 0.0 / 47.1 | 13 (13/0/0) 0.0 / 52.0 | 25 (25/0/0) 0.0 / 48.1 |
+| after maint: fetch 1 commit, warm | 4 (4/0/0) 0.0 / 0.0 | 2 (2/0/0) 0.0 / 0.0 | 2 (2/0/0) 0.0 / 0.0 | 2 (2/0/0) 0.0 / 0.0 |
+| after maint: fetch 1 commit, cold | 63 (58/0/5) 0.0 / 794.9 | 5 (5/0/0) 0.0 / 0.0 | 4 (4/0/0) 0.0 / 0.0 | 5 (5/0/0) 0.0 / 0.0 |
+| after maint: no-op fetch, warm | 2 (2/0/0) 0.0 / 0.0 | 1 (1/0/0) 0.0 / 0.0 | 1 (1/0/0) 0.0 / 0.0 | 1 (1/0/0) 0.0 / 0.0 |
+| after maint: no-op fetch, cold | 37 (32/0/5) 0.0 / 26.9 | 1 (1/0/0) 0.0 / 0.0 | 1 (1/0/0) 0.0 / 0.0 | 1 (1/0/0) 0.0 / 0.0 |
+
+walgit idle (maintainer loop, one repo, 65 s): 25 store requests; vcs-server idle: 0 by construction (stateless; not separately counted).
+
+### deep 100000 files (57.2 MiB, g0 = 10005 files), reps 3, init reps 3, load1 start 1.73, end 11.57
+
+Wall ms, median (min-max). CPU = client + front-server + RustFS CPU seconds (sum of medians). srv RSS = peak VmHWM of walgit-server / vcs-server in MiB.
+
+| op | git (local bare) | walgit | vcs default | vcs best-documented (pack v3) | vcs fastest-config (pack v1, raw) |
+|---|---|---|---|---|---|
+| initial push | 10925 (10911-11406); cpu 14.35s | 12398 (11439-12819); cpu 14.85s; rss 178 | 1169 (1144-1932); cpu 2.77s; rss 68 | 1062 (1053-1080); cpu 1.34s; rss 69 | 1180 (1175-1181); cpu 1.21s; rss 133 |
+| 1-file push | 223 (222-227); cpu 0.22s | 179 (178-207); cpu 0.16s; rss 155 | 38 (34-55); cpu 0.02s; rss 28 | 37 (29-53); cpu 0.02s; rss 29 | 27 (27-56); cpu 0.02s; rss 13 |
+| full clone, warm | 8146 (7088-8762); cpu 6.16s | 9123 (9008-10953); cpu 5.41s; rss 111 | 22960 (21633-23661); cpu 6.14s; rss 127 | 22514 (20831-22926); cpu 6.22s; rss 164 | 22293 (19765-22912); cpu 5.37s; rss 151 |
+| full clone, cold | 7983 (7613-8179); cpu 6.13s | 8071 (7722-8193); cpu 6.03s; rss 165 | 19750 (18807-20361); cpu 5.95s; rss 105 | 19166 (18627-21091); cpu 5.74s; rss 150 | 18527 (18030-18735); cpu 5.48s; rss 140 |
+| partial/zone clone, warm | 1723 (1718-2566); cpu 2.13s | 1577 (1577-1577); cpu 1.78s; rss 142 | 487 (480-657); cpu 0.71s; rss 138 | 607 (582-633); cpu 0.75s; rss 109 | 484 (474-535); cpu 0.68s; rss 160 |
+| partial/zone clone, cold | 2082 (2081-2094); cpu 2.18s | 2500 (2496-2502); cpu 2.47s; rss 159 | 680 (678-686); cpu 0.82s; rss 37 | 837 (832-841); cpu 0.85s; rss 44 | 692 (683-694); cpu 0.77s; rss 39 |
+| fetch 1 commit, warm | 144 (141-303); cpu 0.14s | 147 (146-304); cpu 0.14s; rss 181 | 48 (46-81); cpu 0.03s; rss 52 | 53 (48-98); cpu 0.03s; rss 49 | 56 (51-85); cpu 0.03s; rss 54 |
+| fetch 1 commit, cold | 458 (439-544); cpu 0.17s | 1152 (1145-1158); cpu 0.92s; rss 169 | 153 (149-169); cpu 0.04s; rss 4 | 229 (188-255); cpu 0.05s; rss 4 | 247 (246-252); cpu 0.05s; rss 5 |
+| no-op fetch, warm | 28 (27-85); cpu 0.03s | 34 (32-35); cpu 0.03s; rss 70 | 5 (5-80); cpu 0.00s; rss 5 | 5 (5-23); cpu 0.00s; rss 5 | 5 (4-21); cpu 0.00s; rss 5 |
+| no-op fetch, cold | 226 (154-226); cpu 0.04s | 371 (365-417); cpu 0.17s; rss 150 | 123 (88-129); cpu 0.01s; rss 4 | 131 (90-137); cpu 0.01s; rss 4 | 130 (128-133); cpu 0.01s; rss 4 |
+| after maint: full clone, warm | 8645 (8209-9313); cpu 5.32s | 10135 (9608-10998); cpu 5.37s; rss 163 | 23027 (21929-23344); cpu 6.03s; rss 127 | 23071 (22337-23231); cpu 5.66s; rss 165 | 23240 (21932-24050); cpu 5.16s; rss 147 |
+| after maint: full clone, cold | 7859 (7847-8525); cpu 5.29s | 8928 (8360-9484); cpu 6.10s; rss 172 | 21020 (20203-22553); cpu 5.89s; rss 105 | 21648 (21426-21886); cpu 5.83s; rss 150 | 21791 (21223-22230); cpu 5.59s; rss 140 |
+| after maint: partial/zone clone, warm | 1575 (1559-2667); cpu 1.71s | 1642 (1594-1644); cpu 1.80s; rss 155 | 612 (494-641); cpu 0.72s; rss 136 | 605 (599-623); cpu 0.75s; rss 124 | 493 (467-543); cpu 0.67s; rss 162 |
+| after maint: partial/zone clone, cold | 1921 (1911-1927); cpu 1.74s | 2584 (2559-2633); cpu 2.55s; rss 163 | 691 (687-693); cpu 0.81s; rss 37 | 847 (822-853); cpu 0.83s; rss 43 | 697 (687-819); cpu 0.76s; rss 39 |
+| after maint: fetch 1 commit, warm | 138 (137-297); cpu 0.14s | 153 (152-267); cpu 0.15s; rss 161 | 51 (48-99); cpu 0.03s; rss 52 | 47 (44-76); cpu 0.03s; rss 44 | 52 (50-81); cpu 0.03s; rss 39 |
+| after maint: fetch 1 commit, cold | 420 (410-437); cpu 0.16s | 1133 (1113-1135); cpu 0.91s; rss 178 | 171 (156-175); cpu 0.05s; rss 4 | 229 (180-241); cpu 0.03s; rss 4 | 242 (240-254); cpu 0.04s; rss 4 |
+| after maint: no-op fetch, warm | 28 (28-98); cpu 0.03s | 34 (34-35); cpu 0.04s; rss 71 | 5 (5-82); cpu 0.00s; rss 4 | 5 (5-19); cpu 0.00s; rss 4 | 5 (5-21); cpu 0.00s; rss 4 |
+| after maint: no-op fetch, cold | 228 (128-229); cpu 0.04s | 371 (370-408); cpu 0.19s; rss 156 | 129 (91-133); cpu 0.01s; rss 4 | 129 (104-133); cpu 0.01s; rss 4 | 132 (132-136); cpu 0.01s; rss 4 |
+
+Sizes (MiB; du = allocated blocks, app = apparent bytes). Side effect only: speed is the primary goal.
+
+| size | git (local bare) | walgit | vcs default | vcs best-documented (pack v3) | vcs fastest-config (pack v1, raw) |
+|---|---|---|---|---|---|
+| remote store after initial push (du / app) | 49.3 / 49.3 | 48.6 / 48.5 | 54.6 / 54.5 | 55.0 / 55.0 | 73.7 / 73.6 |
+| remote store after maintenance (du / app) | 50.2 / 50.0 | 147.5 / 147.1 | 54.7 / 54.5 | 55.1 / 55.0 | 73.8 / 73.6 |
+| full clone: client store (.git / .vcs) | 61.6 | 61.6 | 90.5 | 90.5 | 90.5 |
+| partial clone: files / client store | 10005 / 26.4 | 10005 / 26.4 | 10005 / 16.2 | 10005 / 16.2 | 10005 / 16.2 |
+
+Maintenance (time ms / total CPU s / result size MiB):
+
+| arm | remote maintenance | client maintenance variants |
+|---|---|---|
+| git (local bare) | gc_default: 1258 ms / 1.5 s; gc_aggressive: 6632 ms / 86.5 s -> 50.1; before: 50.1, after: 50.2 | before 62.1; gc: 1412 ms / 61.6; gc_aggressive: 6885 ms / 61.6 |
+| walgit | ops_compact_force_base: 11722 ms / 93.8 s; after maintainer settle: 98.2; before: 98.2, after: 147.5 | before 62.1; gc: 1267 ms / 61.6; gc_aggressive: 6682 ms / 61.6 |
+| vcs default | compact: 374 ms / 0.2 s; before: 54.8, after: 54.7 | before 91.0; repack_default: 876 ms / 90.7; repack_v2: 324 ms / 90.7; repack_v3: 732 ms / 72.0; repack_v4: 1447 ms / 71.5 |
+| vcs best-documented (pack v3) | compact: 431 ms / 0.2 s; before: 55.2, after: 55.1 | before 91.0; repack_v3: 647 ms / 71.9; repack_v4: 1667 ms / 71.5 |
+| vcs fastest-config (pack v1, raw) | compact: 795 ms / 0.2 s; before: 73.9, after: 73.8 | before 91.0; repack_v1: 657 ms / 90.6 |
+
+Object-store requests / payload bytes (counting proxy, 1 run per op; GET+PUT+other, MiB up/down):
+
+| op | walgit | vcs default | vcs best-documented (pack v3) | vcs fastest-config (pack v1, raw) |
+|---|---|---|---|---|
+| initial push | 11 (6/5/0) 48.6 / 0.0 | 11 (4/7/0) 54.5 / 0.0 | 9 (2/7/0) 54.9 / 0.0 | 9 (2/7/0) 73.6 / 0.0 |
+| 1-file push | 7 (3/4/0) 0.0 / 0.0 | 10 (4/5/1) 0.0 / 0.0 | 10 (4/5/1) 0.0 / 0.0 | 10 (4/5/1) 0.0 / 0.0 |
+| full clone, warm | 8 (7/0/1) 0.0 / 0.0 | 25 (25/0/0) 0.0 / 54.5 | 26 (17/6/3) 0.0 / 58.9 | 28 (27/0/1) 0.0 / 73.6 |
+| full clone, cold | 20 (18/0/2) 0.0 / 49.2 | 30 (30/0/0) 0.0 / 54.5 | 15 (15/0/0) 0.0 / 58.9 | 29 (29/0/0) 0.0 / 73.6 |
+| partial/zone clone, warm | 7 (7/0/0) 0.0 / 0.0 | 19 (19/0/0) 0.0 / 3.9 | 3 (3/0/0) 0.0 / 0.0 | 20 (20/0/0) 0.0 / 5.8 |
+| partial/zone clone, cold | 23 (21/0/2) 0.0 / 49.2 | 25 (25/0/0) 0.0 / 19.8 | 9 (9/0/0) 0.0 / 27.2 | 25 (25/0/0) 0.0 / 21.6 |
+| fetch 1 commit, warm | 4 (4/0/0) 0.0 / 0.0 | 2 (2/0/0) 0.0 / 0.0 | 2 (2/0/0) 0.0 / 0.0 | 2 (2/0/0) 0.0 / 0.0 |
+| fetch 1 commit, cold | 26 (24/0/2) 0.0 / 49.2 | 5 (5/0/0) 0.0 / 0.0 | 4 (4/0/0) 0.0 / 0.0 | 5 (5/0/0) 0.0 / 0.0 |
+| no-op fetch, warm | 2 (2/0/0) 0.0 / 0.0 | 1 (1/0/0) 0.0 / 0.0 | 1 (1/0/0) 0.0 / 0.0 | 1 (1/0/0) 0.0 / 0.0 |
+| no-op fetch, cold | 23 (21/0/2) 0.0 / 17.2 | 1 (1/0/0) 0.0 / 0.0 | 1 (1/0/0) 0.0 / 0.0 | 1 (1/0/0) 0.0 / 0.0 |
+| after maint: full clone, warm | 8 (7/0/1) 0.0 / 0.0 | 32 (31/1/0) 0.0 / 54.5 | 19 (18/0/1) 0.0 / 59.0 | 33 (32/0/1) 0.0 / 73.6 |
+| after maint: full clone, cold | 27 (24/0/3) 0.0 / 49.2 | 29 (29/0/0) 0.0 / 54.5 | 15 (15/0/0) 0.0 / 59.0 | 29 (29/0/0) 0.0 / 73.6 |
+| after maint: partial/zone clone, warm | 7 (7/0/0) 0.0 / 0.0 | 19 (19/0/0) 0.0 / 3.9 | 3 (3/0/0) 0.0 / 0.0 | 20 (20/0/0) 0.0 / 5.8 |
+| after maint: partial/zone clone, cold | 30 (27/0/3) 0.0 / 49.2 | 25 (25/0/0) 0.0 / 19.8 | 9 (9/0/0) 0.0 / 27.2 | 25 (25/0/0) 0.0 / 21.6 |
+| after maint: fetch 1 commit, warm | 4 (4/0/0) 0.0 / 0.0 | 2 (2/0/0) 0.0 / 0.0 | 2 (2/0/0) 0.0 / 0.0 | 2 (2/0/0) 0.0 / 0.0 |
+| after maint: fetch 1 commit, cold | 33 (30/0/3) 0.0 / 49.2 | 5 (5/0/0) 0.0 / 0.0 | 4 (4/0/0) 0.0 / 0.0 | 5 (5/0/0) 0.0 / 0.0 |
+| after maint: no-op fetch, warm | 2 (2/0/0) 0.0 / 0.0 | 1 (1/0/0) 0.0 / 0.0 | 1 (1/0/0) 0.0 / 0.0 | 1 (1/0/0) 0.0 / 0.0 |
+| after maint: no-op fetch, cold | 30 (27/0/3) 0.0 / 17.2 | 1 (1/0/0) 0.0 / 0.0 | 1 (1/0/0) 0.0 / 0.0 | 1 (1/0/0) 0.0 / 0.0 |
+
+walgit idle (maintainer loop, one repo, 65 s): 8 store requests; vcs-server idle: 0 by construction (stateless; not separately counted).
+
+### Scoreboard 1: speed (wall, CPU, store requests)
+
+Lower is better. Ratio = vcs / walgit (below 1.00x: vcs better). `win` = vcs lower by more than 5%, `tie` = within 5%, `LOSS` = walgit lower by more than 5%. Medians only.
+
+| dataset | metric | walgit | vcs default | ratio | result | vcs best-doc | ratio | result | vcs fastest | ratio | result |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| binary 100000 | initial push wall ms | 24203 | 5969 | 0.25x | win | 5264 | 0.22x | win | 6702 | 0.28x | win |
+| binary 100000 | initial push total CPU s | 60.06 | 6.02 | 0.10x | win | 4.73 | 0.08x | win | 3.74 | 0.06x | win |
+| binary 100000 | 1-file push wall ms | 83.24 | 40.06 | 0.48x | win | 34.84 | 0.42x | win | 47.89 | 0.58x | win |
+| binary 100000 | 1-file push total CPU s | 0.08 | 0.03 | 0.42x | win | 0.02 | 0.30x | win | 0.02 | 0.29x | win |
+| binary 100000 | full clone, warm wall ms | 15049 | 6325 | 0.42x | win | 6210 | 0.41x | win | 6044 | 0.40x | win |
+| binary 100000 | full clone, warm total CPU s | 11.19 | 9.83 | 0.88x | win | 9.60 | 0.86x | win | 9.29 | 0.83x | win |
+| binary 100000 | full clone, cold wall ms | 9798 | 7206 | 0.74x | win | 6890 | 0.70x | win | 6892 | 0.70x | win |
+| binary 100000 | full clone, cold total CPU s | 8.50 | 8.58 | 1.01x | tie | 8.71 | 1.03x | tie | 8.56 | 1.01x | tie |
+| binary 100000 | partial/zone clone, warm wall ms | 1017 | 529 | 0.52x | win | 421 | 0.41x | win | 390 | 0.38x | win |
+| binary 100000 | partial/zone clone, warm total CPU s | 2.59 | 1.05 | 0.40x | win | 1.00 | 0.39x | win | 0.94 | 0.36x | win |
+| binary 100000 | partial/zone clone, cold wall ms | 5446 | 925 | 0.17x | win | 675 | 0.12x | win | 546 | 0.10x | win |
+| binary 100000 | partial/zone clone, cold total CPU s | 3.11 | 1.07 | 0.34x | win | 1.13 | 0.36x | win | 1.07 | 0.34x | win |
+| binary 100000 | fetch 1 commit, warm wall ms | 56.46 | 37.82 | 0.67x | win | 45.49 | 0.81x | win | 42.09 | 0.75x | win |
+| binary 100000 | fetch 1 commit, warm total CPU s | 0.05 | 0.02 | 0.38x | win | 0.03 | 0.56x | win | 0.02 | 0.46x | win |
+| binary 100000 | fetch 1 commit, cold wall ms | 2807 | 272 | 0.10x | win | 245 | 0.09x | win | 277 | 0.10x | win |
+| binary 100000 | fetch 1 commit, cold total CPU s | 1.34 | 0.04 | 0.03x | win | 0.03 | 0.02x | win | 0.04 | 0.03x | win |
+| binary 100000 | no-op fetch, warm wall ms | 19.46 | 4.91 | 0.25x | win | 4.77 | 0.24x | win | 4.44 | 0.23x | win |
+| binary 100000 | no-op fetch, warm total CPU s | 0.04 | 0.00 | 0.08x | win | 0.00 | 0.08x | win | 0.00 | 0.08x | win |
+| binary 100000 | no-op fetch, cold wall ms | 1197 | 82.99 | 0.07x | win | 82.37 | 0.07x | win | 86.42 | 0.07x | win |
+| binary 100000 | no-op fetch, cold total CPU s | 0.56 | 0.01 | 0.01x | win | 0.01 | 0.01x | win | 0.01 | 0.01x | win |
+| binary 100000 | after maint: full clone, warm wall ms | 7163 | 6054 | 0.85x | win | 6100 | 0.85x | win | 6032 | 0.84x | win |
+| binary 100000 | after maint: full clone, warm total CPU s | 7.05 | 8.95 | 1.27x | LOSS | 9.14 | 1.30x | LOSS | 9.07 | 1.29x | LOSS |
+| binary 100000 | after maint: full clone, cold wall ms | 9945 | 7232 | 0.73x | win | 6735 | 0.68x | win | 6972 | 0.70x | win |
+| binary 100000 | after maint: full clone, cold total CPU s | 8.49 | 8.58 | 1.01x | tie | 8.78 | 1.03x | tie | 8.54 | 1.01x | tie |
+| binary 100000 | after maint: partial/zone clone, warm wall ms | 1203 | 435 | 0.36x | win | 436 | 0.36x | win | 479 | 0.40x | win |
+| binary 100000 | after maint: partial/zone clone, warm total CPU s | 1.19 | 0.90 | 0.76x | win | 0.97 | 0.81x | win | 0.91 | 0.76x | win |
+| binary 100000 | after maint: partial/zone clone, cold wall ms | 3714 | 865 | 0.23x | win | 633 | 0.17x | win | 583 | 0.16x | win |
+| binary 100000 | after maint: partial/zone clone, cold total CPU s | 2.47 | 1.01 | 0.41x | win | 1.16 | 0.47x | win | 1.03 | 0.42x | win |
+| binary 100000 | after maint: fetch 1 commit, warm wall ms | 55.73 | 47.28 | 0.85x | win | 39.83 | 0.71x | win | 49.24 | 0.88x | win |
+| binary 100000 | after maint: fetch 1 commit, warm total CPU s | 0.05 | 0.02 | 0.36x | win | 0.02 | 0.36x | win | 0.03 | 0.64x | win |
+| binary 100000 | after maint: fetch 1 commit, cold wall ms | 2815 | 168 | 0.06x | win | 186 | 0.07x | win | 165 | 0.06x | win |
+| binary 100000 | after maint: fetch 1 commit, cold total CPU s | 1.33 | 0.03 | 0.03x | win | 0.03 | 0.03x | win | 0.04 | 0.03x | win |
+| binary 100000 | after maint: no-op fetch, warm wall ms | 19.44 | 5.13 | 0.26x | win | 5.07 | 0.26x | win | 5.15 | 0.26x | win |
+| binary 100000 | after maint: no-op fetch, warm total CPU s | 0.04 | 0.00 | 0.08x | win | 0.00 | 0.08x | win | 0.00 | 0.08x | win |
+| binary 100000 | after maint: no-op fetch, cold wall ms | 1194 | 86.11 | 0.07x | win | 85.67 | 0.07x | win | 86.39 | 0.07x | win |
+| binary 100000 | after maint: no-op fetch, cold total CPU s | 0.55 | 0.01 | 0.01x | win | 0.01 | 0.01x | win | 0.01 | 0.01x | win |
+| binary 100000 | initial push store requests | 20.00 | 9.00 | 0.45x | win | 9.00 | 0.45x | win | 9.00 | 0.45x | win |
+| binary 100000 | 1-file push store requests | 7.00 | 10.00 | 1.43x | LOSS | 11.00 | 1.57x | LOSS | 10.00 | 1.43x | LOSS |
+| binary 100000 | full clone, warm store requests | 8.00 | 56.00 | 7.00x | LOSS | 55.00 | 6.88x | LOSS | 60.00 | 7.50x | LOSS |
+| binary 100000 | full clone, cold store requests | 48.00 | 61.00 | 1.27x | LOSS | 59.00 | 1.23x | LOSS | 61.00 | 1.27x | LOSS |
+| binary 100000 | partial/zone clone, warm store requests | 7.00 | 25.00 | 3.57x | LOSS | 13.00 | 1.86x | LOSS | 25.00 | 3.57x | LOSS |
+| binary 100000 | partial/zone clone, cold store requests | 51.00 | 25.00 | 0.49x | win | 13.00 | 0.25x | win | 25.00 | 0.49x | win |
+| binary 100000 | fetch 1 commit, warm store requests | 4.00 | 2.00 | 0.50x | win | 2.00 | 0.50x | win | 2.00 | 0.50x | win |
+| binary 100000 | fetch 1 commit, cold store requests | 54.00 | 5.00 | 0.09x | win | 4.00 | 0.07x | win | 5.00 | 0.09x | win |
+| binary 100000 | no-op fetch, warm store requests | 2.00 | 1.00 | 0.50x | win | 1.00 | 0.50x | win | 1.00 | 0.50x | win |
+| binary 100000 | no-op fetch, cold store requests | 28.00 | 1.00 | 0.04x | win | 1.00 | 0.04x | win | 1.00 | 0.04x | win |
+| binary 100000 | after maint: full clone, warm store requests | 8.00 | 60.00 | 7.50x | LOSS | 63.00 | 7.88x | LOSS | 67.00 | 8.38x | LOSS |
+| binary 100000 | after maint: full clone, cold store requests | 57.00 | 60.00 | 1.05x | LOSS | 59.00 | 1.04x | tie | 61.00 | 1.07x | LOSS |
+| binary 100000 | after maint: partial/zone clone, warm store requests | 7.00 | 25.00 | 3.57x | LOSS | 13.00 | 1.86x | LOSS | 25.00 | 3.57x | LOSS |
+| binary 100000 | after maint: partial/zone clone, cold store requests | 60.00 | 25.00 | 0.42x | win | 13.00 | 0.22x | win | 25.00 | 0.42x | win |
+| binary 100000 | after maint: fetch 1 commit, warm store requests | 4.00 | 2.00 | 0.50x | win | 2.00 | 0.50x | win | 2.00 | 0.50x | win |
+| binary 100000 | after maint: fetch 1 commit, cold store requests | 63.00 | 5.00 | 0.08x | win | 4.00 | 0.06x | win | 5.00 | 0.08x | win |
+| binary 100000 | after maint: no-op fetch, warm store requests | 2.00 | 1.00 | 0.50x | win | 1.00 | 0.50x | win | 1.00 | 0.50x | win |
+| binary 100000 | after maint: no-op fetch, cold store requests | 37.00 | 1.00 | 0.03x | win | 1.00 | 0.03x | win | 1.00 | 0.03x | win |
+| deep 100000 | initial push wall ms | 12398 | 1169 | 0.09x | win | 1062 | 0.09x | win | 1180 | 0.10x | win |
+| deep 100000 | initial push total CPU s | 14.85 | 2.77 | 0.19x | win | 1.34 | 0.09x | win | 1.21 | 0.08x | win |
+| deep 100000 | 1-file push wall ms | 179 | 38.27 | 0.21x | win | 37.01 | 0.21x | win | 26.98 | 0.15x | win |
+| deep 100000 | 1-file push total CPU s | 0.16 | 0.02 | 0.15x | win | 0.02 | 0.15x | win | 0.02 | 0.15x | win |
+| deep 100000 | full clone, warm wall ms | 9123 | 22960 | 2.52x | LOSS | 22514 | 2.47x | LOSS | 22293 | 2.44x | LOSS |
+| deep 100000 | full clone, warm total CPU s | 5.41 | 6.14 | 1.14x | LOSS | 6.22 | 1.15x | LOSS | 5.37 | 0.99x | tie |
+| deep 100000 | full clone, cold wall ms | 8071 | 19750 | 2.45x | LOSS | 19166 | 2.37x | LOSS | 18527 | 2.30x | LOSS |
+| deep 100000 | full clone, cold total CPU s | 6.03 | 5.95 | 0.99x | tie | 5.74 | 0.95x | tie | 5.48 | 0.91x | win |
+| deep 100000 | partial/zone clone, warm wall ms | 1577 | 487 | 0.31x | win | 607 | 0.39x | win | 484 | 0.31x | win |
+| deep 100000 | partial/zone clone, warm total CPU s | 1.78 | 0.71 | 0.40x | win | 0.75 | 0.42x | win | 0.68 | 0.38x | win |
+| deep 100000 | partial/zone clone, cold wall ms | 2500 | 680 | 0.27x | win | 837 | 0.33x | win | 692 | 0.28x | win |
+| deep 100000 | partial/zone clone, cold total CPU s | 2.47 | 0.82 | 0.33x | win | 0.85 | 0.34x | win | 0.77 | 0.31x | win |
+| deep 100000 | fetch 1 commit, warm wall ms | 147 | 48.39 | 0.33x | win | 53.17 | 0.36x | win | 55.81 | 0.38x | win |
+| deep 100000 | fetch 1 commit, warm total CPU s | 0.14 | 0.03 | 0.20x | win | 0.03 | 0.20x | win | 0.03 | 0.25x | win |
+| deep 100000 | fetch 1 commit, cold wall ms | 1152 | 153 | 0.13x | win | 229 | 0.20x | win | 247 | 0.21x | win |
+| deep 100000 | fetch 1 commit, cold total CPU s | 0.92 | 0.04 | 0.05x | win | 0.05 | 0.05x | win | 0.05 | 0.06x | win |
+| deep 100000 | no-op fetch, warm wall ms | 33.65 | 4.96 | 0.15x | win | 5.15 | 0.15x | win | 4.75 | 0.14x | win |
+| deep 100000 | no-op fetch, warm total CPU s | 0.03 | 0.00 | 0.10x | win | 0.00 | 0.10x | win | 0.00 | 0.09x | win |
+| deep 100000 | no-op fetch, cold wall ms | 371 | 123 | 0.33x | win | 131 | 0.35x | win | 130 | 0.35x | win |
+| deep 100000 | no-op fetch, cold total CPU s | 0.17 | 0.01 | 0.04x | win | 0.01 | 0.05x | win | 0.01 | 0.05x | win |
+| deep 100000 | after maint: full clone, warm wall ms | 10135 | 23027 | 2.27x | LOSS | 23071 | 2.28x | LOSS | 23240 | 2.29x | LOSS |
+| deep 100000 | after maint: full clone, warm total CPU s | 5.37 | 6.03 | 1.12x | LOSS | 5.66 | 1.05x | LOSS | 5.16 | 0.96x | tie |
+| deep 100000 | after maint: full clone, cold wall ms | 8928 | 21020 | 2.35x | LOSS | 21648 | 2.42x | LOSS | 21791 | 2.44x | LOSS |
+| deep 100000 | after maint: full clone, cold total CPU s | 6.10 | 5.89 | 0.96x | tie | 5.83 | 0.95x | tie | 5.59 | 0.92x | win |
+| deep 100000 | after maint: partial/zone clone, warm wall ms | 1642 | 612 | 0.37x | win | 605 | 0.37x | win | 493 | 0.30x | win |
+| deep 100000 | after maint: partial/zone clone, warm total CPU s | 1.80 | 0.72 | 0.40x | win | 0.75 | 0.42x | win | 0.67 | 0.37x | win |
+| deep 100000 | after maint: partial/zone clone, cold wall ms | 2584 | 691 | 0.27x | win | 847 | 0.33x | win | 697 | 0.27x | win |
+| deep 100000 | after maint: partial/zone clone, cold total CPU s | 2.55 | 0.81 | 0.32x | win | 0.83 | 0.32x | win | 0.76 | 0.30x | win |
+| deep 100000 | after maint: fetch 1 commit, warm wall ms | 153 | 51.48 | 0.34x | win | 46.53 | 0.30x | win | 52.09 | 0.34x | win |
+| deep 100000 | after maint: fetch 1 commit, warm total CPU s | 0.15 | 0.03 | 0.20x | win | 0.03 | 0.19x | win | 0.03 | 0.24x | win |
+| deep 100000 | after maint: fetch 1 commit, cold wall ms | 1133 | 171 | 0.15x | win | 229 | 0.20x | win | 242 | 0.21x | win |
+| deep 100000 | after maint: fetch 1 commit, cold total CPU s | 0.91 | 0.05 | 0.06x | win | 0.03 | 0.04x | win | 0.04 | 0.05x | win |
+| deep 100000 | after maint: no-op fetch, warm wall ms | 33.58 | 5.33 | 0.16x | win | 5.18 | 0.15x | win | 5.11 | 0.15x | win |
+| deep 100000 | after maint: no-op fetch, warm total CPU s | 0.04 | 0.00 | 0.08x | win | 0.00 | 0.07x | win | 0.00 | 0.07x | win |
+| deep 100000 | after maint: no-op fetch, cold wall ms | 371 | 129 | 0.35x | win | 129 | 0.35x | win | 132 | 0.36x | win |
+| deep 100000 | after maint: no-op fetch, cold total CPU s | 0.19 | 0.01 | 0.04x | win | 0.01 | 0.04x | win | 0.01 | 0.04x | win |
+| deep 100000 | initial push store requests | 11.00 | 11.00 | 1.00x | tie | 9.00 | 0.82x | win | 9.00 | 0.82x | win |
+| deep 100000 | 1-file push store requests | 7.00 | 10.00 | 1.43x | LOSS | 10.00 | 1.43x | LOSS | 10.00 | 1.43x | LOSS |
+| deep 100000 | full clone, warm store requests | 8.00 | 25.00 | 3.12x | LOSS | 26.00 | 3.25x | LOSS | 28.00 | 3.50x | LOSS |
+| deep 100000 | full clone, cold store requests | 20.00 | 30.00 | 1.50x | LOSS | 15.00 | 0.75x | win | 29.00 | 1.45x | LOSS |
+| deep 100000 | partial/zone clone, warm store requests | 7.00 | 19.00 | 2.71x | LOSS | 3.00 | 0.43x | win | 20.00 | 2.86x | LOSS |
+| deep 100000 | partial/zone clone, cold store requests | 23.00 | 25.00 | 1.09x | LOSS | 9.00 | 0.39x | win | 25.00 | 1.09x | LOSS |
+| deep 100000 | fetch 1 commit, warm store requests | 4.00 | 2.00 | 0.50x | win | 2.00 | 0.50x | win | 2.00 | 0.50x | win |
+| deep 100000 | fetch 1 commit, cold store requests | 26.00 | 5.00 | 0.19x | win | 4.00 | 0.15x | win | 5.00 | 0.19x | win |
+| deep 100000 | no-op fetch, warm store requests | 2.00 | 1.00 | 0.50x | win | 1.00 | 0.50x | win | 1.00 | 0.50x | win |
+| deep 100000 | no-op fetch, cold store requests | 23.00 | 1.00 | 0.04x | win | 1.00 | 0.04x | win | 1.00 | 0.04x | win |
+| deep 100000 | after maint: full clone, warm store requests | 8.00 | 32.00 | 4.00x | LOSS | 19.00 | 2.38x | LOSS | 33.00 | 4.12x | LOSS |
+| deep 100000 | after maint: full clone, cold store requests | 27.00 | 29.00 | 1.07x | LOSS | 15.00 | 0.56x | win | 29.00 | 1.07x | LOSS |
+| deep 100000 | after maint: partial/zone clone, warm store requests | 7.00 | 19.00 | 2.71x | LOSS | 3.00 | 0.43x | win | 20.00 | 2.86x | LOSS |
+| deep 100000 | after maint: partial/zone clone, cold store requests | 30.00 | 25.00 | 0.83x | win | 9.00 | 0.30x | win | 25.00 | 0.83x | win |
+| deep 100000 | after maint: fetch 1 commit, warm store requests | 4.00 | 2.00 | 0.50x | win | 2.00 | 0.50x | win | 2.00 | 0.50x | win |
+| deep 100000 | after maint: fetch 1 commit, cold store requests | 33.00 | 5.00 | 0.15x | win | 4.00 | 0.12x | win | 5.00 | 0.15x | win |
+| deep 100000 | after maint: no-op fetch, warm store requests | 2.00 | 1.00 | 0.50x | win | 1.00 | 0.50x | win | 1.00 | 0.50x | win |
+| deep 100000 | after maint: no-op fetch, cold store requests | 30.00 | 1.00 | 0.03x | win | 1.00 | 0.03x | win | 1.00 | 0.03x | win |
+
+Totals over 108 cells (win / tie / LOSS): vcs default [81, 5, 22]; vcs best-doc [87, 5, 16]; vcs fastest [84, 4, 20].
+
+### Cells where walgit still beats vcs (scoreboard 1: speed (wall, cpu, store requests))
+
+| dataset | metric | walgit | vcs default | vcs best-doc | vcs fastest | vcs variants that lose |
+|---|---|---|---|---|---|---|
+| binary 100000 | after maint: full clone, warm total CPU s | 7.05 | 8.95 | 9.14 | 9.07 | default, best-doc, fastest |
+| binary 100000 | 1-file push store requests | 7.00 | 10.00 | 11.00 | 10.00 | default, best-doc, fastest |
+| binary 100000 | full clone, warm store requests | 8.00 | 56.00 | 55.00 | 60.00 | default, best-doc, fastest |
+| binary 100000 | full clone, cold store requests | 48.00 | 61.00 | 59.00 | 61.00 | default, best-doc, fastest |
+| binary 100000 | partial/zone clone, warm store requests | 7.00 | 25.00 | 13.00 | 25.00 | default, best-doc, fastest |
+| binary 100000 | after maint: full clone, warm store requests | 8.00 | 60.00 | 63.00 | 67.00 | default, best-doc, fastest |
+| binary 100000 | after maint: full clone, cold store requests | 57.00 | 60.00 | 59.00 | 61.00 | default, fastest |
+| binary 100000 | after maint: partial/zone clone, warm store requests | 7.00 | 25.00 | 13.00 | 25.00 | default, best-doc, fastest |
+| deep 100000 | full clone, warm wall ms | 9123 | 22960 | 22514 | 22293 | default, best-doc, fastest |
+| deep 100000 | full clone, warm total CPU s | 5.41 | 6.14 | 6.22 | 5.37 | default, best-doc |
+| deep 100000 | full clone, cold wall ms | 8071 | 19750 | 19166 | 18527 | default, best-doc, fastest |
+| deep 100000 | after maint: full clone, warm wall ms | 10135 | 23027 | 23071 | 23240 | default, best-doc, fastest |
+| deep 100000 | after maint: full clone, warm total CPU s | 5.37 | 6.03 | 5.66 | 5.16 | default, best-doc |
+| deep 100000 | after maint: full clone, cold wall ms | 8928 | 21020 | 21648 | 21791 | default, best-doc, fastest |
+| deep 100000 | 1-file push store requests | 7.00 | 10.00 | 10.00 | 10.00 | default, best-doc, fastest |
+| deep 100000 | full clone, warm store requests | 8.00 | 25.00 | 26.00 | 28.00 | default, best-doc, fastest |
+| deep 100000 | full clone, cold store requests | 20.00 | 30.00 | 15.00 | 29.00 | default, fastest |
+| deep 100000 | partial/zone clone, warm store requests | 7.00 | 19.00 | 3.00 | 20.00 | default, fastest |
+| deep 100000 | partial/zone clone, cold store requests | 23.00 | 25.00 | 9.00 | 25.00 | default, fastest |
+| deep 100000 | after maint: full clone, warm store requests | 8.00 | 32.00 | 19.00 | 33.00 | default, best-doc, fastest |
+| deep 100000 | after maint: full clone, cold store requests | 27.00 | 29.00 | 15.00 | 29.00 | default, fastest |
+| deep 100000 | after maint: partial/zone clone, warm store requests | 7.00 | 19.00 | 3.00 | 20.00 | default, fastest |
+
+### Scoreboard 2: server memory and object-store traffic
+
+Lower is better. Ratio = vcs / walgit (below 1.00x: vcs better). `win` = vcs lower by more than 5%, `tie` = within 5%, `LOSS` = walgit lower by more than 5%. Medians only.
+
+| dataset | metric | walgit | vcs default | ratio | result | vcs best-doc | ratio | result | vcs fastest | ratio | result |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| binary 100000 | initial push server RSS MiB | 161 | 516 | 3.21x | LOSS | 516 | 3.21x | LOSS | 516 | 3.21x | LOSS |
+| binary 100000 | 1-file push server RSS MiB | 495 | 16.88 | 0.03x | win | 4.52 | 0.01x | win | 17.14 | 0.03x | win |
+| binary 100000 | full clone, warm server RSS MiB | 468 | 351 | 0.75x | win | 363 | 0.78x | win | 349 | 0.74x | win |
+| binary 100000 | full clone, cold server RSS MiB | 551 | 356 | 0.65x | win | 342 | 0.62x | win | 345 | 0.63x | win |
+| binary 100000 | partial/zone clone, warm server RSS MiB | 496 | 211 | 0.43x | win | 274 | 0.55x | win | 256 | 0.52x | win |
+| binary 100000 | partial/zone clone, cold server RSS MiB | 548 | 94.78 | 0.17x | win | 146 | 0.27x | win | 96.63 | 0.18x | win |
+| binary 100000 | fetch 1 commit, warm server RSS MiB | 604 | 101 | 0.17x | win | 68.03 | 0.11x | win | 95.71 | 0.16x | win |
+| binary 100000 | fetch 1 commit, cold server RSS MiB | 595 | 4.44 | 0.01x | win | 4.39 | 0.01x | win | 4.44 | 0.01x | win |
+| binary 100000 | no-op fetch, warm server RSS MiB | 69.18 | 4.45 | 0.06x | win | 4.39 | 0.06x | win | 4.39 | 0.06x | win |
+| binary 100000 | no-op fetch, cold server RSS MiB | 424 | 4.41 | 0.01x | win | 4.39 | 0.01x | win | 4.39 | 0.01x | win |
+| binary 100000 | after maint: full clone, warm server RSS MiB | 175 | 376 | 2.15x | LOSS | 362 | 2.07x | LOSS | 364 | 2.08x | LOSS |
+| binary 100000 | after maint: full clone, cold server RSS MiB | 571 | 347 | 0.61x | win | 358 | 0.63x | win | 348 | 0.61x | win |
+| binary 100000 | after maint: partial/zone clone, warm server RSS MiB | 555 | 244 | 0.44x | win | 323 | 0.58x | win | 239 | 0.43x | win |
+| binary 100000 | after maint: partial/zone clone, cold server RSS MiB | 576 | 93.82 | 0.16x | win | 148 | 0.26x | win | 95.54 | 0.17x | win |
+| binary 100000 | after maint: fetch 1 commit, warm server RSS MiB | 208 | 98.41 | 0.47x | win | 76.41 | 0.37x | win | 99.16 | 0.48x | win |
+| binary 100000 | after maint: fetch 1 commit, cold server RSS MiB | 592 | 4.34 | 0.01x | win | 4.41 | 0.01x | win | 4.39 | 0.01x | win |
+| binary 100000 | after maint: no-op fetch, warm server RSS MiB | 73.42 | 4.31 | 0.06x | win | 4.35 | 0.06x | win | 4.39 | 0.06x | win |
+| binary 100000 | after maint: no-op fetch, cold server RSS MiB | 438 | 4.38 | 0.01x | win | 4.36 | 0.01x | win | 4.29 | 0.01x | win |
+| binary 100000 | initial push store traffic up+down MiB | 398 | 399 | 1.00x | tie | 402 | 1.01x | tie | 400 | 1.01x | tie |
+| binary 100000 | 1-file push store traffic up+down MiB | 0.01 | 0.02 | 1.24x | LOSS | 4.26 | 350.37x | LOSS | 0.02 | 1.28x | LOSS |
+| binary 100000 | full clone, warm store traffic up+down MiB | 0.00 | 399 | 626973.55x | LOSS | 398 | 624384.75x | LOSS | 400 | 628495.12x | LOSS |
+| binary 100000 | full clone, cold store traffic up+down MiB | 795 | 399 | 0.50x | win | 402 | 0.51x | win | 400 | 0.50x | win |
+| binary 100000 | partial/zone clone, warm store traffic up+down MiB | 0.00 | 47.08 | inf | LOSS | 51.98 | inf | LOSS | 48.13 | inf | LOSS |
+| binary 100000 | partial/zone clone, cold store traffic up+down MiB | 795 | 47.08 | 0.06x | win | 51.98 | 0.07x | win | 48.13 | 0.06x | win |
+| binary 100000 | fetch 1 commit, warm store traffic up+down MiB | 0.00 | 0.00 | inf | LOSS | 0.00 | inf | LOSS | 0.00 | inf | LOSS |
+| binary 100000 | fetch 1 commit, cold store traffic up+down MiB | 795 | 0.01 | 0.00x | win | 0.01 | 0.00x | win | 0.01 | 0.00x | win |
+| binary 100000 | no-op fetch, warm store traffic up+down MiB | 0.00 | 0.00 | inf | LOSS | 0.00 | inf | LOSS | 0.00 | inf | LOSS |
+| binary 100000 | no-op fetch, cold store traffic up+down MiB | 26.67 | 0.00 | 0.00x | win | 0.00 | 0.00x | win | 0.00 | 0.00x | win |
+| binary 100000 | after maint: full clone, warm store traffic up+down MiB | 0.00 | 399 | 627026.70x | LOSS | 402 | 631101.53x | LOSS | 400 | 628552.45x | LOSS |
+| binary 100000 | after maint: full clone, cold store traffic up+down MiB | 795 | 399 | 0.50x | win | 402 | 0.51x | win | 400 | 0.50x | win |
+| binary 100000 | after maint: partial/zone clone, warm store traffic up+down MiB | 0.00 | 47.08 | inf | LOSS | 51.98 | inf | LOSS | 48.13 | inf | LOSS |
+| binary 100000 | after maint: partial/zone clone, cold store traffic up+down MiB | 795 | 47.08 | 0.06x | win | 51.98 | 0.07x | win | 48.13 | 0.06x | win |
+| binary 100000 | after maint: fetch 1 commit, warm store traffic up+down MiB | 0.00 | 0.00 | inf | LOSS | 0.00 | inf | LOSS | 0.00 | inf | LOSS |
+| binary 100000 | after maint: fetch 1 commit, cold store traffic up+down MiB | 795 | 0.01 | 0.00x | win | 0.01 | 0.00x | win | 0.01 | 0.00x | win |
+| binary 100000 | after maint: no-op fetch, warm store traffic up+down MiB | 0.00 | 0.00 | inf | LOSS | 0.00 | inf | LOSS | 0.00 | inf | LOSS |
+| binary 100000 | after maint: no-op fetch, cold store traffic up+down MiB | 26.91 | 0.00 | 0.00x | win | 0.00 | 0.00x | win | 0.00 | 0.00x | win |
+| deep 100000 | initial push server RSS MiB | 178 | 68.49 | 0.39x | win | 68.59 | 0.39x | win | 133 | 0.75x | win |
+| deep 100000 | 1-file push server RSS MiB | 155 | 28.36 | 0.18x | win | 28.54 | 0.18x | win | 12.52 | 0.08x | win |
+| deep 100000 | full clone, warm server RSS MiB | 111 | 127 | 1.14x | LOSS | 164 | 1.47x | LOSS | 151 | 1.35x | LOSS |
+| deep 100000 | full clone, cold server RSS MiB | 165 | 105 | 0.64x | win | 150 | 0.91x | win | 140 | 0.85x | win |
+| deep 100000 | partial/zone clone, warm server RSS MiB | 142 | 138 | 0.98x | tie | 109 | 0.77x | win | 160 | 1.13x | LOSS |
+| deep 100000 | partial/zone clone, cold server RSS MiB | 159 | 36.91 | 0.23x | win | 43.56 | 0.27x | win | 39.09 | 0.25x | win |
+| deep 100000 | fetch 1 commit, warm server RSS MiB | 181 | 52.40 | 0.29x | win | 48.74 | 0.27x | win | 54.12 | 0.30x | win |
+| deep 100000 | fetch 1 commit, cold server RSS MiB | 169 | 4.40 | 0.03x | win | 4.46 | 0.03x | win | 4.51 | 0.03x | win |
+| deep 100000 | no-op fetch, warm server RSS MiB | 69.53 | 4.54 | 0.07x | win | 4.51 | 0.06x | win | 4.51 | 0.06x | win |
+| deep 100000 | no-op fetch, cold server RSS MiB | 150 | 4.44 | 0.03x | win | 4.38 | 0.03x | win | 4.48 | 0.03x | win |
+| deep 100000 | after maint: full clone, warm server RSS MiB | 163 | 127 | 0.78x | win | 165 | 1.01x | tie | 147 | 0.90x | win |
+| deep 100000 | after maint: full clone, cold server RSS MiB | 172 | 105 | 0.61x | win | 150 | 0.87x | win | 140 | 0.81x | win |
+| deep 100000 | after maint: partial/zone clone, warm server RSS MiB | 155 | 136 | 0.88x | win | 124 | 0.80x | win | 162 | 1.05x | tie |
+| deep 100000 | after maint: partial/zone clone, cold server RSS MiB | 163 | 36.82 | 0.23x | win | 43.41 | 0.27x | win | 38.95 | 0.24x | win |
+| deep 100000 | after maint: fetch 1 commit, warm server RSS MiB | 161 | 52.09 | 0.32x | win | 43.51 | 0.27x | win | 38.99 | 0.24x | win |
+| deep 100000 | after maint: fetch 1 commit, cold server RSS MiB | 178 | 4.43 | 0.02x | win | 4.39 | 0.02x | win | 4.43 | 0.02x | win |
+| deep 100000 | after maint: no-op fetch, warm server RSS MiB | 71.21 | 4.43 | 0.06x | win | 4.36 | 0.06x | win | 4.43 | 0.06x | win |
+| deep 100000 | after maint: no-op fetch, cold server RSS MiB | 156 | 4.36 | 0.03x | win | 4.41 | 0.03x | win | 4.40 | 0.03x | win |
+| deep 100000 | initial push store traffic up+down MiB | 48.58 | 54.50 | 1.12x | LOSS | 54.94 | 1.13x | LOSS | 73.60 | 1.52x | LOSS |
+| deep 100000 | 1-file push store traffic up+down MiB | 0.00 | 0.01 | 1.28x | LOSS | 0.01 | 1.30x | LOSS | 0.01 | 1.08x | LOSS |
+| deep 100000 | full clone, warm store traffic up+down MiB | 0.00 | 54.50 | 85552.28x | LOSS | 58.95 | 92530.89x | LOSS | 73.60 | 115531.85x | LOSS |
+| deep 100000 | full clone, cold store traffic up+down MiB | 49.23 | 54.50 | 1.11x | LOSS | 58.95 | 1.20x | LOSS | 73.60 | 1.50x | LOSS |
+| deep 100000 | partial/zone clone, warm store traffic up+down MiB | 0.00 | 3.86 | inf | LOSS | 0.00 | inf | LOSS | 5.78 | inf | LOSS |
+| deep 100000 | partial/zone clone, cold store traffic up+down MiB | 49.23 | 19.77 | 0.40x | win | 27.22 | 0.55x | win | 21.61 | 0.44x | win |
+| deep 100000 | fetch 1 commit, warm store traffic up+down MiB | 0.00 | 0.00 | inf | LOSS | 0.00 | inf | LOSS | 0.00 | inf | LOSS |
+| deep 100000 | fetch 1 commit, cold store traffic up+down MiB | 49.24 | 0.01 | 0.00x | win | 0.01 | 0.00x | win | 0.00 | 0.00x | win |
+| deep 100000 | no-op fetch, warm store traffic up+down MiB | 0.00 | 0.00 | inf | LOSS | 0.00 | inf | LOSS | 0.00 | inf | LOSS |
+| deep 100000 | no-op fetch, cold store traffic up+down MiB | 17.24 | 0.00 | 0.00x | win | 0.00 | 0.00x | win | 0.00 | 0.00x | win |
+| deep 100000 | after maint: full clone, warm store traffic up+down MiB | 0.00 | 54.51 | 85562.93x | LOSS | 58.95 | 92538.54x | LOSS | 73.61 | 115541.35x | LOSS |
+| deep 100000 | after maint: full clone, cold store traffic up+down MiB | 49.24 | 54.51 | 1.11x | LOSS | 58.95 | 1.20x | LOSS | 73.61 | 1.49x | LOSS |
+| deep 100000 | after maint: partial/zone clone, warm store traffic up+down MiB | 0.00 | 3.86 | inf | LOSS | 0.00 | inf | LOSS | 5.78 | inf | LOSS |
+| deep 100000 | after maint: partial/zone clone, cold store traffic up+down MiB | 49.24 | 19.78 | 0.40x | win | 27.22 | 0.55x | win | 21.61 | 0.44x | win |
+| deep 100000 | after maint: fetch 1 commit, warm store traffic up+down MiB | 0.00 | 0.00 | inf | LOSS | 0.00 | inf | LOSS | 0.00 | inf | LOSS |
+| deep 100000 | after maint: fetch 1 commit, cold store traffic up+down MiB | 49.25 | 0.01 | 0.00x | win | 0.01 | 0.00x | win | 0.00 | 0.00x | win |
+| deep 100000 | after maint: no-op fetch, warm store traffic up+down MiB | 0.00 | 0.00 | inf | LOSS | 0.00 | inf | LOSS | 0.00 | inf | LOSS |
+| deep 100000 | after maint: no-op fetch, cold store traffic up+down MiB | 17.25 | 0.00 | 0.00x | win | 0.00 | 0.00x | win | 0.00 | 0.00x | win |
+
+Totals over 72 cells (win / tie / LOSS): vcs default [46, 2, 24]; vcs best-doc [46, 2, 24]; vcs fastest [45, 2, 25].
+
+### Cells where walgit still beats vcs (scoreboard 2: server memory and object-store traffic)
+
+| dataset | metric | walgit | vcs default | vcs best-doc | vcs fastest | vcs variants that lose |
+|---|---|---|---|---|---|---|
+| binary 100000 | initial push server RSS MiB | 161 | 516 | 516 | 516 | default, best-doc, fastest |
+| binary 100000 | after maint: full clone, warm server RSS MiB | 175 | 376 | 362 | 364 | default, best-doc, fastest |
+| binary 100000 | 1-file push store traffic up+down MiB | 0.01 | 0.02 | 4.26 | 0.02 | default, best-doc, fastest |
+| binary 100000 | full clone, warm store traffic up+down MiB | 0.00 | 399 | 398 | 400 | default, best-doc, fastest |
+| binary 100000 | partial/zone clone, warm store traffic up+down MiB | 0.00 | 47.08 | 51.98 | 48.13 | default, best-doc, fastest |
+| binary 100000 | fetch 1 commit, warm store traffic up+down MiB | 0.00 | 0.00 | 0.00 | 0.00 | default, best-doc, fastest |
+| binary 100000 | no-op fetch, warm store traffic up+down MiB | 0.00 | 0.00 | 0.00 | 0.00 | default, best-doc, fastest |
+| binary 100000 | after maint: full clone, warm store traffic up+down MiB | 0.00 | 399 | 402 | 400 | default, best-doc, fastest |
+| binary 100000 | after maint: partial/zone clone, warm store traffic up+down MiB | 0.00 | 47.08 | 51.98 | 48.13 | default, best-doc, fastest |
+| binary 100000 | after maint: fetch 1 commit, warm store traffic up+down MiB | 0.00 | 0.00 | 0.00 | 0.00 | default, best-doc, fastest |
+| binary 100000 | after maint: no-op fetch, warm store traffic up+down MiB | 0.00 | 0.00 | 0.00 | 0.00 | default, best-doc, fastest |
+| deep 100000 | full clone, warm server RSS MiB | 111 | 127 | 164 | 151 | default, best-doc, fastest |
+| deep 100000 | partial/zone clone, warm server RSS MiB | 142 | 138 | 109 | 160 | fastest |
+| deep 100000 | initial push store traffic up+down MiB | 48.58 | 54.50 | 54.94 | 73.60 | default, best-doc, fastest |
+| deep 100000 | 1-file push store traffic up+down MiB | 0.00 | 0.01 | 0.01 | 0.01 | default, best-doc, fastest |
+| deep 100000 | full clone, warm store traffic up+down MiB | 0.00 | 54.50 | 58.95 | 73.60 | default, best-doc, fastest |
+| deep 100000 | full clone, cold store traffic up+down MiB | 49.23 | 54.50 | 58.95 | 73.60 | default, best-doc, fastest |
+| deep 100000 | partial/zone clone, warm store traffic up+down MiB | 0.00 | 3.86 | 0.00 | 5.78 | default, best-doc, fastest |
+| deep 100000 | fetch 1 commit, warm store traffic up+down MiB | 0.00 | 0.00 | 0.00 | 0.00 | default, best-doc, fastest |
+| deep 100000 | no-op fetch, warm store traffic up+down MiB | 0.00 | 0.00 | 0.00 | 0.00 | default, best-doc, fastest |
+| deep 100000 | after maint: full clone, warm store traffic up+down MiB | 0.00 | 54.51 | 58.95 | 73.61 | default, best-doc, fastest |
+| deep 100000 | after maint: full clone, cold store traffic up+down MiB | 49.24 | 54.51 | 58.95 | 73.61 | default, best-doc, fastest |
+| deep 100000 | after maint: partial/zone clone, warm store traffic up+down MiB | 0.00 | 3.86 | 0.00 | 5.78 | default, best-doc, fastest |
+| deep 100000 | after maint: fetch 1 commit, warm store traffic up+down MiB | 0.00 | 0.00 | 0.00 | 0.00 | default, best-doc, fastest |
+| deep 100000 | after maint: no-op fetch, warm store traffic up+down MiB | 0.00 | 0.00 | 0.00 | 0.00 | default, best-doc, fastest |
+
+### Scoreboard 3: space (secondary)
+
+Lower is better. Ratio = vcs / walgit (below 1.00x: vcs better). `win` = vcs lower by more than 5%, `tie` = within 5%, `LOSS` = walgit lower by more than 5%. Medians only.
+
+| dataset | metric | walgit | vcs default | ratio | result | vcs best-doc | ratio | result | vcs fastest | ratio | result |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| binary 100000 | remote store after initial push MiB (du) | 397 | 399 | 1.01x | tie | 402 | 1.01x | tie | 400 | 1.01x | tie |
+| binary 100000 | remote store after maintenance MiB (du) | 1193 | 400 | 0.34x | win | 402 | 0.34x | win | 401 | 0.34x | win |
+| binary 100000 | full-clone client store MiB (du) | 406 | 412 | 1.01x | tie | 412 | 1.01x | tie | 412 | 1.01x | tie |
+| binary 100000 | partial-clone client store MiB (du) | 51.34 | 45.07 | 0.88x | win | 45.07 | 0.88x | win | 45.07 | 0.88x | win |
+| deep 100000 | remote store after initial push MiB (du) | 48.56 | 54.57 | 1.12x | LOSS | 55.02 | 1.13x | LOSS | 73.66 | 1.52x | LOSS |
+| deep 100000 | remote store after maintenance MiB (du) | 148 | 54.67 | 0.37x | win | 55.12 | 0.37x | win | 73.77 | 0.50x | win |
+| deep 100000 | full-clone client store MiB (du) | 61.57 | 90.50 | 1.47x | LOSS | 90.50 | 1.47x | LOSS | 90.50 | 1.47x | LOSS |
+| deep 100000 | partial-clone client store MiB (du) | 26.39 | 16.23 | 0.61x | win | 16.23 | 0.61x | win | 16.23 | 0.61x | win |
+
+Totals over 8 cells (win / tie / LOSS): vcs default [4, 2, 2]; vcs best-doc [4, 2, 2]; vcs fastest [4, 2, 2].
+
+### Cells where walgit still beats vcs (scoreboard 3: space (secondary))
+
+| dataset | metric | walgit | vcs default | vcs best-doc | vcs fastest | vcs variants that lose |
+|---|---|---|---|---|---|---|
+| deep 100000 | remote store after initial push MiB (du) | 48.56 | 54.57 | 55.02 | 73.66 | default, best-doc, fastest |
+| deep 100000 | full-clone client store MiB (du) | 61.57 | 90.50 | 90.50 | 90.50 | default, best-doc, fastest |
+
 ## 2026-11-01 (evening): quiet box, current vcs build, flat 100k files
 
 **Machine: AWS c6i.4xlarge ("box c"), Intel Xeon Platinum 8375C, 16 vCPU, kernel 7.0.0-1014-aws, dedicated to benchmarks (all timing under `flock ~/bench.lock`), load1 1.33 at start and 1.19 at end of the timing pass (load is recorded per dataset, not per cell).** Object store: local RustFS 1.0.4, loopback (real S3 credentials were expired; nothing here says anything about AWS S3 or a real network). vcs: origin/main `84f3fa2` (release build). walgit: tobi/walgit `80e9a20b29e2` (release, same commit as the Lambda run). **git 2.56.0** (see note below). Driver: `scripts/walgit_bench/walgit_full.py`, 3 reps, 3 fresh remotes for the initial push, all arms interleaved against one RustFS, then a 1-rep counting pass. Raw JSON and logs: `docs/research/data/walgit-full-boxc/`.
