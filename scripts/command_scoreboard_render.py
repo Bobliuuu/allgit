@@ -370,7 +370,7 @@ def main():
     md += ["## Where and how it was run", ""]
     if gm:
         loads = [f"{k.replace('git-','').replace('.json','')}: load1 {m['load1_start']:.1f}->{m.get('load1_end', 0):.1f}" for k, m in gmeta.items()]
-        md += [f"* Machine: {gm.get('host')} (AWS c6i.4xlarge box c, {gm.get('cores')} vCPU), git: `{gm.get('git')}`, vcs: `{gm.get('vcs')}`, "
+        md += [f"* Machine: {gm.get('host')} (AWS c6i.4xlarge timing box, {gm.get('cores')} vCPU), git: `{gm.get('git')}`, vcs: `{gm.get('vcs')}`, "
                f"dataset `datagen flat {gm.get('n')}` (seed 42). Timing under `flock ~/bench.lock`, one group at a time, tools interleaved per round in random order, warm cache.",
                "* **The box was not quiet**: other agents' builds and tests ran on it during these runs (load per group: " + "; ".join(loads) + "). Wall times for slow cells carry that noise; the per-round load is in the JSON.",
                "* Runs per cell: 5 (3 for slow cells), the `n=` in each row says how many. Medians only; min/max are in the JSON. No significance test: the 10% band is a practical threshold, a cell at 0.95 to 1.05 is not distinguishable from noise with 3 to 5 rounds."]
@@ -433,8 +433,8 @@ def main():
 
     def rt(r):
         return f"{r['rw']:.2f}x" if "rw" in r else ""
-    svg("vcs vs git, per command (docs/git-to-vcs.md)", f"ratio = vcs/git wall; WIN/LOSS need wall and CPU beyond {int(TIE*100)}%; flat 100k, box c", [(r["cmd"].replace("git ", "", 1), r["v"], rt(r)) for r in g_out], os.path.join(a.img, "scoreboard-git.svg"))
-    svg("vcs vs Perforce, per command (docs/p4-to-vcs.md)", "ratio = vcs/p4 wall (p4 includes the p4d server work); flat 100k, box c", [(r["cmd"].replace("p4 ", "", 1), r["v"], rt(r)) for r in p_out], os.path.join(a.img, "scoreboard-p4.svg"))
+    svg("vcs vs git, per command (docs/git-to-vcs.md)", f"ratio = vcs/git wall; WIN/LOSS need wall and CPU beyond {int(TIE*100)}%; flat 100k, c6i.4xlarge", [(r["cmd"].replace("git ", "", 1), r["v"], rt(r)) for r in g_out], os.path.join(a.img, "scoreboard-git.svg"))
+    svg("vcs vs Perforce, per command (docs/p4-to-vcs.md)", "ratio = vcs/p4 wall (p4 includes the p4d server work); flat 100k, c6i.4xlarge", [(r["cmd"].replace("p4 ", "", 1), r["v"], rt(r)) for r in p_out], os.path.join(a.img, "scoreboard-p4.svg"))
     svg("vcs vs walgit (remote workflows and walgit CLI)", "ratio = vcs/reference wall; reused from walgit-full-boxc (vcs build 84f3fa2)", [(r["cmd"], r["v"], rt(r)) for r in w_out], os.path.join(a.img, "scoreboard-walgit.svg"))
     print("git", gc, "p4", pc, "walgit", wc)
 
