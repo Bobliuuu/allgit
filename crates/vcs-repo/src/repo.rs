@@ -1313,6 +1313,34 @@ impl Repo {
         untracked: bool,
         inc: Option<&Incremental>,
     ) -> Result<(Status, BTreeSet<String>)> {
+        self.status_inner_paths(opts, ix, untracked, inc, None)
+    }
+
+    /// Staged, merge and unstaged state of only the tracked `paths` (the staged diff is always
+    /// complete; it is cheap). No walk for untracked files. For callers that ask "does this
+    /// change touch a path that has local changes".
+    pub(crate) fn status_paths(&self, paths: &BTreeSet<&str>) -> Result<Status> {
+        let ix = self.index()?;
+        let (st, racy_clean) = self.status_inner_paths(StatusOpts::default(), &ix, false, None, Some(paths))?;
+        if !racy_clean.is_empty() {
+            self.refresh_racy(&ix, &racy_clean);
+        }
+        Ok(st)
+    }
+
+    /// Staged changes only (index against HEAD): no stat of the working tree at all.
+    pub(crate) fn status_staged_only(&self) -> Result<Status> {
+        self.status_paths(&BTreeSet::new())
+    }
+
+    fn status_inner_paths(
+        &self,
+        opts: StatusOpts,
+        ix: &Index,
+        untracked: bool,
+        inc: Option<&Incremental>,
+        only: Option<&BTreeSet<&str>>,
+    ) -> Result<(Status, BTreeSet<String>)> {
         let zones = self.zones()?;
         let ws = self.workspace()?;
         let refs = self.refs()?;
@@ -1324,6 +1352,7 @@ impl Repo {
             let mine: Vec<(&String, &IndexEntry)> = ix
                 .entries
                 .iter()
+                .filter(|(p, _)| only.map_or(true, |o| o.contains(p.as_str())))
                 .filter(|(p, _)| (single_zone || zones.owner(p) == zone) && !ws.skips(zone, p))
                 .collect();
             // Subtree-skipping diff: directories whose cached or computed tree id equals HEAD's

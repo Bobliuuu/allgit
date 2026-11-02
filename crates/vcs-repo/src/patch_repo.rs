@@ -121,10 +121,12 @@ impl Repo {
             patches = patches.iter().map(FilePatch::reversed).collect();
             patches.reverse();
         }
-        self.apply_parsed(&patches, opts)
+        self.apply_parsed(&patches, opts, false)
     }
 
-    fn apply_parsed(&self, patches: &[FilePatch], opts: &ApplyOpts) -> Result<ApplyReport> {
+    /// `tree_clean`: the caller has just checked that the whole tracked tree is clean, so the
+    /// per-path index check of `opts.index` has nothing to find and is skipped.
+    fn apply_parsed(&self, patches: &[FilePatch], opts: &ApplyOpts, tree_clean: bool) -> Result<ApplyReport> {
         // paths and binary check first: nothing is touched when any patch is unusable
         for p in patches {
             if p.binary {
@@ -137,13 +139,13 @@ impl Repo {
                 safe_rel(q)?;
             }
         }
-        if opts.index {
+        if opts.index && !tree_clean {
             let touched: BTreeSet<&str> = patches
                 .iter()
                 .flat_map(|p| [p.old_path.as_deref(), p.new_path.as_deref()])
                 .flatten()
                 .collect();
-            let st = self.status()?;
+            let st = self.status_paths(&touched)?;
             for z in &st.zones {
                 for c in z.staged.iter().chain(z.unstaged.iter()) {
                     if touched.contains(c.path.as_str()) {
@@ -398,7 +400,7 @@ impl Repo {
     }
 
     fn require_all_clean(&self, what: &str) -> Result<()> {
-        let st = self.status()?;
+        let st = self.status_tracked()?;
         for z in &st.zones {
             if !z.staged.is_empty() || !z.unstaged.is_empty() {
                 return msg(format!(
@@ -476,6 +478,7 @@ impl Repo {
                 three_way,
                 ..Default::default()
             },
+            true,
         )?;
         if !rep.conflicts.is_empty() {
             return msg(format!(
@@ -487,7 +490,7 @@ impl Repo {
     }
 
     fn am_commit(&self, mail: &mbox::Mail) -> Result<(String, ObjectId)> {
-        let st = self.status()?;
+        let st = self.status_staged_only()?;
         if st.zones.iter().all(|z| z.staged.is_empty()) {
             return msg("the patch applies no changes (already applied?); use `vcs am --skip`");
         }
