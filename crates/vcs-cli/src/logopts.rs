@@ -185,7 +185,22 @@ impl LogExtra {
     }
 
     /// File list lines per commit for `--name-status` / `--name-only`.
-    pub fn notes(&self, repo: &Repo, zone: &str, shown: &[(ObjectId, Commit)]) -> Result<BTreeMap<ObjectId, Vec<String>>, Error> {
+    ///
+    /// `only` (repo-relative paths from `-- <paths>`) limits each list to those paths, like git: a
+    /// path-limited log lists the changes inside the pathspec, not the whole commit.
+    pub fn notes(
+        &self,
+        repo: &Repo,
+        zone: &str,
+        shown: &[(ObjectId, Commit)],
+        only: &[String],
+    ) -> Result<BTreeMap<ObjectId, Vec<String>>, Error> {
+        let inside = |p: &str| {
+            only.is_empty()
+                || only
+                    .iter()
+                    .any(|s| s.is_empty() || p == s || p.strip_prefix(s.as_str()).is_some_and(|r| r.starts_with('/')))
+        };
         let mut out = BTreeMap::new();
         if !self.lists_files() {
             return Ok(out);
@@ -195,7 +210,7 @@ impl LogExtra {
             if !a.detect() {
                 // no rename detection: the file list straight from the tree diff
                 let lines = repo
-                    .commit_changes(zone, id)?
+                    .commit_changes_only(zone, id, only)?
                     .into_iter()
                     .map(|(p, l)| if self.name_status { format!("{}\t{p}", l as char) } else { p })
                     .collect();
@@ -208,7 +223,9 @@ impl LogExtra {
             } else {
                 repo.commit_pairs_names(zone, id)?
             };
-            let es = difftool::entries(pairs, &a);
+            let mut es = difftool::entries(pairs, &a);
+            // a rename or copy is kept when either side is inside the spec
+            es.retain(|e| inside(&e.path) || e.old_path.as_deref().is_some_and(inside));
             let lines = if self.name_status {
                 difftool::name_status_lines(&es)
             } else {

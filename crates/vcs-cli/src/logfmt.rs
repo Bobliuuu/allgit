@@ -165,7 +165,12 @@ pub fn run(repo: &Repo, cwd: &Path, zone: &str, branch: Option<&str>, limit: usi
         }
         return Ok("no matching commits\n".to_string());
     }
-    let notes = o.x.notes(repo, zone, &shown)?;
+    let only = if o.x.lists_files() {
+        o.paths.iter().map(|p| repo.rel_path(cwd, p)).collect::<Result<Vec<_>, _>>()?
+    } else {
+        Vec::new()
+    };
+    let notes = o.x.notes(repo, zone, &shown, &only)?;
     Ok(render_with(&shown, |z| defs.label(z).to_string(), o, &notes))
 }
 

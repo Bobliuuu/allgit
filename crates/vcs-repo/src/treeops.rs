@@ -107,22 +107,49 @@ pub fn diff_trees_checkout(store: &dyn ObjectStore, old: Option<ObjectId>, new: 
 /// Added (`b'A'`), deleted (`b'D'`) and modified (`b'M'`) files between two trees, sorted by path:
 /// the file list of [`diff_trees_files`] without keeping either side's entries. Equal subtrees are not read.
 pub fn diff_trees_status(store: &dyn ObjectStore, old: Option<ObjectId>, new: Option<ObjectId>, prefix: &str) -> Result<Vec<(String, u8)>> {
+    diff_trees_status_only(store, old, new, prefix, &[])
+}
+
+/// [`diff_trees_status`] limited to the paths equal to or beneath one of `only` (repo-relative, no
+/// trailing slash; empty `only` = everything). Directories outside every spec are not read, so the
+/// cost follows the spec, not the size of the commit.
+pub fn diff_trees_status_only(
+    store: &dyn ObjectStore,
+    old: Option<ObjectId>,
+    new: Option<ObjectId>,
+    prefix: &str,
+    only: &[String],
+) -> Result<Vec<(String, u8)>> {
     let mut out = Vec::new();
     if old != new {
-        status_pair(store, old, new, prefix, &mut out)?;
+        status_pair(store, old, new, prefix, only, &mut out)?;
     }
     out.sort_unstable_by(|a, b| a.0.cmp(&b.0));
     Ok(out)
 }
 
-fn status_side(store: &dyn ObjectStore, e: &TreeEntry, p: String, letter: u8, out: &mut Vec<(String, u8)>) -> Result<()> {
+/// Can `p` (a file or a directory) be, hold, or sit beneath something named by `only`?
+fn wanted(only: &[String], p: &str) -> bool {
+    only.is_empty()
+        || only.iter().any(|s| {
+            s.is_empty()
+                || p == s
+                || (p.len() > s.len() && p.starts_with(s.as_str()) && p.as_bytes()[s.len()] == b'/')
+                || (s.len() > p.len() && s.starts_with(p) && s.as_bytes()[p.len()] == b'/')
+        })
+}
+
+fn status_side(store: &dyn ObjectStore, e: &TreeEntry, p: String, letter: u8, only: &[String], out: &mut Vec<(String, u8)>) -> Result<()> {
+    if !wanted(only, &p) {
+        return Ok(());
+    }
     if p.len() > MAX_PATH {
         return Err(Error::Corrupt("tree path too long".into()));
     }
     if e.mode == EntryMode::Directory {
         for c in read_tree(store, Some(e.id))? {
             let q = join(&p, &c.name);
-            status_side(store, &c, q, letter, out)?;
+            status_side(store, &c, q, letter, only, out)?;
         }
     } else {
         out.push((p, letter));
@@ -135,6 +162,7 @@ fn status_pair(
     old: Option<ObjectId>,
     new: Option<ObjectId>,
     prefix: &str,
+    only: &[String],
     out: &mut Vec<(String, u8)>,
 ) -> Result<()> {
     let (oe, ne) = (read_tree(store, old)?, read_tree(store, new)?);
@@ -148,12 +176,12 @@ fn status_pair(
         match ord {
             std::cmp::Ordering::Less => {
                 let a = &oe[i];
-                status_side(store, a, join(prefix, &a.name), b'D', out)?;
+                status_side(store, a, join(prefix, &a.name), b'D', only, out)?;
                 i += 1;
             }
             std::cmp::Ordering::Greater => {
                 let b = &ne[j];
-                status_side(store, b, join(prefix, &b.name), b'A', out)?;
+                status_side(store, b, join(prefix, &b.name), b'A', only, out)?;
                 j += 1;
             }
             std::cmp::Ordering::Equal => {
@@ -164,8 +192,11 @@ fn status_pair(
                     continue;
                 }
                 let p = join(prefix, &a.name);
+                if !wanted(only, &p) {
+                    continue;
+                }
                 match (a.mode == EntryMode::Directory, b.mode == EntryMode::Directory) {
-                    (true, true) => status_pair(store, Some(a.id), Some(b.id), &p, out)?,
+                    (true, true) => status_pair(store, Some(a.id), Some(b.id), &p, only, out)?,
                     (false, false) => {
                         if p.len() > MAX_PATH {
                             return Err(Error::Corrupt("tree path too long".into()));
@@ -173,8 +204,8 @@ fn status_pair(
                         out.push((p, b'M'));
                     }
                     _ => {
-                        status_side(store, a, p.clone(), b'D', out)?;
-                        status_side(store, b, p, b'A', out)?;
+                        status_side(store, a, p.clone(), b'D', only, out)?;
+                        status_side(store, b, p, b'A', only, out)?;
                     }
                 }
             }
