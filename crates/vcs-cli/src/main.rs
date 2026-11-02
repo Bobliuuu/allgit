@@ -29,6 +29,7 @@ mod logopts;
 mod p4map;
 mod patchcmd;
 mod plumb;
+mod quick;
 mod rebase_i;
 mod remote;
 mod shelve_cmd;
@@ -2429,7 +2430,11 @@ fn run_lazy(cli: Cli) -> Result<(), Error> {
 
 fn main() -> ExitCode {
     let _ = ROOT_ZONE;
-    let cli = Cli::parse_from(gitmap::argv_for_shim());
+    let argv = gitmap::argv_for_shim();
+    let cli = match quick::parse(&argv) {
+        Some(c) => c,
+        None => Cli::parse_from(argv),
+    };
     hooks::set_disabled(cli.no_hooks);
     if let Some(ca) = &cli.ca_pem {
         // Resolved before `-C`; the config machinery reads it back as `remote.cainfo` (env VCS_CAINFO).

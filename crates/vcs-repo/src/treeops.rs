@@ -20,6 +20,28 @@ pub fn flatten(store: &dyn ObjectStore, root: Option<ObjectId>, prefix: &str) ->
     Ok(out)
 }
 
+/// Like [`flatten`] but appends to a vector in tree order (not necessarily path order).
+pub fn flatten_into(store: &dyn ObjectStore, root: ObjectId, prefix: &str, out: &mut Vec<(String, EntryMode, ObjectId)>) -> Result<()> {
+    let Object::Tree(t) = store.get(&root)? else {
+        return Err(Error::Corrupt(format!("object {root} is not a tree")));
+    };
+    for e in t.into_entries() {
+        let p = if prefix.is_empty() {
+            e.name
+        } else {
+            format!("{prefix}/{}", e.name)
+        };
+        if p.len() > MAX_PATH {
+            return Err(Error::Corrupt("tree path too long".into()));
+        }
+        match e.mode {
+            EntryMode::Directory => flatten_into(store, e.id, &p, out)?,
+            m => out.push((p, m, e.id)),
+        }
+    }
+    Ok(())
+}
+
 fn walk(store: &dyn ObjectStore, tree: ObjectId, prefix: &str, out: &mut Flat) -> Result<()> {
     let Object::Tree(t) = store.get(&tree)? else {
         return Err(Error::Corrupt(format!("object {tree} is not a tree")));
