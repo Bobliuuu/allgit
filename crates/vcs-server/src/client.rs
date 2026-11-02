@@ -149,12 +149,22 @@ impl HttpBackend {
         }
     }
 
+    /// Like [`Self::send_bytes`] plus the body as lossy text, for the small text endpoints (whoami,
+    /// list, clock, mtime). Object and pack reads use `send_bytes`: decoding and copying a 4 MiB
+    /// pack range as a `String` on every read is pure waste.
     #[allow(clippy::type_complexity)]
     fn send_raw(
         &self,
         r: ureq::Request,
         body: Option<&[u8]>,
     ) -> Result<Result<(String, Vec<u8>, Option<String>), (u16, String)>, BackendError> {
+        Ok(self
+            .send_bytes(r, body)?
+            .map(|(data, etag)| (String::from_utf8_lossy(&data).into_owned(), data, etag)))
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn send_bytes(&self, r: ureq::Request, body: Option<&[u8]>) -> Result<Result<(Vec<u8>, Option<String>), (u16, String)>, BackendError> {
         let res = match body {
             Some(b) => r.send_bytes(b),
             None => r.call(),
@@ -164,9 +174,15 @@ impl HttpBackend {
                 let etag = resp
                     .header("ETag")
                     .map(|e| e.strip_prefix('"').and_then(|e| e.strip_suffix('"')).unwrap_or(e).to_owned());
-                let mut data = Vec::new();
+                // Presize from Content-Length (capped): no doubling copies of a large pack range.
+                let want = resp
+                    .header("content-length")
+                    .and_then(|v| v.trim().parse::<usize>().ok())
+                    .unwrap_or(0)
+                    .min(256 << 20);
+                let mut data = Vec::with_capacity(want);
                 std::io::Read::read_to_end(&mut resp.into_reader(), &mut data).map_err(|e| BackendError::Unavailable(e.to_string()))?;
-                Ok(Ok((String::from_utf8_lossy(&data).into_owned(), data, etag)))
+                Ok(Ok((data, etag)))
             }
             Err(ureq::Error::Status(code, resp)) => {
                 let msg = resp.into_string().unwrap_or_default();
@@ -224,8 +240,8 @@ impl HttpBackend {
 
 impl Backend for HttpBackend {
     fn get(&self, key: &str) -> Result<Option<Versioned>, BackendError> {
-        match self.send_raw(self.req("GET", &Self::key_path(key)?), None)? {
-            Ok((_, data, etag)) => Ok(Some(Versioned {
+        match self.send_bytes(self.req("GET", &Self::key_path(key)?), None)? {
+            Ok((data, etag)) => Ok(Some(Versioned {
                 data,
                 tag: etag.ok_or_else(|| BackendError::Other("server sent no ETag".into()))?,
             })),
@@ -270,8 +286,8 @@ impl Backend for HttpBackend {
 
     fn get_range(&self, key: &str, offset: u64, len: u64) -> Result<Option<Vec<u8>>, BackendError> {
         let p = format!("{}?offset={offset}&len={len}", Self::key_path(key)?);
-        match self.send_raw(self.req("GET", &p), None)? {
-            Ok((_, data, _)) => Ok(Some(data)),
+        match self.send_bytes(self.req("GET", &p), None)? {
+            Ok((data, _)) => Ok(Some(data)),
             Err((404, _)) => Ok(None),
             Err((c, m)) => Err(self.status_err(c, &m)),
         }
@@ -331,7 +347,11 @@ impl Backend for HttpBackend {
     }
     fn modified_ms(&self, key: &str) -> Result<Option<u64>, BackendError> {
         match self.send_raw(self.req("GET", &Self::mtime_path(key)?), None)? {
-            Ok((t, _, _)) => t.trim().parse().map(Some).map_err(|_| BackendError::Other("bad mtime from server".into())),
+            Ok((t, _, _)) => t
+                .trim()
+                .parse()
+                .map(Some)
+                .map_err(|_| BackendError::Other("bad mtime from server".into())),
             Err((404, _)) => Ok(None),
             Err((c, m)) => Err(self.status_err(c, &m)),
         }

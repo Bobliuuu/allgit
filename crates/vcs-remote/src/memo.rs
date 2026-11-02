@@ -10,10 +10,10 @@
 //! * [`MemoBackend::prime`] reads the manifest and `LIST packs/` concurrently, then the indexes in
 //!   parallel, so the dependency chain at the start of a clone is 2 round trips instead of 3.
 
-use crate::backend::{Backend, BackendError, Conditional, Versioned};
+use crate::backend::{Backend, BackendError, Conditional, SharedBytes, Versioned};
 use crate::manifest;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 type Range = (String, u64, u64);
 
@@ -21,9 +21,9 @@ pub struct MemoBackend {
     inner: Box<dyn Backend>,
     snapshot: bool,
     imm: Mutex<HashMap<String, Versioned>>,
-    ranges: Mutex<HashMap<Range, Vec<u8>>>,
+    ranges: Mutex<HashMap<Range, Arc<Vec<u8>>>>,
     /// Whole packs this process just wrote (write-through), served for any range.
-    packs: Mutex<HashMap<String, Vec<u8>>>,
+    packs: Mutex<HashMap<String, Arc<Vec<u8>>>>,
     live: Mutex<Live>,
     /// Bytes held; when a new entry would pass `cap` everything is dropped first (a memo, not a store).
     held: std::sync::atomic::AtomicUsize,
@@ -166,44 +166,50 @@ impl Backend for MemoBackend {
         self.inner.get_conditional(key, have)
     }
     fn get_range(&self, key: &str, offset: u64, len: u64) -> Result<Option<Vec<u8>>, BackendError> {
+        Ok(self.get_range_shared(key, offset, len)?.map(SharedBytes::into_vec))
+    }
+    fn get_range_shared(&self, key: &str, offset: u64, len: u64) -> Result<Option<SharedBytes>, BackendError> {
         if !(key.starts_with("packs/") && key.ends_with(".pack")) {
-            return self.inner.get_range(key, offset, len);
+            return Ok(self.inner.get_range(key, offset, len)?.map(SharedBytes::from_vec));
         }
-        if let Some(p) = self.packs.lock().unwrap().get(key) {
-            let end = (offset.saturating_add(len)).min(p.len() as u64);
-            return Ok(Some(p[(offset.min(end)) as usize..end as usize].to_vec()));
+        let held = self.packs.lock().unwrap().get(key).cloned();
+        if let Some(p) = held {
+            let end = offset.saturating_add(len).min(p.len() as u64) as usize;
+            return Ok(Some(SharedBytes::window(p, (offset as usize).min(end), end)));
         }
         let k = (key.to_owned(), offset, len);
-        if let Some(v) = self.ranges.lock().unwrap().get(&k) {
-            return Ok(Some(v.clone()));
+        let hit = self.ranges.lock().unwrap().get(&k).cloned();
+        if let Some(v) = hit {
+            return Ok(Some(SharedBytes::from_vec_arc(v)));
         }
         if let Some(d) = &self.disk {
             if let Some((data, _)) = d.get(key, offset, len) {
-                if self.room(data.len()) {
-                    self.ranges.lock().unwrap().insert(k, data.clone());
+                let a = Arc::new(data);
+                if self.room(a.len()) {
+                    self.ranges.lock().unwrap().insert(k, a.clone());
                 }
-                return Ok(Some(data));
+                return Ok(Some(SharedBytes::from_vec_arc(a)));
             }
         }
         let r = self.inner.get_range(key, offset, len)?;
-        match &r {
-            Some(v) if v.len() as u64 == len => {
-                if let Some(d) = &self.disk {
-                    d.put(key, offset, len, "", v);
-                }
-                if self.room(v.len()) {
-                    self.ranges.lock().unwrap().insert(k, v.clone());
-                }
-            }
+        match r {
             Some(v) => {
-                // clamped at the end of an immutable pack: the same (offset, len) always answers the same bytes
+                // a short answer is the clamped end of an immutable pack: the same (offset, len)
+                // always answers the same bytes, so the disk cache may keep it too
                 if let Some(d) = &self.disk {
-                    d.put(key, offset, len, "", v);
+                    d.put(key, offset, len, "", &v);
                 }
+                let a = Arc::new(v);
+                if a.len() as u64 == len && self.room(a.len()) {
+                    self.ranges.lock().unwrap().insert(k, a.clone());
+                }
+                Ok(Some(SharedBytes::from_vec_arc(a)))
             }
-            None => self.drop_live(),
+            None => {
+                self.drop_live();
+                Ok(None)
+            }
         }
-        Ok(r)
     }
     fn exists(&self, key: &str) -> Result<bool, BackendError> {
         // never answered from memory: GC's existence checks must see the live store
@@ -214,7 +220,7 @@ impl Backend for MemoBackend {
         let created = self.inner.put_if_absent(key, data)?;
         if created && self.write_through && self.room(data.len()) {
             if key.starts_with("packs/") && key.ends_with(".pack") {
-                self.packs.lock().unwrap().insert(key.to_owned(), data.to_vec());
+                self.packs.lock().unwrap().insert(key.to_owned(), Arc::new(data.to_vec()));
             } else if immutable(key) {
                 // content-addressed keys: callers never compare their tags; any opaque tag will do
                 self.imm.lock().unwrap().insert(
@@ -271,6 +277,9 @@ impl Backend for std::sync::Arc<dyn Backend> {
     }
     fn get_range(&self, key: &str, offset: u64, len: u64) -> Result<Option<Vec<u8>>, BackendError> {
         (**self).get_range(key, offset, len)
+    }
+    fn get_range_shared(&self, key: &str, offset: u64, len: u64) -> Result<Option<SharedBytes>, BackendError> {
+        (**self).get_range_shared(key, offset, len)
     }
     fn exists(&self, key: &str) -> Result<bool, BackendError> {
         (**self).exists(key)
@@ -388,5 +397,38 @@ mod tests {
             }
         }
         v
+    }
+}
+
+#[cfg(test)]
+mod shared_tests {
+    use super::*;
+    use crate::MemBackend;
+
+    #[test]
+    fn written_pack_ranges_are_windows_without_copies_and_exact() {
+        let pack: Vec<u8> = (0..10_000u32).map(|i| (i % 251) as u8).collect();
+        let b = MemoBackend::new(Box::new(MemBackend::new()), false).with_write_through(1 << 20);
+        b.put_if_absent("packs/p.pack", &pack).unwrap();
+        for (o, l) in [(0u64, 10_000u64), (3, 4000), (9_990, 50), (10_000, 5), (20_000, 5)] {
+            let s = b.get_range_shared("packs/p.pack", o, l).unwrap().unwrap();
+            let end = ((o + l) as usize).min(pack.len());
+            let start = (o as usize).min(end);
+            assert_eq!(&s[..], &pack[start..end], "range {o}+{l}");
+            assert_eq!(b.get_range("packs/p.pack", o, l).unwrap().unwrap(), pack[start..end].to_vec());
+        }
+    }
+
+    #[test]
+    fn read_through_range_is_memoized_once_and_equal_on_hit() {
+        let inner = MemBackend::new();
+        let pack: Vec<u8> = (0..4096u32).map(|i| (i * 7 % 256) as u8).collect();
+        inner.put_if_absent("packs/q.pack", &pack).unwrap();
+        let b = MemoBackend::new(Box::new(inner), false).with_write_through(1 << 20);
+        let a = b.get_range_shared("packs/q.pack", 100, 1000).unwrap().unwrap();
+        let c = b.get_range_shared("packs/q.pack", 100, 1000).unwrap().unwrap();
+        assert_eq!(&a[..], &pack[100..1100]);
+        assert_eq!(&a[..], &c[..]);
+        assert!(b.get_range_shared("packs/none.pack", 0, 4).unwrap().is_none());
     }
 }

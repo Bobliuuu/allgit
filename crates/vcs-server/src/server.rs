@@ -422,6 +422,11 @@ impl Write for DeadlineTcp {
         self.tcp.set_write_timeout(Some(t))?;
         self.tcp.write(buf)
     }
+    fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
+        let t = self.budget()?;
+        self.tcp.set_write_timeout(Some(t))?;
+        self.tcp.write_vectored(bufs)
+    }
     fn flush(&mut self) -> std::io::Result<()> {
         self.tcp.flush()
     }
@@ -538,7 +543,7 @@ fn handle_conn(sh: &Shared, conn: TcpStream) {
         want_ka = want_ka && !error_reply && served < sh.cfg.max_requests_per_conn && !sh.stop.load(Ordering::SeqCst);
         let written = write_response_ka(rd.get_mut(), &resp, head, want_ka).is_ok();
         let dur = t0.elapsed();
-        let bytes_out = if head { 0 } else { resp.body.len() as u64 };
+        let bytes_out = if head { 0 } else { resp.body_len() as u64 };
         sh.metrics.observe(&method, resp.status, ctx.role, dur, bytes_in, bytes_out);
         let lvl = if resp.status >= 500 { Level::Warn } else { Level::Info };
         sh.log.log(
@@ -810,7 +815,9 @@ fn dispatch(sh: &Shared, req: &Request, who: &Principal, extra: &mut Extra) -> R
                 if who.role < Role::Write {
                     return text(403, "Forbidden: touch needs a write token");
                 }
-                if (key == manifest::KEY || shadows_manifest(&key) || key.starts_with(vcs_remote::shelf::SHELF_PREFIX)) && who.role < Role::Admin {
+                if (key == manifest::KEY || shadows_manifest(&key) || key.starts_with(vcs_remote::shelf::SHELF_PREFIX))
+                    && who.role < Role::Admin
+                {
                     return text(403, "Forbidden: only an admin may touch the manifest or shelf keys");
                 }
                 match sh.backend.touch(&key) {
@@ -985,8 +992,8 @@ fn object_read(sh: &Shared, req: &Request, who: &Principal, key: &str, head: boo
         let (Ok(o), Ok(l)) = (o.parse::<u64>(), l.parse::<u64>()) else {
             return text(400, "bad offset/len");
         };
-        return match sh.backend.get_range(key, o, l) {
-            Ok(Some(d)) => Response::new(200, d),
+        return match sh.backend.get_range_shared(key, o, l) {
+            Ok(Some(d)) => Response::shared(200, d),
             Ok(None) => text(404, "not found"),
             Err(e) => backend_err(e),
         };

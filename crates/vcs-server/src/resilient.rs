@@ -202,6 +202,9 @@ impl Backend for ResilientBackend {
     fn get_range(&self, key: &str, offset: u64, len: u64) -> Result<Option<Vec<u8>>, BackendError> {
         self.run(self.cfg.retries, |b| b.get_range(key, offset, len))
     }
+    fn get_range_shared(&self, key: &str, offset: u64, len: u64) -> Result<Option<vcs_remote::SharedBytes>, BackendError> {
+        self.run(self.cfg.retries, |b| b.get_range_shared(key, offset, len))
+    }
     fn exists(&self, key: &str) -> Result<bool, BackendError> {
         self.run(self.cfg.retries, |b| b.exists(key))
     }

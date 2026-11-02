@@ -21,6 +21,51 @@ pub struct Versioned {
     pub tag: String,
 }
 
+/// A byte range that may be a window into a larger shared buffer (a memoized pack): serving it
+/// copies nothing. Derefs to `[u8]`.
+#[derive(Debug, Clone)]
+pub struct SharedBytes {
+    buf: std::sync::Arc<Vec<u8>>,
+    start: usize,
+    end: usize,
+}
+
+impl SharedBytes {
+    pub fn from_vec(v: Vec<u8>) -> Self {
+        Self::from_vec_arc(std::sync::Arc::new(v))
+    }
+    pub fn from_vec_arc(buf: std::sync::Arc<Vec<u8>>) -> Self {
+        let end = buf.len();
+        Self { buf, start: 0, end }
+    }
+    /// `buf[start..end]`, both clamped to the buffer.
+    pub fn window(buf: std::sync::Arc<Vec<u8>>, start: usize, end: usize) -> Self {
+        let end = end.min(buf.len());
+        Self {
+            start: start.min(end),
+            end,
+            buf,
+        }
+    }
+    /// Take the bytes out; copies only when the buffer is shared or this is a window.
+    pub fn into_vec(self) -> Vec<u8> {
+        if self.start == 0 && self.end == self.buf.len() {
+            match std::sync::Arc::try_unwrap(self.buf) {
+                Ok(v) => return v,
+                Err(a) => return a[..].to_vec(),
+            }
+        }
+        self.buf[self.start..self.end].to_vec()
+    }
+}
+
+impl std::ops::Deref for SharedBytes {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.buf[self.start..self.end]
+    }
+}
+
 /// Result of a conditional read ([`Backend::get_conditional`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Conditional {
@@ -46,6 +91,11 @@ pub trait Backend: Send + Sync {
         })
     }
     fn get_range(&self, key: &str, offset: u64, len: u64) -> Result<Option<Vec<u8>>, BackendError>;
+    /// Like [`Backend::get_range`] but the bytes may be shared with a cache, so a server can send
+    /// them without copying. The default wraps `get_range`.
+    fn get_range_shared(&self, key: &str, offset: u64, len: u64) -> Result<Option<SharedBytes>, BackendError> {
+        Ok(self.get_range(key, offset, len)?.map(SharedBytes::from_vec))
+    }
     fn exists(&self, key: &str) -> Result<bool, BackendError>;
     /// Create-only. `Ok(true)` created, `Ok(false)` key already existed (unchanged).
     fn put_if_absent(&self, key: &str, data: &[u8]) -> Result<bool, BackendError>;
