@@ -10,7 +10,7 @@ import bench_compare as bc
 ENV = dict(bc.ENV, GIT_EDITOR="true", GIT_SEQUENCE_EDITOR="true", VCS_SEQUENCE_EDITOR="true")
 bc.ENV = ENV
 median = bc.median
-ALL = "cherrypick,revert,cherry,blame,opundo,tagmk,tagls,branchmk,branchls,am3,apply3,rebasei,repack,gc"
+ALL = "cherrypick,revert,cherry,blame,opundo,tagmk,tagdel,tagls,branchmk,branchdel,branchls,am3,apply3,rebasei,repack,gc"
 
 
 def main():
@@ -97,10 +97,14 @@ def main():
         cell("opundo", pundo, lambda t: "git reset -q --hard HEAD~1" if G(t) else V(t, "op undo"))
         def ptag(t): sh(home(t) + "; " + ("git tag -d v1" if G(t) else V(t, "tag -d v1")), t)
         cell("tagmk", ptag, lambda t: "git tag v1" if G(t) else V(t, "tag v1"))
+        def mktag(t): sh(home(t) + "; " + ("git tag v1 || true" if G(t) else V(t, "tag v1") + " || true"), t)
+        cell("tagdel", mktag, lambda t: "git tag -d v1" if G(t) else V(t, "tag -d v1"))
         for t in tools: sh("git tag v1 || true" if G(t) else V(t, "tag v1"), t)
         cell("tagls", pcp, lambda t: "git tag" if G(t) else V(t, "tag"))
         def pbr(t): sh(home(t) + "; " + ("git branch -D nb" if G(t) else V(t, "branch -d --force nb")), t)
         cell("branchmk", pbr, lambda t: "git branch nb" if G(t) else V(t, "branch nb"))
+        def mkbr(t): sh(home(t) + "; " + ("git branch nb || true" if G(t) else V(t, "branch nb") + " || true"), t)
+        cell("branchdel", mkbr, lambda t: "git branch -D nb" if G(t) else V(t, "branch -d --force nb"))
         cell("branchls", pcp, lambda t: "git branch" if G(t) else V(t, "branch"))
         def pam(t): sh("git am --abort || true" if G(t) else V(t, "am --abort") + " || true", t); sh(SW(t, "ab") + "; " + RESET(t, "b0"), t)
         for t in tools: sh(BR(t, "ab", "b0"), t)

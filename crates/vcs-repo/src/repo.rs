@@ -22,7 +22,8 @@ pub(crate) const FORMAT_FILE: &str = "format";
 /// Absent in repositories that never used one; written the first time a large-file manifest is stored.
 pub(crate) const FEATURES_FILE: &str = "features";
 pub(crate) const FEATURE_LARGE_CHUNKED: &str = "large-chunked";
-const KNOWN_FEATURES: &[&str] = &[FEATURE_LARGE_CHUNKED];
+pub(crate) const FEATURE_REF_JOURNAL: &str = "ref-journal";
+const KNOWN_FEATURES: &[&str] = &[FEATURE_LARGE_CHUNKED, FEATURE_REF_JOURNAL];
 pub(crate) const FORMAT_TEXT: &str = "all-git repository format 1\n";
 /// Checkout streams files of at least this many bytes chunk by chunk instead of reassembling them in memory.
 const STREAM_CHECKOUT_MIN: u64 = 8 << 20;
@@ -345,6 +346,7 @@ impl Repo {
                     counters: Counters::default(),
                 };
                 repo.recover_torn_index();
+                repo.journal_open_check();
                 return Ok(repo);
             }
             if !cur.pop() {
@@ -408,7 +410,9 @@ impl Repo {
     // ---------- state ----------
 
     pub(crate) fn lock(&self) -> Result<LockGuard> {
-        LockGuard::acquire(self.common.join("lock"))
+        let guard = LockGuard::acquire(self.common.join("lock"))?;
+        self.journal_verify()?; // finish an interrupted journalled operation before anyone reads refs
+        Ok(guard)
     }
     /// Path of a state file: shared files live in the common directory, the rest per worktree.
     pub(crate) fn state_path(&self, name: &str) -> PathBuf {
@@ -1920,10 +1924,12 @@ impl Repo {
         refs.apply(&updates)?;
         // Durability barrier: trees, commits and the transaction are durable before refs name them.
         self.store.sync()?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?; // linearization point
-                                                                  // Remember the tree ids just computed so the next commit/status can skip unchanged
-                                                                  // directories. `written_ns` is deliberately untouched: no entry was re-verified. Best
-                                                                  // effort: a lost cache write only costs time.
+        let first = message.lines().next().unwrap_or("");
+        // linearization point: the ref move and its operation record are one journalled step
+        self.commit_refs_op(&refs, &format!("commit: {first}"), Some(op_author))?;
+        // Remember the tree ids just computed so the next commit/status can skip unchanged
+        // directories. `written_ns` is deliberately untouched: no entry was re-verified. Best
+        // effort: a lost cache write only costs time.
         if !fresh_trees.is_empty() {
             ix.entries.store_trees(fp, fresh_trees);
             let _ = crate::meta::write_cache_atomic(&self.vcs.join("index"), &ix.encode());
@@ -1931,8 +1937,6 @@ impl Repo {
         if merging.is_some() {
             self.clear_merge_state()?;
         }
-        let first = message.lines().next().unwrap_or("");
-        self.record_op(&format!("commit: {first}"), Some(op_author))?;
         Ok(CommitReport { transaction: tx, commits })
     }
 
@@ -1981,8 +1985,7 @@ impl Repo {
             old: None,
             new: head,
         }])?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
-        self.record_op(&format!("create branch {zone}/{branch}"), None)?;
+        self.commit_refs_op(&refs, &format!("create branch {zone}/{branch}"), None)?;
         Ok(head)
     }
 
@@ -2017,8 +2020,7 @@ impl Repo {
             old: None,
             new: id,
         }])?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
-        self.record_op(&format!("create branch {zone}/{branch} at {}", id.short()), None)?;
+        self.commit_refs_op(&refs, &format!("create branch {zone}/{branch} at {}", id.short()), None)?;
         Ok(id)
     }
 
@@ -2479,8 +2481,7 @@ impl Repo {
         }))?;
         refs.snapshots.insert(name.to_owned(), id);
         self.store.sync()?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
-        self.record_op(&format!("snapshot create {name}"), None)?;
+        self.commit_refs_op(&refs, &format!("snapshot create {name}"), None)?;
         Ok(id)
     }
 
