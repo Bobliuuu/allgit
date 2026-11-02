@@ -2,7 +2,7 @@
 <style>:root{--bg:#fff;--fg:#1b1f24;--mut:#57606a;--win:#1a7f37;--tie:#9a6700;--loss:#cf222e;--nm:#6e7781;--mis:#8250df;--pill:#f6f8fa}@media (prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--mut:#9da7b3;--win:#3fb950;--tie:#d29922;--loss:#ff7b72;--nm:#8b949e;--mis:#bc8cff;--pill:#161b22}}text{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;fill:var(--fg)}.t{font:600 18px system-ui,sans-serif}.s{font:12px system-ui,sans-serif;fill:var(--mut)}.bg{fill:var(--bg)}.WIN{fill:var(--win)}.TIE{fill:var(--tie)}.LOSS{fill:var(--loss)}.NM{fill:var(--nm)}.MIS{fill:var(--mis)}.r{fill:var(--mut)}</style>
 <rect width="1300" height="1940" fill="#ffffff" class="bg"/>
 <text x="20" y="30" class="t" fill="#1b1f24">vcs vs git, per command (docs/git-to-vcs.md)</text>
-<text x="20" y="50" class="s" fill="#57606a">ratio = vcs/git wall; WIN/LOSS need wall and CPU beyond 10%; flat 100k, box c</text>
+<text x="20" y="50" class="s" fill="#57606a">ratio = vcs/git wall; WIN/LOSS need wall and CPU beyond 10%; flat 100k, c6i.4xlarge</text>
 <rect x="20" y="66" width="12" height="12" rx="3" class="WIN" fill="#1a7f37"/><text x="38" y="77" fill="#1b1f24">WIN 26</text>
 <rect x="107" y="66" width="12" height="12" rx="3" class="TIE" fill="#9a6700"/><text x="125" y="77" fill="#1b1f24">TIE 50</text>
 <rect x="194" y="66" width="12" height="12" rx="3" class="LOSS" fill="#cf222e"/><text x="212" y="77" fill="#1b1f24">LOSS 48</text>
