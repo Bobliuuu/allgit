@@ -30,12 +30,12 @@ use crate::error::{msg, Error, Result};
 use crate::merge::{ConflictRec, MergeState};
 use crate::meta::{frame, unframe, write_atomic};
 use crate::repo::Repo;
-use crate::treeops::{self, Flat};
+use crate::treeops;
 use std::collections::{BTreeSet, VecDeque};
 use std::fs;
 use vcs_merge::{ConflictKind, MarkerLabels};
 use vcs_objects::codec::{Reader, Writer};
-use vcs_objects::{Commit, EntryMode, Object, ObjectId, RefUpdate, Signature, Transaction};
+use vcs_objects::{Commit, Object, ObjectId, RefUpdate, Signature, Transaction};
 use vcs_store::ObjectStore;
 
 const FILE: &str = "rebase";
@@ -600,15 +600,15 @@ impl Repo {
             }
         }
         let ix = self.index()?;
-        let flat: Flat = ix
-            .entries
-            .iter()
-            .filter(|(p, _)| zones.owner(p) == rs.zone)
-            .map(|(p, e)| (p.clone(), (e.mode, e.id)))
-            .collect();
         let pc = self.commit_obj(&rs.current)?;
-        let entries: Vec<(&str, EntryMode, ObjectId)> = flat.iter().map(|(p, (m, i))| (zones.relative(&rs.zone, p), *m, *i)).collect();
-        let root = treeops::build(&self.store, entries)?;
+        // Tree of the resolved index: directories whose ids are cached or equal to HEAD's tree
+        // are not re-read or rewritten (same walk `commit` uses).
+        let root = {
+            let fp = crate::repo::zones_fp(&zones);
+            let head_root = self.commit_obj(&rs.cursor)?.root;
+            let mut it = treeops::IndexTrees::new(&self.store, &ix.entries, &zones, &rs.zone, ix.entries.cached_trees(&fp));
+            it.build_root(zones.path_of(&rs.zone).unwrap_or(""), Some(head_root))?
+        };
         let mut run = Run {
             zone: rs.zone.clone(),
             branch: rs.branch.clone(),
