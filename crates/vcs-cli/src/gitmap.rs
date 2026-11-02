@@ -973,7 +973,8 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
         }
         "ls-tree" => {
             let mut p = parse(cmd, rest, &[]);
-            p.take(&["-r", "-t"]);
+            let recursive = p.take(&["-r"]);
+            p.take(&["-t"]);
             let names = p.take(&["--name-only", "--name-status"]);
             p.finish("`vcs ls-files --rev <rev> [-s] [paths]`")?;
             let pos = p.all_pos();
@@ -983,6 +984,10 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             let mut a = v(&["ls-files", "--rev", rev]);
             if !names {
                 a.insert(1, "-s".into());
+            }
+            // without -r git lists one level: read only the top tree (a path argument keeps the recursive listing)
+            if !recursive && paths.is_empty() {
+                a.extend(["--depth".into(), "1".into()]);
             }
             a.extend(paths.iter().cloned());
             vec![Step::Vcs(a)]

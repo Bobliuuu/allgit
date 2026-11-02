@@ -243,7 +243,7 @@ pub const ROWS: &[Row] = &[
     Row { git: "git ls-files -s", vcs: "vcs ls-files -s", status: Status::Exact, note: "sha256 object ids, not sha1", test: "-" },
     Row { git: "git ls-files -o", vcs: "-", status: Status::Missing, note: "`vcs status` lists untracked files", test: "-" },
     Row { git: "git ls-tree -r --name-only HEAD", vcs: "vcs ls-files --rev HEAD", status: Status::Renamed, note: "always recursive", test: "-" },
-    Row { git: "git ls-tree HEAD", vcs: "vcs ls-files -s --rev HEAD", status: Status::Different, note: "flat recursive listing, not one directory level", test: "-" },
+    Row { git: "git ls-tree HEAD", vcs: "vcs ls-files -s --rev HEAD --depth 1", status: Status::Renamed, note: "one level from the top tree; directories are mode 040000 with their tree id, no type column", test: "-" },
     Row { git: "git cat-file -p HEAD:f.txt", vcs: "vcs cat-file -p HEAD:f.txt", status: Status::Exact, note: "", test: "-" },
     Row { git: "git cat-file -t HEAD", vcs: "vcs cat-file -t HEAD", status: Status::Exact, note: "", test: "-" },
     Row { git: "git cat-file --batch", vcs: "-", status: Status::Missing, note: "one object per call", test: "-" },
