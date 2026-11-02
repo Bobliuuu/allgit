@@ -1376,6 +1376,16 @@ impl Repo {
             st.merging = self.merge_state()?;
             return Ok((st, racy_clean));
         }
+        let (untracked_found, unsupported_found) = self.scan_untracked(opts, ix, &zones, &ws)?;
+        st.untracked = untracked_found;
+        st.unsupported = unsupported_found;
+        st.merging = self.merge_state()?;
+        Ok((st, racy_clean))
+    }
+
+    /// The directory walk for untracked and unsupported entries (with the directory cache when
+    /// `opts` asks for it). Shared by `status` and by callers that need only this part.
+    fn scan_untracked(&self, opts: StatusOpts, ix: &Index, zones: &Zones, ws: &Workspace) -> Result<(Vec<String>, Vec<String>)> {
         let budget = AtomicUsize::new(std::thread::available_parallelism().map_or(1, |n| n.get()).min(8) - 1);
         let ctx = WalkCtx {
             cache: if opts.dir_cache {
@@ -1387,9 +1397,8 @@ impl Repo {
             scan_start_ns: now_ns(),
             racy_ns: opts.racy_ns,
         };
-        let mut w = self.walk_untracked("", &zones, &ws, ix, &budget, &IgnoreStack::default(), &ctx)?;
-        st.untracked = std::mem::take(&mut w.untracked);
-        st.unsupported = std::mem::take(&mut w.unsupported);
+        let mut w = self.walk_untracked("", zones, ws, ix, &budget, &IgnoreStack::default(), &ctx)?;
+        let (untracked, unsupported) = (std::mem::take(&mut w.untracked), std::mem::take(&mut w.unsupported));
         if opts.dir_cache && (w.scanned > 0 || w.hits.len() != ctx.cache.dirs.len()) {
             // Rewrite only when something changed: a fully warm walk costs no write.
             let mut next = DirCache::default();
@@ -1402,8 +1411,19 @@ impl Repo {
             next.dirs.extend(w.fresh);
             next.store(&self.vcs);
         }
-        st.merging = self.merge_state()?;
-        Ok((st, racy_clean))
+        Ok((untracked, unsupported))
+    }
+
+    /// Untracked and unsupported paths only: no comparison of tracked files with the index, so
+    /// no stat of every tracked file. Equals `status()`'s `untracked` / `unsupported`.
+    pub fn untracked_only(&self, opts: StatusOpts) -> Result<(Vec<String>, Vec<String>)> {
+        if std::env::var_os("VCS_NO_FSMONITOR").is_none() && crate::fsmonitor::JournalMonitor::open(&self.vcs).is_some() {
+            let st = self.status_auto(opts)?;
+            return Ok((st.untracked, st.unsupported));
+        }
+        let ix = self.index()?;
+        let (zones, ws) = (self.zones()?, self.workspace()?);
+        self.scan_untracked(opts, &ix, &zones, &ws)
     }
 
     /// Working-tree changes of the tracked `entries`, in entry order, plus the paths whose
