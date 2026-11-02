@@ -810,9 +810,7 @@ fn dispatch(sh: &Shared, req: &Request, who: &Principal, extra: &mut Extra) -> R
                 if who.role < Role::Write {
                     return text(403, "Forbidden: touch needs a write token");
                 }
-                if (key == manifest::KEY || shadows_manifest(&key) || key.starts_with(vcs_remote::shelf::SHELF_PREFIX))
-                    && who.role < Role::Admin
-                {
+                if (key == manifest::KEY || shadows_manifest(&key) || key.starts_with(vcs_remote::shelf::SHELF_PREFIX)) && who.role < Role::Admin {
                     return text(403, "Forbidden: only an admin may touch the manifest or shelf keys");
                 }
                 match sh.backend.touch(&key) {

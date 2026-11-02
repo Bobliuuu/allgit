@@ -24,10 +24,7 @@ fn s3(test: &str) -> Option<S3Backend> {
         &var("VCS_TEST_S3_ACCESS_KEY", "minioadmin"),
         &var("VCS_TEST_S3_SECRET_KEY", "minioadmin"),
     );
-    let t = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     c.prefix = format!("{test}-{t}/");
     let b = S3Backend::new_unchecked(c.clone()).unwrap();
     b.ensure_bucket().unwrap();
@@ -35,23 +32,11 @@ fn s3(test: &str) -> Option<S3Backend> {
 }
 
 fn sig() -> Signature {
-    Signature {
-        name: "t".into(),
-        email: "t@x".into(),
-        timestamp: 1,
-    }
+    Signature { name: "t".into(), email: "t@x".into(), timestamp: 1 }
 }
 fn tree_of(s: &MemoryStore, content: &[u8]) -> ObjectId {
     let blob = s.put_blob(content).unwrap();
-    s.put(&Object::Tree(
-        Tree::new(vec![TreeEntry {
-            name: "f".into(),
-            mode: EntryMode::File,
-            id: blob,
-        }])
-        .unwrap(),
-    ))
-    .unwrap()
+    s.put(&Object::Tree(Tree::new(vec![TreeEntry { name: "f".into(), mode: EntryMode::File, id: blob }]).unwrap())).unwrap()
 }
 fn commit(s: &MemoryStore, root: ObjectId, parents: Vec<ObjectId>, tag: u8) -> ObjectId {
     s.put(&Object::Commit(Commit {
@@ -83,12 +68,7 @@ fn upload(b: &dyn Backend, s: &MemoryStore, id: ObjectId, seen: &mut HashSet<Obj
 }
 fn tx(old: Option<ObjectId>, new: ObjectId) -> Transaction {
     Transaction {
-        updates: vec![RefUpdate {
-            zone: "z".into(),
-            branch: "main".into(),
-            old,
-            new,
-        }],
+        updates: vec![RefUpdate { zone: "z".into(), branch: "main".into(), old, new }],
         author: sig(),
         message: "m".into(),
         lock_ops: vec![],
@@ -114,17 +94,10 @@ fn s3_conformance_gc() {
     let t1 = b.now_ms().unwrap();
     let n1 = b.requests();
     let t2 = b.now_ms().unwrap();
-    assert_eq!(
-        b.requests(),
-        n1,
-        "an anchored clock reading must not hit the network ({n0} -> {n1})"
-    );
+    assert_eq!(b.requests(), n1, "an anchored clock reading must not hit the network ({n0} -> {n1})");
     assert!(t2 >= t1);
     // the anchored clock agrees with this machine to within a minute (both are NTP clocks)
-    let local = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
+    let local = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
     assert!(t1.abs_diff(local) < 60_000, "server {t1} local {local}");
     conformance_gc(&b);
 }
@@ -155,11 +128,7 @@ fn s3_sweeper_deletes_old_garbage_keeps_the_head_and_touch_protects() {
     assert!(fetch_object(&b, &head).is_ok(), "the head must survive");
     assert!(b.exists("manifest").unwrap());
     assert!(b.list("tomb/").unwrap().is_empty(), "no tombstones left behind");
-    assert!(
-        b.list("gc/").unwrap().iter().all(|k| k == "gc/clock"),
-        "lock released: {:?}",
-        b.list("gc/")
-    );
+    assert!(b.list("gc/").unwrap().iter().all(|k| k == "gc/clock"), "lock released: {:?}", b.list("gc/"));
     // idempotent
     assert!(remote_gc(&b, &opts()).unwrap().deleted.is_empty());
 }
