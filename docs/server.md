@@ -220,3 +220,7 @@ server bounds only `time_hw`); one request per connection and one thread per con
 OIDC; Windows signal reload.
 
 Deployment (systemd, Docker, S3 backend, path policy, require-lock, replicas): see [deploy.md](deploy.md).
+
+## Disk cache of immutable reads
+
+`--cache-dir <dir> [--cache-size <bytes>]` (default 8 GiB, also `cache-dir`/`cache-size` in the config file) keeps pack indexes, pack blocks and objects on local disk. These keys are content-addressed, so a restarted server answers a warm clone from disk and asks the object store only for the manifest and the pack listing. Every entry carries a blake3 over key, range and bytes that is checked on each read; a damaged entry is dropped and refetched. The manifest, listings, writes, deletes and existence checks never use the cache. Oldest entries are evicted past the cap.
