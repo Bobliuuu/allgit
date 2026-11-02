@@ -773,8 +773,9 @@ impl Repo {
         let one = |rel: &String| -> Result<(Option<IndexEntry>, bool)> {
             let abs = self.worktree.join(rel);
             let t_stat = now_ns();
-            let m = io(&abs, fs::symlink_metadata(&abs))?; // stat BEFORE read: later edits change mtime/size
-            if m.file_type().is_symlink() {
+            // relative to the worktree's root fd: no re-walk of the absolute prefix per file
+            let m = io(&abs, self.wfs.stat(rel))?; // stat BEFORE read: later edits change mtime/size
+            if m.kind == FileKind::Symlink {
                 let target = io(&abs, read_link_bytes(&abs))?;
                 let id = self.store.put_blob(&target)?;
                 return Ok((
@@ -782,17 +783,17 @@ impl Repo {
                         id,
                         mode: EntryMode::Symlink,
                         size: target.len() as u64,
-                        mtime_ns: mtime_ns(&m),
-                        ctime_ns: ctime_ns(&m),
+                        mtime_ns: m.mtime_ns,
+                        ctime_ns: m.ctime_ns,
                     }),
                     true,
                 ));
             }
-            let (mt, ct, mode) = (mtime_ns(&m), ctime_ns(&m), mode_of(&m));
+            let (mt, ct, mode) = (m.mtime_ns, m.ctime_ns, m.mode);
             let old = prev.get(rel.as_str());
             if let Some(e) = old {
                 if e.mode == mode
-                    && e.size == m.len()
+                    && e.size == m.len
                     && e.mtime_ns == mt
                     && e.ctime_ns == ct
                     && ct != 0
@@ -801,16 +802,16 @@ impl Repo {
                     return Ok((None, true)); // stat cache hit
                 }
             }
-            if m.len() >= vcs_objects::LARGE_THRESHOLD as u64 {
+            if m.len >= vcs_objects::LARGE_THRESHOLD as u64 {
                 // large file: streamed in constant memory, chunk-wise compared with the old manifest first
                 let f = io(&abs, fs::File::open(&abs))?;
                 self.counters.content_reads.fetch_add(1, Ordering::Relaxed);
                 let verified = mt.max(ct).saturating_add(racy) <= t_stat;
-                let id = self.stage_large(&abs, &f, m.len(), old.filter(|e| e.size == m.len()).map(|e| e.id))?;
+                let id = self.stage_large(&abs, &f, m.len, old.filter(|e| e.size == m.len).map(|e| e.id))?;
                 let ne = IndexEntry {
                     id,
                     mode,
-                    size: m.len(),
+                    size: m.len,
                     mtime_ns: mt,
                     ctime_ns: ct,
                 };
@@ -821,13 +822,13 @@ impl Repo {
             let verified = mt.max(ct).saturating_add(racy) <= t_stat;
             let id = match old {
                 // same size: likely the same content, and then the object is known stored
-                Some(e) if e.size == m.len() && vcs_objects::content_id(&data) == e.id => e.id,
+                Some(e) if e.size == m.len && vcs_objects::content_id(&data) == e.id => e.id,
                 _ => self.store.put_content(&data)?,
             };
             let ne = IndexEntry {
                 id,
                 mode,
-                size: m.len(),
+                size: m.len,
                 mtime_ns: mt,
                 ctime_ns: ct,
             };
