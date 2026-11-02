@@ -261,9 +261,29 @@ fn dirty_zone_blocks_switch_and_remove() {
     add_all(&r);
     commit(&r, "m");
     r.create_branch("root", "b").unwrap();
+    r.checkout("root", "b").unwrap();
+    write(&r, "f", "on b");
+    add_all(&r);
+    commit(&r, "b moves on");
+    r.checkout("root", "main").unwrap();
     write(&r, "f", "dirty");
-    assert!(r.checkout("root", "b").is_err());
+    assert!(r.checkout("root", "b").is_err(), "b is at another commit: the edit would be lost");
     assert_eq!(read(&r, "f"), "dirty", "user data untouched");
+}
+
+#[test]
+fn dirty_zone_does_not_block_a_switch_to_the_same_commit() {
+    // nothing in the working tree changes, so an unstaged edit is safe (as in git); staged ones still refuse
+    let (_d, r) = setup();
+    write(&r, "f", "1");
+    add_all(&r);
+    commit(&r, "m");
+    r.create_branch("root", "b").unwrap();
+    write(&r, "f", "dirty");
+    r.checkout("root", "b").unwrap();
+    assert_eq!(read(&r, "f"), "dirty", "user data untouched");
+    add_all(&r);
+    assert!(r.checkout("root", "main").is_err(), "staged changes refuse");
 }
 
 #[test]

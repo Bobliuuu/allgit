@@ -533,10 +533,12 @@ impl Repo {
         }
         let zones = self.zones()?;
         let ws = self.workspace()?;
-        let mut ix = self.index()?;
+        // Lazy index: a few lookups and one patched block, not a decode and rewrite of every entry.
+        let f = self.index_file()?;
         self.require_subscribed(&zones, &ws, src)?;
         self.require_subscribed(&zones, &ws, dst)?;
-        let old: Vec<String> = ix.under(src);
+        let old_entries = f.under(src)?;
+        let old: Vec<String> = old_entries.iter().map(|(k, _)| k.clone()).collect();
         if old.is_empty() {
             return msg(format!("{src:?} is not tracked"));
         }
@@ -546,7 +548,7 @@ impl Repo {
             ));
         }
         let into_dir = match fs::symlink_metadata(self.worktree.join(dst)) {
-            Ok(m) => m.is_dir() && !ix.entries.contains_key(dst),
+            Ok(m) => m.is_dir() && f.get(dst)?.is_none(),
             Err(_) => false,
         };
         let base = if into_dir {
@@ -592,7 +594,7 @@ impl Repo {
                 Err(_) => return msg(format!("{o:?} is missing from the working tree; `vcs restore {o}` it first")),
             }
             self.check_ancestors(&n)?;
-            let occupied = ix.entries.contains_key(&n) && !old.contains(&n) || fs::symlink_metadata(self.worktree.join(&n)).is_ok();
+            let occupied = f.get(&n)?.is_some() && !old.contains(&n) || fs::symlink_metadata(self.worktree.join(&n)).is_ok();
             if occupied && !force {
                 return msg(format!("destination {n:?} already exists (use --force to overwrite)"));
             }
@@ -620,20 +622,25 @@ impl Repo {
             done.push((o.clone(), n.clone()));
         }
         let mut dirs = BTreeSet::new();
-        let mut moved_entries = Vec::new();
-        for (o, n) in &plan {
+        let mut edits = crate::index_file::Edits::new();
+        let mut sets = Vec::with_capacity(plan.len());
+        for ((o, n), (_, e)) in plan.iter().zip(old_entries) {
             if let Some(par) = self.worktree.join(o).parent() {
                 dirs.insert(par.to_owned());
             }
-            moved_entries.push((n.clone(), ix.entries.remove(o).expect("tracked")));
-            ix.entries.remove(n);
+            edits.insert(o.clone(), None);
+            sets.push((n.clone(), e));
         }
-        for (n, e) in moved_entries {
-            ix.insert(&n, e)?;
+        // sets last, so a destination that is also a source ends up set, not removed
+        for (n, e) in sets {
+            edits.insert(n, Some(e));
         }
         self.prune_dirs(dirs);
-        self.save_index(&mut ix)?;
+        let (patched, _) = self.prepare_index_patch(&f, &edits)?;
         self.record_op(&format!("mv {src} {dst}"), None)?;
+        if let Some(bytes) = patched {
+            self.write_index_bytes(&bytes)?;
+        }
         Ok(MvReport { moved: plan })
     }
 }

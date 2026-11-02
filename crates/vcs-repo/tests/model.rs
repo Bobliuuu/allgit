@@ -464,7 +464,10 @@ impl Model {
                 let Some(&target) = self.view.branches.get(&(z.clone(), b.clone())) else {
                     return Err(());
                 };
-                if self.dirty(z) {
+                // Same commit on both branches: only staged changes block the switch (an unstaged
+                // edit cannot be lost, the working tree is not touched).
+                let same = self.view.branches.get(&(z.clone(), cur.clone())) == Some(&target);
+                if if same { !self.staged(z).is_empty() } else { self.dirty(z) } {
                     return Err(());
                 }
                 let (old, new) = (self.head_files(z), self.files_of(Some(target)));

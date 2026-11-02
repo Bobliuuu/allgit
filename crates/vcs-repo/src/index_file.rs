@@ -161,6 +161,24 @@ impl IndexFile {
         Ok(out)
     }
 
+    /// The cached tree id of directory `dir` ("" = root) from the cache-tree section, when that
+    /// section was computed under the zone layout `fp`. Reads only the tail, never an entry.
+    pub(crate) fn cached_tree(&self, fp: &ObjectId, dir: &str) -> Result<Option<ObjectId>> {
+        let mut tr = Reader::new(&self.bytes[self.tail..]);
+        let tn = tr.varint().map_err(corrupt)? as usize;
+        if tn == 0 || tr.id().map_err(corrupt)? != *fp {
+            return Ok(None);
+        }
+        for _ in 0..tn {
+            let d = tr.str(4096).map_err(corrupt)?;
+            let id = tr.id().map_err(corrupt)?;
+            if d == dir {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
+    }
+
     /// Apply `edits` and return the new file bytes plus how many entries really changed.
     pub(crate) fn patch(&self, edits: &Edits) -> Result<(Vec<u8>, usize)> {
         // 1. group the edits by block
