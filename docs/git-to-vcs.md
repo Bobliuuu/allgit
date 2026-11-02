@@ -365,7 +365,7 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git ls-files -s` | `vcs ls-files -s` | exact | sha256 object ids, not sha1 | translation |
 | `git ls-files -o` | none | missing | `vcs status` lists untracked files | translation |
 | `git ls-tree -r --name-only HEAD` | `vcs ls-files --rev HEAD` | renamed | always recursive | translation |
-| `git ls-tree HEAD` | `vcs ls-files -s --rev HEAD` | different | flat recursive listing, not one directory level | translation |
+| `git ls-tree HEAD` | `vcs ls-files -s --rev HEAD --depth 1` | renamed | one level from the top tree; directories are mode 040000 with their tree id, no type column | translation |
 | `git cat-file -p HEAD:f.txt` | `vcs cat-file -p HEAD:f.txt` | exact |  | translation |
 | `git cat-file -t HEAD` | `vcs cat-file -t HEAD` | exact |  | translation |
 | `git cat-file --batch` | none | missing | one object per call | translation |
