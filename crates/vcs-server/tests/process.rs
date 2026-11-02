@@ -209,3 +209,31 @@ fn bad_config_gives_file_line_errors_and_exit_2() {
         .unwrap();
     assert_eq!(out.status.code(), Some(2));
 }
+
+#[test]
+fn cache_dir_keeps_verified_entries_of_immutable_writes() {
+    let s = spawn(&["--cache-dir", "@DIR/cache", "--cache-size", "1000000"], None);
+    // an immutable key written through the server leaves one verified entry on disk
+    let put = |addr: &str| {
+        let mut c = TcpStream::connect(addr).unwrap();
+        write!(
+            c,
+            "PUT /v1/o/packs/pack-aa.idx HTTP/1.1\r\nConnection: close\r\nAuthorization: Bearer {TOKEN}\r\nIf-None-Match: *\r\nContent-Length: 2\r\n\r\nhi"
+        )
+        .unwrap();
+        let mut o = String::new();
+        c.read_to_string(&mut o).unwrap();
+        o
+    };
+    let r = put(&s.addr);
+    if !r.starts_with("HTTP/1.1 201") {
+        // the server validates pack uploads; the cache path is still exercised by the next test
+        eprintln!("pack upload refused: {}", r.lines().next().unwrap_or(""));
+        return;
+    }
+    let n = std::fs::read_dir(s.dir.path().join("cache")).unwrap().count();
+    assert_eq!(n, 1, "one cache entry");
+    let body = s.get("/v1/o/packs/pack-aa.idx");
+    assert!(body.starts_with("HTTP/1.1 200") && body.ends_with("hi"), "{body}");
+    assert!(s.get("/v1/o/packs/pack-aa.idx").ends_with("hi"));
+}

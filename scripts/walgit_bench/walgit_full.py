@@ -186,6 +186,8 @@ def start_vcs(name, port, prefix, best=None):
     S.stop(name)
     env = pack_env(name)
     extra = ["--max-body", os.environ["WB_VCS_MAX_BODY"]] if os.environ.get("WB_VCS_MAX_BODY") else []
+    if os.environ.get("WB_VCS_CACHE"):  # persistent read cache (disk); cold restarts wipe it
+        extra += ["--cache-dir", f"{WB}/vcscache/{name}"]
     S.start(name, ["vcs-server", "--backend", f"s3://vcs/{prefix}?endpoint={endpoint()}", "--tokens", f"{WB}/cfg/tokens",
                    "--listen", f"127.0.0.1:{port}"] + extra, f"http://127.0.0.1:{port}/healthz", env)
 
@@ -232,6 +234,8 @@ class Arm:
         return f"http://127.0.0.1:{self.port}"
 
     def restart_cold(self):
+        if self.kind == "vcs" and os.environ.get("WB_VCS_CACHE"):
+            sh(f"rm -rf '{WB}/vcscache/{self.svc}'")
         if self.kind == "walgit":
             start_walgit(wipe_cache=True, serve_only=True)
         elif self.kind == "vcs":
