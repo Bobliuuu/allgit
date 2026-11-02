@@ -708,6 +708,14 @@ What changed:
   file/directory conflict check runs by binary search over the sorted key list on the same threads. `index_cost`
   (100k entries, release, same box under load): 17.7 ms decode, against 61 ms recorded earlier for the single-threaded
   decoder.
+- **Index layout `AGI4`, patched in place.** `rm`, `rm --cached`, `restore --staged` and `reset <path>` no longer decode
+  and re-encode the whole index. They read the block table (the first path of each block is enough to binary-search),
+  decode only the blocks holding the paths they change, re-encode those and copy every other block's bytes. A patch
+  can leave blocks uneven, so patched files are `AGI4` (the table carries each block's own entry count); `Index::decode`
+  reads `AGI4` and the full writer still writes `AGI3`. A patch keeps `written_ns`, so the entries it adds are at
+  worst re-read once by the next `status`. The index file is replaced by rename without an fsync of the temp file (as
+  git does; the blobs it names are made durable first) and is written after the operation is recorded, so the
+  operation log's fsyncs do not wait for a freshly written index. **Compatibility:** an older binary cannot read an `AGI4` index. **Durability:** without the fsync, a power cut right after the rename can leave a short index on a file system that does not flush replaced-by-rename data; `Repo::discover` therefore checks the index header and tail (cheap, no full read) and, if the file is torn, rebuilds it from the branch heads with a warning (staged-only changes are lost, files are untouched) instead of failing or reading it as empty. Readers that only understand `AGI3` (`IndexView`) fall back to the full decode on an `AGI4` file until the next full write.
 - **Untracked walk**: instead of one `BTreeMap` lookup plus one `format!` per name, each directory's (sorted) listing is
   merged against the sorted list of tracked names directly in that directory (`Entries::children`). A tracked file
   allocates nothing.
