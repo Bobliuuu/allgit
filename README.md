@@ -198,34 +198,70 @@ carry machine, load, run count and version, and none of them is a general statem
 
 ### 🏁 Local commands against git, 100,000 files
 
-Flat layout (`datagen flat 100000`, seed 42), warm cache, interleaved with git in random order per round, 5 runs,
-paired median ratio of CPU (user+sys), vcs divided by git, **below 1 means vcs used less CPU**.
-Machine: AWS c6i.4xlarge, 16 vCPU, load1 about 3 to 8 during the timed rounds, git 2.43.0, 2026-11-01. Build: `08ff4cc`.
+Flat layout (`datagen flat 100000`, seed 42), warm cache, interleaved with git in random order per round, 5 runs (3 for
+the slowest cells), medians, vcs divided by git, **below 1 means vcs used less**. Machine: AWS c6i.4xlarge (box E),
+16 vCPU, load1 about 1.5 to 2.1 during the timed groups, git 2.43.0, run 2026-11-02, vcs release build of
+`origin/main` at `8da0be2`. Wall and CPU are user+sys from `wait4`.
 
-| cell (flat 100k) | git CPU ms | vcs CPU ms | CPU ratio | wall ratio |
+| cell (flat 100k) | git wall / CPU ms | vcs wall / CPU ms | wall ratio | CPU ratio |
 |---|---|---|---|---|
-| add (fresh index) | 4,825 | 1,896 | 0.40 | 0.08 |
-| commit (all staged) | 461 | 273 | 0.58 | 0.74 |
-| status, clean | 175 | 303 | **1.73** | 1.10 |
-| log (50 commits) | 3 | 3 | 1.03 | 1.03 |
-| checkout (1% differ) | 351 | 474 | **1.33** | 0.88 |
+| add (fresh index) | 4,810 / 4,751 | 538 / 1,772 | 0.11 | 0.37 |
+| commit (all staged) | 357 / 459 | 227 / 92 | 0.45 | 0.20 |
+| status, clean | 65 / 182 | 55 / 189 | 0.88 | **1.04** |
+| log -n 5 | 1.4 / 1.3 | 2.1 / 2.1 | **1.54** | **1.58** |
+| switch (1% of files differ) | 233 / 346 | 179 / 279 | 0.77 | 0.81 |
 
-Source: [docs/research/interleaved-data/readmefix/c6i-flat-100000.json](docs/research/interleaved-data/readmefix/c6i-flat-100000.json)
-(re-render with `python3 -I scripts/bench_compare.py --report <file>`), method in
-[docs/research/interleaved-comparison.md](docs/research/interleaved-comparison.md). A second run on a very noisy shared
-30-core box is in `lambda-flat-100000.json` in the same directory; its intervals are wide.
+Source: [docs/research/data/command-scoreboard](docs/research/data/command-scoreboard) (`git-fresh.json`,
+`git-clean.json`, `git-small.json`), rendered by `scripts/command_scoreboard_render.py`; the complete per-command table
+is [docs/research/command-scoreboard.md](docs/research/command-scoreboard.md). The older interleaved harness
+(`scripts/bench_compare.py`, [docs/research/interleaved-comparison.md](docs/research/interleaved-comparison.md)) has
+other runs in `docs/research/interleaved-data/`; they predate the work in PRs #374 to #418 and are not quoted here.
+`status` on a clean tree is a CPU tie with git (1.04x) and about 12% faster in wall time; `log` of a handful of
+commits costs about 0.7 ms more process time than git (a start-up cost, below the 2 ms noise floor of the scoreboard,
+so it is scored a TIE). Not measured here: cold cache, git with fsmonitor, the optional `watcher` feature, other
+machines, deep and binary layouts for the per-command git/p4 scoreboards.
 
-That build predates the index and status work in PRs #374 and #377. The follow-up numbers in the PR #377 comment
-(merged PR data, not a committed file; box c, c6i.4xlarge, git 2.43.0, 5 runs, load1 1.2 to 3.1, CPU median ms, ratio
-to git) are: status clean 201 vs git 179 (**1.13x**, flat), 902 vs 814 (1.10x, deep), 201 vs 180 (1.12x, binary);
-checkout 1% flat 305 vs 347 (0.87x); commit flat 92 vs 468; add fresh flat 1,796 vs 4,762. Status wall time was about
-48 ms against git's 66 ms. **So `status` still costs about 1.1x git's CPU** (the rest is kernel stat time and
-per-entry work), and re-adding a mostly unchanged tree was still slower than git: PR #377 measured 1.78x git CPU
-before its fix and 0.57 s to 0.46 s CPU after it (flat 100k, 4 interleaved runs on a loaded box); the new ratio to
-git was not recorded. Older notes put clone at 1.35 to 1.8x git CPU but 0.5 to 0.65x wall
-([docs/research/storage-speed.md](docs/research/storage-speed.md), 10k files, loaded shared box). Not measured here:
-cold cache, git with fsmonitor, the optional `watcher` feature, other machines, and deep and binary layouts for the
-first table.
+### 🏆 Per-command scoreboards
+
+Every row of the [git to vcs](docs/git-to-vcs.md) and [p4 to vcs](docs/p4-to-vcs.md) tables that has a vcs equivalent
+was run against the real tool where a scenario exists; the rest is listed as NOT-MEASURED (never guessed). Verdicts:
+WIN = vcs at least 10% lower in both wall and CPU, LOSS = at least 10% higher in both, TIE = everything else (and any
+cell under 2 ms wall difference). Green is a win, amber a tie, red a loss. 🟢🟡🔴
+
+<p align="center"><img src="docs/img/scoreboard-git.svg" alt="vcs vs git per-command scoreboard" width="900"></p>
+<p align="center"><img src="docs/img/scoreboard-p4.svg" alt="vcs vs Perforce per-command scoreboard" width="900"></p>
+<p align="center"><img src="docs/img/scoreboard-walgit.svg" alt="vcs vs walgit remote workflows scoreboard" width="900"></p>
+<p align="center"><img src="docs/img/scoreboard-jj.svg" alt="vcs vs Jujutsu per-command scoreboard" width="900"></p>
+<p align="center"><img src="docs/img/scoreboard-sapling.svg" alt="vcs vs Sapling per-command scoreboard" width="900"></p>
+
+| tool | 🟢 WIN | 🟡 TIE | 🔴 LOSS | not measured / n/a | how fresh |
+|---|---|---|---|---|---|
+| git (flat 100k, every doc row; rows sharing a scenario count once per row) | 46 | 68 | 17 | 93 not measured, 44 missing in vcs | 2026-11-02, build `8da0be2`, box E, interleaved |
+| Perforce (p4d on loopback) | 9 | 7 | 14 | 27 not measured, 2 missing | 2026-11-02, build `8da0be2`, box E, interleaved |
+| walgit (remote workflows) | 20 | 4 | 0 | 8 not measured | **older**: vcs build `84f3fa2`, box c, 3 reps, reused unchanged |
+| Jujutsu (3 layouts x 17 cells) | 43 | 2 | 6 | describe and amend n/a | vcs `8da0be2` re-run, **jj numbers from the earlier `34315b6` run, not interleaved** |
+| Sapling | 48 | 0 | 0 | gc, describe and amend n/a | same as Jujutsu |
+
+Before this refresh (earlier same-day run, same scenarios): git 30 WIN / 52 TIE / 49 LOSS, Perforce 6 / 7 / 17. The
+`diff`, `show`, `cat-file`, `reset`, `restore`, `rm` and `clone` rows moved from LOSS to WIN or TIE; the per-row
+before and after ratios are in the scoreboard document. Caveats: load1 was 1.5 to 2.1 (a shared box), p4 CPU is a lower
+bound (the p4d process is read in 10 ms ticks), p4 and jj/Sapling are different architectures than vcs, the git run is
+flat 100k only, and the jj and Sapling cells mix sessions (see [the document](docs/research/jj-sapling-benchmark.md)).
+
+🙈 **Where git (or walgit, or jj) still wins today**, from the same runs:
+
+- **Tiny metadata commands cost vcs about 5x git's wall time** (`branch`, `tag`, `tag -d`, `branch -m`: 6 to 9 ms
+  against 1.4 ms) even though CPU is within 1.5x. `vcs switch -c` is 65 ms against git's 1.8 ms.
+- **`ls-tree HEAD` (non-recursive) is 19x git** (34 ms vs 1.8 ms), `bundle verify` is 370x (467 ms vs 1.3 ms),
+  `ls-files` 1.24x wall and 2.2x CPU, `grep -- path` 1.7x, `log --stat` 1.8x, `gc` 1.8x, `bundle create` 1.6x.
+- **`add -u`, `commit -a` and `add .` after a one-file change use 1.2 to 1.8x git's wall time**, and `mv` regressed (87 ms vs git's
+  46 ms, was a tie at 43 ms).
+- **vs Perforce**: `submit` of one file (115 ms vs 5.5 ms), `add`, `opened`, `revert`, `filelog` and `sync` of a full
+  tree (2.3 s vs 1.5 s) are all slower than p4's thin client; p4d did the work in a server process.
+- **vs Jujutsu**: `commit` of a big staged tree (1.1x to 1.9x), `switch` (1.4x to 1.5x, possible regression) and a deep
+  `clone` (1.6x) are slower than jj. **vs Sapling**: no losses in the measured cells.
+- **vs walgit** (older data, below): warm one-commit fetch is a tie, object-store request counts and client store size
+  are worse for vcs.
 
 ### 🌐 Remote workflows: vcs, git and walgit
 
@@ -266,11 +302,14 @@ in the same document. Deep and binary 100k were not run in the quiet-box pass.
 
 ### 🔭 Other tools
 
-Comparisons with Perforce, Jujutsu, Sapling, Mercurial, Subversion, Fossil, Breezy and Pijul exist
-([perforce](docs/research/perforce-benchmark.md), [jujutsu](docs/research/jujutsu-benchmark.md),
-[sapling](docs/research/sapling-benchmark.md), [others](docs/research/other-vcs-benchmark.md)), but their vcs columns
-were measured with a build that predates the current performance work and were not re-run. They are deliberately not
-reproduced here; read those files with that in mind. More method notes: [docs/benchmarks.md](docs/benchmarks.md).
+Perforce, Jujutsu and Sapling are covered by the scoreboards above
+([command-scoreboard](docs/research/command-scoreboard.md),
+[jj and Sapling](docs/research/jj-sapling-benchmark.md)). Older whole-workflow comparisons with Perforce, Jujutsu,
+Sapling, Mercurial, Subversion, Fossil, Breezy and Pijul exist ([perforce](docs/research/perforce-benchmark.md),
+[jujutsu](docs/research/jujutsu-benchmark.md), [sapling](docs/research/sapling-benchmark.md),
+[others](docs/research/other-vcs-benchmark.md)), but their vcs columns were measured with a build that predates the
+current performance work and were not re-run; read those files with that in mind. More method notes:
+[docs/benchmarks.md](docs/benchmarks.md).
 
 ## 🔒 Security notes
 

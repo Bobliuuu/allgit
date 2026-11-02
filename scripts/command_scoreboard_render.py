@@ -248,6 +248,8 @@ def main():
     ap.add_argument("--walgit", default="docs/research/data/walgit-full-boxc/res-flat-100000.json")
     ap.add_argument("--out-md", default="docs/research/command-scoreboard.md")
     ap.add_argument("--img", default="docs/img")
+    ap.add_argument("--build", default="", help="vcs build (commit) that produced the data, printed in the header")
+    ap.add_argument("--prev", default="", help="directory with the previous run's JSON (adds a 'before' column)")
     a = ap.parse_args()
     os.makedirs(a.img, exist_ok=True)
 
@@ -260,6 +262,24 @@ def main():
     if os.path.exists(pf):
         d = json.load(open(pf))
         pcells, pmeta = d["cells"], d["meta"]
+
+    prev_g, prev_p = {}, {}
+    if a.prev:
+        for f in sorted(glob.glob(os.path.join(a.prev, "git-*.json"))):
+            prev_g.update(json.load(open(f))["cells"])
+        if os.path.exists(os.path.join(a.prev, "p4.json")):
+            prev_p = json.load(open(os.path.join(a.prev, "p4.json")))["cells"]
+
+    def annotate(rs, pc_, ref):
+        for r in rs:
+            sid = r.get("sid")
+            if sid and sid in pc_ and "rw" in r:
+                try:
+                    pr = cell_stats(pc_[sid], ref)
+                except Exception:
+                    continue
+                if "rw" in pr:
+                    r["prev"] = pr
 
     md = []
     # ---- git
@@ -286,17 +306,20 @@ def main():
             g_out.append(res)
 
     def tbl(rs, ref):
-        L = [f"| command | vcs | {ref} wall/cpu ms | vcs wall/cpu ms | ratio wall/cpu | verdict | note |", "|---|---|---|---|---|---|---|"]
+        L = [f"| command | vcs | {ref} wall/cpu ms | vcs wall/cpu ms | ratio wall/cpu | before (wall ratio, verdict) | verdict | note |", "|---|---|---|---|---|---|---|---|"]
         for r in rs:
             if "rw" in r:
-                L.append(f"| `{r['cmd']}` | `{r['vcs']}` | {fmt_ms(r['wr'])} / {fmt_ms(r['cr'])} | {fmt_ms(r['wv'])} / {fmt_ms(r['cv'])} | {r['rw']:.2f} / {r['rc']:.2f} | **{r['v']}** | {r['note']}{' (n=%d)' % r['n']} |")
+                pv = r.get("prev")
+                bf = f"{pv['rw']:.2f} {pv['v']}" if pv else "n/a"
+                L.append(f"| `{r['cmd']}` | `{r['vcs']}` | {fmt_ms(r['wr'])} / {fmt_ms(r['cr'])} | {fmt_ms(r['wv'])} / {fmt_ms(r['cv'])} | {r['rw']:.2f} / {r['rc']:.2f} | {bf} | **{r['v']}** | {r['note']}{' (n=%d)' % r['n']} |")
             else:
-                L.append(f"| `{r['cmd']}` | `{r['vcs']}` | | | | {r['v']} | {r['note'].replace('|', '/')} |")
+                L.append(f"| `{r['cmd']}` | `{r['vcs']}` | | | | | {r['v']} | {r['note'].replace('|', '/')} |")
         return L
 
     def counts(rs):
         return {k: sum(1 for r in rs if r["v"] == k) for k in ("WIN", "TIE", "LOSS", "NOT-MEASURED", "MISSING")}
 
+    annotate(g_out, prev_g, "git")
     gc = counts(g_out)
     # ---- p4
     prow = parse_table("docs/p4-to-vcs.md", 4)
@@ -320,6 +343,7 @@ def main():
             res = cell_stats(pcells[sid], "p4")
             res.update(cmd=lab + " *", vcs=vc, sid=sid, doc="extra")
             p_out.append(res)
+    annotate(p_out, prev_p, "p4")
     pc = counts(p_out)
 
     # ---- walgit
@@ -371,9 +395,10 @@ def main():
     md += ["## Where and how it was run", ""]
     if gm:
         loads = [f"{k.replace('git-','').replace('.json','')}: load1 {m['load1_start']:.1f}->{m.get('load1_end', 0):.1f}" for k, m in gmeta.items()]
-        md += [f"* Machine: {gm.get('host')} (AWS c6i.4xlarge timing box, {gm.get('cores')} vCPU), git: `{gm.get('git')}`, vcs: `{gm.get('vcs')}`, "
+        md += [f"* Machine: {gm.get('host')} (AWS c6i.4xlarge timing box E, {gm.get('cores')} vCPU), run {gm.get('start','')[:10]}, vcs release build of `origin/main` {a.build or '(unrecorded)'}, git: `{gm.get('git')}`, vcs: `{gm.get('vcs')}`, "
                f"dataset `datagen flat {gm.get('n')}` (seed 42). Timing under `flock ~/bench.lock`, one group at a time, tools interleaved per round in random order, warm cache.",
-               "* **The box was not quiet**: other agents' builds and tests ran on it during these runs (load per group: " + "; ".join(loads) + "). Wall times for slow cells carry that noise; the per-round load is in the JSON.",
+               "* **Load caveat**: the box is shared; load1 was sampled at the start and end of each group and is low but not zero (per group: " + "; ".join(loads) + "). Other agents' builds can run outside the lock. Wall times for slow cells carry that noise; the per-round load is in the JSON.",
+               "* **Before column**: the earlier run of the same scenarios (`docs/research/data/command-scoreboard-prev/`, same box, earlier the same day; the vcs build is not recorded in that data, it predates the speed fixes merged since) is kept for comparison. It is the previous wall ratio and verdict, not a re-measurement; a cell with `n/a` had no comparable previous result.",
                "* Runs per cell: 5 (3 for slow cells), the `n=` in each row says how many. Medians only; min/max are in the JSON. No significance test: the 10% band is a practical threshold, a cell at 0.95 to 1.05 is not distinguishable from noise with 3 to 5 rounds."]
     if pmeta:
         md += [f"* Perforce: `{pmeta.get('p4')}` client, `{pmeta.get('p4d')}` server (binaries copied from the earlier Perforce benchmark, SHA256 re-checked against docs/research/perforce-benchmark.md), "
@@ -394,9 +419,10 @@ def main():
     md += ["## LOSS list (hand to optimization agents)", ""]
     loss = [("git", r) for r in g_out if r["v"] == "LOSS"] + [("p4", r) for r in p_out if r["v"] == "LOSS"] + [("walgit/git", r) for r in w_out if r["v"] == "LOSS"]
     if loss:
-        md += ["| vs | command | vcs | ratio wall/cpu | reference ms | vcs ms |", "|---|---|---|---|---|---|"]
+        md += ["| vs | command | vcs | ratio wall/cpu | before (wall ratio) | reference ms | vcs ms |", "|---|---|---|---|---|---|---|"]
         for t, r in sorted(loss, key=lambda x: -x[1]["rw"]):
-            md.append(f"| {t} | `{r['cmd']}` | `{r['vcs']}` | {r['rw']:.2f} / {r['rc']:.2f} | {fmt_ms(r['wr'])} wall / {fmt_ms(r['cr'])} cpu | {fmt_ms(r['wv'])} wall / {fmt_ms(r['cv'])} cpu |")
+            bf = f"{r['prev']['rw']:.2f}" if r.get("prev") else "n/a"
+            md.append(f"| {t} | `{r['cmd']}` | `{r['vcs']}` | {r['rw']:.2f} / {r['rc']:.2f} | {bf} | {fmt_ms(r['wr'])} wall / {fmt_ms(r['cr'])} cpu | {fmt_ms(r['wv'])} wall / {fmt_ms(r['cv'])} cpu |")
     else:
         md.append("No LOSS cells in the measured set.")
     mixed = [(t, r) for t, rs in (("git", g_out), ("p4", p_out), ("walgit/git", w_out)) for r in rs if r.get("note", "").startswith("mixed: ") and "slower" in r["note"]]
@@ -426,7 +452,7 @@ def main():
     # failures / unmeasured in the git+p4 data
     md += ["## Reproduce", "",
            "```sh",
-           "# on box c, under the lock, one group at a time (see the header of scripts/command_scoreboard.py)",
+           "# on box E, under the lock, one group at a time (see the header of scripts/command_scoreboard.py)",
            "python3 -I scripts/command_scoreboard.py setup --work W --vcs target/release/vcs --datagen target/release/datagen --n 100000",
            "for g in fresh clean dirty untracked small; do flock ~/bench.lock python3 -I scripts/command_scoreboard.py run --work W --vcs target/release/vcs --group $g --out git-$g.json; done",
            "flock ~/bench.lock python3 -I scripts/command_scoreboard_p4.py --work W --vcs target/release/vcs --p4 P4 --p4d P4D --datagen target/release/datagen --out p4.json",
@@ -436,7 +462,12 @@ def main():
     open(a.out_md, "w").write("\n".join(md))
 
     def rt(r):
-        return f"{r['rw']:.2f}x" if "rw" in r else ""
+        if "rw" not in r:
+            return ""
+        if r.get("prev"):
+            g = lambda x: f"{x:.0f}" if x >= 10 else f"{x:.2g}"
+            return f"{g(r['prev']['rw'])}\u2192{g(r['rw'])}x"
+        return f"{r['rw']:.2f}x"
     svg("vcs vs git, per command (docs/git-to-vcs.md)", f"ratio = vcs/git wall; WIN/LOSS need wall and CPU beyond {int(TIE*100)}%; flat 100k, c6i.4xlarge", [(r["cmd"].replace("git ", "", 1), r["v"], rt(r)) for r in g_out], os.path.join(a.img, "scoreboard-git.svg"))
     svg("vcs vs Perforce, per command (docs/p4-to-vcs.md)", "ratio = vcs/p4 wall (p4 includes the p4d server work); flat 100k, c6i.4xlarge", [(r["cmd"].replace("p4 ", "", 1), r["v"], rt(r)) for r in p_out], os.path.join(a.img, "scoreboard-p4.svg"))
     svg("vcs vs walgit (remote workflows and walgit CLI)", "ratio = vcs/reference wall; reused from walgit-full-boxc (vcs build 84f3fa2)", [(r["cmd"], r["v"], rt(r)) for r in w_out], os.path.join(a.img, "scoreboard-walgit.svg"))

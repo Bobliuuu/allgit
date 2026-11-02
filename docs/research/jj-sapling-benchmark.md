@@ -1,10 +1,16 @@
-# Jujutsu and Sapling benchmark, per command (fresh run)
+# Jujutsu and Sapling benchmark, per command (vcs refreshed on 8da0be2)
 
-Status: **measured, one box, 100k files, 5 interleaved runs per cell (fewer where noted), warm cache.** This replaces the
-earlier single-layout notes in [jujutsu-benchmark.md](jujutsu-benchmark.md) and [sapling-benchmark.md](sapling-benchmark.md)
-(kept for history and for the feature comparison) with a re-run of every command on a current `origin/main` build.
-Every number below is a median printed by `scripts/bench_jj_sl.py`; the raw per-run data is in
-[jj-sapling-raw/](jj-sapling-raw/). Nothing was estimated.
+Status: **PARTIAL REFRESH, 2026-11-02.** The original run (vcs `34315b6`, box c, jj 0.46.0, Sapling 0.2.20261028) measured
+all three tools interleaved. Since then `origin/main` gained many speed fixes (#400 to #418). This refresh **re-ran only
+the vcs side** on a build of `origin/main` at `8da0be2` (on box E, a different c6i.4xlarge instance than the original run's box c; same `scripts/bench_jj_sl.py`, same datasets, 5 runs,
+`TOOLS=vcs`). **jj and Sapling were not re-run**: their official prebuilt binaries are installed only on box c, not on box E and the
+download was not permitted from the agent session. Their numbers are carried over unchanged from the `34315b6` run.
+So every ratio below is vcs-after against jj/sl-before from **different sessions, not interleaved**; treat close
+calls (inside about 20 percent) as unresolved. The raw data of both runs is kept: the old run in
+[jj-sapling-raw/](jj-sapling-raw/) (`flat/deep/binary.json`), the vcs re-run in
+[jj-sapling-raw/vcs-refresh-8da0be2/](jj-sapling-raw/vcs-refresh-8da0be2/), the merged set used for the tables in
+`jj-sapling-raw/merged-8da0be2/` (made by `scripts/jj_sl_merge_refresh.py`). This replaces the earlier single-layout notes in
+[jujutsu-benchmark.md](jujutsu-benchmark.md) and [sapling-benchmark.md](sapling-benchmark.md) (kept for history and for the feature comparison). Nothing was estimated.
 
 Scoreboards (green = vcs WIN, amber = TIE, red = vcs LOSS, grey = N/A):
 
@@ -16,8 +22,8 @@ Scoreboards (green = vcs WIN, amber = TIE, red = vcs LOSS, grey = N/A):
 
 | item | value |
 |---|---|
-| machine | AWS box c: c6i.4xlarge, Intel Xeon Platinum 8375C, 16 vCPU, ext4, Linux 7.0.0-1014-aws x86_64. Shared box: only one benchmark at a time under `flock ~/bench.lock`, but other jobs and builds run outside the lock. load1 sampled before and after every cell is in the raw JSON (typical 1 to 5, a few cells up to ~12) |
-| vcs | `vcs 0.1.0`, release build (`cargo build --release -p vcs-cli`) of `origin/main` at `34315b6` |
+| machine | original run: AWS box c: c6i.4xlarge; vcs refresh: box E (c6i.4xlarge, 16 vCPU, ext4, same instance type, different instance, hostname ip-172-31-8-192); Intel Xeon Platinum 8375C, 16 vCPU, ext4, Linux 7.0.0-1014-aws x86_64. Shared box: only one benchmark at a time under `flock ~/bench.lock`, but other jobs and builds run outside the lock. load1 sampled before and after every cell is in the raw JSON (typical 1 to 5, a few cells up to ~12) |
+| vcs | `vcs 0.1.0`, release build (`cargo build --release -p vcs-cli`): original run `origin/main` at `34315b6`; **refresh (the vcs columns below) at `8da0be2`**, 2026-11-02, load1 2.5 (flat), 2.0 (deep), 3.9 (binary) at the start of each layout |
 | jj | `jj 0.46.0-7d382314f9420b4b8d932245b49c99492c812b9f`, official prebuilt `jj-v0.46.0-x86_64-unknown-linux-musl.tar.gz`, SHA256 `fce0271158e665ceb82dc66c5eb95b1728649094e9133074f3b5baece345fc08`, user-space install under `~/rt-jjsl-tools/jj` |
 | Sapling | `Sapling 0.2.20261028-123539+7415fb2f`, official prebuilt `sapling-...-linux-x64.tar.xz` (latest release at run time), SHA256 `9504b9514ed16dce3b5443811f7625742a363e66a44b316bcaad70a9d013b274`, user-space install under `~/rt-jjsl-tools/sl`, `sl init --git` (Git-backed store), no watchman, no EdenFS |
 | git | 2.43.0 (used only for the bare Git remotes jj and sl push to) |
@@ -63,23 +69,82 @@ History: 1% of files modified and committed, then 48 single-file commits, so `ma
 
 ## Summary
 
-- vs jj: 41 WIN, 4 TIE, 6 LOSS (51 cells where both tools ran; describe and amend are N/A).
-- vs sl: 47 WIN, 0 TIE, 1 LOSS (48 cells; gc, describe and amend are N/A).
-- Every LOSS is listed below. None of them was investigated for a root cause in this run; the explanations are hypotheses and are marked as such.
+- vs jj: 43 WIN, 2 TIE, 6 LOSS (51 cells where both tools ran; describe and amend are N/A). Before the refresh: 41 WIN, 4 TIE, 6 LOSS.
+- vs sl: 48 WIN, 0 TIE, 0 LOSS (48 cells; gc, describe and amend are N/A). Before: 47 WIN, 0 TIE, 1 LOSS.
+- Biggest change: `diff (1% modified)` went from 643/759/815 ms (flat/deep/binary) to 29/71/29 ms (PR #409), flipping three LOSSes to WINs.
+- Provisional, see the Status paragraph: jj and sl were not re-measured.
 
-## All LOSSES (vcs slower than the other tool by more than 10 percent)
+## REMAINING LOSSES (vcs slower than jj by more than 10 percent; this list drives the next optimization round)
 
-| command | layout | vs | vcs ms | other ms | vcs slower by |
+| command | layout | vs | vcs ms (before -> after) | jj ms | vcs slower by (after) |
 |---|---|---|---|---|---|
-| commit (all files) | flat | jj | 102 | 82 | 1.24x |
-| commit (all files) | deep | jj | 544 | 268 | 2.03x |
-| commit (all files) | binary | jj | 177 | 95 | 1.87x |
-| diff (1% modified) | flat | jj | 643 | 550 | 1.17x |
-| diff (1% modified) | binary | jj | 815 | 563 | 1.45x |
-| clone (local remote, full history) | deep | jj | 25,562 | 14,973 | 1.71x |
-| diff (1% modified) | binary | sl | 815 | 626 | 1.30x |
+| commit (all files) | deep | jj | 544 -> 521 | 268 | 1.94x |
+| commit (all files) | flat | jj | 102 -> 93 | 82 | 1.13x |
+| checkout/switch (1% differ) | flat | jj | 152 -> 360 | 239 | 1.51x |
+| checkout/switch (1% differ) | binary | jj | 161 -> 349 | 244 | 1.43x |
+| init (empty dir) | deep | jj | 15 -> 46 | 30 | 1.54x |
+| clone (local remote, full history) | deep | jj | 25,562 -> 23,931 | 14,973 | 1.60x |
 
-TIEs vs jj: status (clean) on flat, deep and binary (1.04 to 1.08), undo on binary (1.05). Details are in the table.
+Vs Sapling: none. Close TIEs vs jj: status (clean) deep 0.97, commit (all files) binary 1.01.
+
+**Possible regressions to look at first.** In this refresh vcs `checkout/switch (1% differ)` is 2.3x slower than in the 34315b6 run on all three layouts (152 -> 360, 170 -> 371, 161 -> 349 ms) and `init (empty dir)` deep 15 -> 46 ms, `rebase` deep 58 -> 85, `merge` deep 122 -> 146, `undo` deep 91 -> 111. These are cross-session vcs-vs-vcs comparisons on a box with load1 2 to 4, so noise is possible, but the switch change is consistent in three layouts. The per-command git scoreboard (`switch_side`, 1% differ, flat 100k) did **not** show it (178 ms vs git 233 ms), so the jj harness's switch scenario (switch back to `main` from `side` after the history setup) should be diffed against that one first. Not investigated.
+
+## Before and after, vcs side (wall ms medians; ratio = other tool / vcs, W/T/L at the 10 percent band)
+
+| cell | layout | vcs before ms | vcs after ms | jj ms | sl ms | ratio jj/vcs before -> after | ratio sl/vcs before -> after |
+|---|---|---|---|---|---|---|---|
+| init (empty dir) | flat | 15 | 10 | 27 | 229 | 1.85 W -> 2.67 W | 15.53 W -> 22.39 W |
+| add/track (all files) | flat | 588 | 529 | 94,761 | 6,134 | 161.18 W -> 179.08 W | 10.43 W -> 11.59 W |
+| commit (all files) | flat | 102 | 93 | 82 | 13,341 | 0.81 L -> 0.88 L | 130.85 W -> 143.25 W |
+| status (clean) | flat | 49 | 46 | 51 | 216 | 1.04 T -> 1.12 W | 4.41 W -> 4.75 W |
+| status (1% modified) | flat | 50 | 46 | 507 | 222 | 10.12 W -> 10.92 W | 4.44 W -> 4.79 W |
+| diff (1% modified) | flat | 643 | 29 | 550 | 779 | 0.85 L -> 18.78 W | 1.21 W -> 26.60 W |
+| log (50 commits) | flat | 4 | 4 | 54 | 248 | 13.43 W -> 14.49 W | 61.14 W -> 65.96 W |
+| blame/annotate (1 file) | flat | 9 | 8 | 67 | 227 | 7.38 W -> 8.21 W | 24.85 W -> 27.65 W |
+| branch/bookmark (create) | flat | 16 | 7 | 80 | 231 | 5.15 W -> 12.11 W | 14.91 W -> 35.06 W |
+| checkout/switch (1% differ) | flat | 152 | 360 | 239 | 440 | 1.57 W -> 0.66 L | 2.90 W -> 1.22 W |
+| undo (last commit) | flat | 66 | 60 | 73 | 610 | 1.11 W -> 1.21 W | 9.31 W -> 10.15 W |
+| merge (disjoint files) | flat | 98 | 104 | 252 | 1,061 | 2.58 W -> 2.42 W | 10.88 W -> 10.19 W |
+| rebase (1 commit onto main) | flat | 41 | 38 | 250 | 874 | 6.06 W -> 6.53 W | 21.15 W -> 22.79 W |
+| push (1 new commit) | flat | 13 | 11 | 124 | 279 | 9.90 W -> 11.55 W | 22.32 W -> 26.03 W |
+| clone (local remote, full history) | flat | 1,060 | 1,032 | 5,013 | 2,931 | 4.73 W -> 4.86 W | 2.77 W -> 2.84 W |
+| fetch/pull (1 new commit) | flat | 23 | 22 | 126 | 284 | 5.53 W -> 5.74 W | 12.52 W -> 13.00 W |
+| gc (local) | flat | 1,134 | 1,133 | 2,478 | N/A | 2.18 W -> 2.19 W | N/A |
+| init (empty dir) | deep | 15 | 46 | 30 | 240 | 2.01 W -> 0.65 L | 16.22 W -> 5.24 W |
+| add/track (all files) | deep | 1,307 | 1,241 | 428,123 | 8,069 | 327.55 W -> 344.86 W | 6.17 W -> 6.50 W |
+| commit (all files) | deep | 544 | 521 | 268 | 21,250 | 0.49 L -> 0.51 L | 39.05 W -> 40.81 W |
+| status (clean) | deep | 206 | 228 | 222 | 526 | 1.08 T -> 0.97 T | 2.56 W -> 2.31 W |
+| status (1% modified) | deep | 212 | 232 | 983 | 543 | 4.64 W -> 4.23 W | 2.56 W -> 2.34 W |
+| diff (1% modified) | deep | 759 | 71 | 974 | 1,087 | 1.28 W -> 13.65 W | 1.43 W -> 15.25 W |
+| log (50 commits) | deep | 5 | 4 | 230 | 246 | 48.80 W -> 54.26 W | 52.07 W -> 57.91 W |
+| blame/annotate (1 file) | deep | 7 | 6 | 230 | 223 | 31.74 W -> 38.44 W | 30.83 W -> 37.35 W |
+| branch/bookmark (create) | deep | 10 | 8 | 251 | 233 | 24.99 W -> 32.48 W | 23.23 W -> 30.19 W |
+| checkout/switch (1% differ) | deep | 170 | 371 | 480 | 797 | 2.83 W -> 1.30 W | 4.70 W -> 2.15 W |
+| undo (last commit) | deep | 91 | 111 | 250 | 1,165 | 2.75 W -> 2.24 W | 12.82 W -> 10.46 W |
+| merge (disjoint files) | deep | 122 | 146 | 477 | 1,934 | 3.89 W -> 3.27 W | 15.80 W -> 13.29 W |
+| rebase (1 commit onto main) | deep | 58 | 85 | 470 | 1,653 | 8.10 W -> 5.54 W | 28.50 W -> 19.47 W |
+| push (1 new commit) | deep | 13 | 11 | 390 | 355 | 29.91 W -> 34.62 W | 27.22 W -> 31.50 W |
+| clone (local remote, full history) | deep | 25,562 | 23,931 | 14,973 | 78,734 | 0.59 L -> 0.63 L | 3.08 W -> 3.29 W |
+| fetch/pull (1 new commit) | deep | 32 | 29 | 397 | 379 | 12.26 W -> 13.75 W | 11.69 W -> 13.11 W |
+| gc (local) | deep | 1,791 | 1,599 | 4,339 | N/A | 2.42 W -> 2.71 W | N/A |
+| init (empty dir) | binary | 14 | 11 | 29 | 237 | 1.97 W -> 2.62 W | 16.40 W -> 21.82 W |
+| add/track (all files) | binary | 2,754 | 3,189 | 97,500 | 6,078 | 35.40 W -> 30.57 W | 2.21 W -> 1.91 W |
+| commit (all files) | binary | 177 | 94 | 95 | 22,365 | 0.53 L -> 1.01 T | 126.34 W -> 238.45 W |
+| status (clean) | binary | 49 | 46 | 51 | 210 | 1.04 T -> 1.12 W | 4.27 W -> 4.62 W |
+| status (1% modified) | binary | 51 | 47 | 550 | 223 | 10.70 W -> 11.82 W | 4.34 W -> 4.79 W |
+| diff (1% modified) | binary | 815 | 29 | 563 | 626 | 0.69 L -> 19.21 W | 0.77 L -> 21.34 W |
+| log (50 commits) | binary | 4 | 4 | 56 | 251 | 12.71 W -> 15.34 W | 56.93 W -> 68.72 W |
+| blame/annotate (1 file) | binary | 10 | 8 | 69 | 231 | 7.17 W -> 8.48 W | 24.13 W -> 28.54 W |
+| branch/bookmark (create) | binary | 12 | 7 | 78 | 236 | 6.28 W -> 11.62 W | 19.01 W -> 35.22 W |
+| checkout/switch (1% differ) | binary | 161 | 349 | 244 | 450 | 1.52 W -> 0.70 L | 2.80 W -> 1.29 W |
+| undo (last commit) | binary | 70 | 61 | 74 | 622 | 1.05 T -> 1.20 W | 8.91 W -> 10.12 W |
+| merge (disjoint files) | binary | 101 | 85 | 248 | 1,094 | 2.47 W -> 2.92 W | 10.86 W -> 12.85 W |
+| rebase (1 commit onto main) | binary | 40 | 38 | 250 | 880 | 6.27 W -> 6.53 W | 22.10 W -> 23.05 W |
+| push (1 new commit) | binary | 14 | 11 | 125 | 278 | 9.26 W -> 11.49 W | 20.51 W -> 25.45 W |
+| clone (local remote, full history) | binary | 4,164 | 3,331 | 9,463 | 9,598 | 2.27 W -> 2.84 W | 2.31 W -> 2.88 W |
+| fetch/pull (1 new commit) | binary | 22 | 22 | 126 | 292 | 5.81 W -> 5.74 W | 13.49 W -> 13.32 W |
+| gc (local) | binary | 1,625 | 1,573 | 5,920 | N/A | 3.64 W -> 3.76 W | N/A |
+
 
 ## Notes and caveats (read before quoting any number)
 
@@ -96,135 +161,150 @@ TIEs vs jj: status (clean) on flat, deep and binary (1.04 to 1.08), undo on bina
 - **push/fetch** use local bare repositories or directory remotes; no network, no S3, no SSH.
 - **describe** was re-run on its own (`CELLS=describe`, the first run reused one message for every run and sl's `metaedit` rejected the repeat); the table uses the re-run, merged by `scripts/jj_sl_scoreboard.py`'s `desc-*.json` rule.
 - The box is shared. The lock serialises benchmarks but not builds or other jobs; check each cell's load1 in the raw JSON before relying on a close call.
+- **Refresh caveat:** the vcs and jj/sl samples in the tables are from different sessions (jj/sl: the 34315b6 run, vcs: 8da0be2). Different instances (c vs E) and different load; the load1 of each cell is in the respective raw JSON.
 - Not run: git itself in this harness (ratios are against vcs only), the 10k size, other machines, repeated sessions on different days.
 
-## Per-command results
+## Per-command results (vcs after the refresh; jj and sl from the 34315b6 run)
 
 ### vcs vs Jujutsu (jj)
 
 | command | layout | jj wall ms (cpu) | vcs wall ms (cpu) | ratio jj/vcs | result | runs |
 |---|---|---|---|---|---|---|
-| init (empty dir) | flat | 27 (11) | 15 (4) | 1.85 | WIN | 5/5 |
-| init (empty dir) | deep | 30 (11) | 15 (4) | 2.01 | WIN | 5/5 |
-| init (empty dir) | binary | 29 (11) | 14 (4) | 1.97 | WIN | 5/5 |
-| add/track (all files) | flat | 94,761 (96,028) | 588 (1,816) | 161.18 | WIN | 5/5 |
-| add/track (all files) | deep | 428,123 (429,350) | 1,307 (2,529) | 327.55 | WIN | 3/3 |
-| add/track (all files) | binary | 97,500 (99,020) | 2,754 (4,723) | 35.40 | WIN | 5/5 |
-| commit (all files) | flat | 82 (412) | 102 (92) | 0.81 | LOSS | 5/5 |
-| commit (all files) | deep | 268 (2,101) | 544 (530) | 0.49 | LOSS | 3/3 |
-| commit (all files) | binary | 95 (421) | 177 (96) | 0.53 | LOSS | 5/5 |
-| status (clean) | flat | 51 (397) | 49 (202) | 1.04 | TIE | 5/5 |
-| status (clean) | deep | 222 (2,063) | 206 (887) | 1.08 | TIE | 5/5 |
-| status (clean) | binary | 51 (400) | 49 (208) | 1.04 | TIE | 5/5 |
-| status (1% modified) | flat | 507 (756) | 50 (212) | 10.12 | WIN | 5/5 |
-| status (1% modified) | deep | 983 (2,432) | 212 (901) | 4.64 | WIN | 5/5 |
-| status (1% modified) | binary | 550 (769) | 51 (221) | 10.70 | WIN | 5/5 |
-| diff (1% modified) | flat | 550 (802) | 643 (657) | 0.85 | LOSS | 5/5 |
-| diff (1% modified) | deep | 974 (2,489) | 759 (790) | 1.28 | WIN | 5/5 |
-| diff (1% modified) | binary | 563 (808) | 815 (829) | 0.69 | LOSS | 5/5 |
-| log (50 commits) | flat | 54 (403) | 4 (4) | 13.43 | WIN | 5/5 |
-| log (50 commits) | deep | 230 (2,094) | 5 (5) | 48.80 | WIN | 5/5 |
-| log (50 commits) | binary | 56 (409) | 4 (4) | 12.71 | WIN | 5/5 |
-| blame/annotate (1 file) | flat | 67 (413) | 9 (9) | 7.38 | WIN | 5/5 |
-| blame/annotate (1 file) | deep | 230 (2,091) | 7 (7) | 31.74 | WIN | 5/5 |
-| blame/annotate (1 file) | binary | 69 (419) | 10 (9) | 7.17 | WIN | 5/5 |
+| init (empty dir) | flat | 27 (11) | 10 (2) | 2.67 | WIN | 5/5 |
+| init (empty dir) | deep | 30 (11) | 46 (2) | 0.65 | LOSS | 5/5 |
+| init (empty dir) | binary | 29 (11) | 11 (2) | 2.62 | WIN | 5/5 |
+| add/track (all files) | flat | 94,761 (96,028) | 529 (1,814) | 179.08 | WIN | 5/5 |
+| add/track (all files) | deep | 428,123 (429,350) | 1,241 (2,463) | 344.86 | WIN | 3/5 |
+| add/track (all files) | binary | 97,500 (99,020) | 3,189 (4,468) | 30.57 | WIN | 5/5 |
+| commit (all files) | flat | 82 (412) | 93 (89) | 0.88 | LOSS | 5/5 |
+| commit (all files) | deep | 268 (2,101) | 521 (508) | 0.51 | LOSS | 3/5 |
+| commit (all files) | binary | 95 (421) | 94 (90) | 1.01 | TIE | 5/5 |
+| status (clean) | flat | 51 (397) | 46 (184) | 1.12 | WIN | 5/5 |
+| status (clean) | deep | 222 (2,063) | 228 (1,373) | 0.97 | TIE | 5/5 |
+| status (clean) | binary | 51 (400) | 46 (184) | 1.12 | WIN | 5/5 |
+| status (1% modified) | flat | 507 (756) | 46 (192) | 10.92 | WIN | 5/5 |
+| status (1% modified) | deep | 983 (2,432) | 232 (1,325) | 4.23 | WIN | 5/5 |
+| status (1% modified) | binary | 550 (769) | 47 (192) | 11.82 | WIN | 5/5 |
+| diff (1% modified) | flat | 550 (802) | 29 (164) | 18.78 | WIN | 5/5 |
+| diff (1% modified) | deep | 974 (2,489) | 71 (745) | 13.65 | WIN | 5/5 |
+| diff (1% modified) | binary | 563 (808) | 29 (163) | 19.21 | WIN | 5/5 |
+| log (50 commits) | flat | 54 (403) | 4 (4) | 14.49 | WIN | 5/5 |
+| log (50 commits) | deep | 230 (2,094) | 4 (4) | 54.26 | WIN | 5/5 |
+| log (50 commits) | binary | 56 (409) | 4 (4) | 15.34 | WIN | 5/5 |
+| blame/annotate (1 file) | flat | 67 (413) | 8 (8) | 8.21 | WIN | 5/5 |
+| blame/annotate (1 file) | deep | 230 (2,091) | 6 (6) | 38.44 | WIN | 5/5 |
+| blame/annotate (1 file) | binary | 69 (419) | 8 (8) | 8.48 | WIN | 5/5 |
 | describe/metaedit (message) | flat | 90 (421) | N/A | N/A (vcs has no equivalent command) | N/A | 5/- |
 | describe/metaedit (message) | deep | 266 (2,108) | N/A | N/A (vcs has no equivalent command) | N/A | 5/- |
 | describe/metaedit (message) | binary | 79 (417) | N/A | N/A (vcs has no equivalent command) | N/A | 5/- |
-| branch/bookmark (create) | flat | 80 (414) | 16 (4) | 5.15 | WIN | 5/5 |
-| branch/bookmark (create) | deep | 251 (2,104) | 10 (4) | 24.99 | WIN | 5/5 |
-| branch/bookmark (create) | binary | 78 (420) | 12 (4) | 6.28 | WIN | 5/5 |
-| checkout/switch (1% differ) | flat | 239 (563) | 152 (306) | 1.57 | WIN | 5/5 |
-| checkout/switch (1% differ) | deep | 480 (2,320) | 170 (411) | 2.83 | WIN | 5/5 |
-| checkout/switch (1% differ) | binary | 244 (562) | 161 (311) | 1.52 | WIN | 5/5 |
+| branch/bookmark (create) | flat | 80 (414) | 7 (3) | 12.11 | WIN | 5/5 |
+| branch/bookmark (create) | deep | 251 (2,104) | 8 (3) | 32.48 | WIN | 5/5 |
+| branch/bookmark (create) | binary | 78 (420) | 7 (3) | 11.62 | WIN | 5/5 |
+| checkout/switch (1% differ) | flat | 239 (563) | 360 (277) | 0.66 | LOSS | 5/5 |
+| checkout/switch (1% differ) | deep | 480 (2,320) | 371 (864) | 1.30 | WIN | 5/5 |
+| checkout/switch (1% differ) | binary | 244 (562) | 349 (283) | 0.70 | LOSS | 5/5 |
 | amend (1 file) | flat | 95 (416) | N/A | N/A (vcs has no equivalent command) | N/A | 5/- |
 | amend (1 file) | deep | 260 (2,118) | N/A | N/A (vcs has no equivalent command) | N/A | 5/- |
 | amend (1 file) | binary | 95 (418) | N/A | N/A (vcs has no equivalent command) | N/A | 5/- |
-| undo (last commit) | flat | 73 (415) | 66 (200) | 1.11 | WIN | 5/5 |
-| undo (last commit) | deep | 250 (2,112) | 91 (306) | 2.75 | WIN | 5/5 |
-| undo (last commit) | binary | 74 (417) | 70 (208) | 1.05 | TIE | 5/5 |
-| merge (disjoint files) | flat | 252 (559) | 98 (241) | 2.58 | WIN | 5/5 |
-| merge (disjoint files) | deep | 477 (2,298) | 122 (371) | 3.89 | WIN | 5/5 |
-| merge (disjoint files) | binary | 248 (562) | 101 (250) | 2.47 | WIN | 5/5 |
-| rebase (1 commit onto main) | flat | 250 (560) | 41 (189) | 6.06 | WIN | 5/5 |
-| rebase (1 commit onto main) | deep | 470 (2,295) | 58 (289) | 8.10 | WIN | 5/5 |
-| rebase (1 commit onto main) | binary | 250 (567) | 40 (191) | 6.27 | WIN | 5/5 |
-| push (1 new commit) | flat | 124 (465) | 13 (6) | 9.90 | WIN | 5/5 |
-| push (1 new commit) | deep | 390 (2,244) | 13 (6) | 29.91 | WIN | 5/5 |
-| push (1 new commit) | binary | 125 (470) | 14 (6) | 9.26 | WIN | 5/5 |
-| clone (local remote, full history) | flat | 5,013 (5,104) | 1,060 (2,707) | 4.73 | WIN | 5/5 |
-| clone (local remote, full history) | deep | 14,973 (7,424) | 25,562 (5,538) | 0.59 | LOSS | 5/5 |
-| clone (local remote, full history) | binary | 9,463 (9,058) | 4,164 (3,979) | 2.27 | WIN | 5/5 |
-| fetch/pull (1 new commit) | flat | 126 (465) | 23 (19) | 5.53 | WIN | 5/5 |
-| fetch/pull (1 new commit) | deep | 397 (2,247) | 32 (30) | 12.26 | WIN | 5/5 |
-| fetch/pull (1 new commit) | binary | 126 (463) | 22 (18) | 5.81 | WIN | 5/5 |
-| gc (local) | flat | 2,478 (2,868) | 1,134 (1,158) | 2.18 | WIN | 5/5 |
-| gc (local) | deep | 4,339 (7,145) | 1,791 (1,849) | 2.42 | WIN | 5/5 |
-| gc (local) | binary | 5,920 (4,444) | 1,625 (1,649) | 3.64 | WIN | 5/5 |
+| undo (last commit) | flat | 73 (415) | 60 (189) | 1.21 | WIN | 5/5 |
+| undo (last commit) | deep | 250 (2,112) | 111 (810) | 2.24 | WIN | 5/5 |
+| undo (last commit) | binary | 74 (417) | 61 (188) | 1.20 | WIN | 5/5 |
+| merge (disjoint files) | flat | 252 (559) | 104 (222) | 2.42 | WIN | 5/5 |
+| merge (disjoint files) | deep | 477 (2,298) | 146 (880) | 3.27 | WIN | 5/5 |
+| merge (disjoint files) | binary | 248 (562) | 85 (221) | 2.92 | WIN | 5/5 |
+| rebase (1 commit onto main) | flat | 250 (560) | 38 (176) | 6.53 | WIN | 5/5 |
+| rebase (1 commit onto main) | deep | 470 (2,295) | 85 (728) | 5.54 | WIN | 5/5 |
+| rebase (1 commit onto main) | binary | 250 (567) | 38 (176) | 6.53 | WIN | 5/5 |
+| push (1 new commit) | flat | 124 (465) | 11 (6) | 11.55 | WIN | 5/5 |
+| push (1 new commit) | deep | 390 (2,244) | 11 (6) | 34.62 | WIN | 5/5 |
+| push (1 new commit) | binary | 125 (470) | 11 (6) | 11.49 | WIN | 5/5 |
+| clone (local remote, full history) | flat | 5,013 (5,104) | 1,032 (2,686) | 4.86 | WIN | 5/5 |
+| clone (local remote, full history) | deep | 14,973 (7,424) | 23,931 (4,992) | 0.63 | LOSS | 5/5 |
+| clone (local remote, full history) | binary | 9,463 (9,058) | 3,331 (3,805) | 2.84 | WIN | 5/5 |
+| fetch/pull (1 new commit) | flat | 126 (465) | 22 (19) | 5.74 | WIN | 5/5 |
+| fetch/pull (1 new commit) | deep | 397 (2,247) | 29 (27) | 13.75 | WIN | 5/5 |
+| fetch/pull (1 new commit) | binary | 126 (463) | 22 (19) | 5.74 | WIN | 5/5 |
+| gc (local) | flat | 2,478 (2,868) | 1,133 (1,156) | 2.19 | WIN | 5/5 |
+| gc (local) | deep | 4,339 (7,145) | 1,599 (1,656) | 2.71 | WIN | 5/5 |
+| gc (local) | binary | 5,920 (4,444) | 1,573 (1,597) | 3.76 | WIN | 5/5 |
 
-Totals vs jj: 41 WIN, 4 TIE, 6 LOSS.
+Totals vs jj: 43 WIN, 2 TIE, 6 LOSS.
+
+LOSSES vs jj (vcs slower by more than 10%):
+
+| command | layout | vcs ms | jj ms | vcs slower by |
+|---|---|---|---|---|
+| init (empty dir) | deep | 46 | 30 | 1.54x |
+| commit (all files) | flat | 93 | 82 | 1.13x |
+| commit (all files) | deep | 521 | 268 | 1.94x |
+| checkout/switch (1% differ) | flat | 360 | 239 | 1.51x |
+| checkout/switch (1% differ) | binary | 349 | 244 | 1.43x |
+| clone (local remote, full history) | deep | 23,931 | 14,973 | 1.60x |
 
 ### vcs vs Sapling (sl)
 
 | command | layout | sl wall ms (cpu) | vcs wall ms (cpu) | ratio sl/vcs | result | runs |
 |---|---|---|---|---|---|---|
-| init (empty dir) | flat | 229 (221) | 15 (4) | 15.53 | WIN | 5/5 |
-| init (empty dir) | deep | 240 (231) | 15 (4) | 16.22 | WIN | 5/5 |
-| init (empty dir) | binary | 237 (229) | 14 (4) | 16.40 | WIN | 5/5 |
-| add/track (all files) | flat | 6,134 (6,478) | 588 (1,816) | 10.43 | WIN | 5/5 |
-| add/track (all files) | deep | 8,069 (9,494) | 1,307 (2,529) | 6.17 | WIN | 3/3 |
-| add/track (all files) | binary | 6,078 (6,429) | 2,754 (4,723) | 2.21 | WIN | 5/5 |
-| commit (all files) | flat | 13,341 (13,949) | 102 (92) | 130.85 | WIN | 5/5 |
-| commit (all files) | deep | 21,250 (24,297) | 544 (530) | 39.05 | WIN | 3/3 |
-| commit (all files) | binary | 22,365 (22,207) | 177 (96) | 126.34 | WIN | 5/5 |
-| status (clean) | flat | 216 (557) | 49 (202) | 4.41 | WIN | 5/5 |
-| status (clean) | deep | 526 (1,991) | 206 (887) | 2.56 | WIN | 5/5 |
-| status (clean) | binary | 210 (562) | 49 (208) | 4.27 | WIN | 5/5 |
-| status (1% modified) | flat | 222 (588) | 50 (212) | 4.44 | WIN | 5/5 |
-| status (1% modified) | deep | 543 (1,997) | 212 (901) | 2.56 | WIN | 5/5 |
-| status (1% modified) | binary | 223 (574) | 51 (221) | 4.34 | WIN | 5/5 |
-| diff (1% modified) | flat | 779 (1,123) | 643 (657) | 1.21 | WIN | 5/5 |
-| diff (1% modified) | deep | 1,087 (2,490) | 759 (790) | 1.43 | WIN | 5/5 |
-| diff (1% modified) | binary | 626 (971) | 815 (829) | 0.77 | LOSS | 5/5 |
-| log (50 commits) | flat | 248 (248) | 4 (4) | 61.14 | WIN | 5/5 |
-| log (50 commits) | deep | 246 (246) | 5 (5) | 52.07 | WIN | 5/5 |
-| log (50 commits) | binary | 251 (251) | 4 (4) | 56.93 | WIN | 5/5 |
-| blame/annotate (1 file) | flat | 227 (228) | 9 (9) | 24.85 | WIN | 5/5 |
-| blame/annotate (1 file) | deep | 223 (224) | 7 (7) | 30.83 | WIN | 5/5 |
-| blame/annotate (1 file) | binary | 231 (232) | 10 (9) | 24.13 | WIN | 5/5 |
+| init (empty dir) | flat | 229 (221) | 10 (2) | 22.39 | WIN | 5/5 |
+| init (empty dir) | deep | 240 (231) | 46 (2) | 5.24 | WIN | 5/5 |
+| init (empty dir) | binary | 237 (229) | 11 (2) | 21.82 | WIN | 5/5 |
+| add/track (all files) | flat | 6,134 (6,478) | 529 (1,814) | 11.59 | WIN | 5/5 |
+| add/track (all files) | deep | 8,069 (9,494) | 1,241 (2,463) | 6.50 | WIN | 3/5 |
+| add/track (all files) | binary | 6,078 (6,429) | 3,189 (4,468) | 1.91 | WIN | 5/5 |
+| commit (all files) | flat | 13,341 (13,949) | 93 (89) | 143.25 | WIN | 5/5 |
+| commit (all files) | deep | 21,250 (24,297) | 521 (508) | 40.81 | WIN | 3/5 |
+| commit (all files) | binary | 22,365 (22,207) | 94 (90) | 238.45 | WIN | 5/5 |
+| status (clean) | flat | 216 (557) | 46 (184) | 4.75 | WIN | 5/5 |
+| status (clean) | deep | 526 (1,991) | 228 (1,373) | 2.31 | WIN | 5/5 |
+| status (clean) | binary | 210 (562) | 46 (184) | 4.62 | WIN | 5/5 |
+| status (1% modified) | flat | 222 (588) | 46 (192) | 4.79 | WIN | 5/5 |
+| status (1% modified) | deep | 543 (1,997) | 232 (1,325) | 2.34 | WIN | 5/5 |
+| status (1% modified) | binary | 223 (574) | 47 (192) | 4.79 | WIN | 5/5 |
+| diff (1% modified) | flat | 779 (1,123) | 29 (164) | 26.60 | WIN | 5/5 |
+| diff (1% modified) | deep | 1,087 (2,490) | 71 (745) | 15.25 | WIN | 5/5 |
+| diff (1% modified) | binary | 626 (971) | 29 (163) | 21.34 | WIN | 5/5 |
+| log (50 commits) | flat | 248 (248) | 4 (4) | 65.96 | WIN | 5/5 |
+| log (50 commits) | deep | 246 (246) | 4 (4) | 57.91 | WIN | 5/5 |
+| log (50 commits) | binary | 251 (251) | 4 (4) | 68.72 | WIN | 5/5 |
+| blame/annotate (1 file) | flat | 227 (228) | 8 (8) | 27.65 | WIN | 5/5 |
+| blame/annotate (1 file) | deep | 223 (224) | 6 (6) | 37.35 | WIN | 5/5 |
+| blame/annotate (1 file) | binary | 231 (232) | 8 (8) | 28.54 | WIN | 5/5 |
 | describe/metaedit (message) | flat | 255 (243) | N/A | N/A (vcs has no equivalent command) | N/A | 5/- |
 | describe/metaedit (message) | deep | 244 (234) | N/A | N/A (vcs has no equivalent command) | N/A | 5/- |
 | describe/metaedit (message) | binary | 249 (240) | N/A | N/A (vcs has no equivalent command) | N/A | 5/- |
-| branch/bookmark (create) | flat | 231 (226) | 16 (4) | 14.91 | WIN | 5/5 |
-| branch/bookmark (create) | deep | 233 (228) | 10 (4) | 23.23 | WIN | 5/5 |
-| branch/bookmark (create) | binary | 236 (229) | 12 (4) | 19.01 | WIN | 5/5 |
-| checkout/switch (1% differ) | flat | 440 (817) | 152 (306) | 2.90 | WIN | 5/5 |
-| checkout/switch (1% differ) | deep | 797 (2,396) | 170 (411) | 4.70 | WIN | 5/5 |
-| checkout/switch (1% differ) | binary | 450 (851) | 161 (311) | 2.80 | WIN | 5/5 |
+| branch/bookmark (create) | flat | 231 (226) | 7 (3) | 35.06 | WIN | 5/5 |
+| branch/bookmark (create) | deep | 233 (228) | 8 (3) | 30.19 | WIN | 5/5 |
+| branch/bookmark (create) | binary | 236 (229) | 7 (3) | 35.22 | WIN | 5/5 |
+| checkout/switch (1% differ) | flat | 440 (817) | 360 (277) | 1.22 | WIN | 5/5 |
+| checkout/switch (1% differ) | deep | 797 (2,396) | 371 (864) | 2.15 | WIN | 5/5 |
+| checkout/switch (1% differ) | binary | 450 (851) | 349 (283) | 1.29 | WIN | 5/5 |
 | amend (1 file) | flat | 662 (1,458) | N/A | N/A (vcs has no equivalent command) | N/A | 5/- |
 | amend (1 file) | deep | 1,247 (4,478) | N/A | N/A (vcs has no equivalent command) | N/A | 5/- |
 | amend (1 file) | binary | 669 (1,434) | N/A | N/A (vcs has no equivalent command) | N/A | 5/- |
-| undo (last commit) | flat | 610 (1,244) | 66 (200) | 9.31 | WIN | 5/5 |
-| undo (last commit) | deep | 1,165 (3,870) | 91 (306) | 12.82 | WIN | 5/5 |
-| undo (last commit) | binary | 622 (1,273) | 70 (208) | 8.91 | WIN | 5/5 |
-| merge (disjoint files) | flat | 1,061 (2,067) | 98 (241) | 10.88 | WIN | 5/5 |
-| merge (disjoint files) | deep | 1,934 (6,131) | 122 (371) | 15.80 | WIN | 5/5 |
-| merge (disjoint files) | binary | 1,094 (2,098) | 101 (250) | 10.86 | WIN | 5/5 |
-| rebase (1 commit onto main) | flat | 874 (1,990) | 41 (189) | 21.15 | WIN | 5/5 |
-| rebase (1 commit onto main) | deep | 1,653 (6,172) | 58 (289) | 28.50 | WIN | 5/5 |
-| rebase (1 commit onto main) | binary | 880 (2,005) | 40 (191) | 22.10 | WIN | 5/5 |
-| push (1 new commit) | flat | 279 (281) | 13 (6) | 22.32 | WIN | 5/5 |
-| push (1 new commit) | deep | 355 (357) | 13 (6) | 27.22 | WIN | 5/5 |
-| push (1 new commit) | binary | 278 (279) | 14 (6) | 20.51 | WIN | 5/5 |
-| clone (local remote, full history) | flat | 2,931 (5,218) | 1,060 (2,707) | 2.77 | WIN | 5/5 |
-| clone (local remote, full history) | deep | 78,734 (13,738) | 25,562 (5,538) | 3.08 | WIN | 5/5 |
-| clone (local remote, full history) | binary | 9,598 (10,922) | 4,164 (3,979) | 2.31 | WIN | 5/5 |
-| fetch/pull (1 new commit) | flat | 284 (281) | 23 (19) | 12.52 | WIN | 5/5 |
-| fetch/pull (1 new commit) | deep | 379 (375) | 32 (30) | 11.69 | WIN | 5/5 |
-| fetch/pull (1 new commit) | binary | 292 (287) | 22 (18) | 13.49 | WIN | 5/5 |
-| gc (local) | flat | N/A | 1,134 (1,158) | N/A (no sl result) | N/A | -/5 |
-| gc (local) | deep | N/A | 1,791 (1,849) | N/A (no sl result) | N/A | -/5 |
-| gc (local) | binary | N/A | 1,625 (1,649) | N/A (no sl result) | N/A | -/5 |
+| undo (last commit) | flat | 610 (1,244) | 60 (189) | 10.15 | WIN | 5/5 |
+| undo (last commit) | deep | 1,165 (3,870) | 111 (810) | 10.46 | WIN | 5/5 |
+| undo (last commit) | binary | 622 (1,273) | 61 (188) | 10.12 | WIN | 5/5 |
+| merge (disjoint files) | flat | 1,061 (2,067) | 104 (222) | 10.19 | WIN | 5/5 |
+| merge (disjoint files) | deep | 1,934 (6,131) | 146 (880) | 13.29 | WIN | 5/5 |
+| merge (disjoint files) | binary | 1,094 (2,098) | 85 (221) | 12.85 | WIN | 5/5 |
+| rebase (1 commit onto main) | flat | 874 (1,990) | 38 (176) | 22.79 | WIN | 5/5 |
+| rebase (1 commit onto main) | deep | 1,653 (6,172) | 85 (728) | 19.47 | WIN | 5/5 |
+| rebase (1 commit onto main) | binary | 880 (2,005) | 38 (176) | 23.05 | WIN | 5/5 |
+| push (1 new commit) | flat | 279 (281) | 11 (6) | 26.03 | WIN | 5/5 |
+| push (1 new commit) | deep | 355 (357) | 11 (6) | 31.50 | WIN | 5/5 |
+| push (1 new commit) | binary | 278 (279) | 11 (6) | 25.45 | WIN | 5/5 |
+| clone (local remote, full history) | flat | 2,931 (5,218) | 1,032 (2,686) | 2.84 | WIN | 5/5 |
+| clone (local remote, full history) | deep | 78,734 (13,738) | 23,931 (4,992) | 3.29 | WIN | 5/5 |
+| clone (local remote, full history) | binary | 9,598 (10,922) | 3,331 (3,805) | 2.88 | WIN | 5/5 |
+| fetch/pull (1 new commit) | flat | 284 (281) | 22 (19) | 13.00 | WIN | 5/5 |
+| fetch/pull (1 new commit) | deep | 379 (375) | 29 (27) | 13.11 | WIN | 5/5 |
+| fetch/pull (1 new commit) | binary | 292 (287) | 22 (19) | 13.32 | WIN | 5/5 |
+| gc (local) | flat | N/A | 1,133 (1,156) | N/A (no sl result) | N/A | -/5 |
+| gc (local) | deep | N/A | 1,599 (1,656) | N/A (no sl result) | N/A | -/5 |
+| gc (local) | binary | N/A | 1,573 (1,597) | N/A (no sl result) | N/A | -/5 |
 
-Totals vs sl: 47 WIN, 0 TIE, 1 LOSS.
+Totals vs sl: 48 WIN, 0 TIE, 0 LOSS.
 
+LOSSES vs sl (vcs slower by more than 10%):
+
+none
