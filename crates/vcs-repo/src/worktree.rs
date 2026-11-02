@@ -262,7 +262,7 @@ impl Repo {
                 old: None,
                 new: head,
             }])?;
-            write_atomic(&self.common.join("refs"), &refs.encode())?;
+            self.write_refs(&refs)?;
         }
         // Reserve a registry name (create_dir is atomic).
         let sane: String = base

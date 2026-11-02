@@ -683,7 +683,7 @@ impl Repo {
                 repo.bundle_commit(file, &p, author)?;
                 let mut local = Refs::default();
                 local.apply(&p.updates)?;
-                write_atomic(&repo.common.join("refs"), &local.encode())?;
+                repo.write_refs(&local)?;
                 repo.save_ws(&Workspace::default())?;
             }
             let mut pick: BTreeMap<&str, &str> = BTreeMap::new();

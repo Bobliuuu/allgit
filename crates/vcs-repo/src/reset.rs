@@ -91,7 +91,7 @@ impl Repo {
                 old,
                 new: *target,
             }])?;
-            crate::meta::write_atomic(&self.common.join("refs"), &refs.encode())?;
+            self.write_refs(&refs)?;
         }
         let m = match mode {
             ResetMode::Soft => "--soft",

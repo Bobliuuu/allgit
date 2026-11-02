@@ -202,7 +202,7 @@ impl Repo {
             old: None,
             new: r,
         }])?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
+        self.write_refs(&refs)?;
         Ok(true)
     }
 
@@ -710,7 +710,7 @@ impl Repo {
             changed = true;
         }
         if changed {
-            write_atomic(&self.common.join("refs"), &refs.encode())?;
+            self.write_refs(&refs)?;
         }
         Ok(())
     }
@@ -925,7 +925,7 @@ impl Repo {
                             old: l,
                             new: r,
                         }])?;
-                        write_atomic(&self.common.join("refs"), &refs.encode())?;
+                        self.write_refs(&refs)?;
                         SyncAction::FastForwarded { from: l, to: r }
                     }
                 }
@@ -993,7 +993,7 @@ impl Repo {
                 local.branches.insert((a.clone(), b.clone()), *id);
             }
             repo.save_remote_refs(&rr)?;
-            write_atomic(&repo.common.join("refs"), &local.encode())?;
+            repo.write_refs(&local)?;
             repo.adopt_remote_tags(backend, Some(&want), &m, &cat)?;
             drop(_l);
             // Checkout needs the default branch's files: fetch them of ALL zones in one batch
