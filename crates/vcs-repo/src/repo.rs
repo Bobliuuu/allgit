@@ -1134,6 +1134,18 @@ impl Repo {
         self.status_with(opts)
     }
 
+    /// [`Self::status_auto`] without the untracked-file walk: `untracked`/`unsupported` stay empty,
+    /// staged/unstaged/merge state is identical. For callers that only look at tracked changes.
+    pub fn status_tracked_auto(&self, opts: StatusOpts) -> Result<Status> {
+        if std::env::var_os("VCS_NO_FSMONITOR").is_none() {
+            if let Some(m) = crate::fsmonitor::JournalMonitor::open(&self.vcs) {
+                return self.status_monitored(opts, &m);
+            }
+        }
+        let ix = self.index()?;
+        self.status_inner(opts, &ix, false, None)
+    }
+
     /// `status` using `mon` to skip the stat of unchanged files and the untracked walk. The
     /// result always equals [`Self::status_full`]; any doubt makes this a full scan (see
     /// `fsmonitor`). The last result is kept in `.vcs/fsmon/state`, keyed by index, zone layout
@@ -1249,6 +1261,24 @@ impl Repo {
     /// for untracked files (`Status::untracked` / `unsupported` are then left empty), which is
     /// all a caller that only needs staged/unstaged/merge state has to pay for.
     pub(crate) fn status_inner(&self, opts: StatusOpts, ix: &Index, untracked: bool, inc: Option<&Incremental>) -> Result<Status> {
+        let (st, racy_clean) = self.status_inner_verified(opts, ix, untracked, inc)?;
+        if !racy_clean.is_empty() {
+            self.refresh_racy(ix, &racy_clean);
+        }
+        Ok(st)
+    }
+
+    /// [`Self::status_inner`] that leaves the racy-entry refresh to the caller and returns the
+    /// paths whose content was read and found clean. For a caller that holds the repository lock
+    /// (where the best-effort refresh is skipped) and rewrites the index itself: it passes them to
+    /// `save_index_verified` so the next command does not hash those files again.
+    pub(crate) fn status_inner_verified(
+        &self,
+        opts: StatusOpts,
+        ix: &Index,
+        untracked: bool,
+        inc: Option<&Incremental>,
+    ) -> Result<(Status, BTreeSet<String>)> {
         let zones = self.zones()?;
         let ws = self.workspace()?;
         let refs = self.refs()?;
@@ -1303,14 +1333,14 @@ impl Repo {
         }
         if !untracked {
             st.merging = self.merge_state()?;
-            return Ok(st);
+            return Ok((st, racy_clean));
         }
         if let Some(i) = inc.filter(|i| !i.rewalk) {
             // The monitor vouches that no untracked name appeared or went away.
             st.untracked = i.untracked.clone();
             st.unsupported = i.unsupported.clone();
             st.merging = self.merge_state()?;
-            return Ok(st);
+            return Ok((st, racy_clean));
         }
         let budget = AtomicUsize::new(std::thread::available_parallelism().map_or(1, |n| n.get()).min(8) - 1);
         let ctx = WalkCtx {
@@ -1339,10 +1369,7 @@ impl Repo {
             next.store(&self.vcs);
         }
         st.merging = self.merge_state()?;
-        if !racy_clean.is_empty() {
-            self.refresh_racy(ix, &racy_clean);
-        }
-        Ok(st)
+        Ok((st, racy_clean))
     }
 
     /// Working-tree changes of the tracked `entries`, in entry order, plus the paths whose

@@ -1455,7 +1455,7 @@ fn rev_zones(repo: &Repo, rev: &str, zone: Option<&str>) -> Result<std::collecti
 
 /// Paths with staged or unstaged changes that `pred` selects.
 fn dirty(repo: &Repo, pred: &dyn Fn(&str) -> bool) -> Result<Vec<String>, Error> {
-    let stat = repo.status_auto(Default::default())?;
+    let stat = repo.status_tracked_auto(Default::default())?;
     let mut out = vec![];
     for z in &stat.zones {
         for c in z.staged.iter().chain(z.unstaged.iter()) {
@@ -1572,7 +1572,12 @@ fn exec(st: &Step, quiet: bool) -> Result<(), Error> {
         } => {
             let (repo, cwd) = open()?;
             let only = only_prefixes(&repo, &cwd, only)?;
-            let stat = repo.status_auto(Default::default())?;
+            // The untracked walk is only needed to find files to add.
+            let stat = if *adds {
+                repo.status_auto(Default::default())?
+            } else {
+                repo.status_tracked_auto(Default::default())?
+            };
             let mut found: Vec<(&str, String)> = vec![];
             for z in &stat.zones {
                 for c in &z.unstaged {
@@ -1679,7 +1684,7 @@ fn exec(st: &Step, quiet: bool) -> Result<(), Error> {
         Step::Opened(only) => {
             let (repo, cwd) = open()?;
             let only = only_prefixes(&repo, &cwd, only)?;
-            let stat = repo.status_auto(Default::default())?;
+            let stat = repo.status_tracked_auto(Default::default())?;
             let mut n = 0;
             for z in &stat.zones {
                 for (list, staged) in [(&z.staged, true), (&z.unstaged, false)] {
@@ -1752,7 +1757,7 @@ fn exec(st: &Step, quiet: bool) -> Result<(), Error> {
         }
         Step::ResolveAll(flag) => {
             let (repo, _) = open()?;
-            let stat = repo.status_auto(Default::default())?;
+            let stat = repo.status_tracked_auto(Default::default())?;
             let Some(m) = stat.merging else {
                 return msg("no file(s) to resolve: no merge in progress");
             };
@@ -1859,7 +1864,7 @@ fn exec(st: &Step, quiet: bool) -> Result<(), Error> {
         Step::Reopen { n, paths } => {
             let (repo, cwd) = open()?;
             let mut l = Ledger::load(repo.worktree());
-            let stat = repo.status_auto(Default::default())?;
+            let stat = repo.status_tracked_auto(Default::default())?;
             for p in paths {
                 let rel = repo.rel_path(&cwd, p)?;
                 let from = l.holder(&rel);
@@ -2008,7 +2013,7 @@ fn exec(st: &Step, quiet: bool) -> Result<(), Error> {
             let (repo, _) = open()?;
             let l = Ledger::load(repo.worktree());
             let c = l.pending.get(n).ok_or_else(|| Error::Msg(format!("no pending changelist {n}")))?;
-            let stat = repo.status_auto(Default::default())?;
+            let stat = repo.status_tracked_auto(Default::default())?;
             let extra: Vec<&str> = stat
                 .zones
                 .iter()

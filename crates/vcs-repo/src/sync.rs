@@ -874,6 +874,7 @@ impl Repo {
         let mut refs = self.refs()?;
         let rr = self.remote_refs()?;
         let mut ix = self.index()?;
+        let mut verified: BTreeSet<String> = BTreeSet::new();
         let mut rep = SyncReport::default();
         let subs: Vec<(String, String)> = ws.subs.iter().map(|(a, b)| (a.clone(), b.clone())).collect();
         for (zone, branch) in subs {
@@ -886,18 +887,38 @@ impl Repo {
                 (l, Some(r)) if l == Some(r) => SyncAction::UpToDate,
                 (Some(l), Some(r)) if self.is_ancestor(r, l)? => SyncAction::Ahead,
                 (l, Some(r)) if l.is_none() || self.is_ancestor(l.unwrap(), r)? => {
-                    let st = self.status()?;
+                    // Only staged/unstaged state decides "dirty": skip the untracked walk (an
+                    // untracked file in the way is refused by the transition check below).
+                    let (st, clean) = self.status_inner_verified(Default::default(), &ix, false, None)?;
                     let a = st.zones.iter().find(|x| x.zone == zone).expect("subscribed");
                     if !a.staged.is_empty() || !a.unstaged.is_empty() {
                         SyncAction::Dirty
                     } else {
-                        self.prefetch_zone_files(backend, &zone, self.commit_obj(&r)?.root)?;
-                        let old = self.head_flat(&zone, &defs, &ws, &refs)?;
-                        let new = treeops::flatten(&self.store, Some(self.commit_obj(&r)?.root), defs.path_of(&zone).unwrap())?;
-                        self.transition(&zone, &defs, &old, &new, &mut ix)?;
+                        // Only the subtrees that differ are read, and only the blobs of changed
+                        // files are fetched; the cost follows the change, not the tracked files.
+                        let old_root = match self.current_head(&zone, &ws, &refs) {
+                            Some(h) => Some(self.commit_obj(&h)?.root),
+                            None => None,
+                        };
+                        let new_root = self.commit_obj(&r)?.root;
+                        let prefix = defs.path_of(&zone).unwrap();
+                        let diff = treeops::diff_trees_checkout(&self.store, old_root, Some(new_root), prefix)?;
+                        let mut want = BTreeSet::new();
+                        for (p, (mode, id)) in &diff.new {
+                            if *mode != vcs_objects::EntryMode::Directory && !ws.skips(&zone, p) && !self.store.contains_hint(id)? {
+                                want.insert(*id);
+                            }
+                        }
+                        self.prefetch_ids(backend, want)?;
+                        self.transition_diff(&zone, &defs, &diff, &mut ix)?;
+                        verified.extend(clean.into_iter().filter(|p| !diff.old.contains_key(p) && !diff.new.contains_key(p)));
+                        // The index equalled the old tree, so the directories read on the way give
+                        // the next status/commit their tree ids.
+                        ix.entries
+                            .store_trees(crate::repo::zones_fp(&defs), diff.new_trees.iter().cloned().collect());
                         // index/worktree first, ref last: a crash in between leaves a clean-looking
                         // diff against the old head, never a lost commit.
-                        self.save_index(&mut ix)?;
+                        self.save_index_verified(&mut ix, |p| verified.contains(p))?;
                         refs.apply(&[RefUpdate {
                             zone: zone.clone(),
                             branch: branch.clone(),
