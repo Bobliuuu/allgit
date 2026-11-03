@@ -211,6 +211,10 @@ the slowest cells), medians, vcs divided by git, **below 1 means vcs used less**
 | log -n 5 | 1.4 / 1.3 | 2.1 / 2.1 | **1.54** | **1.58** |
 | switch (1% of files differ) | 233 / 346 | 179 / 279 | 0.77 | 0.81 |
 
+Huge scale (1,000,000 files, about 4 GB, one run on a c6i.4xlarge): `add` 18.9 s against git 215.5 s, clone 40.5 s
+against 603.1 s, diff of a 1% change 3.7 s against 19.7 s; the no-op `add` is slower (6.8 s against 0.9 s). Source:
+[docs/research/huge-scale.md](docs/research/huge-scale.md).
+
 Source: [docs/research/data/command-scoreboard](docs/research/data/command-scoreboard) (`git-fresh.json`,
 `git-clean.json`, `git-small.json`), rendered by `scripts/command_scoreboard_render.py`; the complete per-command table
 is [docs/research/command-scoreboard.md](docs/research/command-scoreboard.md). The older interleaved harness
