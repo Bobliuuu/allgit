@@ -90,6 +90,8 @@ How to read it:
 |---|---|---|---|
 | `vcs fetch` | `git fetch` | `p4 sync -n` (nearest) | local branches stay untouched |
 | `vcs sync` | `git pull --ff-only` | `p4 sync` | fetch plus fast-forward; paths ignored |
+| `vcs pull` | `git pull --ff-only` | `p4 sync` | same as `vcs sync`; `--auto` picks zones from your usage profile ([zone-profile.md](zone-profile.md)) |
+| `vcs profile` | `git sparse-checkout` (manual) | client view (manual) | local usage profile that `--auto` predicts zones from; `fetch` gets a skipped zone |
 | `vcs publish` | `git push` | `p4 submit` (the publishing half) | all checked-out branches, one atomic transaction |
 | `vcs prefetch` | none | none | warm file contents for offline work |
 | `vcs lock` / `vcs unlock` / `vcs locks` | `git lfs lock` / `unlock` / `locks` | `p4 lock` / `p4 unlock` / `p4 locks`, `+l` filetype | leases, see [locks.md](locks.md) |
