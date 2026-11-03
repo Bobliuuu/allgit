@@ -5,7 +5,7 @@
 # Records the build SHA and load1 around every phase. Timed parts run under flock ~/bench.lock.
 set -euo pipefail
 OUT="$(cd "$(mkdir -p "${1:?outdir}" && echo "$1")" && pwd)"; MAXLOAD="${MAXLOAD:-1.0}"
-T=target/release; W="${BENCH_TMP:-$HOME/asw}"; mkdir -p "$W"
+T="$PWD/target/release"; W="${BENCH_TMP:-$HOME/asw}"; mkdir -p "$W"
 load() { cut -d' ' -f1 /proc/loadavg; }
 quiet() { for _ in $(seq 120); do awk -v l="$(load)" -v m="$MAXLOAD" 'BEGIN{exit !(l<m)}' && return 0; sleep 5; done; echo "load never below $MAXLOAD: $(load)" >&2; return 1; }
 { echo "sha=$(git rev-parse HEAD 2>/dev/null || cat BUILD_SHA)"; echo "vcs=$($T/vcs --version)"; echo "git=$(git --version)"; echo "date=$(date -u +%FT%TZ)"; echo "cores=$(nproc)"; } > "$OUT/meta.txt"
