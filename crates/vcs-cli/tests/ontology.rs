@@ -330,14 +330,14 @@ fn log_all_zones_finds_pickaxe_and_regex_hits_in_one_call() {
     let a = fixture(t.path());
     let out = ok(&a, &["log", "--all-zones", "-S", "pub fn g()", "--format", "%z:%s"]);
     assert_eq!(out.trim(), "api:touch core and api");
-    let out = ok(&a, &["log", "--all-zones", "-G", "v2|fn g", "--format", "%z:%s"]);
+    let out = ok(&a, &["log", "--all-zones", "-E", "-G", "v2|fn g", "--format", "%z:%s"]);
     let mut lines: Vec<&str> = out.lines().collect();
     lines.sort();
     assert_eq!(lines, ["api:touch core and api", "core:touch core and api"]);
     // -G ignores an unchanged line and a non-matching change
     let out = ok(&a, &["log", "--all-zones", "-G", "^pub fn f", "--format", "%z:%s"]);
     assert!(out.lines().any(|l| l == "core:initial import"), "{out}");
-    assert!(!vcs(&a, &["log", "-G", "(", "--all-zones"]).status.success());
+    assert!(!vcs(&a, &["log", "-E", "-G", "(", "--all-zones"]).status.success());
 }
 
 #[test]
@@ -347,8 +347,8 @@ fn log_grep_fixed_strings_matches_plus_and_parens_literally() {
     write(&a, "crates/core/src/x.rs", "x\n");
     ok(&a, &["add", "."]);
     ok(&a, &["commit", "-m", "net+api: (odd) subject"]);
-    let none = ok(&a, &["log", "--all-zones", "--grep", "net+api: (odd)", "--format", "%s"]);
-    assert_eq!(none.trim(), "", "as a regex `net+api` does not match `net+api`");
+    let none = ok(&a, &["log", "--all-zones", "-E", "--grep", "net+api: (odd)", "--format", "%s"]);
+    assert_eq!(none.trim(), "", "as an extended regex `net+api` does not match `net+api`");
     let some = ok(&a, &["log", "--all-zones", "-F", "--grep", "net+api: (odd)", "--format", "%s"]);
     assert_eq!(some.trim(), "net+api: (odd) subject");
 }
