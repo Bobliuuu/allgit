@@ -2291,6 +2291,16 @@ impl Repo {
         let skip = |p: &str| ws.skips(zone, p);
         let all_changed: Vec<&String> = new.iter().filter(|(p, v)| old.get(*p) != Some(v)).map(|(p, _)| p).collect();
         let (virt, changed): (Vec<&String>, Vec<&String>) = all_changed.into_iter().partition(|p| skip(p));
+        // Every blob must be present before the first file is touched. A blob that is absent (a
+        // partial clone, a merge that brings in unfetched content) surfaces as `NotFound`, and
+        // `vcs` fetches it and re-runs the whole command; if some files were already written by
+        // then, the re-run refuses with "untracked path would be overwritten".
+        for p in &changed {
+            let id = &new[*p].1;
+            if !self.store.contains(id)? {
+                return Err(vcs_store::StoreError::NotFound(*id).into());
+            }
+        }
         // deletions
         let mut dirs: BTreeSet<String> = BTreeSet::new();
         for p in old.keys().filter(|p| !new.contains_key(*p)) {
