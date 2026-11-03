@@ -64,6 +64,21 @@ pub struct LogExtra {
     /// Minimum similarity in percent for rename and copy detection (also used by --follow)
     #[arg(long, value_name = "PERCENT", default_value_t = 50, value_parser = clap::value_parser!(u32).range(0..=100))]
     pub rename_threshold: u32,
+    /// Start from every branch and tag of the zone (and a detached HEAD), not only the checked-out branch
+    #[arg(long)]
+    pub all: bool,
+    /// Like --all for every zone of the repository; commits of all zones interleave newest first
+    #[arg(long)]
+    pub all_zones: bool,
+    /// Leave out the history of this revision (repeatable; the same as a `^REV` argument)
+    #[arg(long = "not", value_name = "REV")]
+    pub not: Vec<String>,
+    /// Show the selected commits oldest first (after `-n` picked them)
+    #[arg(long)]
+    pub reverse: bool,
+    /// More revisions after the first: `A B`, `^A B`, `A..B`, `A...B` (set by the command line parser)
+    #[arg(skip)]
+    pub revs: Vec<String>,
 }
 
 impl LogExtra {
@@ -170,20 +185,47 @@ impl LogExtra {
     }
 
     /// File list lines per commit for `--name-status` / `--name-only`.
-    pub fn notes(&self, repo: &Repo, zone: &str, shown: &[(ObjectId, Commit)]) -> Result<BTreeMap<ObjectId, Vec<String>>, Error> {
+    ///
+    /// `only` (repo-relative paths from `-- <paths>`) limits each list to those paths, like git: a
+    /// path-limited log lists the changes inside the pathspec, not the whole commit.
+    pub fn notes(
+        &self,
+        repo: &Repo,
+        zone: &str,
+        shown: &[(ObjectId, Commit)],
+        only: &[String],
+    ) -> Result<BTreeMap<ObjectId, Vec<String>>, Error> {
+        let inside = |p: &str| {
+            only.is_empty()
+                || only
+                    .iter()
+                    .any(|s| s.is_empty() || p == s || p.strip_prefix(s.as_str()).is_some_and(|r| r.starts_with('/')))
+        };
         let mut out = BTreeMap::new();
         if !self.lists_files() {
             return Ok(out);
         }
         let a = self.diff_args();
         for (id, _) in shown {
+            if !a.detect() {
+                // no rename detection: the file list straight from the tree diff
+                let lines = repo
+                    .commit_changes_only(zone, id, only)?
+                    .into_iter()
+                    .map(|(p, l)| if self.name_status { format!("{}\t{p}", l as char) } else { p })
+                    .collect();
+                out.insert(*id, lines);
+                continue;
+            }
             // contents matter only for rename / copy detection
             let pairs = if a.detect() {
                 repo.commit_pairs(zone, id)?
             } else {
                 repo.commit_pairs_names(zone, id)?
             };
-            let es = difftool::entries(pairs, &a);
+            let mut es = difftool::entries(pairs, &a);
+            // a rename or copy is kept when either side is inside the spec
+            es.retain(|e| inside(&e.path) || e.old_path.as_deref().is_some_and(inside));
             let lines = if self.name_status {
                 difftool::name_status_lines(&es)
             } else {
@@ -198,25 +240,31 @@ impl LogExtra {
 /// Commits reachable from the tip through first parents only (input order kept).
 pub fn first_parent_chain(all: &[(ObjectId, Commit)]) -> Vec<(ObjectId, Commit)> {
     let by_id: BTreeMap<ObjectId, &Commit> = all.iter().map(|(i, c)| (*i, c)).collect();
-    let Some(tip) = tip_of(all) else { return Vec::new() };
     let mut keep = BTreeSet::new();
-    let mut cur = Some(tip);
-    while let Some(id) = cur {
-        if !keep.insert(id) {
-            break;
+    for tip in tips_of(all) {
+        let mut cur = Some(tip);
+        while let Some(id) = cur {
+            if !keep.insert(id) {
+                break;
+            }
+            cur = by_id
+                .get(&id)
+                .and_then(|c| c.parents.first().copied())
+                .filter(|p| by_id.contains_key(p));
         }
-        cur = by_id
-            .get(&id)
-            .and_then(|c| c.parents.first().copied())
-            .filter(|p| by_id.contains_key(p));
     }
     all.iter().filter(|(i, _)| keep.contains(i)).cloned().collect()
 }
 
-/// The commit nothing in the list has as a parent (timestamp ties make list order unreliable).
+/// The first commit nothing in the list has as a parent.
 fn tip_of(all: &[(ObjectId, Commit)]) -> Option<ObjectId> {
+    tips_of(all).first().copied()
+}
+
+/// The commits nothing in the list has as a parent (timestamp ties make list order unreliable).
+fn tips_of(all: &[(ObjectId, Commit)]) -> Vec<ObjectId> {
     let parents: BTreeSet<ObjectId> = all.iter().flat_map(|(_, c)| c.parents.iter().copied()).collect();
-    all.iter().map(|(i, _)| *i).find(|i| !parents.contains(i))
+    all.iter().map(|(i, _)| *i).filter(|i| !parents.contains(i)).collect()
 }
 
 /// `p` (repo-relative) as a path inside the zone at `prefix`, if it is inside it.

@@ -145,6 +145,17 @@ pub fn verify_file(path: &Path, key: Option<&[u8; 32]>) -> Result<VerifyReport, 
     Ok(VerifyReport { records: n, head: prev })
 }
 
+/// Decision detail of a record. `reason` is one of `accepted`, `policy`, `lock`, `lock-required`,
+/// `invalid`, `forbidden`, `unavailable`, `conflict`, `error`; `policy` is the hex BLAKE3 of the
+/// path policy in force; `vtime` is the validator's server time (ms) for an accepted manifest write, which is
+/// also the `time_hw` stored in the same compare-and-swap.
+#[derive(Clone, Debug, Default)]
+pub struct Extra {
+    pub reason: Option<&'static str>,
+    pub policy: Option<String>,
+    pub vtime: Option<u64>,
+}
+
 struct State {
     file: File,
     seq: u64,
@@ -152,6 +163,7 @@ struct State {
 }
 
 pub struct AuditLog {
+    path: std::path::PathBuf,
     state: Mutex<State>,
     key: Option<[u8; 32]>,
 }
@@ -169,9 +181,33 @@ impl AuditLog {
         };
         let file = OpenOptions::new().create(true).append(true).open(path)?;
         Ok(Self {
+            path: path.to_path_buf(),
             state: Mutex::new(State { file, seq, prev }),
             key,
         })
+    }
+
+    /// Up to `limit` raw records with `seq > after` (or from the start when `after` is `None`), as
+    /// JSON lines, plus the newest returned seq and the head hash. Read under the append lock so a
+    /// half-written line is never returned.
+    pub fn page(&self, after: Option<u64>, limit: usize) -> std::io::Result<(Vec<String>, Option<u64>, String)> {
+        let st = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let head = st.prev.clone();
+        let r = BufReader::new(File::open(&self.path)?);
+        let mut out = Vec::new();
+        let mut last = None;
+        for (n, line) in r.lines().enumerate() {
+            let n = n as u64;
+            if after.is_some_and(|a| n <= a) {
+                continue;
+            }
+            if out.len() >= limit {
+                break;
+            }
+            out.push(line?);
+            last = Some(n);
+        }
+        Ok((out, last, head))
     }
 
     /// fsync the file (records are already synced on append; this is the shutdown belt-and-braces).
@@ -181,9 +217,24 @@ impl AuditLog {
 
     /// Append one record and flush it to disk. Returns the record's hash.
     pub fn record(&self, ts_ms: u64, principal: &str, op: &str, key: &str, outcome: &str) -> std::io::Result<String> {
+        self.record_ext(ts_ms, principal, op, key, outcome, &Extra::default())
+    }
+
+    /// [`record`](Self::record) with the decision detail (`reason`, policy hash, validator time).
+    pub fn record_ext(&self, ts_ms: u64, principal: &str, op: &str, key: &str, outcome: &str, extra: &Extra) -> std::io::Result<String> {
         let mut st = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut ext = String::new();
+        if let Some(r) = extra.reason {
+            ext.push_str(&format!(",\"reason\":{}", json_str(r)));
+        }
+        if let Some(p) = &extra.policy {
+            ext.push_str(&format!(",\"policy\":{}", json_str(p)));
+        }
+        if let Some(t) = extra.vtime {
+            ext.push_str(&format!(",\"vtime\":{t}"));
+        }
         let body = format!(
-            "{{\"seq\":{},\"ts_ms\":{ts_ms},\"principal\":{},\"op\":{},\"key\":{},\"outcome\":{},\"prev\":\"{}\"",
+            "{{\"seq\":{},\"ts_ms\":{ts_ms},\"principal\":{},\"op\":{},\"key\":{},\"outcome\":{}{ext},\"prev\":\"{}\"",
             st.seq,
             json_str(principal),
             json_str(op),
@@ -301,6 +352,35 @@ mod tests {
         l.record(2, "ünï", "PUT", "k", "201").unwrap();
         assert_eq!(verify_file(&p, None).unwrap().records, 2);
         assert_eq!(std::fs::read_to_string(&p).unwrap().lines().count(), 2);
+    }
+
+    #[test]
+    fn extra_fields_are_chained_and_paged() {
+        let (_d, p) = tmp();
+        let l = AuditLog::open(&p, None).unwrap();
+        let ex = Extra {
+            reason: Some("policy"),
+            policy: Some("ab".repeat(32)),
+            vtime: Some(42),
+        };
+        l.record_ext(1, "a", "PUT", "manifest", "403", &ex).unwrap();
+        l.record(2, "b", "PUT", "x", "201").unwrap();
+        l.record(3, "c", "PUT", "y", "201").unwrap();
+        assert_eq!(verify_file(&p, None).unwrap().records, 3);
+        let (all, last, head) = l.page(None, 10).unwrap();
+        assert_eq!(all.len(), 3);
+        assert!(all[0].contains("\"reason\":\"policy\"") && all[0].contains("\"vtime\":42"));
+        assert_eq!(last, Some(2));
+        assert_eq!(head, verify_file(&p, None).unwrap().head);
+        let (pg, last, _) = l.page(None, 2).unwrap();
+        assert_eq!((pg.len(), last), (2, Some(1)));
+        let (pg, last, _) = l.page(Some(1), 2).unwrap();
+        assert_eq!((pg.len(), last), (1, Some(2)));
+        assert_eq!(l.page(Some(2), 2).unwrap().1, None);
+        // editing the new fields breaks the chain
+        let t = std::fs::read_to_string(&p).unwrap().replace("\"vtime\":42", "\"vtime\":43");
+        std::fs::write(&p, t).unwrap();
+        assert!(verify_file(&p, None).is_err());
     }
 
     #[test]

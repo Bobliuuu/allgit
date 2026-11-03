@@ -17,6 +17,7 @@ use vcs_remote::{
     fetch_heads_lazy_shared, fetch_object, fetch_tags_lazy_shared, load_manifest, refresh_manifest, Backend, Manifest, Outcome,
     PublishError, Publisher,
 };
+use vcs_store::ObjectStore;
 
 #[derive(Debug)]
 pub struct PublishReport {
@@ -27,6 +28,42 @@ pub struct PublishReport {
     pub tags: Vec<(String, String)>,
     /// Local tags not published because the remote has the same name at another target.
     pub tag_conflicts: Vec<(String, String)>,
+    /// Non-fast-forward updates that were forced: (zone, branch, replaced remote head, new head).
+    pub forced: Vec<(String, String, ObjectId, ObjectId)>,
+    /// Branches deleted from the remote: (zone, branch, head they had).
+    pub deleted: Vec<(String, String, ObjectId)>,
+}
+
+/// How a non-fast-forward publish is allowed to replace a remote branch head. There is no blind
+/// overwrite: every forced move is a compare-and-swap in the manifest transaction.
+#[derive(Clone, Debug, Default)]
+pub struct ForceSpec {
+    /// Skip the lease: replace whatever head the remote has when this publish reads it (still
+    /// atomic against the manifest, but not against what you last fetched). Native flag
+    /// `--force-without-lease`.
+    pub without_lease: bool,
+    /// Explicit lease per branch name: the remote head must start with this hex id prefix.
+    /// Branches without an entry are leased against the remote-tracking head (last fetched).
+    pub expect: BTreeMap<String, String>,
+}
+
+/// Options of [`Repo::publish_with`]. `Default` is a plain fast-forward-only publish of every
+/// checked-out branch. With `force` and no `branches`, every checked-out branch that is not a
+/// fast-forward is forced (each still needs its lease).
+#[derive(Clone, Debug, Default)]
+pub struct PublishOpts {
+    /// Publish only these branch names (empty = all checked-out branches).
+    pub branches: Vec<String>,
+    /// Allow non-fast-forward replacement of the named branches.
+    pub force: Option<ForceSpec>,
+    /// Delete these remote branches (must be the head you last fetched, or covered by `force`).
+    pub delete: Vec<String>,
+    /// Publish only the tags (`git push --tags`): no branch is moved or deleted.
+    pub tags_only: bool,
+    /// Also delete every remote branch of a subscribed zone that has no local branch of that name
+    /// (`git push --prune`). Each deletion is a compare-and-swap against the head you last fetched
+    /// (or the lease in `force`), audited in the operation log and the transaction like `delete`.
+    pub prune: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -139,7 +176,7 @@ impl Repo {
             if !t.contains('\n') && !url.contains('\n') {
                 let mut out = format!("{url}\n{t}\n").into_bytes();
                 out.extend_from_slice(&m.encode());
-                let _ = write_atomic(&self.common.join("remote-manifest"), &out);
+                let _ = crate::meta::write_cache_nosync(&self.common.join("remote-manifest"), &out);
                 // a cache: failure is fine
             }
         }
@@ -213,7 +250,27 @@ impl Repo {
     /// Like [`Repo::publish`], acting as lock principal `principal`. The locks that principal
     /// holds in the published zones are presented with their fencing tokens.
     pub fn publish_as(&self, backend: &dyn Backend, zones: Option<&[String]>, author: Signature, principal: &str) -> Result<PublishReport> {
+        self.publish_with(backend, zones, author, principal, &PublishOpts::default())
+    }
+
+    /// Publish with explicit scope, forced updates and deletions (see [`PublishOpts`]).
+    ///
+    /// A forced update replaces a remote head that is not an ancestor of the local one. It is a
+    /// compare-and-swap in the same manifest transaction as any other publish: the swap fails
+    /// (nothing changes) unless the remote head is still the leased value. The replaced head is
+    /// recorded as `old` in the transaction (the remote keeps it reachable for the GC retention
+    /// window), stored locally (a GC root), and named in the operation log.
+    pub fn publish_with(
+        &self,
+        backend: &dyn Backend,
+        zones: Option<&[String]>,
+        author: Signature,
+        principal: &str,
+        opts: &PublishOpts,
+    ) -> Result<PublishReport> {
         let _l = self.lock()?;
+        let mut forced: Vec<(String, String, ObjectId, ObjectId)> = Vec::new();
+        let mut deletes: Vec<(String, String, ObjectId)> = Vec::new();
         let defs = self.zones()?;
         let ws = self.workspace()?;
         let refs = self.refs()?;
@@ -225,8 +282,14 @@ impl Repo {
         let mut zone_defs = BTreeMap::new();
         let mut label_defs = BTreeMap::new();
         for (zone, branch) in &ws.subs {
-            if zones.is_some_and(|w| !w.contains(zone)) {
+            if zones.is_some_and(|w| !w.contains(zone)) || branch == vcs_objects::names::DETACHED_BRANCH {
+                continue; // a detached HEAD is never published
+            }
+            if opts.tags_only {
                 continue;
+            }
+            if (!opts.branches.is_empty() || !opts.delete.is_empty()) && !opts.branches.contains(branch) {
+                continue; // scoped publish: only the named branches
             }
             let Some(local) = refs.head(zone, branch) else { continue };
             let remote = manifest.head(zone, branch);
@@ -240,8 +303,25 @@ impl Repo {
             }
             if let Some(r) = remote {
                 if !self.is_ancestor(r, local)? {
+                    if let Some(spec) = &opts.force {
+                        self.check_lease(spec, zone, branch, r, tracked.head(zone, branch))?;
+                        forced.push((zone.clone(), branch.clone(), r, local));
+                        updates.push(RefUpdate {
+                            zone: zone.clone(),
+                            branch: branch.clone(),
+                            old: remote,
+                            new: local,
+                        });
+                        if zone != ROOT_ZONE {
+                            zone_defs.insert(zone.clone(), defs.path_of(zone).unwrap().to_owned());
+                            if defs.label(zone) != zone {
+                                label_defs.insert(zone.clone(), defs.label(zone).to_owned());
+                            }
+                        }
+                        continue;
+                    }
                     return msg(format!(
-                        "Cannot publish {zone}/{branch}:\n\nRemote branch advanced to {}.\n\nYour local commit: {}\nRemote commit:     {}\n\nOptions:\n  vcs sync",
+                        "Cannot publish {zone}/{branch}:\n\nRemote branch advanced to {}.\n\nYour local commit: {}\nRemote commit:     {}\n\nOptions:\n  vcs sync\n  vcs publish --force {branch}   (replace the remote head, only if it is still the one you last fetched)",
                         r.short(),
                         local.short(),
                         r.short()
@@ -259,6 +339,37 @@ impl Repo {
                 if defs.label(zone) != zone {
                     label_defs.insert(zone.clone(), defs.label(zone).to_owned());
                 }
+            }
+        }
+        let delete_names: &[String] = if opts.tags_only { &[] } else { &opts.delete };
+        for name in delete_names {
+            let mut hit = false;
+            for (zone, branch) in manifest.branches.keys() {
+                if branch != name || zones.is_some_and(|w| !w.contains(zone)) {
+                    continue;
+                }
+                hit = true;
+                let remote = manifest.head(zone, branch).expect("listed");
+                // Deleting is a compare-and-swap too: it only succeeds against a head you have seen.
+                self.delete_lease(opts, zone, branch, remote, tracked.head(zone, branch))?;
+                deletes.push((zone.clone(), branch.clone(), remote));
+            }
+            if !hit {
+                return msg(format!("no branch {name:?} on the remote to delete"));
+            }
+        }
+        if opts.prune && !opts.tags_only {
+            for (zone, branch) in manifest.branches.keys() {
+                if !ws.subs.contains_key(zone)
+                    || zones.is_some_and(|w| !w.contains(zone))
+                    || refs.head(zone, branch).is_some()
+                    || deletes.iter().any(|(z, b, _)| z == zone && b == branch)
+                {
+                    continue;
+                }
+                let remote = manifest.head(zone, branch).expect("listed");
+                self.delete_lease(opts, zone, branch, remote, tracked.head(zone, branch))?;
+                deletes.push((zone.clone(), branch.clone(), remote));
             }
         }
         // Tags of the published zones (all zones when unfiltered) that the remote lacks.
@@ -286,12 +397,14 @@ impl Repo {
                 }
             }
         }
-        if updates.is_empty() && tag_defs.is_empty() {
+        if updates.is_empty() && tag_defs.is_empty() && deletes.is_empty() {
             return Ok(PublishReport {
                 updated: vec![],
                 outcome: None,
                 tags: vec![],
                 tag_conflicts,
+                forced: vec![],
+                deleted: vec![],
             });
         }
         updates.sort();
@@ -310,31 +423,121 @@ impl Repo {
             updates: updates.clone(),
             author,
             // a tags-only publish must not collide with an earlier one in the applied-tx window
-            message: if updates.is_empty() {
+            message: if !deletes.is_empty() {
+                let mut m = format!("publish delete {}", now_ms());
+                for (z, b, id) in &deletes {
+                    m.push_str(&format!("\ndeleted {z}/{b} was {}", id.to_hex()));
+                }
+                m
+            } else if updates.is_empty() {
                 format!("publish tags {}", now_ms())
-            } else {
+            } else if forced.is_empty() {
                 "publish".into()
+            } else if opts.force.as_ref().is_some_and(|f| f.without_lease) {
+                "publish --force-without-lease".into()
+            } else {
+                "publish --force-with-lease".into()
             },
             lock_ops,
         };
+        let tx_for_log = tx.clone();
         let outcome = Publisher::new(backend, &self.store, tx)
             .with_manifest_hint(manifest.clone(), manifest_tag)
             .with_principal(principal)
             .with_zones(zone_defs)
             .with_labels(label_defs)
             .with_tags(tag_defs.clone())
+            .with_deletes(deletes.clone())
             .run()
             .map_err(publish_err)?;
         let mut rr = self.remote_refs()?;
         rr.branches
             .extend(updates.iter().map(|u| ((u.zone.clone(), u.branch.clone()), u.new)));
+        for (z, b, _) in &deletes {
+            rr.branches.remove(&(z.clone(), b.clone()));
+        }
         self.save_remote_refs(&rr)?;
+        if !forced.is_empty() || !deletes.is_empty() {
+            // Keep the replaced/deleted heads reachable locally (every stored Transaction is a
+            // GC root) and say so in the operation log.
+            self.store.put(&Object::Transaction(tx_for_log))?;
+            for (z, b, old, new) in &forced {
+                self.record_op(
+                    &format!(
+                        "publish --force {z}/{b}: remote {} -> {} (replaced head {}; recover: vcs branch <name> --at {})",
+                        old.short(),
+                        new.short(),
+                        old.to_hex(),
+                        old.to_hex()
+                    ),
+                    None,
+                )?;
+            }
+            for (z, b, old) in &deletes {
+                self.record_op(
+                    &format!(
+                        "publish --delete {z}/{b}: remote head was {} (recover: vcs branch <name> --at {})",
+                        old.to_hex(),
+                        old.to_hex()
+                    ),
+                    None,
+                )?;
+            }
+        }
         Ok(PublishReport {
             updated: updates.into_iter().map(|u| (u.zone, u.branch, u.old, u.new)).collect(),
             outcome: Some(outcome),
             tags: tag_defs.into_keys().collect(),
             tag_conflicts,
+            forced,
+            deleted: deletes,
         })
+    }
+
+    /// A deletion is allowed against the head last fetched, or the lease named in `opts.force`.
+    fn delete_lease(&self, opts: &PublishOpts, zone: &str, branch: &str, remote: ObjectId, tracked: Option<ObjectId>) -> Result<()> {
+        match &opts.force {
+            Some(spec) => self.check_lease(spec, zone, branch, remote, tracked),
+            None if tracked == Some(remote) => Ok(()),
+            None => msg(format!(
+                "Cannot delete {zone}/{branch}: the remote head {} is not the one you last fetched ({}).\n\nOptions:\n  vcs fetch, look at it, then retry\n  vcs publish --delete {branch} --force-with-lease={branch}:{}   (delete exactly that head)",
+                remote.short(),
+                tracked.map(|i| i.short()).unwrap_or_else(|| "never fetched".into()),
+                remote.short()
+            )),
+        }
+    }
+
+    /// The lease of a forced update (see [`ForceSpec`]): the remote head `remote` must be the
+    /// value the caller vouched for, or the update is refused with nothing changed.
+    fn check_lease(&self, spec: &ForceSpec, zone: &str, branch: &str, remote: ObjectId, tracked: Option<ObjectId>) -> Result<()> {
+        if let Some(prefix) = spec.expect.get(branch) {
+            let p = prefix.to_ascii_lowercase();
+            if p.is_empty() || !remote.to_hex().starts_with(&p) {
+                return msg(format!(
+                    "stale lease on {zone}/{branch}: you expected {prefix}, but the remote head is {} (full {}).\nNothing was changed. Fetch and look at it, then lease on the new value.",
+                    remote.short(),
+                    remote.to_hex()
+                ));
+            }
+            return Ok(());
+        }
+        if spec.without_lease {
+            return Ok(());
+        }
+        match tracked {
+            Some(t) if t == remote => Ok(()),
+            Some(t) => msg(format!(
+                "stale info: the remote {zone}/{branch} is at {} but you last fetched {}. Someone else moved it.\nNothing was changed. `vcs fetch`, look at what they did, then retry.\n(Native override: --force-with-lease={branch}:<id> or --force-without-lease.)",
+                remote.short(),
+                t.short()
+            )),
+            None => msg(format!(
+                "stale info: you have never fetched {zone}/{branch} (the remote has {}), so there is nothing to lease against.\nNothing was changed. `vcs fetch` first, or name the value you expect: --force-with-lease={branch}:{}",
+                remote.short(),
+                remote.short()
+            )),
+        }
     }
 
     /// Re-upload every object reachable from the local branch heads that the remote lacks, even
@@ -600,7 +803,7 @@ impl Repo {
                     }
                 } else if set.is_none_or(|s| crate::meta::in_sparse_set(s, &path))
                     && !files.contains(&e.id)
-                    && !self.store.contains(&e.id)?
+                    && !self.store.contains_hint(&e.id)?
                 {
                     files.insert(e.id);
                 }
@@ -671,27 +874,51 @@ impl Repo {
         let mut refs = self.refs()?;
         let rr = self.remote_refs()?;
         let mut ix = self.index()?;
+        let mut verified: BTreeSet<String> = BTreeSet::new();
         let mut rep = SyncReport::default();
         let subs: Vec<(String, String)> = ws.subs.iter().map(|(a, b)| (a.clone(), b.clone())).collect();
         for (zone, branch) in subs {
+            if branch == vcs_objects::names::DETACHED_BRANCH {
+                continue;
+            }
             let local = refs.head(&zone, &branch);
             let act = match (local, rr.head(&zone, &branch)) {
                 (_, None) => SyncAction::NoRemote,
                 (l, Some(r)) if l == Some(r) => SyncAction::UpToDate,
                 (Some(l), Some(r)) if self.is_ancestor(r, l)? => SyncAction::Ahead,
                 (l, Some(r)) if l.is_none() || self.is_ancestor(l.unwrap(), r)? => {
-                    let st = self.status()?;
+                    // Only staged/unstaged state decides "dirty": skip the untracked walk (an
+                    // untracked file in the way is refused by the transition check below).
+                    let (st, clean) = self.status_inner_verified(Default::default(), &ix, false, None)?;
                     let a = st.zones.iter().find(|x| x.zone == zone).expect("subscribed");
                     if !a.staged.is_empty() || !a.unstaged.is_empty() {
                         SyncAction::Dirty
                     } else {
-                        self.prefetch_zone_files(backend, &zone, self.commit_obj(&r)?.root)?;
-                        let old = self.head_flat(&zone, &defs, &ws, &refs)?;
-                        let new = treeops::flatten(&self.store, Some(self.commit_obj(&r)?.root), defs.path_of(&zone).unwrap())?;
-                        self.transition(&zone, &defs, &old, &new, &mut ix)?;
+                        // Only the subtrees that differ are read, and only the blobs of changed
+                        // files are fetched; the cost follows the change, not the tracked files.
+                        let old_root = match self.current_head(&zone, &ws, &refs) {
+                            Some(h) => Some(self.commit_obj(&h)?.root),
+                            None => None,
+                        };
+                        let new_root = self.commit_obj(&r)?.root;
+                        let prefix = defs.path_of(&zone).unwrap();
+                        let diff = treeops::diff_trees_checkout(&self.store, old_root, Some(new_root), prefix)?;
+                        let mut want = BTreeSet::new();
+                        for (p, (mode, id)) in &diff.new {
+                            if *mode != vcs_objects::EntryMode::Directory && !ws.skips(&zone, p) && !self.store.contains_hint(id)? {
+                                want.insert(*id);
+                            }
+                        }
+                        self.prefetch_ids(backend, want)?;
+                        self.transition_diff(&zone, &defs, &diff, &mut ix)?;
+                        verified.extend(clean.into_iter().filter(|p| !diff.old.contains_key(p) && !diff.new.contains_key(p)));
+                        // The index equalled the old tree, so the directories read on the way give
+                        // the next status/commit their tree ids.
+                        ix.entries
+                            .store_trees(crate::repo::zones_fp(&defs), diff.new_trees.iter().cloned().collect());
                         // index/worktree first, ref last: a crash in between leaves a clean-looking
                         // diff against the old head, never a lost commit.
-                        self.save_index(&mut ix)?;
+                        self.save_index_verified(&mut ix, |p| verified.contains(p))?;
                         refs.apply(&[RefUpdate {
                             zone: zone.clone(),
                             branch: branch.clone(),
@@ -757,7 +984,7 @@ impl Repo {
                 None => defs.names().map(str::to_owned).collect(),
             };
             repo.save_ws(&Workspace::default())?;
-            let cat = Arc::new(PackCatalog::new());
+            let cat = Arc::new(PackCatalog::for_clone());
             let got = fetch_heads_lazy_shared(backend, &repo.store, Some(&want), &m, &cat).map_err(publish_err)?;
             let mut rr = Refs::default();
             let mut local = Refs::default();

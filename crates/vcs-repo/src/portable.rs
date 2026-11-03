@@ -51,6 +51,77 @@ pub fn check_symlink_target(link_path: &str, target: &[u8]) -> std::result::Resu
     Ok(())
 }
 
+/// Names Windows resolves to devices in every directory, with or without an extension (`CON`,
+/// `aux.txt`, `COM1.log`, `LPT\u{b9}`), plus the console handles.
+const RESERVED: &[&str] = &[
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    "CONIN$",
+    "CONOUT$",
+    "COM1",
+    "COM2",
+    "COM3",
+    "COM4",
+    "COM5",
+    "COM6",
+    "COM7",
+    "COM8",
+    "COM9",
+    "COM\u{b9}",
+    "COM\u{b2}",
+    "COM\u{b3}",
+    "LPT1",
+    "LPT2",
+    "LPT3",
+    "LPT4",
+    "LPT5",
+    "LPT6",
+    "LPT7",
+    "LPT8",
+    "LPT9",
+    "LPT\u{b9}",
+    "LPT\u{b2}",
+    "LPT\u{b3}",
+];
+
+/// The classic Windows `MAX_PATH`: a full path must stay below it (260 counts the terminating NUL).
+pub const WINDOWS_MAX_PATH: usize = 260;
+
+/// Why `path` (zone-independent, `/`-separated, below a worktree whose own path is `root_len` bytes
+/// long) could not be created on Windows, or `None`. Reserved device names, trailing dots/spaces,
+/// characters NTFS forbids, and the 260-byte path limit.
+pub fn windows_path_problem(root_len: usize, path: &str) -> Option<String> {
+    if root_len + 1 + path.len() >= WINDOWS_MAX_PATH {
+        return Some(format!(
+            "path is {} bytes below the worktree; with the worktree prefix it reaches the Windows 260-byte limit",
+            path.len()
+        ));
+    }
+    for c in path.split('/') {
+        if c.chars()
+            .any(|ch| (ch as u32) < 0x20 || matches!(ch, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
+        {
+            return Some(format!("component {c:?} has a character Windows forbids in file names"));
+        }
+        if c.ends_with('.') || c.ends_with(' ') {
+            return Some(format!("component {c:?} ends in a dot or space, which Windows strips"));
+        }
+        let stem = c.split('.').next().unwrap_or(c).trim_end_matches(' ');
+        if RESERVED.iter().any(|r| stem.eq_ignore_ascii_case(r)) {
+            return Some(format!("component {c:?} is a reserved Windows device name"));
+        }
+    }
+    None
+}
+
+/// Are Windows-name checks enforced on checkout? Always on Windows; elsewhere when
+/// `VCS_PROTECT_WINDOWS` is set (a team that wants its repository to stay checkout-safe there).
+pub fn windows_checks_enabled() -> bool {
+    cfg!(windows) || std::env::var_os("VCS_PROTECT_WINDOWS").is_some_and(|v| !v.is_empty() && v != "0")
+}
+
 /// The key under which two names are the same file on a folding filesystem.
 pub fn fold_component(c: &str) -> String {
     let mut s = String::with_capacity(c.len());
@@ -239,5 +310,52 @@ mod tests {
         assert!(find_collision(["a/b/x", "a/c/y", "a/B/x"]).is_some());
         assert!(find_collision(["a/b/x", "a/b/y", "a/c/y", "a/b/z"]).is_none());
         assert_eq!(find_collision(["Dir/a", "dir/b"]), Some(("Dir".into(), "dir".into())));
+    }
+}
+
+#[cfg(test)]
+mod windows_tests {
+    use super::*;
+
+    #[test]
+    fn reserved_names_and_limits() {
+        for bad in [
+            "con",
+            "CON",
+            "dir/aux.txt",
+            "a/Nul.tar.gz",
+            "com1",
+            "x/LPT9.log",
+            "COM\u{b9}",
+            "conout$",
+            "a/b./c",
+            "a/b /c",
+            "x/ends.",
+            "a:b",
+            "a/b?c",
+            "q\"r",
+            "t\u{1}",
+            "con .txt",
+        ] {
+            assert!(windows_path_problem(10, bad).is_some(), "{bad:?}");
+        }
+        for ok in [
+            "console",
+            "aux1",
+            "com10",
+            "lpt0",
+            "a/b.c",
+            "conn.txt",
+            ".hidden",
+            "dir/auxiliary",
+            "nul_x",
+        ] {
+            assert_eq!(windows_path_problem(10, ok), None, "{ok:?}");
+        }
+        // the 260-byte limit counts the worktree prefix and a separator
+        let p = "a".repeat(200);
+        assert_eq!(windows_path_problem(10, &p), None);
+        assert!(windows_path_problem(59, &p).is_some(), "10 + 1 + 200 < 260 but 59 + 1 + 200 = 260");
+        assert_eq!(windows_path_problem(58, &p), None);
     }
 }

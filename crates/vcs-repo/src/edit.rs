@@ -18,13 +18,12 @@ use crate::error::{io, msg, Error, Result};
 use crate::index::{Index, IndexEntry};
 use crate::meta::{Workspace, Zones};
 use crate::repo::{Repo, Wt};
-use crate::treeops::Flat;
+use crate::treeops;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
 use vcs_objects::names::validate_path;
-use vcs_objects::EntryMode;
-use vcs_store::ObjectStore;
+use vcs_objects::{EntryMode, ObjectId};
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct RestoreReport {
@@ -133,6 +132,58 @@ impl Repo {
         Ok(out)
     }
 
+    /// [`Self::match_index`] without copying every path: the matching entries in path order, borrowed
+    /// from the index (`restore .` on 100k files would otherwise clone 100k strings twice).
+    fn match_index_list<'a>(
+        &self,
+        specs: &[String],
+        zones: &Zones,
+        ws: &Workspace,
+        ix: &'a Index,
+        what: &str,
+    ) -> Result<Vec<(&'a String, &'a IndexEntry)>> {
+        let mut out: Vec<(&String, &IndexEntry)> = Vec::new();
+        for p in specs {
+            self.require_subscribed(zones, ws, p)?;
+            let (mut owned, mut hits) = (0usize, 0usize);
+            let mut take = |k: &'a String, e: &'a IndexEntry| {
+                let zone = zones.owner(k);
+                if ws.subs.contains_key(zone) {
+                    owned += 1;
+                    if !ws.skips(zone, k) {
+                        hits += 1;
+                        out.push((k, e));
+                    }
+                }
+            };
+            if p.is_empty() {
+                for (k, e) in ix.entries.iter() {
+                    take(k, e);
+                }
+            } else {
+                if let Some((k, e)) = ix.entries.get_key_value(p.as_str()) {
+                    take(k, e);
+                }
+                for (k, e) in ix.entries.range(format!("{p}/")..format!("{p}0")) {
+                    take(k, e);
+                }
+            }
+            if hits == 0 && owned > 0 {
+                return msg(format!(
+                    "pathspec {p:?} is outside this workspace's sparse set (not materialized); `vcs sparse add` it first"
+                ));
+            }
+            if hits == 0 && !p.is_empty() {
+                return msg(format!("pathspec {p:?} did not match any {what} files"));
+            }
+        }
+        if specs.len() > 1 {
+            out.sort_unstable_by(|a, b| a.0.cmp(b.0));
+            out.dedup_by(|a, b| std::ptr::eq(a.0, b.0));
+        }
+        Ok(out)
+    }
+
     fn unresolved_conflicts(&self) -> Result<BTreeSet<String>> {
         Ok(self
             .merge_state()?
@@ -148,27 +199,82 @@ impl Repo {
         }
         let zones = self.zones()?;
         let ws = self.workspace()?;
+        let what = if staged { "restore --staged" } else { "restore" };
+        if staged {
+            // The operation is recorded before the (unsynced) index write, see `prepare_index_patch`.
+            let (n, patched) = self.restore_staged(specs, &zones, &ws)?;
+            self.record_op(&format!("{what} {}", specs.join(" ")), None)?;
+            if let Some(bytes) = patched {
+                self.write_index_bytes(&bytes)?;
+            }
+            return Ok(RestoreReport { restored: n });
+        }
+        // A few named paths: restore them against just their index entries and patch the index file,
+        // instead of decoding and re-encoding every entry.
+        if let Some((f, mut part, before)) = self.small_index_view(specs)? {
+            let n = self.restore_worktree(specs, &zones, &ws, &mut part)?;
+            let mut edits = crate::index_file::Edits::new();
+            for (p, e) in part.entries.iter() {
+                if before.get(p) != Some(e) {
+                    edits.insert(p.clone(), Some(e.clone()));
+                }
+            }
+            let patched = if edits.is_empty() {
+                None
+            } else {
+                self.prepare_index_patch(&f, &edits)?.0
+            };
+            self.record_op(&format!("{what} {}", specs.join(" ")), None)?;
+            if let Some(bytes) = patched {
+                self.write_index_bytes(&bytes)?;
+            }
+            return Ok(RestoreReport { restored: n });
+        }
         let mut ix = self.index()?;
-        let n = if staged {
-            self.restore_staged(specs, &zones, &ws, &mut ix)?
-        } else {
-            self.restore_worktree(specs, &zones, &ws, &mut ix)?
-        };
+        let n = self.restore_worktree(specs, &zones, &ws, &mut ix)?;
         if n > 0 {
             self.save_index(&mut ix)?;
         }
-        let what = if staged { "restore --staged" } else { "restore" };
         self.record_op(&format!("{what} {}", specs.join(" ")), None)?;
         Ok(RestoreReport { restored: n })
     }
 
+    /// The index entries at or under `specs`, as a small [`Index`] (plus a copy to diff against), read
+    /// from the lazily parsed index file. `None` when a spec is empty (the whole tree), the index is
+    /// in an older layout, or the specs cover more than a few thousand entries: those take the full path.
+    fn small_index_view(&self, specs: &[String]) -> Result<Option<(crate::index_file::IndexFile, Index, BTreeMap<String, IndexEntry>)>> {
+        const MAX: usize = 2048;
+        if specs.iter().any(|p| p.is_empty()) {
+            return Ok(None);
+        }
+        let Ok(raw) = self.rd("index") else { return Ok(None) };
+        let Some(f) = crate::index_file::IndexFile::parse(raw)? else {
+            return Ok(None);
+        };
+        let mut part = Index {
+            written_ns: f.written_ns,
+            ..Index::default()
+        };
+        let mut before = BTreeMap::new();
+        for p in specs {
+            for (k, e) in f.under(p)? {
+                before.insert(k.clone(), e.clone());
+                part.entries.insert(k, e);
+                if before.len() > MAX {
+                    return Ok(None);
+                }
+            }
+        }
+        Ok(Some((f, part, before)))
+    }
+
     fn restore_worktree(&self, specs: &[String], zones: &Zones, ws: &Workspace, ix: &mut Index) -> Result<usize> {
         use crate::repo::ChangeKind;
-        let paths = self.match_index(specs, zones, ws, ix, "tracked")?;
         // 1. decide and validate everything first. The stat of every matched path (and the
         // content check of a racy one) runs on the status worker pool.
-        let list: Vec<(&String, &IndexEntry)> = paths.iter().map(|p| (p, &ix.entries[p])).collect();
+        let list = self.match_index_list(specs, zones, ws, ix, "tracked")?;
         let (changed, _clean) = self.unstaged_changes(&list, ix.written_ns)?;
+        drop(list);
         let mut ok_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut todo: Vec<(String, bool)> = Vec::with_capacity(changed.len()); // (path, known absent)
         for c in &changed {
@@ -193,7 +299,10 @@ impl Repo {
         // 2. write: independent per path, so a big batch runs on a bounded pool (8 threads)
         let write_one = |(p, absent): &(String, bool)| -> Result<IndexEntry> {
             let (mode, id) = (ix.entries[p].mode, ix.entries[p].id);
-            let data = self.store.get_content(&id)?;
+            let data = match self.content_or_stream(p, &id, mode)? {
+                crate::repo::FileContent::Streamed(e) => return Ok(e),
+                crate::repo::FileContent::Bytes(b) => b,
+            };
             let abs = || self.worktree.join(p);
             let m = if mode == EntryMode::Symlink {
                 crate::portable::check_symlink_target(p, &data).or_else(|why| msg(format!("refusing to restore symlink {p:?}: {why}")))?;
@@ -205,7 +314,17 @@ impl Repo {
                     r => io(&abs(), r)?,
                 }
             } else {
-                io(&abs(), self.wfs.write(p, &data, mode))?
+                // Replacing local edits: unlink and create in place, like git. A rename over the
+                // old file makes ext4 flush the new data before returning, which dominates when
+                // many files are restored. (A crash in between leaves the file missing; it shows as
+                // deleted and `restore` brings it back.)
+                match self.wfs.remove(p) {
+                    Ok(()) => match self.wfs.create_new(p, &data, mode) {
+                        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => io(&abs(), self.wfs.write(p, &data, mode))?,
+                        r => io(&abs(), r)?,
+                    },
+                    Err(_) => io(&abs(), self.wfs.write(p, &data, mode))?,
+                }
             };
             Ok(IndexEntry {
                 id,
@@ -236,26 +355,61 @@ impl Repo {
         Ok(n)
     }
 
-    fn restore_staged(&self, specs: &[String], zones: &Zones, ws: &Workspace, ix: &mut Index) -> Result<usize> {
+    /// `restore --staged`: put the index entries under `specs` back to what HEAD has. Works on the
+    /// lazily read index file and looks HEAD up per path, so one file costs a block, not the tree.
+    fn restore_staged(&self, specs: &[String], zones: &Zones, ws: &Workspace) -> Result<(usize, Option<Vec<u8>>)> {
         let refs = self.refs()?;
-        let mut heads: BTreeMap<String, Flat> = BTreeMap::new();
+        let f = self.index_file()?;
+        let mut roots: BTreeMap<String, Option<ObjectId>> = BTreeMap::new();
         for zone in ws.subs.keys() {
-            heads.insert(zone.clone(), self.head_flat(zone, zones, ws, &refs)?);
+            roots.insert(zone.clone(), self.head_root(zone, ws, &refs)?);
         }
         let conflicted = self.unresolved_conflicts()?;
         let mut cands = BTreeSet::new();
         for p in specs {
             self.require_subscribed(zones, ws, p)?;
             let mut hit = false;
-            for q in ix.under(p) {
+            for (q, _) in f.under(p)? {
                 if ws.subs.contains_key(zones.owner(&q)) {
                     cands.insert(q);
                     hit = true;
                 }
             }
-            for flat in heads.values() {
-                for q in flat.keys().filter(|q| under(q, p)) {
-                    cands.insert(q.clone());
+            for (zone, root) in &roots {
+                let Some(root) = *root else { continue };
+                let zp = zones.path_of(zone).unwrap_or("");
+                // the part of this zone's tree that lies under `p`
+                let rel: Option<&str> = if p.is_empty() || zp == p.as_str() {
+                    Some("")
+                } else if zp.is_empty() {
+                    Some(p.as_str())
+                } else if let Some(r) = p.strip_prefix(zp).and_then(|r| r.strip_prefix('/')) {
+                    Some(r)
+                } else if zp.strip_prefix(p.as_str()).is_some_and(|r| r.starts_with('/')) {
+                    Some("") // the zone lies inside `p`
+                } else {
+                    None
+                };
+                let Some(rel) = rel else { continue };
+                let Some(ent) = treeops::entry_at(&self.store, root, rel)? else {
+                    continue;
+                };
+                let base = if rel.is_empty() {
+                    zp.to_owned()
+                } else if zp.is_empty() {
+                    rel.to_owned()
+                } else {
+                    format!("{zp}/{rel}")
+                };
+                if ent.0 == EntryMode::Directory {
+                    for q in treeops::flatten(&self.store, Some(ent.1), &base)?.into_keys() {
+                        if under(&q, p) {
+                            cands.insert(q);
+                            hit = true;
+                        }
+                    }
+                } else if under(&base, p) {
+                    cands.insert(base);
                     hit = true;
                 }
             }
@@ -266,40 +420,40 @@ impl Repo {
         if let Some(c) = cands.iter().find(|c| conflicted.contains(*c)) {
             return msg(format!("{c:?} has unresolved merge conflicts; resolve it or abort the merge first"));
         }
-        // drop entries that HEAD does not have, then set the ones it does (so file/dir swaps work)
-        let mut changed = 0;
-        let mut set = Vec::new();
+        // entries HEAD does not have go, the ones it does are set (a file/dir swap works because
+        // the patch is judged after all of its removals)
+        let mut edits = crate::index_file::Edits::new();
         for q in &cands {
-            let head = heads.get(zones.owner(q)).and_then(|f| f.get(q)).copied();
-            match (head, ix.entries.get(q)) {
+            let zone = zones.owner(q);
+            let head = match roots.get(zone) {
+                Some(root) => self.head_entry(*root, zones, zone, q)?,
+                None => None,
+            };
+            match (head, f.get(q)?) {
                 (None, None) => {}
                 (None, Some(_)) => {
-                    ix.entries.remove(q);
-                    changed += 1;
+                    edits.insert(q.clone(), None);
                 }
                 (Some((m, id)), Some(e)) if e.id == id && e.mode == m => {}
                 (Some((m, id)), _) => {
-                    ix.entries.remove(q);
-                    set.push((q.clone(), m, id));
-                    changed += 1;
+                    let size = self.content_len(&id)?;
+                    // mtime 0 never matches the file's, so status re-hashes it instead of trusting a stale stat
+                    edits.insert(
+                        q.clone(),
+                        Some(IndexEntry {
+                            id,
+                            mode: m,
+                            size,
+                            mtime_ns: 0,
+                            ctime_ns: 0,
+                        }),
+                    );
                 }
             }
         }
-        for (q, mode, id) in set {
-            let size = self.store.get_content(&id)?.len() as u64;
-            // mtime 0 never matches the file's, so status re-hashes it instead of trusting a stale stat
-            ix.insert(
-                &q,
-                IndexEntry {
-                    id,
-                    mode,
-                    size,
-                    mtime_ns: 0,
-                    ctime_ns: 0,
-                },
-            )?;
-        }
-        Ok(changed)
+        let n = edits.len();
+        let (patched, _) = self.prepare_index_patch(&f, &edits)?;
+        Ok((n, patched))
     }
 
     /// Remove tracked files from the index and the working tree (`cached`: index only).
@@ -311,23 +465,23 @@ impl Repo {
         let zones = self.zones()?;
         let ws = self.workspace()?;
         let refs = self.refs()?;
-        let mut ix = self.index()?;
-        let paths = self.match_index(specs, &zones, &ws, &ix, "tracked")?;
+        // The index is read lazily: a few lookups and one patched block, not a decode of every entry.
+        let f = self.index_file()?;
+        let paths = self.match_index_f(specs, &zones, &ws, &f, "tracked")?;
         if paths.is_empty() {
             return msg("nothing to remove");
         }
         if !force {
             let conflicted = self.unresolved_conflicts()?;
-            let mut heads: BTreeMap<String, Flat> = BTreeMap::new();
+            let mut roots: BTreeMap<String, Option<ObjectId>> = BTreeMap::new();
             let mut bad = Vec::new();
-            for p in &paths {
-                let e = &ix.entries[p];
+            for (p, e) in &paths {
                 let zone = zones.owner(p).to_owned();
-                if !heads.contains_key(&zone) {
-                    heads.insert(zone.clone(), self.head_flat(&zone, &zones, &ws, &refs)?);
+                if !roots.contains_key(&zone) {
+                    roots.insert(zone.clone(), self.head_root(&zone, &ws, &refs)?);
                 }
-                let in_head = heads[&zone].get(p) == Some(&(e.mode, e.id));
-                let wt = self.wt_state(p, e, ix.written_ns)?;
+                let in_head = self.head_entry(roots[&zone], &zones, &zone, p)? == Some((e.mode, e.id));
+                let wt = self.wt_state(p, e, f.written_ns)?;
                 if conflicted.contains(p) {
                     bad.push(format!("  {p} (unresolved merge conflict)"));
                 } else if cached {
@@ -349,7 +503,7 @@ impl Repo {
             }
         }
         if !cached {
-            for p in &paths {
+            for p in paths.keys() {
                 match fs::symlink_metadata(self.worktree.join(p)) {
                     Ok(m) if m.is_file() || m.file_type().is_symlink() => {}
                     Ok(_) => return msg(format!("cannot remove {p:?}: not a regular file in the working tree")),
@@ -364,7 +518,8 @@ impl Repo {
             }
         }
         let mut dirs = BTreeSet::new();
-        for p in &paths {
+        let mut edits = crate::index_file::Edits::new();
+        for p in paths.keys() {
             if !cached {
                 let abs = self.worktree.join(p);
                 match fs::remove_file(&abs) {
@@ -376,14 +531,48 @@ impl Repo {
                     dirs.insert(par.to_owned());
                 }
             }
-            ix.entries.remove(p);
+            edits.insert(p.clone(), None);
         }
         self.prune_dirs(dirs);
-        self.save_index(&mut ix)?;
+        let (patched, _) = self.prepare_index_patch(&f, &edits)?;
         self.record_op(&format!("rm {}", specs.join(" ")), None)?;
+        if let Some(bytes) = patched {
+            self.write_index_bytes(&bytes)?;
+        }
         Ok(RmReport {
-            removed: paths.into_iter().collect(),
+            removed: paths.into_keys().collect(),
         })
+    }
+
+    /// `match_index` over a lazily read index file; keeps the entries it found.
+    fn match_index_f(
+        &self,
+        specs: &[String],
+        zones: &Zones,
+        ws: &Workspace,
+        f: &crate::index_file::IndexFile,
+        what: &str,
+    ) -> Result<BTreeMap<String, IndexEntry>> {
+        let mut out = BTreeMap::new();
+        for p in specs {
+            self.require_subscribed(zones, ws, p)?;
+            let all: Vec<(String, IndexEntry)> = f
+                .under(p)?
+                .into_iter()
+                .filter(|(q, _)| ws.subs.contains_key(zones.owner(q)))
+                .collect();
+            let hits: Vec<(String, IndexEntry)> = all.iter().filter(|(q, _)| !ws.skips(zones.owner(q), q)).cloned().collect();
+            if hits.is_empty() && !all.is_empty() {
+                return msg(format!(
+                    "pathspec {p:?} is outside this workspace's sparse set (not materialized); `vcs sparse add` it first"
+                ));
+            }
+            if hits.is_empty() && !p.is_empty() {
+                return msg(format!("pathspec {p:?} did not match any {what} files"));
+            }
+            out.extend(hits);
+        }
+        Ok(out)
     }
 
     /// Rename a tracked file or directory (into `dst` when `dst` is an existing directory).
@@ -394,10 +583,12 @@ impl Repo {
         }
         let zones = self.zones()?;
         let ws = self.workspace()?;
-        let mut ix = self.index()?;
+        // Lazy index: a few lookups and one patched block, not a decode and rewrite of every entry.
+        let f = self.index_file()?;
         self.require_subscribed(&zones, &ws, src)?;
         self.require_subscribed(&zones, &ws, dst)?;
-        let old: Vec<String> = ix.under(src);
+        let old_entries = f.under(src)?;
+        let old: Vec<String> = old_entries.iter().map(|(k, _)| k.clone()).collect();
         if old.is_empty() {
             return msg(format!("{src:?} is not tracked"));
         }
@@ -407,7 +598,7 @@ impl Repo {
             ));
         }
         let into_dir = match fs::symlink_metadata(self.worktree.join(dst)) {
-            Ok(m) => m.is_dir() && !ix.entries.contains_key(dst),
+            Ok(m) => m.is_dir() && f.get(dst)?.is_none(),
             Err(_) => false,
         };
         let base = if into_dir {
@@ -453,7 +644,7 @@ impl Repo {
                 Err(_) => return msg(format!("{o:?} is missing from the working tree; `vcs restore {o}` it first")),
             }
             self.check_ancestors(&n)?;
-            let occupied = ix.entries.contains_key(&n) && !old.contains(&n) || fs::symlink_metadata(self.worktree.join(&n)).is_ok();
+            let occupied = f.get(&n)?.is_some() && !old.contains(&n) || fs::symlink_metadata(self.worktree.join(&n)).is_ok();
             if occupied && !force {
                 return msg(format!("destination {n:?} already exists (use --force to overwrite)"));
             }
@@ -481,20 +672,25 @@ impl Repo {
             done.push((o.clone(), n.clone()));
         }
         let mut dirs = BTreeSet::new();
-        let mut moved_entries = Vec::new();
-        for (o, n) in &plan {
+        let mut edits = crate::index_file::Edits::new();
+        let mut sets = Vec::with_capacity(plan.len());
+        for ((o, n), (_, e)) in plan.iter().zip(old_entries) {
             if let Some(par) = self.worktree.join(o).parent() {
                 dirs.insert(par.to_owned());
             }
-            moved_entries.push((n.clone(), ix.entries.remove(o).expect("tracked")));
-            ix.entries.remove(n);
+            edits.insert(o.clone(), None);
+            sets.push((n.clone(), e));
         }
-        for (n, e) in moved_entries {
-            ix.insert(&n, e)?;
+        // sets last, so a destination that is also a source ends up set, not removed
+        for (n, e) in sets {
+            edits.insert(n, Some(e));
         }
         self.prune_dirs(dirs);
-        self.save_index(&mut ix)?;
+        let (patched, _) = self.prepare_index_patch(&f, &edits)?;
         self.record_op(&format!("mv {src} {dst}"), None)?;
+        if let Some(bytes) = patched {
+            self.write_index_bytes(&bytes)?;
+        }
         Ok(MvReport { moved: plan })
     }
 }

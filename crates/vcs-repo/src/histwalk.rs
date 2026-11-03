@@ -125,7 +125,7 @@ impl Repo {
     }
 
     /// Load commits, on several threads when there are many.
-    fn load_commits(&self, ids: Vec<ObjectId>) -> Result<Vec<(ObjectId, Commit)>> {
+    pub(crate) fn load_commits(&self, ids: Vec<ObjectId>) -> Result<Vec<(ObjectId, Commit)>> {
         if ids.len() < 256 {
             return ids.into_iter().map(|i| Ok((i, self.commit_obj(&i)?))).collect();
         }

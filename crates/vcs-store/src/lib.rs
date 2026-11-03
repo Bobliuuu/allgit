@@ -5,6 +5,7 @@
 //! at the network boundary; see docs/architecture.md §Storage.
 
 pub use vcs_objects::chunk;
+pub mod bigfile;
 mod compact;
 pub mod delta;
 pub mod layout;
@@ -55,6 +56,13 @@ pub trait ObjectStore: Send + Sync {
         Ok(())
     }
     fn contains(&self, id: &ObjectId) -> Result<bool, StoreError>;
+    /// Like [`ObjectStore::contains`] but a `false` may be stale for an object another process
+    /// wrote after this store first looked (only ever a loose object in a fan-out dir that did
+    /// not exist then). For "what do I still need to download" scans, where a false miss costs
+    /// one redundant, idempotent download instead of one failed stat per object.
+    fn contains_hint(&self, id: &ObjectId) -> Result<bool, StoreError> {
+        self.contains(id)
+    }
     /// Enumerate all stored ids (fsck / GC mark phase). Not for hot paths.
     fn list(&self) -> Result<Vec<ObjectId>, StoreError>;
     /// When the object was written, if the store can tell. `None` means unknown, and callers
@@ -96,17 +104,25 @@ pub trait ObjectStore: Send + Sync {
         Ok(())
     }
     /// Store file content: a plain blob below `CHUNK_THRESHOLD`, otherwise chunk blobs plus a
-    /// manifest. Returns the canonical id (`vcs_objects::content_id`).
+    /// manifest (small-chunk layout up to `LARGE_THRESHOLD`, large-file layout from there). Returns the
+    /// canonical id (`vcs_objects::content_id`).
     fn put_content(&self, data: &[u8]) -> Result<ObjectId, StoreError> {
-        match ChunkedBlob::plan(data) {
+        match ChunkedBlob::plan_for(data) {
             None => self.put_blob(data),
             Some(m) => {
-                let mut off = 0usize;
-                for c in &m.chunks {
-                    let end = off + c.len as usize;
-                    // `plan` already hashed this chunk; do not hash it again.
-                    self.put_blob_prehashed(&c.id, &data[off..end])?;
-                    off = end;
+                let offs = m.offsets();
+                // `plan` already hashed each chunk; do not hash it again. Large files store chunks in parallel.
+                let res = chunk::par_map(if m.large { m.chunks.len() } else { 0 }, |i| {
+                    let (s, c) = (offs[i] as usize, &m.chunks[i]);
+                    self.put_blob_prehashed(&c.id, &data[s..s + c.len as usize])
+                });
+                for r in res {
+                    r?;
+                }
+                if !m.large {
+                    for (c, &s) in m.chunks.iter().zip(&offs) {
+                        self.put_blob_prehashed(&c.id, &data[s as usize..s as usize + c.len as usize])?;
+                    }
                 }
                 self.put(&Object::Chunked(m))
             }
@@ -117,21 +133,23 @@ pub trait ObjectStore: Send + Sync {
     fn get_content(&self, id: &ObjectId) -> Result<Vec<u8>, StoreError> {
         match self.get(id)? {
             Object::Blob(b) => Ok(b),
-            Object::Chunked(m) => {
-                // total_len comes from the (possibly hostile) manifest: cap the up-front reservation and grow as verified chunks arrive
-                let mut out = Vec::with_capacity(m.total_len.min(16 << 20) as usize);
-                for c in &m.chunks {
-                    let b = self.get_blob(&c.id)?;
-                    if b.len() != c.len as usize {
-                        return Err(StoreError::Corrupt {
-                            id: *id,
-                            reason: format!("chunk {} has length {}, manifest says {}", c.id, b.len(), c.len),
-                        });
-                    }
-                    out.extend_from_slice(&b);
-                }
-                Ok(out)
+            Object::Chunked(m) => bigfile::read_manifest_range(self, id, &m, 0, m.total_len),
+            _ => Err(StoreError::Corrupt {
+                id: *id,
+                reason: "expected blob or chunk manifest".into(),
+            }),
+        }
+    }
+    /// Bytes `[off, off + len)` of the file stored under `id` (clamped to its length), reading only the
+    /// chunks that overlap the range. A missing chunk is `NotFound(chunk)`, so lazy fetch pulls just it.
+    fn get_content_range(&self, id: &ObjectId, off: u64, len: u64) -> Result<Vec<u8>, StoreError> {
+        match self.get(id)? {
+            Object::Blob(b) => {
+                let s = (off.min(b.len() as u64)) as usize;
+                let e = off.saturating_add(len).min(b.len() as u64) as usize;
+                Ok(b[s..e.max(s)].to_vec())
             }
+            Object::Chunked(m) => bigfile::read_manifest_range(self, id, &m, off, len),
             _ => Err(StoreError::Corrupt {
                 id: *id,
                 reason: "expected blob or chunk manifest".into(),
@@ -227,7 +245,24 @@ struct SpillFile {
 const PEND_MEM_CAP: u64 = 256 << 20;
 /// A barrier with at least this many pending objects publishes them as ONE pack (one data file,
 /// one fsync, two renames) instead of one loose file each (a create, fsync and rename per object).
-const PACK_MIN: usize = 256;
+const PACK_MIN: usize = 64;
+/// Objects of at least this many encoded bytes are written to their own file at `put` and published as loose files.
+const BIG_OBJECT: u64 = 1 << 20;
+/// Barriers stop writing packs once this many packs exist (loose files again): readers consult every pack, so an
+/// unbounded number of small packs would slow reads. `vcs repack` / compaction merges them.
+const MAX_BARRIER_PACKS: usize = 32;
+
+/// Pending-object count from which a barrier writes one pack instead of loose files; `VCS_PACK_MIN` overrides (benchmarks).
+fn pack_min() -> usize {
+    static V: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        std::env::var("VCS_PACK_MIN")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|n: &usize| *n >= 1)
+            .unwrap_or(PACK_MIN)
+    })
+}
 
 /// Loose-object filesystem store: `<dir>/<aa>/<rest-of-hex>`.
 ///
@@ -253,10 +288,21 @@ pub struct LocalStore {
     spill: Mutex<Option<std::sync::Arc<SpillFile>>>,
     seq: AtomicU64,
     packs: RwLock<Vec<Pack>>,
+    /// `packs` holds the pack directory's contents. Loaded on first use: a command that only reads
+    /// refs (`branch`, `tag`, `stash list`) never opens a pack index.
+    packs_ready: std::sync::atomic::AtomicBool,
     /// Dedup hits on objects older than this refresh their age; see [`DEFAULT_TOUCH_AFTER`].
     touch_after: std::time::Duration,
     /// Test hook: simulate a crash at a point of [`LocalStore::sweep`].
     sweep_crash: Mutex<Option<SweepCrash>>,
+    /// Which of the 256 fan-out dirs existed when first asked (lazily read once). A loose object
+    /// can only be older than this store's view if its dir was already there, so the dedup probe
+    /// of an id in a missing dir skips the failing stat.
+    fan_at_open: std::sync::OnceLock<Vec<std::sync::atomic::AtomicBool>>,
+    /// `(file, feature name)`: recorded in that file (one name per line) the first time a large-file manifest
+    /// (kind 9) is stored through this handle, whether it came from a local add, a fetch or a clone.
+    feature_mark: std::sync::OnceLock<(PathBuf, String)>,
+    feature_done: std::sync::atomic::AtomicBool,
 }
 
 /// Where a simulated crash interrupts [`LocalStore::sweep`] (test support; see `gc` tests).
@@ -336,6 +382,23 @@ fn hardware_flush(f: &fs::File) -> std::io::Result<()> {
 
 const SYNC_THREADS: usize = 32;
 
+/// Like [`par_try_each`] for fsync-bound work: even two items run concurrently (their journal
+/// commits coalesce instead of queuing behind each other), on no more threads than items.
+fn par_sync_each<T: Sync>(items: &[T], f: impl Fn(&T) -> Result<(), StoreError> + Sync) -> Result<(), StoreError> {
+    if items.len() < 2 || items.len() >= 64 {
+        return par_try_each(items, f);
+    }
+    let errs: Vec<Option<StoreError>> = std::thread::scope(|sc| {
+        let f = &f;
+        let hs: Vec<_> = items.iter().map(|it| sc.spawn(move || f(it).err())).collect();
+        hs.into_iter().map(|h| h.join().expect("sync worker panicked")).collect()
+    });
+    match errs.into_iter().flatten().next() {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
 /// Run `f` over `items` on up to `SYNC_THREADS` threads (inline for small inputs); first error wins.
 fn par_try_each<T: Sync>(items: &[T], f: impl Fn(&T) -> Result<(), StoreError> + Sync) -> Result<(), StoreError> {
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(SYNC_THREADS);
@@ -389,7 +452,6 @@ impl LocalStore {
     pub fn open(dir: impl Into<PathBuf>) -> Result<Self, StoreError> {
         let dir = dir.into();
         io(&dir, fs::create_dir_all(dir.join("tmp")))?;
-        let packs = Self::load_packs(&dir)?;
         Ok(Self {
             dir,
             pending: Mutex::new(HashMap::new()),
@@ -398,10 +460,33 @@ impl LocalStore {
             #[cfg(unix)]
             spill: Mutex::new(None),
             seq: AtomicU64::new(0),
-            packs: RwLock::new(packs),
+            packs: RwLock::new(Vec::new()),
+            packs_ready: std::sync::atomic::AtomicBool::new(false),
             touch_after: DEFAULT_TOUCH_AFTER,
             sweep_crash: Mutex::new(None),
+            fan_at_open: std::sync::OnceLock::new(),
+            feature_mark: std::sync::OnceLock::new(),
+            feature_done: std::sync::atomic::AtomicBool::new(false),
         })
+    }
+    /// Record `name` in `file` when a kind 9 (large-file) manifest is first stored through this handle.
+    pub fn set_large_feature_mark(&self, file: PathBuf, name: &str) {
+        let _ = self.feature_mark.set((file, name.to_owned()));
+    }
+    fn mark_large_feature(&self) -> Result<(), StoreError> {
+        let Some((file, name)) = self.feature_mark.get() else {
+            return Ok(());
+        };
+        if self.feature_done.swap(true, Ordering::Relaxed) {
+            return Ok(());
+        }
+        let cur = fs::read_to_string(file).unwrap_or_default();
+        if cur.lines().any(|l| l == name) {
+            return Ok(());
+        }
+        let tmp = file.with_extension(format!("tmp{}", std::process::id()));
+        io(&tmp, fs::write(&tmp, format!("{cur}{name}\n")))?;
+        io(file, fs::rename(&tmp, file))
     }
     /// Lower the in-memory budget for unsynced objects (test support: forces the spill path).
     #[doc(hidden)]
@@ -424,8 +509,38 @@ impl LocalStore {
     }
     fn reload_packs(&self) -> Result<(), StoreError> {
         let fresh = Self::load_packs(&self.dir)?;
-        *self.packs.write().unwrap() = fresh;
+        let mut g = self.packs.write().unwrap();
+        *g = fresh;
+        self.packs_ready.store(true, Ordering::Release);
         Ok(())
+    }
+    fn ensure_packs(&self) -> Result<(), StoreError> {
+        if self.packs_ready.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let mut g = self.packs.write().unwrap();
+        if !self.packs_ready.load(Ordering::Relaxed) {
+            *g = Self::load_packs(&self.dir)?;
+            self.packs_ready.store(true, Ordering::Release);
+        }
+        Ok(())
+    }
+    fn packs_r(&self) -> Result<std::sync::RwLockReadGuard<'_, Vec<Pack>>, StoreError> {
+        self.ensure_packs()?;
+        Ok(self.packs.read().unwrap())
+    }
+    fn packs_w(&self) -> Result<std::sync::RwLockWriteGuard<'_, Vec<Pack>>, StoreError> {
+        self.ensure_packs()?;
+        Ok(self.packs.write().unwrap())
+    }
+    /// Register a pack that was just written into the pack directory. Not loaded yet: the lazy
+    /// load will find it on disk (adding it here as well would list it twice).
+    fn add_pack(&self, pack: Pack) {
+        let mut g = self.packs.write().unwrap();
+        // A concurrent lazy load may already have listed it (it was on disk before this call).
+        if self.packs_ready.load(Ordering::Relaxed) && !g.iter().any(|p| p.pack_path == pack.pack_path) {
+            g.push(pack);
+        }
     }
     /// Only refresh a deduplicated object's age if it is older than `d` (zero: always).
     pub fn set_touch_after(&mut self, d: std::time::Duration) {
@@ -455,7 +570,7 @@ impl LocalStore {
     }
     fn packed(&self, id: &ObjectId) -> Result<Option<Vec<u8>>, StoreError> {
         let scan = || -> Result<Option<Vec<u8>>, StoreError> {
-            for p in self.packs.read().unwrap().iter() {
+            for p in self.packs_r()?.iter() {
                 if let Some(b) = p.read(id)? {
                     return Ok(Some(b));
                 }
@@ -485,7 +600,7 @@ impl LocalStore {
         self.sync()?;
         let mut st = SweepStats::default();
         {
-            let mut guard = self.packs.write().unwrap();
+            let mut guard = self.packs_w()?;
             let mut work: Vec<Pack> = std::mem::take(&mut *guard);
             let mut done: Vec<Pack> = Vec::new();
             let res = (|| -> Result<(), StoreError> {
@@ -592,7 +707,7 @@ impl LocalStore {
         Ok(st)
     }
     fn in_pack(&self, id: &ObjectId) -> bool {
-        self.packs.read().unwrap().iter().any(|p| p.contains(id))
+        self.packs_r().map(|g| g.iter().any(|p| p.contains(id))).unwrap_or(false)
     }
     /// Move every loose object into one new pack (default write format), then delete the loose
     /// files. Returns the number of objects packed (0 if there were none, in which case no pack
@@ -618,7 +733,7 @@ impl LocalStore {
             objs.push((*id, b));
         }
         let pack = pack::write_pack_fmt(&self.dir.join("pack"), &self.dir.join("tmp"), objs, fmt)?;
-        self.packs.write().unwrap().push(pack);
+        self.add_pack(pack);
         for id in &loose {
             let _ = fs::remove_file(self.path_of(id));
         }
@@ -627,7 +742,7 @@ impl LocalStore {
     /// Rewrite every pack not already in `fmt`. Same crash order as a sweep: new pack (pack file
     /// first, index last), then old index, then old pack, so nothing is ever missing.
     fn convert_packs(&self, fmt: pack::PackFormat) -> Result<usize, StoreError> {
-        let mut guard = self.packs.write().unwrap();
+        let mut guard = self.packs_w()?;
         let old = std::mem::take(&mut *guard);
         let mut out = Vec::with_capacity(old.len());
         let (mut n, mut res) = (0, Ok(()));
@@ -705,7 +820,7 @@ impl LocalStore {
             return Ok(0);
         }
         let pack = pack::write_pack(&self.dir.join("pack"), &self.dir.join("tmp"), objs)?;
-        self.packs.write().unwrap().push(pack);
+        self.add_pack(pack);
         for id in &ids {
             let p = self.path_of(id);
             let _ = fs::remove_file(&p);
@@ -717,11 +832,36 @@ impl LocalStore {
     }
     /// Whole-pack verification for fsck (checksums, framing, every object hash).
     pub fn verify_packs(&self) -> Vec<String> {
-        self.packs.read().unwrap().iter().flat_map(|p| p.verify()).collect()
+        match self.packs_r() {
+            Ok(g) => g.iter().flat_map(|p| p.verify()).collect(),
+            Err(e) => vec![e.to_string()],
+        }
     }
     /// Write `head || tail` (already identified as `id`) as a pending loose object unless it exists.
+    /// Fan-out dirs seen at first use plus those this instance created since (see `fan_at_open`).
+    fn fan_at_open(&self) -> &Vec<std::sync::atomic::AtomicBool> {
+        self.fan_at_open.get_or_init(|| {
+            let v: Vec<_> = (0..256).map(|_| std::sync::atomic::AtomicBool::new(false)).collect();
+            if let Ok(rd) = fs::read_dir(&self.dir) {
+                for e in rd.flatten() {
+                    if let Some(b) = e
+                        .file_name()
+                        .to_str()
+                        .filter(|n| n.len() == 2)
+                        .and_then(|n| u8::from_str_radix(n, 16).ok())
+                    {
+                        v[b as usize].store(true, Ordering::Relaxed);
+                    }
+                }
+            }
+            v
+        })
+    }
     fn store_encoded(&self, id: &ObjectId, head: &[u8], tail: &[u8]) -> Result<(), StoreError> {
         let id = *id;
+        if head.is_empty() && tail.first() == Some(&(vcs_objects::Kind::ChunkedLarge as u8)) {
+            self.mark_large_feature()?;
+        }
         // Existing objects are never rewritten. A pending object is brand new already. A published
         // one older than `touch_after` gets its modification time refreshed ("touch on dedup"), so
         // GC's age check sees a re-adopted orphan as young (docs/gc.md). Younger ones are left
@@ -730,7 +870,15 @@ impl LocalStore {
             return Ok(());
         }
         let loose = self.path_of(&id);
-        match fs::metadata(&loose) {
+        // A fan-out dir that did not exist at first use holds only objects written since, which
+        // are young: nothing to dedup against or touch, and no stat to waste.
+        let fan = self.fan_at_open();
+        let probe = if fan[id.as_bytes()[0] as usize].load(Ordering::Relaxed) {
+            fs::metadata(&loose)
+        } else {
+            Err(std::io::ErrorKind::NotFound.into())
+        };
+        match probe {
             Ok(m) => {
                 if self.is_stale(m.modified().ok()) {
                     touch(&loose)?;
@@ -743,9 +891,7 @@ impl LocalStore {
         // Packs are immutable and shared, so an old packed object is re-adopted by writing a fresh
         // loose copy below (which `modified` prefers); an object in a recent pack needs nothing.
         let packed_recent = self
-            .packs
-            .read()
-            .unwrap()
+            .packs_r()?
             .iter()
             .find(|pk| pk.contains(&id))
             .map(|pk| !self.is_stale(pk.modified()));
@@ -753,6 +899,19 @@ impl LocalStore {
             return Ok(());
         }
         let len = (head.len() + tail.len()) as u64;
+        if len >= BIG_OBJECT {
+            // Big objects (chunks of large files) go straight to their own temporary file: no copy through
+            // the memory budget or the spill file, and `sync` publishes them as loose files (renaming a
+            // 2 MiB file is cheaper than re-reading and re-writing it into a pack).
+            let tmp = self.write_tmp(&id, head, tail)?;
+            let mut p = self.pending.lock().unwrap();
+            if let std::collections::hash_map::Entry::Vacant(v) = p.entry(id) {
+                v.insert(Pend::File(tmp));
+            } else {
+                let _ = fs::remove_file(&tmp); // another thread stored the same chunk first
+            }
+            return Ok(());
+        }
         if self.pend_mem.load(Ordering::Relaxed) + len <= self.pend_cap.load(Ordering::Relaxed) {
             let mut v = Vec::with_capacity(len as usize);
             v.extend_from_slice(head);
@@ -825,7 +984,7 @@ impl LocalStore {
     /// Publish a big batch as one pack: stream every pending object into a single file, fsync it
     /// once, rename pack then index (a pack without an index is ignored), fsync the directory.
     fn sync_as_pack(&self, pending: &mut HashMap<ObjectId, Pend>) -> Result<(), StoreError> {
-        let items: Vec<(&ObjectId, &Pend)> = pending.iter().collect();
+        let items: Vec<(&ObjectId, &Pend)> = pending.iter().filter(|(_, p)| !matches!(p, Pend::File(_))).collect();
         let pack = pack::write_pack_streaming(
             &self.dir,
             items.len(),
@@ -839,16 +998,7 @@ impl LocalStore {
                 Ok((**id, bytes))
             }),
         )?;
-        self.packs.write().unwrap().push(pack);
-        let files: Vec<&PathBuf> = pending
-            .values()
-            .filter_map(|p| if let Pend::File(f) = p { Some(f) } else { None })
-            .collect();
-        // Best effort: a leftover is an orphan in tmp/ that clean_orphans removes.
-        let _ = par_try_each(&files, |f| {
-            let _ = fs::remove_file(f);
-            Ok(())
-        });
+        self.add_pack(pack);
         Ok(())
     }
     fn path_of(&self, id: &ObjectId) -> PathBuf {
@@ -913,13 +1063,17 @@ impl ObjectStore for LocalStore {
         if pending.is_empty() {
             return Ok(());
         }
-        if pending.len() >= PACK_MIN {
+        let in_files = pending.values().filter(|p| matches!(p, Pend::File(_))).count();
+        if pending.len() - in_files >= pack_min() && self.packs_r()?.len() < MAX_BARRIER_PACKS {
             self.sync_as_pack(&mut pending)?;
-            pending.clear();
+            pending.retain(|_, p| matches!(p, Pend::File(_)));
             self.pend_mem.store(0, Ordering::Relaxed);
             #[cfg(unix)]
             self.end_spill();
-            return Ok(());
+            if pending.is_empty() {
+                return Ok(());
+            }
+            // big objects written to their own files are published as loose files below
         }
         // Small batch: spill the in-memory objects to tmp files, then publish them as loose files.
         let mem: Vec<ObjectId> = pending
@@ -953,7 +1107,7 @@ impl ObjectStore for LocalStore {
             unsafe { libc::sync_file_range(f.as_raw_fd(), 0, 0, libc::SYNC_FILE_RANGE_WRITE) };
             Ok(())
         })?;
-        par_try_each(&tmps, |tmp| {
+        par_sync_each(&tmps, |tmp| {
             let f = io(tmp, fs::File::open(tmp))?;
             io(tmp, flush_file(&f))
         })?;
@@ -972,16 +1126,21 @@ impl ObjectStore for LocalStore {
             let parent = dest.parent().expect("object path has parent").to_owned();
             if dirs.insert(parent.clone()) {
                 io(&parent, fs::create_dir_all(&parent))?;
+                if let Some(b) = id.as_bytes().first() {
+                    self.fan_at_open()[*b as usize].store(true, Ordering::Relaxed);
+                }
             }
             moves.push((tmp, dest));
         }
         // rename over an existing identical object is atomic and harmless (another writer won).
         par_try_each(&moves, |(tmp, dest)| io(dest, fs::rename(tmp, dest)))?;
         // 3. directory entries (renames, new fan-out dirs) durable before anything refers to them.
+        // The object dir is always flushed (a fan-out dir may have been created by anyone, and its
+        // entry must be durable before a ref names the object). tmp/ only lost entries: a surviving
+        // tmp name is an orphan that clean_orphans removes, so it needs no flush.
         dirs.insert(self.dir.clone());
-        dirs.insert(self.dir.join("tmp"));
         let dirs: Vec<PathBuf> = dirs.into_iter().collect();
-        par_try_each(&dirs, |d| {
+        par_sync_each(&dirs, |d| {
             let f = io(d, fs::File::open(d))?;
             io(d, flush_file(&f))
         })?;
@@ -998,6 +1157,13 @@ impl ObjectStore for LocalStore {
         Ok(self.pending.lock().unwrap().contains_key(id) || self.in_pack(id) || self.path_of(id).exists())
     }
 
+    fn contains_hint(&self, id: &ObjectId) -> Result<bool, StoreError> {
+        if self.pending.lock().unwrap().contains_key(id) || self.in_pack(id) {
+            return Ok(true);
+        }
+        Ok(self.fan_at_open()[id.as_bytes()[0] as usize].load(Ordering::Relaxed) && self.path_of(id).exists())
+    }
+
     fn modified(&self, id: &ObjectId) -> Result<Option<std::time::SystemTime>, StoreError> {
         // Written but not yet published objects are, by definition, brand new.
         if self.pending.lock().unwrap().contains_key(id) {
@@ -1006,7 +1172,7 @@ impl ObjectStore for LocalStore {
         let p = self.path_of(id);
         match fs::metadata(&p) {
             Ok(m) => Ok(m.modified().ok()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => match self.packs.read().unwrap().iter().find(|pk| pk.contains(id)) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => match self.packs_r()?.iter().find(|pk| pk.contains(id)) {
                 Some(pk) => Ok(pk.modified()),
                 None => Err(StoreError::NotFound(*id)),
             },
@@ -1016,7 +1182,7 @@ impl ObjectStore for LocalStore {
 
     fn list(&self) -> Result<Vec<ObjectId>, StoreError> {
         let mut out = self.list_loose()?;
-        for p in self.packs.read().unwrap().iter() {
+        for p in self.packs_r()?.iter() {
             out.extend(p.ids());
         }
         out.sort();
@@ -1050,6 +1216,81 @@ impl LocalStore {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn fan_out_snapshot_skips_probes_but_never_changes_contains() {
+        let d = tempfile::tempdir().unwrap();
+        let a = LocalStore::open(d.path()).unwrap();
+        let first = a.put_blob(b"one").unwrap();
+        a.sync().unwrap();
+        assert!(a.contains_hint(&first).unwrap() && a.contains(&first).unwrap());
+        // a second handle writes an object in a fan-out dir `a` has not seen
+        let b = LocalStore::open(d.path()).unwrap();
+        let mut late = None;
+        for i in 0..400 {
+            let id = vcs_objects::blob_id(format!("late {i}").as_bytes());
+            if !d.path().join(&id.to_hex()[..2]).exists() {
+                b.put_blob(format!("late {i}").as_bytes()).unwrap();
+                late = Some(id);
+                break;
+            }
+        }
+        let late = late.expect("a fresh fan-out dir exists among 400 ids");
+        b.sync().unwrap();
+        assert!(a.contains(&late).unwrap(), "contains is always exact");
+        assert!(
+            !a.contains_hint(&late).unwrap(),
+            "the hint may be stale for a dir created after first use"
+        );
+        // re-putting it through `a` is harmless
+        a.put_blob(&format!("late {}", 0).into_bytes()).unwrap();
+        a.sync().unwrap();
+        assert!(LocalStore::open(d.path()).unwrap().contains(&first).unwrap());
+    }
+
+    #[test]
+    fn small_batch_sync_flushes_concurrently_and_survives_reopen() {
+        let d = tempfile::tempdir().unwrap();
+        let s = LocalStore::open(d.path()).unwrap();
+        // fewer than PACK_MIN objects: loose path with several fan-out dirs, flushed in parallel
+        let ids: Vec<_> = (0..40).map(|i| s.put_blob(format!("small {i}").as_bytes()).unwrap()).collect();
+        s.sync().unwrap();
+        assert!(fs::read_dir(d.path().join("tmp")).unwrap().next().is_none(), "no temp files left");
+        let s2 = LocalStore::open(d.path()).unwrap();
+        for (i, id) in ids.iter().enumerate() {
+            assert_eq!(s2.get_blob(id).unwrap(), format!("small {i}").as_bytes());
+            assert!(d.path().join(&id.to_hex()[..2]).is_dir());
+        }
+        // second batch into already existing fan-out dirs
+        let more: Vec<_> = (40..80).map(|i| s2.put_blob(format!("small {i}").as_bytes()).unwrap()).collect();
+        s2.sync().unwrap();
+        let s3 = LocalStore::open(d.path()).unwrap();
+        for id in more {
+            s3.get_blob(&id).unwrap();
+        }
+    }
+
+    #[test]
+    fn par_sync_each_runs_all_and_reports_first_error() {
+        let n = AtomicUsize::new(0);
+        let items = [1, 2, 3, 4];
+        par_sync_each(&items, |_| {
+            n.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(n.load(Ordering::SeqCst), 4);
+        let r = par_sync_each(&items, |&i| {
+            if i == 3 {
+                Err(StoreError::NotFound(ObjectId::from_hex(&"0".repeat(64)).unwrap()))
+            } else {
+                Ok(())
+            }
+        });
+        assert!(r.is_err());
+        par_sync_each(&[] as &[u8], |_| Ok(())).unwrap();
+        par_sync_each(&[1u8], |_| Ok(())).unwrap();
+    }
+
+    #[test]
     fn big_batch_publishes_as_one_pack_and_survives_reopen() {
         let d = tempfile::tempdir().unwrap();
         let s = LocalStore::open(d.path()).unwrap();
@@ -1074,6 +1315,26 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn barrier_packs_are_capped_then_loose_again_and_everything_stays_readable() {
+        let d = tempfile::tempdir().unwrap();
+        let s = LocalStore::open(d.path()).unwrap();
+        let mut ids = Vec::new();
+        for round in 0..(MAX_BARRIER_PACKS + 3) {
+            for i in 0..PACK_MIN {
+                ids.push(s.put_blob(format!("round {round} blob {i}").as_bytes()).unwrap());
+            }
+            s.sync().unwrap();
+        }
+        assert_eq!(s.pack_count(), MAX_BARRIER_PACKS, "no more packs past the cap");
+        let s2 = LocalStore::open(d.path()).unwrap();
+        for id in &ids {
+            assert!(s2.contains(id).unwrap());
+            s2.get_blob(id).unwrap(); // hash-verified read
+        }
+        assert!(s2.verify_packs().is_empty());
+    }
 
     #[test]
     fn spilled_objects_are_readable_published_and_cleaned_up() {
@@ -1308,6 +1569,23 @@ mod tests {
     }
 
     #[test]
+    fn packs_load_lazily_and_a_pack_written_before_the_load_is_listed_once() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("o");
+        let s = LocalStore::open(&dir).unwrap();
+        assert!(!s.packs_ready.load(Ordering::Relaxed), "open must not read the pack directory");
+        let id = s.put_blob(b"one").unwrap();
+        assert_eq!(s.repack().unwrap(), 1);
+        assert_eq!(s.pack_count(), 1, "the new pack is found by the lazy load, not added twice");
+        assert_eq!(s.get_blob(&id).unwrap(), b"one");
+        let s2 = LocalStore::open(&dir).unwrap();
+        assert!(!s2.packs_ready.load(Ordering::Relaxed));
+        assert_eq!(s2.get_blob(&id).unwrap(), b"one");
+        assert!(s2.packs_ready.load(Ordering::Relaxed));
+        assert_eq!(s2.pack_count(), 1);
+    }
+
+    #[test]
     fn repack_reads_back_across_reopen_and_removes_loose() {
         let (_d, dir, ids) = packed_store();
         for reopen in [false, true] {
@@ -1349,22 +1627,27 @@ mod tests {
         assert!(!s.verify_packs().is_empty());
     }
 
+    /// Packs are opened on first use, not by `open`: a damaged one is refused by the first object operation.
+    fn opens_and_lists(dir: &Path) -> Result<(), StoreError> {
+        LocalStore::open(dir)?.list().map(|_| ())
+    }
+
     #[test]
-    fn truncated_pack_and_damaged_index_are_refused_at_open() {
+    fn truncated_pack_and_damaged_index_are_refused_on_first_use() {
         let (_d, dir, _ids) = packed_store();
         let pp = pack_file(&dir, "pack");
         let b = fs::read(&pp).unwrap();
         fs::write(&pp, &b[..b.len() - 10]).unwrap();
-        assert!(LocalStore::open(&dir).is_err(), "truncated pack");
+        assert!(opens_and_lists(&dir).is_err(), "truncated pack");
         fs::write(&pp, &b).unwrap();
-        assert!(LocalStore::open(&dir).is_ok());
+        assert!(opens_and_lists(&dir).is_ok());
         let ip = pack_file(&dir, "idx");
         let mut i = fs::read(&ip).unwrap();
         i[60] ^= 1;
         fs::write(&ip, &i).unwrap();
-        assert!(LocalStore::open(&dir).is_err(), "bad index checksum");
+        assert!(opens_and_lists(&dir).is_err(), "bad index checksum");
         fs::write(&ip, &i[..30]).unwrap();
-        assert!(LocalStore::open(&dir).is_err(), "truncated index");
+        assert!(opens_and_lists(&dir).is_err(), "truncated index");
     }
 
     #[test]
@@ -1455,11 +1738,8 @@ mod tests {
         b.sort();
         assert_eq!(a, b);
         for x in &a {
-            let h = x.to_hex();
-            assert_eq!(
-                std::fs::read(d.path().join("fast").join(&h[..2]).join(&h[2..])).unwrap(),
-                std::fs::read(d.path().join("slow").join(&h[..2]).join(&h[2..])).unwrap()
-            );
+            // (a batch this big is published as a pack, so compare the stored objects, not loose files)
+            assert_eq!(fast.get(x).unwrap().encode(), slow.get(x).unwrap().encode());
         }
         assert_eq!(id, vcs_objects::content_id(&data));
     }

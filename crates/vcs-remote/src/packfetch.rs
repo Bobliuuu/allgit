@@ -3,7 +3,7 @@
 use crate::backend::{Backend, BackendError};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use vcs_objects::{id_of_encoded, ObjectId};
 use vcs_store::pack::{block_is_metadata, decode_block, BlockCache, PackIndex};
@@ -106,6 +106,15 @@ pub struct Loaded {
     listing: Vec<String>,
     /// An index named by the listing was gone when read (a compaction removed it).
     vanished: bool,
+    /// Whole bodies of the small packs (see [`crate::smallpack`]), by stem.
+    bodies: Arc<crate::smallpack::Bodies>,
+}
+
+impl Loaded {
+    /// `b`, except that reads of a pack this catalog holds whole are answered from memory.
+    pub fn view<'a>(&self, b: &'a dyn Backend) -> crate::smallpack::BodyBackend<'a> {
+        crate::smallpack::BodyBackend::new(b, self.bodies.clone())
+    }
 }
 
 /// The remote's packs: one `list` plus one index GET per pack, done once and shared by every
@@ -115,6 +124,8 @@ pub struct Loaded {
 /// finds a pack vanished (compaction) calls [`PackCatalog::invalidate`] and the next use lists again.
 #[derive(Default)]
 pub struct PackCatalog {
+    /// Read small packs whole in the index wave ([`PackCatalog::for_clone`]).
+    whole_small: bool,
     state: Mutex<Option<Arc<Loaded>>>,
     trailers_ok: Mutex<HashSet<String>>,
 }
@@ -122,6 +133,15 @@ pub struct PackCatalog {
 impl PackCatalog {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A catalog for a clone: every small pack is read whole with its index (see
+    /// [`crate::smallpack`]), so a small pack costs two requests however many waves read it.
+    pub fn for_clone() -> Self {
+        Self {
+            whole_small: true,
+            ..Self::default()
+        }
     }
 
     /// The listing and indexes, loaded on first use (index GETs run on a bounded pool).
@@ -135,24 +155,53 @@ impl PackCatalog {
             .iter()
             .filter_map(|k| k.strip_suffix(".idx").map(|s| (s.to_owned(), k.clone())))
             .collect();
+        let small = if self.whole_small {
+            crate::smallpack::small_pack_bytes()
+        } else {
+            0
+        };
+        let left = AtomicU64::new(crate::smallpack::small_pack_total());
         let loaded = par_map(
             &stems,
             FETCH_THREADS,
-            |(stem, key)| -> Result<Option<(String, PackIndex)>, BackendError> {
+            |(stem, key)| -> Result<Option<(String, PackIndex, Option<Vec<u8>>)>, BackendError> {
                 let Some(idx) = b.get(key)? else { return Ok(None) };
                 let idx = PackIndex::parse(&idx.data, Path::new(stem)).map_err(|e| BackendError::Other(e.to_string()))?;
-                Ok(Some((stem.clone(), idx)))
+                let mut body = None;
+                if idx.pack_len <= small && claim(&left, idx.pack_len) {
+                    match b.get(&format!("{stem}.pack"))? {
+                        None => return Ok(None), // gone: report as vanished
+                        Some(v)
+                            if v.data.len() as u64 == idx.pack_len && v.data[v.data.len().saturating_sub(32)..] == idx.checksum()[..] =>
+                        {
+                            body = Some(v.data);
+                        }
+                        Some(_) => {} // not what the index says: the ranged path reports it
+                    }
+                }
+                Ok(Some((stem.clone(), idx, body)))
             },
         );
         let mut packs = Vec::with_capacity(loaded.len());
+        let mut bodies = crate::smallpack::Bodies::new();
         let mut vanished = false;
         for r in loaded {
             match r? {
-                Some(x) => packs.push(x),
+                Some((stem, idx, body)) => {
+                    if let Some(d) = body {
+                        bodies.insert(stem.clone(), d);
+                    }
+                    packs.push((stem, idx));
+                }
                 None => vanished = true,
             }
         }
-        let l = Arc::new(Loaded { packs, listing, vanished });
+        let l = Arc::new(Loaded {
+            packs,
+            listing,
+            vanished,
+            bodies: Arc::new(bodies),
+        });
         *g = Some(l.clone());
         Ok(l)
     }
@@ -188,6 +237,18 @@ impl PackCatalog {
             self.trailers_ok.lock().unwrap().insert(stem.to_owned());
         }
         Ok(ok)
+    }
+}
+
+/// Take `n` bytes from the shared whole-pack budget, if that much is left.
+fn claim(left: &AtomicU64, n: u64) -> bool {
+    let mut cur = left.load(Ordering::Relaxed);
+    loop {
+        let Some(next) = cur.checked_sub(n) else { return false };
+        match left.compare_exchange_weak(cur, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return true,
+            Err(c) => cur = c,
+        }
     }
 }
 
@@ -391,23 +452,24 @@ struct Segment<'a> {
     hits: Hits,
 }
 
-/// Segments to fetch, ids no pack has, and ids of packs found gone.
-type PlannedSegments<'a> = (Vec<Segment<'a>>, Vec<ObjectId>, Vec<ObjectId>);
+/// Smallest ranged read the planner cuts a pack into. Each ranged read is one request, so a
+/// segment under this costs more in request count than the parallelism it buys.
+const SEGMENT_MIN: u64 = 1024 * 1024;
 
 /// Plan the ranged reads for `want` (sorted, unique): assign each id to the first pack that
 /// indexes it, merge hits closer than [`COALESCE_GAP`], and cut merged ranges into segments of
-/// about `total / (2 * threads)` bytes (at least 256 KiB) so the pool has work to share.
+/// about `total / threads` bytes (at least [`SEGMENT_MIN`]) so the pool has work to share.
 /// Returns the segments, the ids no pack has, and the ids of packs found gone (to retry).
 fn plan_segments<'a>(
     b: &dyn Backend,
     cat: &PackCatalog,
     packs: &'a PackList,
     want: Vec<ObjectId>,
-) -> Result<PlannedSegments<'a>, BackendError> {
+) -> Result<(Vec<Segment<'a>>, Vec<ObjectId>, Vec<ObjectId>), BackendError> {
     let mut remaining = want;
     let mut gone = Vec::new();
     let mut per_pack: Vec<(usize, Hits)> = Vec::new();
-    for (pi, (stem, idx)) in packs.iter().enumerate() {
+    for (pi, (_, idx)) in packs.iter().enumerate() {
         if remaining.is_empty() {
             break;
         }
@@ -423,14 +485,24 @@ fn plan_segments<'a>(
         if hits.is_empty() {
             continue;
         }
-        if !cat.check_trailer_once(b, stem, idx)? {
-            gone.extend(hits.iter().map(|h| h.2));
-            continue;
-        }
         per_pack.push((pi, hits));
     }
+    // One trailer check per pack that is read, all in one parallel wave (a chain of them would
+    // cost a round trip per pack). Packs held whole are checked from memory.
+    let checks = crate::par::map_bounded(&per_pack, crate::par::parallelism(), |(pi, _)| {
+        cat.check_trailer_once(b, &packs[*pi].0, &packs[*pi].1)
+    })?;
+    let mut kept = Vec::with_capacity(per_pack.len());
+    for ((pi, hits), ok) in per_pack.into_iter().zip(checks) {
+        if ok {
+            kept.push((pi, hits));
+        } else {
+            gone.extend(hits.iter().map(|h| h.2));
+        }
+    }
+    let per_pack = kept;
     let total: u64 = per_pack.iter().flat_map(|(_, h)| h.iter()).map(|h| h.1 as u64).sum();
-    let target = (total / (2 * FETCH_THREADS as u64)).clamp(256 * 1024, 8 * 1024 * 1024);
+    let target = (total / FETCH_THREADS as u64).clamp(SEGMENT_MIN, 8 * 1024 * 1024);
     let mut segs = Vec::new();
     for (pi, hits) in per_pack {
         let (stem, idx) = (packs[pi].0.as_str(), &packs[pi].1);
@@ -598,6 +670,8 @@ pub fn fetch_many_each_retrying<E: From<BackendError>>(
             return Ok(());
         }
         let loaded = cat.get(b)?;
+        let view = loaded.view(b);
+        let b: &dyn Backend = &view;
         let (segs, leftover, gone) = plan_segments(b, cat, &loaded.packs, std::mem::take(&mut remaining))?;
         let mut retry = gone;
         run_pool(b, segs.into_iter().map(Job::Seg).collect(), sink, &mut retry)?;
@@ -654,6 +728,8 @@ pub struct RemoteSource<'a> {
     ahead: ReadAhead,
     catalog: Arc<PackCatalog>,
     packs: Option<Arc<Loaded>>,
+    /// Reads of packs the catalog holds whole go through this (see [`Loaded::view`]).
+    view: Option<crate::smallpack::BodyBackend<'a>>,
     read_ahead_done: Vec<bool>,
     /// Pre-read objects keyed by the hash of their bytes, so a lying pack cannot plant data.
     cache: HashMap<ObjectId, Vec<u8>>,
@@ -669,6 +745,7 @@ impl<'a> RemoteSource<'a> {
             ahead,
             catalog: Arc::new(PackCatalog::new()),
             packs: None,
+            view: None,
             read_ahead_done: vec![],
             cache: HashMap::new(),
             roots: vec![],
@@ -706,6 +783,7 @@ impl<'a> RemoteSource<'a> {
         if self.packs.is_none() {
             let l = self.catalog.get(self.b)?;
             self.read_ahead_done = vec![false; l.packs.len()];
+            self.view = Some(l.view(self.b));
             self.packs = Some(l);
         }
         Ok(self.packs.as_deref().map_or(&[][..], |l| l.packs.as_slice()))
@@ -717,9 +795,10 @@ impl<'a> RemoteSource<'a> {
             (s.clone(), idx.pack_len, idx.version())
         };
         let key = format!("{stem}.pack");
+        let io: &dyn Backend = self.view.as_ref().map_or(self.b, |v| v);
         let end = pack_len.saturating_sub(32);
         if self.ahead == ReadAhead::Whole {
-            if let Some(v) = self.b.get(&key)? {
+            if let Some(v) = io.get(&key)? {
                 let to = (end as usize).min(v.data.len());
                 absorb(&mut self.cache, &v.data, PACK_HEADER as usize, to, false, version, &mut Vec::new());
             }
@@ -741,7 +820,7 @@ impl<'a> RemoteSource<'a> {
             let mut pos = PACK_HEADER;
             let mut pending: Vec<ObjectId> = Vec::new();
             while let Some(target) = bound.filter(|t| *t > pos) {
-                let Some(buf) = self.b.get_range(&key, pos, (target - pos).min(PREFIX_MAX))? else {
+                let Some(buf) = io.get_range(&key, pos, (target - pos).min(PREFIX_MAX))? else {
                     break;
                 };
                 let mut fresh = Vec::new();
@@ -768,7 +847,7 @@ impl<'a> RemoteSource<'a> {
         }
         let (mut pos, mut want) = (PACK_HEADER, PREFIX_FIRST);
         while pos < end {
-            let Some(buf) = self.b.get_range(&key, pos, want.min(end - pos))? else {
+            let Some(buf) = io.get_range(&key, pos, want.min(end - pos))? else {
                 break;
             };
             let (used, stop) = absorb(&mut self.cache, &buf, 0, buf.len(), true, version, &mut Vec::new());
@@ -809,6 +888,7 @@ impl<'a> RemoteSource<'a> {
                     }
                 }
             }
+            self.view = None;
             if let Some(l) = self.packs.take() {
                 self.catalog.invalidate(&l);
             }
@@ -833,7 +913,8 @@ impl<'a> RemoteSource<'a> {
                     return Ok(Fetched::Found(v));
                 }
             }
-            let Some(bytes) = self.b.get_range(&key, off, len as u64)? else {
+            let io: &dyn Backend = self.view.as_ref().map_or(self.b, |v| v);
+            let Some(bytes) = io.get_range(&key, off, len as u64)? else {
                 return Ok(Fetched::Raced);
             };
             if bytes.len() != len as usize {

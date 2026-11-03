@@ -174,7 +174,7 @@ pub fn count_packs(b: &dyn Backend) -> Result<usize, BackendError> {
 
 /// Read and verify one whole pack: length and trailer against its index, every entry against its
 /// id. Returns (id, encoded bytes) in file order.
-fn read_pack(b: &dyn Backend, p: &PackInfo, idx: &PackIndex) -> Result<Vec<(ObjectId, Vec<u8>)>, GcError> {
+pub(crate) fn read_pack(b: &dyn Backend, p: &PackInfo, idx: &PackIndex) -> Result<Vec<(ObjectId, Vec<u8>)>, GcError> {
     let damaged = |why: String| GcError::Damaged(format!("pack {}: {why}", p.stem));
     let Some(g) = b.get(&format!("{}.pack", p.stem))? else {
         return Err(damaged("pack file missing (changed under the compaction; run it again)".into()));

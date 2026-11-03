@@ -308,3 +308,88 @@ fn undo_moves_tags_with_the_rest_of_the_view() {
     assert!(r.tag_list("root").unwrap().is_empty());
     fsck_ok(&r);
 }
+
+/// Every file under the worktree (excluding .vcs): path -> (content, executable bit).
+fn tree_snapshot(r: &Repo) -> std::collections::BTreeMap<String, (Vec<u8>, bool)> {
+    use std::os::unix::fs::PermissionsExt;
+    fn go(root: &std::path::Path, dir: &std::path::Path, out: &mut std::collections::BTreeMap<String, (Vec<u8>, bool)>) {
+        for e in fs::read_dir(dir).unwrap() {
+            let e = e.unwrap();
+            let p = e.path();
+            if p.file_name().unwrap() == ".vcs" {
+                continue;
+            }
+            if e.file_type().unwrap().is_dir() {
+                go(root, &p, out);
+            } else {
+                let x = fs::metadata(&p).unwrap().permissions().mode() & 0o111 != 0;
+                out.insert(
+                    p.strip_prefix(root).unwrap().to_string_lossy().into_owned(),
+                    (fs::read(&p).unwrap(), x),
+                );
+            }
+        }
+    }
+    let mut out = Default::default();
+    go(r.worktree(), r.worktree(), &mut out);
+    out
+}
+
+#[test]
+fn undo_of_nested_changes_deletes_and_mode_changes_is_exact_in_two_zones() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_d, r) = setup();
+    r.create_zone("engine", "engine").unwrap();
+    for i in 0..30 {
+        write(&r, &format!("engine/a/b/f{i}"), &format!("e{i}"));
+        write(&r, &format!("engine/c/g{i}"), &format!("g{i}"));
+        write(&r, &format!("top/d{i}/x"), &format!("t{i}"));
+    }
+    write(&r, "engine/run.sh", "#!/bin/sh\n");
+    write(&r, "README", "r");
+    r.add(&["".into()]).unwrap();
+    r.commit("base", sig()).unwrap();
+    let before = tree_snapshot(&r);
+    let (h_engine, h_root) = (head(&r, "engine"), head(&r, "root"));
+    // one commit touching both zones: nested edit, delete, new nested file, mode change
+    write(&r, "engine/a/b/f3", "changed");
+    fs::remove_file(r.worktree().join("engine/c/g7")).unwrap();
+    write(&r, "engine/a/new/deep/n", "n");
+    fs::set_permissions(r.worktree().join("engine/run.sh"), fs::Permissions::from_mode(0o755)).unwrap();
+    write(&r, "top/d9/x", "t9-changed");
+    fs::remove_dir_all(r.worktree().join("top/d11")).unwrap();
+    r.add(&["".into()]).unwrap();
+    r.commit("change", sig()).unwrap();
+    let after = tree_snapshot(&r);
+    assert_ne!(before, after);
+    r.op_undo().unwrap();
+    assert_eq!(tree_snapshot(&r), before);
+    assert_eq!((head(&r, "engine"), head(&r, "root")), (h_engine, h_root));
+    let st = r.status().unwrap();
+    assert!(
+        st.zones.iter().all(|z| z.staged.is_empty() && z.unstaged.is_empty()),
+        "{:?}",
+        st.zones
+    );
+    assert!(!r.worktree().join("engine/a/new").exists(), "emptied directories are pruned");
+    fsck_ok(&r);
+    // undo of the undo returns to the committed state, also exactly
+    r.op_undo().unwrap();
+    assert_eq!(tree_snapshot(&r), after);
+    let st = r.status().unwrap();
+    assert!(st.zones.iter().all(|z| z.staged.is_empty() && z.unstaged.is_empty()));
+    fsck_ok(&r);
+}
+
+#[test]
+fn undo_still_refuses_a_dirty_zone_and_changes_nothing() {
+    let (_d, r) = setup();
+    commit(&r, "d/f", "one", "c1");
+    commit(&r, "d/f", "two", "c2");
+    write(&r, "d/f", "dirty");
+    let before = tree_snapshot(&r);
+    let h = head(&r, "root");
+    assert!(r.op_undo().is_err());
+    assert_eq!(tree_snapshot(&r), before);
+    assert_eq!(head(&r, "root"), h);
+}

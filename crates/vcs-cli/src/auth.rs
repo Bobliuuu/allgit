@@ -445,8 +445,18 @@ pub mod keychain {
 
 // ---- resolution and commands ----
 
+/// `VCS_TOKEN` is used for `host` unless `VCS_TOKEN_HOST` is set to a different host (docs/security-review.md, finding 13).
+/// Unset keeps the old behaviour (sent to every remote). `host` is the normalized `host_key`.
+fn env_token_for(host: &str, token: Option<String>, bound: Option<String>) -> Option<String> {
+    let t = token.filter(|t| !t.trim().is_empty())?;
+    match bound.map(|b| b.trim().to_ascii_lowercase()).filter(|b| !b.is_empty()) {
+        Some(b) if b != host => None,
+        _ => Some(t),
+    }
+}
+
 pub fn describe_source(host: &str, cfg: &Config) -> Result<(String, Option<Token>), Error> {
-    if let Some(t) = std::env::var("VCS_TOKEN").ok().filter(|t| !t.trim().is_empty()) {
+    if let Some(t) = env_token_for(host, std::env::var("VCS_TOKEN").ok(), std::env::var("VCS_TOKEN_HOST").ok()) {
         return Ok(("VCS_TOKEN environment variable".into(), Some(Token::new(&t)?)));
     }
     let h = configured_helper(cfg)?;
@@ -591,6 +601,15 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn vcs_token_host_binding() {
+        let t = || Some("tok".to_string());
+        assert_eq!(env_token_for("a:1", t(), None).as_deref(), Some("tok"));
+        assert_eq!(env_token_for("a:1", t(), Some("A:1".into())).as_deref(), Some("tok"));
+        assert_eq!(env_token_for("evil:1", t(), Some("a:1".into())), None);
+        assert_eq!(env_token_for("a:1", Some(" ".into()), None), None);
+    }
 
     #[test]
     fn token_never_prints() {

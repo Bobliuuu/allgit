@@ -17,7 +17,7 @@ use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use vcs_objects::names::{validate_branch_name, validate_path, validate_zone_name};
 use vcs_objects::{id_of_encoded, Object, ObjectId, RefUpdate, Signature, Transaction};
-use vcs_store::pack::{build_pack_fmt, decode_payload_max, PackFormat, PACK_MAGIC, PACK_MAGIC_V2};
+use vcs_store::pack::{build_pack_fast_v2, decode_payload_max, PACK_MAGIC, PACK_MAGIC_V2};
 use vcs_store::ObjectStore;
 
 pub const MAGIC: &[u8; 8] = b"VCSBNDL\n";
@@ -402,7 +402,12 @@ fn select_heads(repo: &Repo, selectors: &[String]) -> Result<Vec<(String, String
     let refs = repo.refs()?;
     let mut out: BTreeMap<(String, String), ObjectId> = BTreeMap::new();
     if selectors.is_empty() {
-        out.extend(refs.branches.iter().map(|(k, v)| (k.clone(), *v)));
+        out.extend(
+            refs.branches
+                .iter()
+                .filter(|((_, b), _)| b != vcs_objects::names::DETACHED_BRANCH)
+                .map(|(k, v)| (k.clone(), *v)),
+        );
     }
     for s in selectors {
         if let Some((z, b)) = s.split_once('/') {
@@ -463,20 +468,46 @@ impl Repo {
                 children(&self.store.get(&id)?, &mut stack);
             }
         }
+        // Breadth-first by level; each level's objects are read and encoded on several threads.
         let mut objs: BTreeMap<ObjectId, Vec<u8>> = BTreeMap::new();
-        let mut stack: Vec<ObjectId> = heads.iter().map(|h| h.2).collect();
-        while let Some(id) = stack.pop() {
-            if have.contains(&id) || objs.contains_key(&id) {
-                continue;
+        let mut level: Vec<ObjectId> = heads.iter().map(|h| h.2).collect();
+        while !level.is_empty() {
+            level.sort_unstable();
+            level.dedup();
+            level.retain(|id| !have.contains(id) && !objs.contains_key(id));
+            let fetch = |id: &ObjectId| -> Result<(ObjectId, Vec<u8>, Vec<ObjectId>)> {
+                let o = self.store.get(id).map_err(|e| match e {
+                    vcs_store::StoreError::NotFound(i) => Error::Msg(format!(
+                        "cannot bundle: object {i} is not in this repository (a sparse clone must fetch it first)"
+                    )),
+                    e => e.into(),
+                })?;
+                let mut kids = Vec::new();
+                children(&o, &mut kids);
+                Ok((*id, o.encode(), kids))
+            };
+            let threads = if level.len() < 256 {
+                1
+            } else {
+                std::thread::available_parallelism().map_or(1, |n| n.get()).min(16)
+            };
+            let per = level.len().div_ceil(threads).max(1);
+            let parts: Vec<Result<Vec<_>>> = std::thread::scope(|sc| {
+                let fetch = &fetch;
+                let hs: Vec<_> = level
+                    .chunks(per)
+                    .map(|ch| sc.spawn(move || ch.iter().map(fetch).collect::<Result<Vec<_>>>()))
+                    .collect();
+                hs.into_iter().map(|h| h.join().expect("bundle worker panicked")).collect()
+            });
+            let mut next = Vec::new();
+            for part in parts {
+                for (id, enc, kids) in part? {
+                    objs.insert(id, enc);
+                    next.extend(kids);
+                }
             }
-            let o = self.store.get(&id).map_err(|e| match e {
-                vcs_store::StoreError::NotFound(i) => Error::Msg(format!(
-                    "cannot bundle: object {i} is not in this repository (a sparse clone must fetch it first)"
-                )),
-                e => e.into(),
-            })?;
-            children(&o, &mut stack);
-            objs.insert(id, o.encode());
+            level = next;
         }
         let used_zones: BTreeSet<&str> = heads.iter().map(|h| h.0.as_str()).collect();
         let info = BundleInfo {
@@ -498,7 +529,8 @@ impl Repo {
             prerequisites: prereqs,
             bytes: 0,
         };
-        let pack = build_pack_fmt(objs.into_iter().collect(), PackFormat::V2).pack;
+        // zstd level 1: a bundle is written once and read once, so write speed beats size
+        let pack = build_pack_fast_v2(objs.into_iter().collect(), vcs_store::pack::RAW_SMALL).pack;
         let header = encode_header(&info, pack.len() as u64);
         let tmp = PathBuf::from(format!("{}.tmp{}", file.display(), std::process::id()));
         let mut hasher = blake3::Hasher::new();

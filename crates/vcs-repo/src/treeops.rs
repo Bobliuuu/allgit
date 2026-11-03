@@ -20,6 +20,28 @@ pub fn flatten(store: &dyn ObjectStore, root: Option<ObjectId>, prefix: &str) ->
     Ok(out)
 }
 
+/// Like [`flatten`] but appends to a vector in tree order (not necessarily path order).
+pub fn flatten_into(store: &dyn ObjectStore, root: ObjectId, prefix: &str, out: &mut Vec<(String, EntryMode, ObjectId)>) -> Result<()> {
+    let Object::Tree(t) = store.get(&root)? else {
+        return Err(Error::Corrupt(format!("object {root} is not a tree")));
+    };
+    for e in t.into_entries() {
+        let p = if prefix.is_empty() {
+            e.name
+        } else {
+            format!("{prefix}/{}", e.name)
+        };
+        if p.len() > MAX_PATH {
+            return Err(Error::Corrupt("tree path too long".into()));
+        }
+        match e.mode {
+            EntryMode::Directory => flatten_into(store, e.id, &p, out)?,
+            m => out.push((p, m, e.id)),
+        }
+    }
+    Ok(())
+}
+
 fn walk(store: &dyn ObjectStore, tree: ObjectId, prefix: &str, out: &mut Flat) -> Result<()> {
     let Object::Tree(t) = store.get(&tree)? else {
         return Err(Error::Corrupt(format!("object {tree} is not a tree")));
@@ -51,6 +73,14 @@ pub struct TreeDiff {
     pub old: Flat,
     pub new: Flat,
     pub new_dir_names: Vec<Vec<String>>,
+    /// Directory path -> tree id on the `new` side, for every directory pair that was read (not
+    /// collected in lean mode). With an index that equalled the old tree, these are the cache-tree
+    /// ids of the index after moving to the new tree.
+    pub new_trees: Vec<(String, ObjectId)>,
+    /// Collect `new_dir_names` only for directories whose set of names differs from the old
+    /// side's. Sound for a checkout, where the old tree is the one on disk (its names passed the
+    /// same check when it was checked out or added).
+    trust_old_names: bool,
     /// Do not collect `new_dir_names` (callers that only want the changed files).
     lean: bool,
 }
@@ -59,18 +89,142 @@ pub struct TreeDiff {
 /// changed directories rather than tracked files. The result's `old`/`new` maps are exactly
 /// `flatten(old)`/`flatten(new)` with every path whose entry is equal on both sides removed.
 pub fn diff_trees(store: &dyn ObjectStore, old: Option<ObjectId>, new: Option<ObjectId>, prefix: &str) -> Result<TreeDiff> {
-    diff_trees_with(store, old, new, prefix, false)
+    diff_trees_with(store, old, new, prefix, false, false)
 }
 
 /// [`diff_trees`] for callers that only look at `old` and `new`: `new_dir_names` stays empty, which
 /// saves cloning every entry name of every changed directory.
 pub fn diff_trees_files(store: &dyn ObjectStore, old: Option<ObjectId>, new: Option<ObjectId>, prefix: &str) -> Result<TreeDiff> {
-    diff_trees_with(store, old, new, prefix, true)
+    diff_trees_with(store, old, new, prefix, true, false)
 }
 
-fn diff_trees_with(store: &dyn ObjectStore, old: Option<ObjectId>, new: Option<ObjectId>, prefix: &str, lean: bool) -> Result<TreeDiff> {
+/// [`diff_trees`] for moving the working tree from `old` (what is on disk) to `new`: the
+/// case-folding name lists are kept only for directories whose names changed.
+pub fn diff_trees_checkout(store: &dyn ObjectStore, old: Option<ObjectId>, new: Option<ObjectId>, prefix: &str) -> Result<TreeDiff> {
+    diff_trees_with(store, old, new, prefix, false, true)
+}
+
+/// Added (`b'A'`), deleted (`b'D'`) and modified (`b'M'`) files between two trees, sorted by path:
+/// the file list of [`diff_trees_files`] without keeping either side's entries. Equal subtrees are not read.
+pub fn diff_trees_status(store: &dyn ObjectStore, old: Option<ObjectId>, new: Option<ObjectId>, prefix: &str) -> Result<Vec<(String, u8)>> {
+    diff_trees_status_only(store, old, new, prefix, &[])
+}
+
+/// [`diff_trees_status`] limited to the paths equal to or beneath one of `only` (repo-relative, no
+/// trailing slash; empty `only` = everything). Directories outside every spec are not read, so the
+/// cost follows the spec, not the size of the commit.
+pub fn diff_trees_status_only(
+    store: &dyn ObjectStore,
+    old: Option<ObjectId>,
+    new: Option<ObjectId>,
+    prefix: &str,
+    only: &[String],
+) -> Result<Vec<(String, u8)>> {
+    let mut out = Vec::new();
+    if old != new {
+        status_pair(store, old, new, prefix, only, &mut out)?;
+    }
+    out.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    Ok(out)
+}
+
+/// Can `p` (a file or a directory) be, hold, or sit beneath something named by `only`?
+fn wanted(only: &[String], p: &str) -> bool {
+    only.is_empty()
+        || only.iter().any(|s| {
+            s.is_empty()
+                || p == s
+                || (p.len() > s.len() && p.starts_with(s.as_str()) && p.as_bytes()[s.len()] == b'/')
+                || (s.len() > p.len() && s.starts_with(p) && s.as_bytes()[p.len()] == b'/')
+        })
+}
+
+fn status_side(store: &dyn ObjectStore, e: &TreeEntry, p: String, letter: u8, only: &[String], out: &mut Vec<(String, u8)>) -> Result<()> {
+    if !wanted(only, &p) {
+        return Ok(());
+    }
+    if p.len() > MAX_PATH {
+        return Err(Error::Corrupt("tree path too long".into()));
+    }
+    if e.mode == EntryMode::Directory {
+        for c in read_tree(store, Some(e.id))? {
+            let q = join(&p, &c.name);
+            status_side(store, &c, q, letter, only, out)?;
+        }
+    } else {
+        out.push((p, letter));
+    }
+    Ok(())
+}
+
+fn status_pair(
+    store: &dyn ObjectStore,
+    old: Option<ObjectId>,
+    new: Option<ObjectId>,
+    prefix: &str,
+    only: &[String],
+    out: &mut Vec<(String, u8)>,
+) -> Result<()> {
+    let (oe, ne) = (read_tree(store, old)?, read_tree(store, new)?);
+    let (mut i, mut j) = (0, 0);
+    while i < oe.len() || j < ne.len() {
+        let ord = match (oe.get(i), ne.get(j)) {
+            (Some(a), Some(b)) => a.name.cmp(&b.name),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            _ => std::cmp::Ordering::Greater,
+        };
+        match ord {
+            std::cmp::Ordering::Less => {
+                let a = &oe[i];
+                status_side(store, a, join(prefix, &a.name), b'D', only, out)?;
+                i += 1;
+            }
+            std::cmp::Ordering::Greater => {
+                let b = &ne[j];
+                status_side(store, b, join(prefix, &b.name), b'A', only, out)?;
+                j += 1;
+            }
+            std::cmp::Ordering::Equal => {
+                let (a, b) = (&oe[i], &ne[j]);
+                i += 1;
+                j += 1;
+                if a.mode == b.mode && a.id == b.id {
+                    continue;
+                }
+                let p = join(prefix, &a.name);
+                if !wanted(only, &p) {
+                    continue;
+                }
+                match (a.mode == EntryMode::Directory, b.mode == EntryMode::Directory) {
+                    (true, true) => status_pair(store, Some(a.id), Some(b.id), &p, only, out)?,
+                    (false, false) => {
+                        if p.len() > MAX_PATH {
+                            return Err(Error::Corrupt("tree path too long".into()));
+                        }
+                        out.push((p, b'M'));
+                    }
+                    _ => {
+                        status_side(store, a, p.clone(), b'D', only, out)?;
+                        status_side(store, b, p, b'A', only, out)?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn diff_trees_with(
+    store: &dyn ObjectStore,
+    old: Option<ObjectId>,
+    new: Option<ObjectId>,
+    prefix: &str,
+    lean: bool,
+    trust_old_names: bool,
+) -> Result<TreeDiff> {
     let mut d = TreeDiff {
         lean,
+        trust_old_names,
         ..Default::default()
     };
     if old != new {
@@ -127,7 +281,7 @@ fn read_tree(store: &dyn ObjectStore, id: Option<ObjectId>) -> Result<Vec<TreeEn
     match id {
         None => Ok(Vec::new()),
         Some(id) => match store.get(&id)? {
-            Object::Tree(t) => Ok(t.entries().to_vec()),
+            Object::Tree(t) => Ok(t.into_entries()),
             _ => Err(Error::Corrupt(format!("object {id} is not a tree"))),
         },
     }
@@ -160,7 +314,11 @@ fn walk_names(store: &dyn ObjectStore, tree: ObjectId, prefix: &str, out: &mut F
 fn diff_pair(store: &dyn ObjectStore, old: Option<ObjectId>, new: Option<ObjectId>, prefix: &str, d: &mut TreeDiff) -> Result<()> {
     let lean = d.lean;
     let (oe, ne) = (read_tree(store, old)?, read_tree(store, new)?);
-    if new.is_some() && !d.lean {
+    if let (Some(n), false) = (new, d.lean) {
+        d.new_trees.push((prefix.to_owned(), n));
+    }
+    let same_names = d.trust_old_names && old.is_some() && oe.len() == ne.len() && oe.iter().zip(&ne).all(|(a, b)| a.name == b.name);
+    if new.is_some() && !d.lean && !same_names {
         d.new_dir_names.push(ne.iter().map(|e| e.name.clone()).collect());
     }
     let (mut i, mut j) = (0, 0);
@@ -680,6 +838,36 @@ pub fn entry_at(store: &dyn ObjectStore, root: ObjectId, rel: &str) -> Result<Op
             return Err(Error::Corrupt(format!("object {} is not a tree", cur.1)));
         };
         match t.get(part) {
+            Some(e) => cur = (e.mode, e.id),
+            None => return Ok(None),
+        }
+    }
+    Ok(Some(cur))
+}
+
+/// [`entry_at`] for many lookups under the same roots: each tree read is kept in `cache`, so a
+/// directory shared by many paths is decoded once.
+pub fn entry_at_cached(
+    store: &dyn ObjectStore,
+    cache: &mut std::collections::HashMap<ObjectId, Tree>,
+    root: ObjectId,
+    rel: &str,
+) -> Result<Option<(EntryMode, ObjectId)>> {
+    let mut cur = (EntryMode::Directory, root);
+    if rel.is_empty() {
+        return Ok(Some(cur));
+    }
+    for part in rel.split('/') {
+        if cur.0 != EntryMode::Directory {
+            return Ok(None);
+        }
+        if !cache.contains_key(&cur.1) {
+            let Object::Tree(t) = store.get(&cur.1)? else {
+                return Err(Error::Corrupt(format!("object {} is not a tree", cur.1)));
+            };
+            cache.insert(cur.1, t);
+        }
+        match cache[&cur.1].get(part) {
             Some(e) => cur = (e.mode, e.id),
             None => return Ok(None),
         }

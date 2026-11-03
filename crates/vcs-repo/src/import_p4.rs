@@ -2,7 +2,7 @@
 //!
 //! Written from Perforce's documentation, then checked once against a real p4d 2026.1 (fixtures in
 //! tests/fixtures/p4real, test import_p4_real.rs): the tree at every changelist equals `p4 sync @N`. Known
-//! discrepancies: `utf16` content (p4 print returns UTF-8). Not covered by that check: unicode servers, large
+//! discrepancies (none known now). Not covered by that check: unicode servers, large
 //! files, streams, obliterate, so the formats below may still differ from what a server emits:
 //!
 //! * `p4 changes -l` text: "Change N on YYYY/MM/DD by user@client [*pending*]" followed by a
@@ -336,14 +336,34 @@ fn file_type(t: &str) -> (EntryMode, Option<String>) {
     };
     let warn = if base.contains("apple") || base.contains("resource") {
         Some("resource fork / apple file is stored as the bytes p4 print returned")
-    } else if base.contains("utf16") {
-        Some("utf16 content is stored as the bytes p4 print returned")
     } else if legacy_k || mods.contains('k') {
         Some("keyword expansion (+k) is not undone; expanded text is stored")
     } else {
         None
     };
     (mode, warn.map(str::to_owned))
+}
+
+fn is_utf16_type(t: &str) -> bool {
+    t.split_once('+').map_or(t, |(b, _)| b).contains("utf16")
+}
+
+/// `p4 print` returns `utf16` files as UTF-8 text, while `p4 sync` writes UTF-16 little-endian with a BOM (checked
+/// against a real p4d: `hi\n` prints as 3 bytes and syncs as `FF FE 68 00 69 00 0A 00`). Convert back; data that is
+/// already UTF-16 (starts with a BOM) or is not valid UTF-8 is kept as printed.
+fn utf16_for_sync(data: Vec<u8>) -> Vec<u8> {
+    if data.starts_with(&[0xFF, 0xFE]) || data.starts_with(&[0xFE, 0xFF]) {
+        return data;
+    }
+    let Ok(text) = std::str::from_utf8(&data) else {
+        return data;
+    };
+    let text = text.strip_prefix('\u{FEFF}').unwrap_or(text);
+    let mut out = vec![0xFF, 0xFE];
+    for u in text.encode_utf16() {
+        out.extend_from_slice(&u.to_le_bytes());
+    }
+    out
 }
 
 /// Real Perforce escapes `@`, `#`, `%` and `*` in depot paths as `%40`, `%23`, `%25`, `%2A` (found by comparing against
@@ -481,6 +501,9 @@ impl Repo {
                         }
                         let pp = dir.join("print").join(ch.n.to_string()).join(rel);
                         let mut data = fs::read(&pp).map_err(|e| io(&pp, e))?;
+                        if is_utf16_type(&f.ftype) {
+                            data = utf16_for_sync(data);
+                        }
                         if mode == EntryMode::Symlink && data.last() == Some(&b'\n') {
                             data.pop(); // fixture files end in a newline; a link target never does
                         }
@@ -616,5 +639,27 @@ impl Repo {
             self.record_op(&message, Some(author))?;
         }
         Ok(rep)
+    }
+}
+
+#[cfg(test)]
+mod utf16_tests {
+    use super::*;
+
+    #[test]
+    fn utf16_rules() {
+        assert!(is_utf16_type("utf16") && is_utf16_type("utf16+x") && is_utf16_type("xutf16"));
+        assert!(!is_utf16_type("utf8") && !is_utf16_type("text+x"));
+        // real p4d: `hi\n` syncs as FF FE 68 00 69 00 0A 00
+        assert_eq!(utf16_for_sync(b"hi\n".to_vec()), [0xFF, 0xFE, 0x68, 0, 0x69, 0, 0x0A, 0]);
+        // astral char becomes a surrogate pair; a UTF-8 BOM is dropped
+        assert_eq!(
+            utf16_for_sync("\u{FEFF}\u{1F600}".as_bytes().to_vec()),
+            [0xFF, 0xFE, 0x3D, 0xD8, 0x00, 0xDE]
+        );
+        // already UTF-16 or not UTF-8: kept
+        assert_eq!(utf16_for_sync(vec![0xFF, 0xFE, 0x68, 0]), [0xFF, 0xFE, 0x68, 0]);
+        assert_eq!(utf16_for_sync(vec![0xC3, 0x28]), [0xC3, 0x28]);
+        assert_eq!(utf16_for_sync(vec![]), [0xFF, 0xFE]);
     }
 }

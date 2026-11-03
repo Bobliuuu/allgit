@@ -57,3 +57,9 @@ because `vcs branch <name>` already creates a branch.)
 * Like `op restore`, snapshot checkout is not atomic across several zones if a later zone's preflight fails after an
   earlier zone was applied; the result shows as ordinary changes, with no data loss.
 * Snapshot checkout does not fetch missing commits.
+
+## Path-level sparse sets
+
+A workspace can materialize only some directories of a zone: see [sparse-paths.md](sparse-paths.md)
+(`vcs sparse set|add|remove|list|disable`). Out-of-set paths stay tracked in the index and are never recorded as
+deletions.

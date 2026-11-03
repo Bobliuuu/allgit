@@ -67,6 +67,19 @@ fn live(expires_at: u64, now: u64, eps: u64) -> bool {
     now < expires_at.saturating_add(eps)
 }
 
+/// A branch head a manifest write replaced with something that does not descend from it
+/// (`new == Some(_)`, "force") or removed (`new == None`, "delete"). Only these are recorded in the
+/// server's audit log as `FORCE` / `DELETE-BRANCH`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Rewrite {
+    pub zone: String,
+    pub branch: String,
+    pub old: ObjectId,
+    pub new: Option<ObjectId>,
+    /// The ancestry walk hit its bound, so descent could not be established either way.
+    pub unverified: bool,
+}
+
 /// Validate with default settings, discarding the normalized manifest.
 pub fn validate_manifest_write(
     backend: &dyn Backend,
@@ -89,6 +102,20 @@ pub fn validate_and_normalize(
     who: &Principal,
     server_now: u64,
     cfg: &ValidatorConfig,
+) -> Result<(), Reject> {
+    validate_and_report(backend, cur, new, who, server_now, cfg, None)
+}
+
+/// Like [`validate_and_normalize`]; with `report`, also lists every forced move and deletion (this
+/// walks history from each changed head to its old head, so only the server asks for it).
+pub fn validate_and_report(
+    backend: &dyn Backend,
+    cur: &Manifest,
+    new: &mut Manifest,
+    who: &Principal,
+    server_now: u64,
+    cfg: &ValidatorConfig,
+    mut report: Option<&mut Vec<Rewrite>>,
 ) -> Result<(), Reject> {
     let eps = cfg.skew_epsilon_ms;
     let live = |e: u64, n: u64| live(e, n, eps);
@@ -150,8 +177,26 @@ pub fn validate_and_normalize(
                 return Err(Reject::Forbidden(format!("principal {} may not write zone {}", who.name, k.0)));
             }
             policy_zone(cfg, who, &k.0)?;
-            if let Some(n) = n {
-                changed_heads.push((k.0.clone(), k.1.clone(), o, n));
+            match (o, n) {
+                (_, Some(n)) => changed_heads.push((k.0.clone(), k.1.clone(), o, n)),
+                (Some(old), None) => {
+                    if cfg.policy.protects_branch(&k.0, &k.1) {
+                        return Err(Reject::Forbidden(format!(
+                            "policy protect-branch: {}/{} cannot be deleted",
+                            k.0, k.1
+                        )));
+                    }
+                    if let Some(r) = report.as_deref_mut() {
+                        r.push(Rewrite {
+                            zone: k.0.clone(),
+                            branch: k.1.clone(),
+                            old,
+                            new: None,
+                            unverified: false,
+                        });
+                    }
+                }
+                (None, None) => {}
             }
         }
     }
@@ -208,6 +253,37 @@ pub fn validate_and_normalize(
 
     // Net changed paths vs. the locks that will be in force after this write.
     for (zone, branch, old, newh) in changed_heads {
+        let protected = cfg.policy.protects_branch(&zone, &branch);
+        if let (Some(o), true) = (old, protected || report.is_some()) {
+            match descends(backend, o, newh)? {
+                Some(true) => {}
+                d => {
+                    if protected && d == Some(false) {
+                        return Err(Reject::Forbidden(format!(
+                            "policy protect-branch: {zone}/{branch} only accepts fast-forward updates (this would replace {} with {})",
+                            o.short(),
+                            newh.short()
+                        )));
+                    }
+                    if protected {
+                        return Err(Reject::Invalid(format!(
+                            "protect-branch: history between {} and {} too large to check",
+                            o.short(),
+                            newh.short()
+                        )));
+                    }
+                    if let Some(r) = report.as_deref_mut() {
+                        r.push(Rewrite {
+                            zone: zone.clone(),
+                            branch: branch.clone(),
+                            old: o,
+                            new: Some(newh),
+                            unverified: d.is_none(),
+                        });
+                    }
+                }
+            }
+        }
         if cfg.policy.requires_signed(&zone, &branch) {
             check_signed(backend, &cfg.signers, &zone, &branch, old, newh)?;
         }
@@ -274,6 +350,25 @@ fn policy_zone(cfg: &ValidatorConfig, who: &Principal, zone: &str) -> Result<(),
 /// Most commits walked on either side while checking signatures; beyond it the publish is refused
 /// rather than letting one request make the server read an unbounded history.
 const MAX_SIGNED_WALK: usize = 100_000;
+
+/// Is `old` an ancestor of (or equal to) `new`? `None` when the walk bound is hit first.
+fn descends(backend: &dyn Backend, old: ObjectId, new: ObjectId) -> Result<Option<bool>, Reject> {
+    let mut seen: BTreeSet<ObjectId> = BTreeSet::new();
+    let mut stack = vec![new];
+    while let Some(id) = stack.pop() {
+        if id == old {
+            return Ok(Some(true));
+        }
+        if !seen.insert(id) {
+            continue;
+        }
+        if seen.len() > MAX_SIGNED_WALK {
+            return Ok(None);
+        }
+        stack.extend(commit_of(backend, &id)?.parents);
+    }
+    Ok(Some(false))
+}
 
 fn commit_of(backend: &dyn Backend, id: &ObjectId) -> Result<vcs_objects::Commit, Reject> {
     match fetch_object(backend, id) {

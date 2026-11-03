@@ -8,7 +8,7 @@ branches, or on what `fetch` and `clone` see. The idea is Perforce's `p4 shelve`
 ```text
 vcs shelve [-m msg] [--zone Z] [--expires 30d] [name]    park the changes of the working tree
 vcs shelves [--all]                                       list your shelves (--all: everyone's you may read)
-vcs unshelve <principal/name>                             apply a shelf to the working tree
+vcs unshelve [--drop] <principal/name>                    apply a shelf to the working tree (--drop: delete it after a clean apply)
 vcs shelve --delete <name | principal/name>               remove a shelf
 ```
 
@@ -100,4 +100,6 @@ hook creates a shelf between its first look and its remark, a shelve that meets 
 * A shelf can pin its base commits indefinitely; use `--expires` and delete shelves you no longer need. An admin
   can delete anyone's shelf.
 * Pack-size on download is capped at 4 GiB and a single object at 64 MiB.
-* There is no `unshelve --drop`; delete explicitly with `vcs shelve --delete`.
+* `vcs unshelve --drop <shelf>` deletes the shelf after a clean apply (a conflicted apply keeps it). Deleting is subject to the usual rules: on `vcs-server` only the owner or an admin may delete, so `--drop` of someone else's shelf applies and then fails with 403.
+* There are no per-principal shelf quotas yet (a shelf is capped at 4 GiB; use `--expires`). Quotas need a server-side count of a principal's shelves and bytes and an owner decision on the limits.
+* Tested against a local S3 server (RustFS 1.0.4): `crates/vcs-cli/tests/shelve.rs` `shelve_and_unshelve_over_s3` and `shelves_on_vcs_server_over_s3_are_private_until_a_shelve_read_rule`, gated on `VCS_TEST_S3_ENDPOINT`.

@@ -495,6 +495,7 @@ fn equivalence_run(seed: u64) {
                 MergeOutcome::UpToDate => {
                     assert!(matches!(sp.merge("root", other, sig()), Ok(MergeOutcome::UpToDate)));
                 }
+                MergeOutcome::Squashed { .. } => unreachable!("plain merge never squashes"),
             }
         } else {
             // edit 1-3 files, commit. Out-of-set edits are made in the sparse repo by temporarily

@@ -122,6 +122,9 @@ fn tampered_head_blob_fails_the_batch_prefetch_and_the_clone() {
 
 #[test]
 fn lazy_clone_downloads_fewer_bytes_than_eager_fetch() {
+    // Small packs are read whole by default (fewer requests, more bytes: see docs/remote-packs.md);
+    // this test is about the ranged path that skips history blobs.
+    std::env::set_var("VCS_SMALL_PACK_BYTES", "0");
     let d = tempfile::tempdir().unwrap();
     let remote = MemBackend::new();
     seeded(&remote, d.path());
@@ -216,4 +219,169 @@ fn fs_backend_lazy_clone_publish_and_sync_roundtrip() {
     assert_eq!(fs::read_to_string(b.worktree().join("engine/f2.rs")).unwrap(), "changed in a");
     let rep = b.fsck().unwrap();
     assert!(rep.problems.is_empty(), "{:?}", rep.problems);
+}
+
+#[test]
+fn prefetch_subscribed_fetches_new_head_blobs_once_and_a_failing_backend_stores_nothing_bad() {
+    let d = tempfile::tempdir().unwrap();
+    let remote = MemBackend::new();
+    let a = seeded(&remote, d.path());
+    let b = Repo::clone_from(&remote, "mem", &d.path().join("b"), Some(&["engine".to_string()])).unwrap();
+    // a new head on the remote: fetch stores commits and trees, blobs stay remote
+    for i in 0..20 {
+        write(&a, &format!("engine/f{i}.rs"), &format!("file {i} v3 {}", pad(i, "v3")));
+    }
+    commit_all(&a, "v3");
+    a.publish(&remote, None, sig()).unwrap();
+    b.fetch(&remote, None).unwrap();
+    let v3 = |i: usize| blob_id(&format!("file {i} v3 {}", pad(i, "v3")));
+    assert!(!b.store().contains(&v3(5)).unwrap());
+    // a different zone name fetches nothing
+    assert_eq!(b.prefetch_subscribed(&remote, Some(&["nope".to_string()])).unwrap(), 0);
+    assert_eq!(b.prefetch_subscribed(&remote, None).unwrap(), 20);
+    assert!(b.store().contains(&v3(5)).unwrap());
+    // idempotent: nothing left to fetch
+    assert_eq!(b.prefetch_subscribed(&remote, None).unwrap(), 0);
+    let rep = b.fsck().unwrap();
+    assert!(rep.problems.is_empty(), "{:?}", rep.problems);
+}
+
+#[test]
+fn prefetch_subscribed_rejects_a_tampered_blob_and_does_not_store_it() {
+    let d = tempfile::tempdir().unwrap();
+    let remote = MemBackend::new();
+    let a = seeded(&remote, d.path());
+    let b = Repo::clone_from(&remote, "mem", &d.path().join("b"), Some(&["engine".to_string()])).unwrap();
+    write(&a, "engine/f0.rs", "brand new");
+    commit_all(&a, "v3");
+    a.publish(&remote, None, sig()).unwrap();
+    b.fetch(&remote, None).unwrap();
+    let id = blob_id("brand new");
+    remote.tamper_object(&id, Object::Blob(b"evil".to_vec()).encode());
+    let err = b.prefetch_subscribed(&remote, None).err().expect("must fail").to_string();
+    assert!(err.contains("hash verification"), "{err}");
+    assert!(!b.store().contains(&id).unwrap(), "tampered blob must not be stored");
+    // the worktree was never touched
+    assert_eq!(
+        fs::read_to_string(b.worktree().join("engine/f0.rs")).unwrap(),
+        format!("file 0 v2 {}", pad(0, "v2"))
+    );
+}
+
+/// Delegates to an inner backend, but once armed every object read (`objects/` or `packs/`) after
+/// the first `allow` succeeds fails with `Unavailable`, as a dropped connection mid-batch would.
+struct DropsMidFetch<'a> {
+    inner: &'a dyn Backend,
+    allow: std::sync::atomic::AtomicI64,
+}
+impl DropsMidFetch<'_> {
+    fn gate(&self, key: &str) -> Result<(), vcs_remote::BackendError> {
+        if (key.starts_with("objects/") || key.starts_with("packs/")) && self.allow.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) <= 0 {
+            return Err(vcs_remote::BackendError::Unavailable("connection dropped mid-fetch".into()));
+        }
+        Ok(())
+    }
+}
+impl Backend for DropsMidFetch<'_> {
+    fn get(&self, key: &str) -> Result<Option<vcs_remote::Versioned>, vcs_remote::BackendError> {
+        self.gate(key)?;
+        self.inner.get(key)
+    }
+    fn get_range(&self, key: &str, o: u64, l: u64) -> Result<Option<Vec<u8>>, vcs_remote::BackendError> {
+        self.gate(key)?;
+        self.inner.get_range(key, o, l)
+    }
+    fn exists(&self, key: &str) -> Result<bool, vcs_remote::BackendError> {
+        self.inner.exists(key)
+    }
+    fn put_if_absent(&self, key: &str, d: &[u8]) -> Result<bool, vcs_remote::BackendError> {
+        self.inner.put_if_absent(key, d)
+    }
+    fn put_if_match(&self, key: &str, d: &[u8], t: &str) -> Result<Option<String>, vcs_remote::BackendError> {
+        self.inner.put_if_match(key, d, t)
+    }
+    fn list(&self, p: &str) -> Result<Vec<String>, vcs_remote::BackendError> {
+        self.inner.list(p)
+    }
+}
+
+/// #117: a backend that dies part-way through the head's blob batch must leave the worktree, the
+/// index and the branch ref exactly as they were (the preflight runs before any worktree write),
+/// and the same command must succeed once the backend is back.
+#[test]
+fn backend_failing_mid_fetch_leaves_no_partial_worktree_write_on_sync() {
+    for allow in [0i64, 1] {
+        let d = tempfile::tempdir().unwrap();
+        let remote = MemBackend::new();
+        let a = seeded(&remote, d.path());
+        let b = Repo::clone_from(&remote, "mem", &d.path().join("b"), Some(&["engine".to_string()])).unwrap();
+        for i in 0..20 {
+            write(&a, &format!("engine/f{i}.rs"), &format!("file {i} v3 {}", pad(i, "v3")));
+        }
+        commit_all(&a, "v3");
+        a.publish(&remote, None, sig()).unwrap();
+        b.fetch(&remote, None).unwrap(); // commits and trees are local; the 20 new blobs are not
+        let before: Vec<String> = (0..20)
+            .map(|i| fs::read_to_string(b.worktree().join(format!("engine/f{i}.rs"))).unwrap())
+            .collect();
+        let head_before = b.refs().unwrap().head("engine", "main");
+        let flaky = DropsMidFetch {
+            inner: &remote,
+            allow: std::sync::atomic::AtomicI64::new(allow),
+        };
+        let err = match b.sync(&flaky) {
+            Err(e) => e.to_string(),
+            Ok(r) => panic!("allow={allow}: sync succeeded: {:?}", r.actions),
+        };
+        assert!(err.contains("dropped") || err.contains("unavailable"), "allow={allow}: {err}");
+        for (i, want) in before.iter().enumerate() {
+            let got = fs::read_to_string(b.worktree().join(format!("engine/f{i}.rs"))).unwrap();
+            assert_eq!(&got, want, "allow={allow}: f{i} was touched by a failed sync");
+        }
+        assert_eq!(b.refs().unwrap().head("engine", "main"), head_before, "allow={allow}: ref moved");
+        let st = b.status().unwrap();
+        assert!(
+            st.zones.iter().all(|z| z.staged.is_empty() && z.unstaged.is_empty()),
+            "allow={allow}: a failed sync left the worktree dirty"
+        );
+        // partial progress is only whole, verified blobs in the store; fsck is clean
+        assert!(b.fsck().unwrap().problems.is_empty());
+        // backend back: the same command completes
+        b.sync(&remote).unwrap();
+        assert_eq!(
+            fs::read_to_string(b.worktree().join("engine/f5.rs")).unwrap(),
+            format!("file 5 v3 {}", pad(5, "v3"))
+        );
+    }
+}
+
+/// A merge that brings in files whose blobs are not local fails with `NotFound` BEFORE any file is
+/// written: `vcs` fetches the object and re-runs the command, and a half-applied first run made
+/// the re-run refuse with "untracked path would be overwritten".
+#[test]
+fn merge_with_missing_blobs_writes_nothing_before_failing() {
+    let d = tempfile::tempdir().unwrap();
+    let remote = MemBackend::new();
+    let a = seeded(&remote, d.path());
+    let b = Repo::clone_from(&remote, "mem", &d.path().join("b"), Some(&["engine".to_string()])).unwrap();
+    for i in 0..20 {
+        write(&a, &format!("engine/new{i}.rs"), &format!("new {i} {}", pad(i, "n")));
+    }
+    commit_all(&a, "adds");
+    a.publish(&remote, None, sig()).unwrap();
+    write(&b, "engine/mine.rs", "local change");
+    commit_all(&b, "local");
+    b.fetch(&remote, None).unwrap(); // commits and trees only: the 20 new blobs are not local
+    let err = b.merge_remote("engine", "main", sig()).unwrap_err();
+    assert!(matches!(err, vcs_repo::Error::Store(vcs_store::StoreError::NotFound(_))), "{err}");
+    for i in 0..20 {
+        assert!(
+            !b.worktree().join(format!("engine/new{i}.rs")).exists(),
+            "new{i}.rs written before the failure"
+        );
+    }
+    // the re-run `vcs` does after fetching the missing object succeeds
+    b.with_lazy_fetch(&remote, || Ok(b.merge_remote("engine", "main", sig())?))
+        .expect("merge after lazy fetch");
+    assert!(b.worktree().join("engine/new7.rs").exists());
 }

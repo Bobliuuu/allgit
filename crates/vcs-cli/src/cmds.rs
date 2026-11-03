@@ -25,12 +25,21 @@ pub enum More {
     LsFiles(crate::plumb::LsFilesArgs),
     /// Show the type, size or content of an object
     CatFile(crate::plumb::CatFileArgs),
+    /// List commit ids of a revision range (A..B, A...B, ^A B, --all), newest first
+    RevList(crate::histcli::RevListArgs),
     /// Summarize history by author
     Shortlog(crate::plumb::ShortlogArgs),
     /// Best common ancestor of two revisions
     MergeBase(crate::histcmds::MergeBaseArgs),
     /// List the files that differ between two revisions (A/D/M and path)
     DiffTree(crate::histcmds::DiffTreeArgs),
+    /// Move the checked-out branch of a zone to another commit (--soft, --mixed, --hard); acts on one zone
+    Reset(crate::everyday::ResetArgs),
+    /// Delete untracked files (-n lists, -f deletes)
+    Clean(crate::everyday::CleanArgs),
+    /// Run a git command line as its vcs equivalent, e.g. `vcs git log --oneline` (table: docs/git-to-vcs.md; `--map` lists it)
+    #[command(name = "git")]
+    Git(crate::gitmap::GitArgs),
 }
 
 pub fn dispatch(cmd: &More, json: bool) -> Result<(), Error> {
@@ -43,8 +52,12 @@ pub fn dispatch(cmd: &More, json: bool) -> Result<(), Error> {
         More::RevParse(a) => crate::plumb::rev_parse(a, json),
         More::LsFiles(a) => crate::plumb::ls_files(a, json),
         More::CatFile(a) => crate::plumb::cat_file(a, json),
+        More::RevList(a) => crate::histcli::rev_list(a, json),
         More::Shortlog(a) => crate::plumb::shortlog(a, json),
         More::MergeBase(a) => crate::histcmds::merge_base(a, json),
         More::DiffTree(a) => crate::histcmds::diff_tree(a, json),
+        More::Reset(a) => crate::everyday::reset(a),
+        More::Clean(a) => crate::everyday::clean(a),
+        More::Git(a) => crate::gitmap::run(&a.args, json),
     }
 }

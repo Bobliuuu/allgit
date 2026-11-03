@@ -7,16 +7,17 @@
 //!          (invariant: a remote object's whole closure is present – upload is post-order)
 //! Guard    (only on backends with `supports_gc`) the handshake that makes remote garbage
 //!          collection safe, protocol G1 in docs/gc.md. For every remote key this publish relies
-//!          on but did not just create (a legacy loose object Collect pruned at; a pack or
-//!          index that `put_if_absent` found already there): Touch it, then check no
+//!          on but did not just create (a legacy loose object the loose-layout Collect pruned at;
+//!          a pack or index that `put_if_absent` found already there): Touch it, then check no
 //!          `tomb/...` exists for it, then check it still exists. Loose objects are guarded
 //!          BEFORE anything is uploaded (nothing that depends on them is visible while they can
 //!          still be swept); a deduplicated pack right after PutIdx. A failed check, or the
 //!          hold-time fence in front of the CAS ([`Publisher::with_hold_ms`]), restarts at Collect.
 //! Upload   packed (default): PutPack `packs/<name>.pack`, then PutIdx `packs/<name>.idx`
 //!          (the index is the commit point of the pack: no index, no objects; an orphan
-//!          pack is ignored). Legacy/tiny: put_if_absent each loose object, dependencies first
-//! PutTx    put_if_absent tx/<txid>
+//!          pack is ignored) together with `tx/<txid>` (create-only, idempotent, not read
+//!          except through the manifest). Legacy/tiny: put_if_absent each loose object,
+//!          dependencies first, then PutTx
 //! Load     read manifest; if txid already applied -> done; check every update.old == current
 //! Cas      conditional manifest write  <-- linearization point
 //! ```
@@ -121,6 +122,8 @@ enum Then {
     PutPack,
     Upload,
     PutTx,
+    /// Everything this transaction needs is uploaded: read the manifest and CAS.
+    Load,
 }
 
 pub fn object_key(id: &ObjectId) -> String {
@@ -175,10 +178,14 @@ pub struct Publisher<'a> {
     /// Packed mode: the bundle of this transaction's new objects, built once in Collect.
     built: Option<BuiltPack>,
     packed: bool,
+    /// Probe the remote for legacy loose copies of new commits (see [`Publisher::with_loose_probe`]).
+    loose_probe: bool,
     retries: u32,
     zones: BTreeMap<String, String>,
     labels: BTreeMap<String, String>,
     tags: BTreeMap<(String, String), ObjectId>,
+    /// Branch deletions: (zone, branch, head the caller saw). Compare-and-swapped like an update.
+    deletes: Vec<(String, String, ObjectId)>,
     verify_budget: Option<usize>,
     principal: String,
     clock: Box<dyn Fn() -> u64 + 'a>,
@@ -207,6 +214,10 @@ pub struct Publisher<'a> {
     backoff: bool,
 }
 
+/// Blobs at least this large are uploaded as their own objects instead of being copied into the transaction's pack.
+const BIG_UPLOAD: usize = 1 << 20;
+/// Objects uploaded concurrently per [`State::Upload`] step.
+const UPLOAD_BATCH: usize = 16;
 /// Longest randomized wait after a lost manifest CAS; the window doubles per loss up to this.
 pub const CAS_BACKOFF_CAP_MS: u64 = 250;
 
@@ -396,10 +407,12 @@ impl<'a> Publisher<'a> {
             to_upload: vec![],
             built: None,
             packed: true,
+            loose_probe: false,
             retries: 0,
             zones: BTreeMap::new(),
             labels: BTreeMap::new(),
             tags: BTreeMap::new(),
+            deletes: vec![],
             verify_budget: None,
             principal: String::new(),
             clock: Box::new(|| {
@@ -465,6 +478,16 @@ impl<'a> Publisher<'a> {
         self.packed = false;
         self
     }
+    /// Ask the remote (one HEAD per commit it cannot derive as present) whether a commit this
+    /// publish would upload already exists as a legacy loose object, and if so prune there and run
+    /// the GC handshake on it instead of uploading it again. Off by default: on a remote written
+    /// by this layout (packs) it never finds anything, and it costs one sequential request per new
+    /// commit. Only useful against old loose-layout remotes, and in the GC model tests, which
+    /// need a publisher that adopts a loose orphan.
+    pub fn with_loose_probe(mut self) -> Self {
+        self.loose_probe = true;
+        self
+    }
     /// The authenticated identity lock decisions are made for (NOT `Transaction.author`).
     pub fn with_principal(mut self, p: impl Into<String>) -> Self {
         self.principal = p.into();
@@ -500,6 +523,13 @@ impl<'a> Publisher<'a> {
     /// Tags ((zone, name) -> commit or annotated tag object) to record in the manifest with this
     /// tx. Their objects are uploaded first. A tag the remote already has with another target is
     /// a conflict (tags are never moved by a publish); an identical one is a no-op.
+    /// Delete remote branches `(zone, branch, expected head)` atomically with this tx. Each is a
+    /// compare-and-swap: if the remote head is not `expected` the publish fails `Diverged`. Name
+    /// every deletion in `tx.message` so the transaction id (and the tx log) records it.
+    pub fn with_deletes(mut self, deletes: Vec<(String, String, ObjectId)>) -> Self {
+        self.deletes = deletes;
+        self
+    }
     pub fn with_tags(mut self, tags: BTreeMap<(String, String), ObjectId>) -> Self {
         self.tags = tags;
         self
@@ -577,7 +607,8 @@ impl<'a> Publisher<'a> {
     /// the remote about individual objects. See the module docs for why pruning is sound.
     #[allow(clippy::type_complexity)]
     fn collect_packed(&self) -> Result<(Vec<(ObjectId, Vec<u8>)>, Vec<ObjectId>), PublishError> {
-        // Legacy loose objects this walk pruned at (they need the GC handshake).
+        // Legacy loose objects this walk pruned at (they need the GC handshake). Only filled with
+        // `with_loose_probe`.
         let loose_pruned = std::cell::RefCell::new(Vec::<ObjectId>::new());
         // Objects whose whole closure is on the remote (or will be, see `Load`).
         let mut known: HashSet<ObjectId> = self.tx.updates.iter().filter_map(|u| u.old).collect();
@@ -618,7 +649,13 @@ impl<'a> Publisher<'a> {
             if anc.contains(id) {
                 return Ok(true);
             }
-            // Not derivable from the heads: maybe a legacy loose upload. One HEAD for a commit.
+            // Not derivable from the heads, so the commit is new. By default that is the answer: a
+            // legacy loose copy of it (left by an abandoned loose-layout publish) is not probed for,
+            // because one HEAD per new commit, in sequence, would buy only a skipped re-upload, and
+            // uploading it again inside the pack is always safe. `with_loose_probe` asks anyway.
+            if !self.loose_probe {
+                return Ok(false);
+            }
             let here = self.backend.exists(&object_key(id))?;
             if here {
                 loose_pruned.borrow_mut().push(*id);
@@ -635,7 +672,13 @@ impl<'a> Publisher<'a> {
                     continue;
                 }
                 if let Some(o) = obj {
-                    out.push((id, o.encode()));
+                    // Big blobs (chunks of large files) are not copied into the pack: an empty encoding
+                    // marks them, and `step` uploads each as its own object, in parallel and resumably.
+                    let enc = match &o {
+                        Object::Blob(b) if b.len() >= BIG_UPLOAD => Vec::new(),
+                        _ => o.encode(),
+                    };
+                    out.push((id, enc));
                     done.insert(id);
                     continue;
                 }
@@ -722,6 +765,7 @@ impl<'a> Publisher<'a> {
                 Then::PutPack => State::PutPack,
                 Then::Upload => State::Upload(0),
                 Then::PutTx => State::PutTx,
+                Then::Load => State::Load,
             };
         }
         self.guard = keys;
@@ -744,6 +788,7 @@ impl<'a> Publisher<'a> {
                     Then::PutPack => State::PutPack,
                     Then::Upload => State::Upload(0),
                     Then::PutTx => State::PutTx,
+                    Then::Load => State::Load,
                 };
                 return Ok(Step::Continue);
             }
@@ -814,12 +859,19 @@ impl<'a> Publisher<'a> {
                 self.dedup.clear();
                 match self.collect_packed().and_then(|(st, lp)| self.with_holes(st).map(|st| (st, lp))) {
                     Ok((staged, loose_pruned)) => {
+                        let (bigs, staged): (Vec<_>, Vec<_>) = staged.into_iter().partition(|s| s.1.is_empty());
+                        self.to_upload = bigs.iter().map(|s| s.0).collect();
+                        self.built = None;
                         let then = if staged.len() >= 2 {
                             self.built = Some(build_pack(staged));
-                            Then::PutPack
+                            if self.to_upload.is_empty() {
+                                Then::PutPack
+                            } else {
+                                Then::Upload // big objects first, then the pack that names them
+                            }
                         } else {
                             // zero or one object: a pack would cost more than it saves
-                            self.to_upload = staged.iter().map(|s| s.0).collect();
+                            self.to_upload.extend(staged.iter().map(|s| s.0));
                             Then::Upload
                         };
                         let keys = loose_pruned.iter().map(|id| (object_key(id), tomb_key(id))).collect();
@@ -929,18 +981,34 @@ impl<'a> Publisher<'a> {
                 Ok(Step::Continue)
             }
             State::PutIdx => {
+                // The index is the commit point of the pack, so it follows the pack. The transaction
+                // record does not depend on it for anything the CAS needs: a record whose objects are
+                // not visible yet is as harmless as the one a lost CAS leaves behind (nothing reads
+                // `tx/` except through the manifest's applied window, and the GC never deletes it).
+                // Both are create-only and idempotent, so they go up together: one round trip fewer.
                 let b = self.built.as_ref().expect("built in Collect");
                 let (name, idx) = (b.name.clone(), &b.idx);
                 let key = format!("{}{name}.idx", packfetch::PACK_PREFIX);
-                match self.backend.put_if_absent(&key, idx) {
-                    Ok(created) => {
+                let (tkey, tbytes) = (tx_key(&self.txid), Object::Transaction(self.tx.clone()).encode());
+                let backend = self.backend;
+                let mut res = vcs_objects::chunk::par_map_with(2, 2, |k| {
+                    if k == 0 {
+                        backend.put_if_absent(&key, idx)
+                    } else {
+                        backend.put_if_absent(&tkey, &tbytes)
+                    }
+                });
+                let tx_res = res.pop().expect("two results");
+                let idx_res = res.pop().expect("two results");
+                match (idx_res, tx_res) {
+                    (Ok(created), Ok(_)) => {
                         if !created {
                             self.dedup.push((key, pack_tomb_key(&name)));
                         }
                         let keys = std::mem::take(&mut self.dedup);
-                        self.state = self.guard_then(keys, Then::PutTx);
+                        self.state = self.guard_then(keys, Then::Load);
                     }
-                    Err(e) => {
+                    (Err(e), _) | (_, Err(e)) => {
                         self.state = State::PutIdx;
                         return self.retry(e);
                     }
@@ -950,14 +1018,35 @@ impl<'a> Publisher<'a> {
             State::Upload(i) => {
                 if i >= self.to_upload.len() {
                     self.distrust.extend(self.to_upload.iter().copied());
-                    self.state = State::PutTx;
+                    self.state = if self.built.is_some() { State::PutPack } else { State::PutTx };
                     return Ok(Step::Continue);
                 }
-                let id = self.to_upload[i];
-                let obj = self.local.get(&id)?;
-                match self.backend.put_if_absent(&object_key(&id), &obj.encode()) {
-                    Ok(_) => self.state = State::Upload(i + 1),
-                    Err(e) => {
+                // a batch at a time: big objects go up in parallel; ones the remote already has (an
+                // interrupted earlier publish) cost one existence check instead of a transfer
+                // loose mode uploads in dependency order, one at a time; packed mode only has leaf blobs here
+                let n = (self.to_upload.len() - i).min(if self.packed { UPLOAD_BATCH } else { 1 });
+                let ids = &self.to_upload[i..i + n];
+                let (backend, local) = (self.backend, self.local);
+                let res = vcs_objects::chunk::par_map(n, |k| -> Result<(), PublishError> {
+                    let key = object_key(&ids[k]);
+                    if n > 1 && backend.exists(&key)? {
+                        return Ok(());
+                    }
+                    let obj = local.get(&ids[k])?;
+                    backend.put_if_absent(&key, &obj.encode())?;
+                    Ok(())
+                });
+                let mut failed = None;
+                for r in res {
+                    match r {
+                        Ok(()) => {}
+                        Err(PublishError::Backend(e)) => failed = failed.or(Some(e)),
+                        Err(e) => return Err(e),
+                    }
+                }
+                match failed {
+                    None => self.state = State::Upload(i + n),
+                    Some(e) => {
                         self.state = State::Upload(i);
                         return self.retry(e);
                     }
@@ -1006,7 +1095,22 @@ impl<'a> Publisher<'a> {
                         });
                     }
                 }
+                for (z, b, exp) in &self.deletes {
+                    let found = cur.head(z, b);
+                    if found != Some(*exp) {
+                        self.state = State::Finished;
+                        return Err(PublishError::Diverged {
+                            zone: z.clone(),
+                            branch: b.clone(),
+                            expected: Some(*exp),
+                            found,
+                        });
+                    }
+                }
                 let mut new = cur.clone();
+                for (z, b, _) in &self.deletes {
+                    new.branches.remove(&(z.clone(), b.clone()));
+                }
                 for (n, p) in &self.zones {
                     match cur.zones.get(n) {
                         Some(q) if q == p => {}

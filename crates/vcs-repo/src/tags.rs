@@ -8,7 +8,7 @@ use crate::diff;
 use crate::error::{msg, Error, Result};
 use crate::meta::write_atomic;
 use crate::repo::Repo;
-use crate::treeops::{self, Flat};
+use crate::treeops;
 use std::collections::{BTreeMap, BTreeSet};
 use vcs_objects::names::validate_branch_name;
 use vcs_objects::{AnnotatedTag, Commit, EntryMode, Object, ObjectId, Signature};
@@ -216,6 +216,7 @@ impl Repo {
         let p = base.to_ascii_lowercase();
         if p.len() >= 4 && p.bytes().all(|b| b.is_ascii_hexdigit()) {
             let mut roots: Vec<ObjectId> = refs.branches_of(zone).into_iter().map(|(_, h)| h).collect();
+            roots.extend(refs.detached(zone));
             for ((a, _), id) in &refs.tags {
                 if a == zone {
                     roots.push(self.peel(zone, *id)?.0);
@@ -243,10 +244,6 @@ impl Repo {
         ))
     }
 
-    fn flat_of(&self, commit: Option<&Commit>, prefix: &str) -> Result<Flat> {
-        treeops::flatten(&self.store, commit.map(|c| c.root), prefix)
-    }
-
     /// Commit metadata and its diff against the first parent.
     pub fn show(&self, zone: &str, rev: &str) -> Result<ShowReport> {
         let zone = self.known_zone(zone)?;
@@ -264,8 +261,9 @@ impl Repo {
             Some(p) => Some(self.commit_obj(p)?),
             None => None,
         };
-        let old = self.flat_of(parent.as_ref(), &prefix)?;
-        let new = self.flat_of(Some(&commit), &prefix)?;
+        // only the paths that differ: equal subtrees are not read
+        let d = treeops::diff_trees_files(&self.store, parent.as_ref().map(|c| c.root), Some(commit.root), &prefix)?;
+        let (old, new) = (d.old, d.new);
         let mut paths: BTreeSet<&String> = old.keys().collect();
         paths.extend(new.keys());
         let mut out = String::new();

@@ -76,3 +76,25 @@ fn fetch_downloads_only_new_pack_indexes_and_repairs_a_damaged_cache() {
     c.fetch(&log, None).unwrap();
     assert_eq!(idx_gets(&log.calls()).len(), 0, "repaired entries are served locally");
 }
+
+#[test]
+fn torn_or_empty_manifest_cache_is_ignored_by_fetch() {
+    // the cache is written without fsync: a crash may leave it empty or cut short
+    let d = tempfile::tempdir().unwrap();
+    let o = Repo::init(&d.path().join("origin")).unwrap();
+    let mem = MemBackend::new();
+    commit_publish(&o, &mem, 0);
+    let c = Repo::clone_from(&mem, "mem", &d.path().join("clone"), None).unwrap();
+    let cache = c.worktree().join(".vcs/remote-manifest");
+    for n in [0usize, 7, 40] {
+        commit_publish(&o, &mem, n + 10);
+        let full = fs::read(&cache).unwrap_or_default();
+        fs::write(&cache, &full[..full.len().min(n)]).unwrap();
+        let got = c.fetch(&mem, None).unwrap();
+        assert!(!got.is_empty());
+        assert_eq!(
+            c.remote_refs().unwrap().head("root", "main"),
+            o.refs().unwrap().head("root", "main")
+        );
+    }
+}

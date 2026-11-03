@@ -8,7 +8,7 @@
 //! Policy options: `--policy <file> [--allowed-signers <file>] [--revoked-signers <file>] [--max-lease-secs N] [--skew-epsilon-ms N]` (docs/deploy.md).
 //! Operations: `--config <server.toml>` (flags override it), `--log-format json|text`, `--log-level <level>`,
 //! `--shutdown-grace <secs>`, `--metrics-token <token|@file>`, `--backend-retries N`, `--backend-timeout <secs>`,
-//! `--breaker-threshold N`, `--breaker-cooldown <secs>`. SIGTERM/SIGINT drain and exit 0; SIGHUP reloads.
+//! `--breaker-threshold N`, `--breaker-cooldown <secs>`, `--cache-dir <dir> [--cache-size <bytes>]` (disk cache of immutable reads). SIGTERM/SIGINT drain and exit 0; SIGHUP reloads.
 //! Without TLS the server speaks plain HTTP (docs/server.md).
 
 use std::path::Path;
@@ -18,9 +18,9 @@ use vcs_server::log::{Format, Level, Logger, V};
 use vcs_server::{auth, backend_url, AuditLog, Config, Policy, RateLimit, Server, TokenTable};
 
 const USAGE: &str = "usage: vcs-server (--root <dir> | --backend <s3://...|dir>) --tokens <file> [--listen host:port] [--audit-log <file> [--audit-key <file>]] \
-[--rate-limit <burst>,<per-sec>] [--max-connections <n>] [--max-body <bytes>] [--policy <file>] [--allowed-signers <file>] [--revoked-signers <file>] [--max-lease-secs N] [--skew-epsilon-ms N] [--tls-cert <pem> --tls-key <pem> [--tls-client-ca <pem>]] \
+[--rate-limit <burst>,<per-sec>] [--max-connections <n>] [--max-conns-per-ip <n>] [--auth-fail-limit <burst>,<per-sec>] [--max-body <bytes>] [--max-inflight-body <bytes>] [--cache-dir <dir> [--cache-size <bytes>]] [--policy <file>] [--allowed-signers <file>] [--revoked-signers <file>] [--max-lease-secs N] [--skew-epsilon-ms N] [--tls-cert <pem> --tls-key <pem> [--tls-client-ca <pem>]] \
 [--config <file>] [--log-format json|text] [--log-level error|warn|info|debug] [--shutdown-grace <secs>] [--metrics-token <token|@file>] \
-[--backend-retries N] [--backend-timeout <secs>] [--breaker-threshold N] [--breaker-cooldown <secs>]\n       \
+[--backend-retries N] [--backend-timeout <secs>] [--breaker-threshold N] [--breaker-cooldown <secs>] [--check-client-cannot-write-manifest]\n       \
 vcs-server hash-token <token>\n       vcs-server audit verify <file> [--key <file>]";
 
 fn die(m: &str) -> ! {
@@ -84,15 +84,20 @@ fn main() {
     }
     let (mut root, mut tokens, mut listen) = (None, None, "127.0.0.1:8480".to_owned());
     let (mut audit_log, mut audit_key, mut rate, mut maxc, mut maxb) = (None, None, None, None, None);
+    let mut maxib: Option<String> = None;
+    let (mut maxc_ip, mut auth_fail): (Option<String>, Option<String>) = (None, None);
     let (mut tls_cert, mut tls_key, mut tls_client_ca) = (None, None, None);
     let (mut backend_arg, mut policy_path, mut max_lease, mut eps) = (None, None, None, None);
     let (mut log_format, mut log_level, mut grace, mut metrics_tok) = (None, None, None, None);
     let (mut retries, mut timeout, mut brk_n, mut brk_cool) = (None, None, None, None);
     let (mut allowed_signers, mut revoked_signers) = (None, None);
+    let mut check_client = false;
+    let (mut cache_dir, mut cache_size): (Option<String>, Option<String>) = (None, None);
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         let mut val = |n: &str| it.next().unwrap_or_else(|| die(&format!("{n} needs a value")));
         match a.as_str() {
+            "--check-client-cannot-write-manifest" => check_client = true,
             "--root" => root = Some(val("--root")),
             "--tokens" => tokens = Some(val("--tokens")),
             "--listen" => listen = val("--listen"),
@@ -100,10 +105,15 @@ fn main() {
             "--audit-key" => audit_key = Some(val("--audit-key")),
             "--rate-limit" => rate = Some(val("--rate-limit")),
             "--max-connections" => maxc = Some(val("--max-connections")),
+            "--max-conns-per-ip" => maxc_ip = Some(val("--max-conns-per-ip")),
+            "--auth-fail-limit" => auth_fail = Some(val("--auth-fail-limit")),
             "--max-body" => maxb = Some(val("--max-body")),
+            "--max-inflight-body" => maxib = Some(val("--max-inflight-body")),
             "--tls-cert" => tls_cert = Some(val("--tls-cert")),
             "--tls-key" => tls_key = Some(val("--tls-key")),
             "--tls-client-ca" => tls_client_ca = Some(val("--tls-client-ca")),
+            "--cache-dir" => cache_dir = Some(val("--cache-dir")),
+            "--cache-size" => cache_size = Some(val("--cache-size")),
             "--backend" => backend_arg = Some(val("--backend")),
             "--policy" => policy_path = Some(val("--policy")),
             "--allowed-signers" => allowed_signers = Some(val("--allowed-signers")),
@@ -147,7 +157,23 @@ fn main() {
     if table.is_empty() {
         die("tokens file has no entries");
     }
+    if check_client {
+        backend_url::check_client_cannot_write_manifest(&backend_url, &|k| std::env::var(k).ok()).unwrap_or_else(|e| die(&e));
+    }
     let backend = backend_url::open(&backend_url).unwrap_or_else(|e| die(&e));
+    // Persistent cache of immutable reads (indexes, pack blocks, objects): a restarted server
+    // answers a warm clone from disk and asks the store only for the manifest and the listing.
+    let backend: std::sync::Arc<dyn vcs_remote::Backend> = match cache_dir {
+        None => backend,
+        Some(d) => {
+            let cap = cache_size.map_or(8u64 << 30, |n| {
+                n.parse().unwrap_or_else(|_| die("--cache-size expects a number of bytes"))
+            });
+            std::sync::Arc::new(
+                vcs_remote::DiskCacheBackend::new(backend, d, cap).unwrap_or_else(|e| die(&format!("cannot use --cache-dir: {e}"))),
+            )
+        }
+    };
     let mut cfg = Config::new(table);
     #[cfg(unix)]
     let (cfg_tokens, cfg_policy) = (tokens.clone(), policy_path.clone());
@@ -209,11 +235,30 @@ fn main() {
         });
         cfg.rate_limit = Some(parsed.unwrap_or_else(|| die("--rate-limit expects <burst>,<per-sec> (e.g. 20,5)")));
     }
+    if let Some(n) = maxc_ip {
+        cfg.max_conns_per_ip = n
+            .parse()
+            .unwrap_or_else(|_| die("--max-conns-per-ip expects a number (0 = unlimited)"));
+    }
+    if let Some(r) = auth_fail {
+        let parsed = r.split_once(',').and_then(|(b, p)| {
+            Some(RateLimit {
+                burst: b.parse().ok()?,
+                per_sec: p.parse().ok()?,
+            })
+        });
+        cfg.auth_fail_limit = Some(parsed.unwrap_or_else(|| die("--auth-fail-limit expects <burst>,<per-sec> (e.g. 20,0.5)")));
+    }
     if let Some(n) = maxc {
         cfg.max_connections = n.parse().unwrap_or_else(|_| die("--max-connections expects a number"));
     }
     if let Some(n) = maxb {
         cfg.max_body = n.parse().unwrap_or_else(|_| die("--max-body expects a number of bytes"));
+    }
+    if let Some(n) = maxib {
+        cfg.max_inflight_body = n
+            .parse()
+            .unwrap_or_else(|_| die("--max-inflight-body expects a number of bytes (0 = unlimited)"));
     }
     if let Some(p) = audit_log {
         let key = audit_key.as_deref().map(read_key);

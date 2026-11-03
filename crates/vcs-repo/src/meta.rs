@@ -7,24 +7,43 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use vcs_objects::codec::{Reader, Writer};
-use vcs_objects::names::{paths_overlap, validate_branch_name, validate_path, validate_zone_name};
+use vcs_objects::names::{
+    paths_overlap, validate_branch_name, validate_path, validate_stored_branch_name, validate_zone_name, DETACHED_BRANCH,
+};
 use vcs_objects::{ObjectId, RefUpdate};
 
 pub const ROOT_ZONE: &str = "root";
 pub const DEFAULT_BRANCH: &str = "main";
-const STATE_VERSION: u8 = 1;
+pub(crate) const STATE_VERSION: u8 = 1;
 
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    write_atomic_inner(path, bytes, true)
+    write_atomic_inner(path, bytes, true, true)
+}
+
+/// [`write_atomic`] without the fsync of the temp file, for state that is replaced by rename and
+/// that git itself never syncs (the index). A crash of the process still leaves the old file or
+/// the new one, never a mix (the rename is atomic); only a power cut right after the rename can
+/// leave a short file on a file system that does not flush replaced-by-rename data (ext4 and XFS
+/// do). Crash injection still counts these writes.
+pub(crate) fn write_atomic_nosync(path: &Path, bytes: &[u8]) -> Result<()> {
+    write_atomic_inner(path, bytes, true, false)
 }
 
 /// Like [`write_atomic`] for pure caches (never state): crash injection does not count these
 /// writes, because a failed cache write is ignored by design.
 pub(crate) fn write_cache_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    write_atomic_inner(path, bytes, false)
+    write_atomic_inner(path, bytes, false, true)
 }
 
-fn write_atomic_inner(path: &Path, bytes: &[u8], inject: bool) -> Result<()> {
+/// Like [`write_cache_atomic`] without the fsync, for caches whose readers validate (and ignore)
+/// anything undecodable: a crash may leave an empty or torn file, which only costs a re-read.
+pub(crate) fn write_cache_nosync(path: &Path, bytes: &[u8]) -> Result<()> {
+    let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+    io(&tmp, fs::write(&tmp, bytes))?;
+    io(path, fs::rename(&tmp, path))
+}
+
+fn write_atomic_inner(path: &Path, bytes: &[u8], inject: bool, sync: bool) -> Result<()> {
     let tmp = path.with_extension(format!("tmp{}", std::process::id()));
     if inject && crate::failpoint::tick() {
         // Simulated crash mid-write: a torn temp file is left behind, the target is untouched.
@@ -37,7 +56,9 @@ fn write_atomic_inner(path: &Path, bytes: &[u8], inject: bool) -> Result<()> {
     {
         let mut f = io(&tmp, fs::File::create(&tmp))?;
         io(&tmp, f.write_all(bytes))?;
-        io(&tmp, f.sync_all())?;
+        if sync {
+            io(&tmp, f.sync_all())?;
+        }
     }
     io(path, fs::rename(&tmp, path))
 }
@@ -275,12 +296,17 @@ impl Refs {
     pub fn head(&self, zone: &str, branch: &str) -> Option<ObjectId> {
         self.branches.get(&(zone.to_owned(), branch.to_owned())).copied()
     }
+    /// Named branches of `zone` (the internal detached-HEAD ref is not a branch; see [`Refs::detached`]).
     pub fn branches_of(&self, zone: &str) -> Vec<(String, ObjectId)> {
         self.branches
             .iter()
-            .filter(|((a, _), _)| a == zone)
+            .filter(|((a, b), _)| a == zone && b != DETACHED_BRANCH)
             .map(|((_, b), id)| (b.clone(), *id))
             .collect()
+    }
+    /// The commit `zone`'s detached HEAD points at, if the zone has one.
+    pub fn detached(&self, zone: &str) -> Option<ObjectId> {
+        self.head(zone, DETACHED_BRANCH)
     }
     /// Compare-and-set a batch of updates, all-or-nothing.
     pub fn apply(&mut self, updates: &[RefUpdate]) -> Result<()> {
@@ -329,7 +355,7 @@ impl Refs {
             let a = r.str(64).map_err(e)?;
             let b = r.str(200).map_err(e)?;
             validate_zone_name(&a)?;
-            validate_branch_name(&b)?;
+            validate_stored_branch_name(&b)?;
             refs.branches.insert((a, b), r.id().map_err(e)?);
         }
         for _ in 0..r.count(33).map_err(e)? {
@@ -402,7 +428,7 @@ impl Workspace {
             let a = r.str(64).map_err(e)?;
             let b = r.str(200).map_err(e)?;
             validate_zone_name(&a)?;
-            validate_branch_name(&b)?;
+            validate_stored_branch_name(&b)?;
             ws.subs.insert(a, b);
         }
         if v2 {

@@ -15,15 +15,23 @@ mod cmds;
 mod config;
 mod describe;
 mod difftool;
+mod everyday;
 mod generate;
+mod gitmap;
 mod grep;
+mod histcli;
 mod histcmds;
 mod hooks;
 mod json;
 mod lockable_cmd;
 mod logfmt;
 mod logopts;
+mod ontology;
+mod p4map;
+mod patchcmd;
 mod plumb;
+mod quick;
+mod rebase_i;
 mod remote;
 mod shelve_cmd;
 mod signing_cmd;
@@ -221,8 +229,10 @@ enum Cmd {
         /// Show the signature verdict of each commit (against `signing.allowedSigners`)
         #[arg(long)]
         show_signature: bool,
-        /// Branch (default: the checked-out one)
+        /// Branch or revision range (default: the checked-out branch): `A`, `A..B`, `A...B`, `^A`
         branch: Option<String>,
+        /// More revisions (`vcs log main ^dev`, see also --not and --all)
+        revs: Vec<String>,
         /// Only commits that change these paths (after `--`)
         #[arg(last = true)]
         paths: Vec<String>,
@@ -233,6 +243,8 @@ enum Cmd {
     /// List branches of the current zone, or create one (at the checked-out head)
     Branch {
         name: Option<String>,
+        /// Start point (any revision) of the new branch; with -m/-M: the new name
+        start: Option<String>,
         #[arg(long)]
         zone: Option<String>,
         /// Delete the named branch instead of creating it (refuses the checked-out branch)
@@ -241,6 +253,15 @@ enum Cmd {
         /// With --delete: delete even if its commits are not reachable from another branch or snapshot
         #[arg(long, requires = "delete")]
         force: bool,
+        /// Create the branch at this commit (full id or prefix) instead of the checked-out head
+        #[arg(long, value_name = "COMMIT", conflicts_with = "delete")]
+        at: Option<String>,
+        /// Rename a branch: `-m <old> <new>`, or `-m <new>` for the checked-out one
+        #[arg(short = 'm', long = "move", conflicts_with_all = ["delete", "force_move"])]
+        rename: bool,
+        /// Like -m but replace an existing branch of that name (never the checked-out one)
+        #[arg(short = 'M', long = "force-move", conflicts_with = "delete")]
+        force_move: bool,
     },
     /// Set tracked changes aside (push, pop, list, drop); untracked files are left alone
     #[command(subcommand)]
@@ -251,6 +272,9 @@ enum Cmd {
     Shelves(shelve_cmd::ShelvesArgs),
     /// Apply a shelf from the remote to the working tree (staged, like `stash pop`)
     Unshelve(shelve_cmd::UnshelveArgs),
+    /// Run a Perforce command in its vcs form, one to one (`vcs p4 --list` shows the map, `--explain` the translation; docs/p4-to-vcs.md)
+    #[command(disable_help_flag = true)]
+    P4(p4map::P4Args),
     /// Materialize only some paths of a zone (set, add, remove, list, disable); the rest stays tracked, not deleted
     #[command(subcommand)]
     Sparse(SparseCmd),
@@ -274,6 +298,12 @@ enum Cmd {
         #[arg(short = 'd', long)]
         delete: bool,
     },
+    /// Write commits as mail-format patch files (one per commit: author, date, message, diff)
+    FormatPatch(patchcmd::FormatPatchArgs),
+    /// Apply a unified diff (from `vcs diff`, `vcs show`, `vcs format-patch` or git) to the working tree
+    Apply(patchcmd::ApplyArgs),
+    /// Apply mail-format patches as commits, keeping author, date and message
+    Am(patchcmd::AmArgs),
     /// Show a commit (default HEAD) with its diff against the first parent
     Show {
         rev: Option<String>,
@@ -297,11 +327,18 @@ enum Cmd {
     },
     #[command(flatten)]
     More(cmds::More),
-    /// Switch branch (in the zone containing cwd, or --zone)
+    /// Switch branch (in the zone containing cwd, or --zone); `--detach` checks out any revision without a branch
     Switch {
+        /// Branch (with --detach: any revision: tag, commit id prefix, HEAD~2, branch)
         branch: String,
         #[arg(long)]
         zone: Option<String>,
+        /// Create the branch (at the checked-out head) and switch to it
+        #[arg(short = 'c', long)]
+        create: bool,
+        /// Check the revision out as a detached HEAD of the zone (commits made there belong to no branch)
+        #[arg(short = 'd', long, conflicts_with = "create")]
+        detach: bool,
     },
     /// Merge a branch into the checked-out branch (fast-forward when possible)
     Merge {
@@ -332,12 +369,38 @@ enum Cmd {
         /// Do not run the assistant even if the `merge.assist` setting is configured
         #[arg(long, conflicts_with = "assist")]
         no_assist: bool,
+        /// Always create a merge commit, even when a fast-forward is possible
+        #[arg(long, conflicts_with_all = ["squash", "ff_only"])]
+        no_ff: bool,
+        /// Stage the merged result without a merge commit; the branch does not move (then `vcs commit`)
+        #[arg(long, conflicts_with = "ff_only")]
+        squash: bool,
+        /// Refuse unless the merge is a fast-forward (or already up to date)
+        #[arg(long)]
+        ff_only: bool,
+        /// Message for the merge commit
+        #[arg(short = 'm', long)]
+        message: Option<String>,
     },
     /// Re-apply the change of one commit onto the checked-out branch
     #[command(name = "cherry-pick")]
     CherryPick {
-        /// Commit id (or unique prefix), branch name or HEAD
-        rev: String,
+        /// Commit id (or unique prefix), branch name, HEAD, or a range `A..B` (the commits of B that A lacks, oldest first); several allowed
+        #[arg(required = true)]
+        revs: Vec<String>,
+        /// Zone (default: the zone containing the current directory)
+        #[arg(long)]
+        zone: Option<String>,
+    },
+    /// List the commits of a branch with `+` (no equivalent patch upstream) or `-` (an upstream commit has the same patch)
+    Cherry {
+        /// Branch or revision to compare against
+        upstream: String,
+        /// Commits to list (default HEAD)
+        head: Option<String>,
+        /// Print the subject after each id
+        #[arg(short = 'v', long)]
+        verbose: bool,
         /// Zone (default: the zone containing the current directory)
         #[arg(long)]
         zone: Option<String>,
@@ -363,6 +426,25 @@ enum Cmd {
         /// Abandon the in-progress rebase and restore the original branch
         #[arg(long)]
         abort: bool,
+        /// Drop the commit the rebase is stopped on (conflicts) and carry on
+        #[arg(long)]
+        skip: bool,
+        /// Edit the todo list (pick/reword/edit/squash/fixup/drop/exec, reorder) in
+        /// $GIT_SEQUENCE_EDITOR / $VCS_SEQUENCE_EDITOR / core.editor / $EDITOR; `onto` may be any revision such as HEAD~3
+        #[arg(short = 'i', long)]
+        interactive: bool,
+        /// With -i: move `fixup! X` / `squash! X` commits next to X and fold them
+        #[arg(long)]
+        autosquash: bool,
+        /// Run this shell command after each replayed commit (repeatable); a failure stops the rebase
+        #[arg(short = 'x', long = "exec", value_name = "COMMAND")]
+        exec: Vec<String>,
+        /// Replay onto NEWBASE (any revision) the commits that the positional upstream lacks (`git rebase --onto`)
+        #[arg(long = "onto", value_name = "NEWBASE")]
+        new_base: Option<String>,
+        /// With --onto: replay every commit of the branch, root commit included (no upstream)
+        #[arg(long, requires = "new_base")]
+        root: bool,
         /// Do not use the structural Rust merge (only matters when built with `--features structural`)
         #[arg(long)]
         no_structural: bool,
@@ -461,6 +543,37 @@ enum Cmd {
         /// First re-upload any object the remote lost beneath objects it still has (checks every reachable object)
         #[arg(long)]
         repair: bool,
+        /// Publish only these branches (default: every checked-out branch)
+        branches: Vec<String>,
+        /// Replace a remote branch that is not an ancestor of yours, but only if it is still the
+        /// head you last fetched (a lease). Needs the branch name(s)
+        #[arg(long)]
+        force: bool,
+        /// Like --force; `=BRANCH` leases that branch, `=BRANCH:ID` leases it against the remote head starting with ID
+        #[arg(long, value_name = "BRANCH[:ID]", num_args = 0..=1, require_equals = true, default_missing_value = "")]
+        force_with_lease: Vec<String>,
+        /// Replace the remote head whatever it is when the publish reads it (still one atomic
+        /// compare-and-swap, but not checked against what you last fetched)
+        #[arg(long)]
+        force_without_lease: bool,
+        /// Delete this remote branch (only if it is the head you last fetched; repeatable)
+        #[arg(long = "delete", value_name = "BRANCH")]
+        delete: Vec<String>,
+        /// Publish only the tags, move no branch (`git push --tags`)
+        #[arg(long, conflicts_with_all = ["mirror", "delete"])]
+        tags: bool,
+        /// Also delete every remote branch of a subscribed zone that has no local branch (`git push --prune`);
+        /// each deletion needs the head you last fetched (or your lease) and is audited
+        #[arg(long)]
+        prune: bool,
+        /// Make the remote match this repo: force every checked-out branch (leased, like --force-with-lease),
+        /// prune remote branches with no local one, and publish tags (`git push --mirror`)
+        #[arg(long, conflicts_with_all = ["tags", "delete"])]
+        mirror: bool,
+        /// When the remote branch moved, fetch, merge it in (only if the merge is clean) and publish again,
+        /// up to N times with a short randomized wait (default 20; env VCS_PUBLISH_AUTOMERGE=N also turns it on)
+        #[arg(long, value_name = "N", num_args = 0..=1, require_equals = true, default_missing_value = "20")]
+        auto_merge: Option<u32>,
     },
     /// Lock files on the remote so others cannot publish changes to them
     Lock {
@@ -483,6 +596,14 @@ enum Cmd {
     Fetch {
         /// Fetch from this bundle file instead of the remote
         source: Option<PathBuf>,
+        #[arg(long = "zone")]
+        zones: Vec<String>,
+        /// Print the number of remote requests and bytes transferred
+        #[arg(long)]
+        stats: bool,
+    },
+    /// Download the file contents of subscribed zones' heads now (to work offline later)
+    Prefetch {
         #[arg(long = "zone")]
         zones: Vec<String>,
         /// Print the number of remote requests and bytes transferred
@@ -627,6 +748,10 @@ enum ZoneCmd {
     Apply(autozone::ApplyArgs),
     /// Subscribe to the minimal zone set for a path, symbol, task or person, plus their dependencies
     Subscribe(autozone::ForArgs),
+    /// Machine-readable description of zones: purpose, owners, dependencies, subscriptions, locks, history (docs/zone-ontology.md)
+    Describe(ontology::DescribeArgs),
+    /// Zone dependency graph with reasons, transitive closures and path index (docs/zone-ontology.md)
+    Graph(ontology::GraphArgs),
 }
 
 #[derive(Subcommand, Clone)]
@@ -727,6 +852,11 @@ enum StashCmd {
         /// Entry number from `stash list` (default: newest)
         index: Option<usize>,
     },
+    /// Apply a stash entry (staged) and keep it
+    Apply {
+        /// Entry number from `stash list` (default: newest)
+        index: Option<usize>,
+    },
     /// List stash entries, newest first
     List,
     /// Forget a stash entry
@@ -764,7 +894,7 @@ fn open() -> Result<(Repo, PathBuf), Error> {
     Ok((Repo::discover(&cwd)?, cwd))
 }
 
-fn zone_of_cwd(repo: &Repo, cwd: &Path, explicit: Option<String>) -> Result<String, Error> {
+pub(crate) fn zone_of_cwd(repo: &Repo, cwd: &Path, explicit: Option<String>) -> Result<String, Error> {
     if let Some(a) = explicit {
         return Ok(a);
     }
@@ -784,7 +914,30 @@ fn print_pick(zone: &str, out: MergeOutcome, verb: &str) -> Result<(), Error> {
             println!("Inspect with `vcs conflict list|show <path>`; give up with `vcs merge --abort`.");
             return Err(Error::Msg(format!("{verb} has conflicts")));
         }
-        MergeOutcome::UpToDate | MergeOutcome::FastForward { .. } => println!("nothing to do"),
+        MergeOutcome::UpToDate | MergeOutcome::FastForward { .. } | MergeOutcome::Squashed { .. } => println!("nothing to do"),
+    }
+    Ok(())
+}
+
+fn print_pick_seq(zone: &str, seq: vcs_repo::PickSeq) -> Result<(), Error> {
+    for (src, new) in &seq.done {
+        println!("{zone}: cherry-picked {} as {}", src.short(), new.short());
+    }
+    for src in &seq.skipped {
+        println!("{zone}: skipped {} (its change is already here)", src.short());
+    }
+    if let Some((src, paths, rest)) = seq.stopped {
+        println!("cherry-pick stopped at {}: {} conflict(s)", src.short(), paths.len());
+        for p in &paths {
+            println!("  conflict: {p}");
+        }
+        println!("\nResolve the files, `vcs add` each one, then `vcs commit -m <message>`.");
+        if !rest.is_empty() {
+            let ids: Vec<String> = rest.iter().map(|i| i.to_hex()).collect();
+            println!("Then pick the rest: vcs cherry-pick {}", ids.join(" "));
+        }
+        println!("Inspect with `vcs conflict list|show <path>`; give up with `vcs merge --abort`.");
+        return Err(Error::Msg("cherry-pick has conflicts".into()));
     }
     Ok(())
 }
@@ -820,6 +973,9 @@ fn run(cli: Cli) -> Result<(), Error> {
         return cmds::dispatch(m, cli.json);
     }
     if let Some(r) = autozone::intercept(&cli.cmd, cli.json) {
+        return r;
+    }
+    if let Some(r) = ontology::intercept(&cli.cmd, cli.json) {
         return r;
     }
     if cli.json {
@@ -944,7 +1100,12 @@ fn run(cli: Cli) -> Result<(), Error> {
             let defs = repo.zones()?;
             for (zone, branch, id) in &rep.commits {
                 let zone = defs.label(zone);
-                println!("[{zone}/{branch} {}] {}", id.short(), message.lines().next().unwrap_or(""));
+                println!(
+                    "[{zone}/{} {}] {}",
+                    histcli::ref_label(branch),
+                    id.short(),
+                    message.lines().next().unwrap_or("")
+                );
             }
             if rep.commits.len() > 1 {
                 println!(
@@ -974,7 +1135,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                 } else {
                     format!(" ({}/)", a.path)
                 };
-                println!("zone {}{loc}: branch {} @ {}", defs.label(&a.zone), a.branch, opt_short(a.head));
+                println!("zone {}{loc}: {}", defs.label(&a.zone), histcli::head_line(&a.branch, a.head));
                 if !a.staged.is_empty() {
                     println!("  staged:");
                     for c in &a.staged {
@@ -1008,6 +1169,17 @@ fn run(cli: Cli) -> Result<(), Error> {
                     println!("  (rebase in progress: fix, `vcs add`, `vcs rebase --continue`; or `vcs rebase --abort`)");
                 } else {
                     println!("  (fix, `vcs add`, `vcs commit`; or `vcs merge --abort`)");
+                }
+            }
+            if let Some(rs) = repo.rebase_state()? {
+                if rs.stop != vcs_repo::Stop::Conflict {
+                    println!(
+                        "rebase of {}/{} onto {} stopped ({} step(s) left): amend or commit, then `vcs rebase --continue`; or `vcs rebase --abort`",
+                        rs.zone,
+                        rs.branch,
+                        rs.onto_label,
+                        rs.todo.len()
+                    );
                 }
             }
             lockable_cmd::status_section(&repo, &st)?;
@@ -1136,10 +1308,13 @@ fn run(cli: Cli) -> Result<(), Error> {
             x,
             show_signature,
             branch,
+            revs,
             paths,
         } => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
+            let mut x = x;
+            x.revs = revs;
             let oneline = oneline || config::Config::load()?.oneline_log()?;
             let opts = logfmt::Opts {
                 oneline,
@@ -1220,37 +1395,22 @@ fn run(cli: Cli) -> Result<(), Error> {
                 }
             }
         }
+        Cmd::FormatPatch(a) => {
+            let (repo, cwd) = open()?;
+            patchcmd::format_patch(&repo, &cwd, a)?;
+        }
+        Cmd::Apply(a) => {
+            let (repo, _) = open()?;
+            patchcmd::apply(&repo, a)?;
+        }
+        Cmd::Am(a) => {
+            let (repo, _) = open()?;
+            patchcmd::am(&repo, a)?;
+        }
         Cmd::Show { rev, zone, opts } => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
-            let rep = repo.show(&zone, rev.as_deref().unwrap_or("HEAD"))?;
-            let defs = repo.zones()?;
-            if let Some(t) = &rep.tag {
-                println!("tag {}", t.name);
-                println!("Tagger: {} <{}>", t.tagger.name, t.tagger.email);
-                println!("Date:   {}", t.tagger.timestamp);
-                if !t.signature.is_empty() {
-                    let trust = signing_cmd::load_trust(&config::Config::load()?)?;
-                    println!("Signature: {}", signing_cmd::describe(&vcs_objects::signing::verify_tag(t, &trust)));
-                }
-                for l in t.message.lines() {
-                    println!("    {l}");
-                }
-                println!();
-            }
-            let c = &rep.commit;
-            println!("commit {}", rep.id);
-            println!("change {}   zone {}", c.change_id, defs.label(&c.zone));
-            for p in &c.parents {
-                println!("parent {p}");
-            }
-            println!("Author: {} <{}>", c.author.name, c.author.email);
-            println!("Date:   {}", c.author.timestamp);
-            for l in vcs_objects::signing::strip_commit_signature(&c.message).lines() {
-                println!("    {l}");
-            }
-            println!();
-            print!("{}", difftool::show_diff(&repo, &rep, &opts)?);
+            difftool::print_show(&repo, &zone, rev.as_deref().unwrap_or("HEAD"), &opts)?;
         }
         Cmd::Blame {
             path,
@@ -1263,16 +1423,32 @@ fn run(cli: Cli) -> Result<(), Error> {
             let lines = repo.blame_follow(&rel, rev.as_deref(), find_renames.then_some(rename_threshold * 10))?;
             let w = lines.len().to_string().len();
             let names = lines.iter().any(|l| l.path != rel);
+            // one write, not one per line (stdout is line buffered)
+            let mut out = String::new();
             for l in lines {
-                if names {
-                    println!("{} {} ({:>w$}) {}", l.commit.short(), l.path, l.line_no, l.text);
+                use std::fmt::Write as _;
+                let _ = if names {
+                    writeln!(out, "{} {} ({:>w$}) {}", l.commit.short(), l.path, l.line_no, l.text)
                 } else {
-                    println!("{} ({:>w$}) {}", l.commit.short(), l.line_no, l.text);
-                }
+                    writeln!(out, "{} ({:>w$}) {}", l.commit.short(), l.line_no, l.text)
+                };
             }
+            print!("{out}");
         }
         Cmd::Gen(g) => generate::run(g, <Cli as clap::CommandFactory>::command())?,
-        Cmd::Branch { name, zone, delete, force } => {
+        Cmd::Branch {
+            name,
+            start,
+            zone,
+            delete,
+            force,
+            at,
+            rename,
+            force_move,
+        } => {
+            if histcli::branch_ext(&name, &start, zone.clone(), rename, force_move)? {
+                return Ok(());
+            }
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
             match name {
@@ -1282,20 +1458,22 @@ fn run(cli: Cli) -> Result<(), Error> {
                 }
                 None if delete => return Err(Error::Msg("--delete needs a branch name".into())),
                 Some(n) => {
-                    let h = repo.create_branch(&zone, &n)?;
+                    let h = match &at {
+                        Some(c) => repo.create_branch_at(&zone, &n, c)?,
+                        None => repo.create_branch(&zone, &n)?,
+                    };
                     println!("created {zone}/{n} at {}", h.short());
                 }
+                None if at.is_some() => return Err(Error::Msg("--at needs a branch name".into())),
                 None => print_branches(&repo, &zone)?,
             }
         }
-        Cmd::Switch { branch, zone } => {
-            let (repo, cwd) = open()?;
-            let zone = zone_of_cwd(&repo, &cwd, zone)?;
-            let old = hooks::head_arg(&repo, &zone);
-            repo.checkout(&zone, &branch)?;
-            println!("zone {zone}: switched to {branch}");
-            hooks::fire_simple(&repo, &zone, "post-checkout", &[old, hooks::head_arg(&repo, &zone)])?;
-        }
+        Cmd::Switch {
+            branch,
+            zone,
+            create,
+            detach,
+        } => histcli::switch(&branch, zone, create, detach)?,
         Cmd::Merge {
             branch,
             zone,
@@ -1306,6 +1484,10 @@ fn run(cli: Cli) -> Result<(), Error> {
             assist,
             assist_timeout,
             no_assist,
+            no_ff,
+            squash,
+            ff_only,
+            message,
         } => {
             let (mut repo, cwd) = open()?;
             repo.set_structural(!no_structural && config::Config::load()?.structural()?);
@@ -1322,13 +1504,19 @@ fn run(cli: Cli) -> Result<(), Error> {
             };
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
             hooks::fire_simple(&repo, &zone, "pre-merge", std::slice::from_ref(&branch))?;
-            let out = if remote {
-                repo.merge_remote(&zone, &branch, author()?)?
-            } else {
-                repo.merge(&zone, &branch, author()?)?
+            let opts = vcs_repo::MergeOpts {
+                no_ff,
+                squash,
+                ff_only,
+                message,
             };
+            let out = repo.merge_with(&zone, &branch, remote, &opts, author()?)?;
             match out {
                 MergeOutcome::UpToDate => println!("already up to date"),
+                MergeOutcome::Squashed { changed } => {
+                    println!("{zone}: squashed {branch}: {changed} path(s) staged, branch not moved");
+                    println!("Review with `vcs status`, then record one commit with `vcs commit -m <message>`.");
+                }
                 MergeOutcome::FastForward { from, to } => {
                     println!("{zone}: fast-forward {} -> {}", opt_short(from), to.short());
                     hooks::fire_simple(&repo, &zone, "post-merge", std::slice::from_ref(&branch))?;
@@ -1351,11 +1539,32 @@ fn run(cli: Cli) -> Result<(), Error> {
                 }
             }
         }
-        Cmd::CherryPick { rev, zone } => {
+        Cmd::CherryPick { revs, zone } => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
-            let out = repo.cherry_pick(&zone, &rev, author()?)?;
-            print_pick(&zone, out, "cherry-pick")?;
+            if revs.len() == 1 && !revs[0].contains("..") {
+                let out = repo.cherry_pick(&zone, &revs[0], author()?)?;
+                print_pick(&zone, out, "cherry-pick")?;
+            } else {
+                print_pick_seq(&zone, repo.cherry_pick_many(&zone, &revs, author()?)?)?;
+            }
+        }
+        Cmd::Cherry {
+            upstream,
+            head,
+            verbose,
+            zone,
+        } => {
+            let (repo, cwd) = open()?;
+            let zone = zone_of_cwd(&repo, &cwd, zone)?;
+            for (id, equivalent, subject) in repo.cherry(&zone, &upstream, head.as_deref().unwrap_or("HEAD"))? {
+                let sign = if equivalent { '-' } else { '+' };
+                if verbose {
+                    println!("{sign} {} {subject}", id.short());
+                } else {
+                    println!("{sign} {}", id.to_hex());
+                }
+            }
         }
         Cmd::Revert { rev, zone } => {
             let (repo, cwd) = open()?;
@@ -1368,6 +1577,12 @@ fn run(cli: Cli) -> Result<(), Error> {
             zone,
             cont,
             abort,
+            skip,
+            interactive,
+            autosquash,
+            exec,
+            new_base,
+            root,
             no_structural,
             renames,
             assist,
@@ -1382,8 +1597,34 @@ fn run(cli: Cli) -> Result<(), Error> {
                 println!("rebase aborted; original branch restored");
                 return Ok(());
             }
-            let out = if cont {
-                repo.rebase_continue(author()?)?
+            let out = if cont || skip {
+                rebase_i::resume(&repo, skip, author()?)?
+            } else if let Some(nb) = new_base {
+                if interactive || !exec.is_empty() {
+                    return Err(Error::Msg("--onto cannot be combined with -i or -x yet".into()));
+                }
+                if root == onto.is_some() {
+                    return Err(Error::Msg(
+                        "usage: vcs rebase --onto <newbase> <upstream> | vcs rebase --onto <newbase> --root".into(),
+                    ));
+                }
+                let zone = zone_of_cwd(&repo, &cwd, zone)?;
+                hooks::fire_simple(&repo, &zone, "pre-rebase", std::slice::from_ref(&nb))?;
+                repo.rebase_onto(&zone, &nb, onto.as_deref(), author()?)?
+            } else if interactive || !exec.is_empty() {
+                let Some(onto) = onto else {
+                    return Err(Error::Msg(
+                        "usage: vcs rebase -i <upstream> [--zone A] [--autosquash] [-x CMD]".into(),
+                    ));
+                };
+                let zone = zone_of_cwd(&repo, &cwd, zone)?;
+                hooks::fire_simple(&repo, &zone, "pre-rebase", std::slice::from_ref(&onto))?;
+                let a = rebase_i::Args {
+                    interactive,
+                    autosquash,
+                    exec,
+                };
+                rebase_i::start(&repo, &zone, &onto, &a, author()?)?
             } else {
                 let Some(onto) = onto else {
                     return Err(Error::Msg("usage: vcs rebase <branch> [--zone A] | --continue | --abort".into()));
@@ -1397,6 +1638,16 @@ fn run(cli: Cli) -> Result<(), Error> {
                 RebaseOutcome::Done { from, to, replayed } => {
                     println!("rebased {replayed} commit(s): {} -> {}", from.short(), to.short())
                 }
+                RebaseOutcome::Stopped { commit, detail, .. } if detail.is_empty() => {
+                    println!(
+                        "stopped at {}: amend it (or add commits), then `vcs rebase --continue`; `vcs rebase --abort` to give up",
+                        commit.short()
+                    );
+                }
+                RebaseOutcome::Stopped { commit, detail, .. } => {
+                    println!("rebase stopped at {}", commit.short());
+                    return Err(Error::Msg(detail));
+                }
                 RebaseOutcome::Conflicted { commit, paths } => {
                     println!("rebase stopped at {}: {} conflict(s)", commit.short(), paths.len());
                     for p in &paths {
@@ -1405,7 +1656,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                     if let Some(cmd) = effective_assist(assist.as_deref(), no_assist)? {
                         run_assist(&repo, &cmd, assist_timeout)?;
                     }
-                    println!("\nResolve the files, `vcs add` each one, then `vcs rebase --continue`.");
+                    println!("\nResolve the files, `vcs add` each one, then `vcs rebase --continue` (or `--skip` to drop this commit).");
                     println!("Inspect with `vcs conflict list|show <path>`; give up with `vcs rebase --abort`.");
                     return Err(Error::Msg("rebase has conflicts".into()));
                 }
@@ -1514,6 +1765,15 @@ fn run(cli: Cli) -> Result<(), Error> {
                             println!("    {p}");
                         }
                         println!("fix the markers, `vcs add` the files, then `vcs stash drop`");
+                    }
+                },
+                StashCmd::Apply { index } => match repo.stash_apply(index.unwrap_or(0))? {
+                    vcs_repo::StashPopOutcome::Applied => println!("applied stash entry (kept)"),
+                    vcs_repo::StashPopOutcome::Conflicted { paths } => {
+                        println!("conflicts in {} file(s); the stash entry was kept:", paths.len());
+                        for p in &paths {
+                            println!("    {p}");
+                        }
                     }
                 },
                 StashCmd::List => {
@@ -1650,7 +1910,9 @@ fn run(cli: Cli) -> Result<(), Error> {
                     repo.zone_delete(&name, force)?;
                     println!("deleted zone {name}");
                 }
-                ZoneCmd::Suggest(_) | ZoneCmd::Apply(_) | ZoneCmd::Subscribe(_) => unreachable!("handled by autozone::intercept"),
+                ZoneCmd::Suggest(_) | ZoneCmd::Apply(_) | ZoneCmd::Subscribe(_) | ZoneCmd::Describe(_) | ZoneCmd::Graph(_) => {
+                    unreachable!("handled by autozone::intercept")
+                }
             }
         }
         Cmd::Snapshot(s) => {
@@ -1721,6 +1983,7 @@ fn run(cli: Cli) -> Result<(), Error> {
         Cmd::Shelve(a) => shelve_cmd::shelve(&open()?.0, a, &principal(), author()?)?,
         Cmd::Shelves(a) => shelve_cmd::shelves(&open()?.0, a, &principal())?,
         Cmd::Unshelve(a) => shelve_cmd::unshelve(&open()?.0, a, &principal())?,
+        Cmd::P4(a) => p4map::run(&a)?,
         Cmd::Clone {
             url, dir, zones, stats, ..
         } => {
@@ -1729,8 +1992,8 @@ fn run(cli: Cli) -> Result<(), Error> {
             }
             let cwd = std::env::current_dir().map_err(|source| Error::Io { path: ".".into(), source })?;
             let url = remote::normalize_url(&url, &cwd);
-            let backend = remote::open_backend(&url)?;
-            let counting = vcs_remote::CountingBackend::new(backend.as_ref());
+            let backend = remote::open_memo(&url, true)?;
+            let counting = vcs_remote::CountingBackend::new(&backend);
             let want = (!zones.is_empty()).then_some(zones.as_slice());
             let repo = Repo::clone_from(&counting, &url, &dir, want)?;
             if stats {
@@ -1746,25 +2009,80 @@ fn run(cli: Cli) -> Result<(), Error> {
                 println!("  add one later with `vcs zone add <name>` then `vcs fetch --zone <name>`");
             }
         }
-        Cmd::Publish { zones, repair } => {
+        Cmd::Publish {
+            zones,
+            repair,
+            branches,
+            force,
+            force_with_lease,
+            force_without_lease,
+            delete,
+            tags,
+            prune,
+            mirror,
+            auto_merge,
+        } => {
             let (repo, _) = open()?;
             let backend = remote::open_backend(&need_remote(&repo)?)?;
+            let auto_merge = auto_merge
+                .or_else(|| std::env::var("VCS_PUBLISH_AUTOMERGE").ok().and_then(|v| v.parse().ok()))
+                .filter(|_| {
+                    !(force || mirror || force_without_lease || !force_with_lease.is_empty() || tags || !delete.is_empty() || prune)
+                });
             if repair {
                 println!("repaired {} object(s) on the remote", repo.repair_remote(backend.as_ref())?);
             }
             let want = (!zones.is_empty()).then_some(zones.as_slice());
             let pending = hooks::publish_lines(&repo, want);
             hooks::fire_with_stdin(&repo, "pre-publish", &pending)?;
-            let rep = repo.publish_as(backend.as_ref(), want, author()?, &principal())?;
+            let mut opts = vcs_repo::PublishOpts {
+                branches,
+                force: None,
+                delete,
+                tags_only: tags,
+                prune: prune || mirror,
+            };
+            if force || mirror || force_without_lease || !force_with_lease.is_empty() {
+                let mut spec = vcs_repo::ForceSpec {
+                    without_lease: force_without_lease,
+                    expect: Default::default(),
+                };
+                for l in &force_with_lease {
+                    if l.is_empty() {
+                        continue;
+                    }
+                    let (b, id) = l.split_once(':').unwrap_or((l.as_str(), ""));
+                    if !opts.branches.iter().any(|x| x == b) {
+                        opts.branches.push(b.to_owned());
+                    }
+                    if !id.is_empty() {
+                        spec.expect.insert(b.to_owned(), id.to_owned());
+                    }
+                }
+                opts.force = Some(spec);
+            }
+            let rep = publish_auto_merge(&repo, backend.as_ref(), want, &opts, auto_merge.unwrap_or(0))?;
             let done: String = rep.updated.iter().map(|(a, b, old, new)| hooks::line(a, b, *old, *new)).collect();
             if !done.is_empty() {
                 hooks::fire_with_stdin(&repo, "post-publish", &done)?;
             }
-            if rep.updated.is_empty() && rep.tags.is_empty() {
+            if rep.updated.is_empty() && rep.tags.is_empty() && rep.deleted.is_empty() {
                 println!("nothing to publish");
             }
             for (a, b, old, new) in &rep.updated {
                 println!("{a}/{b} {} -> {}", opt_short(*old), new.short());
+            }
+            for (z, b, old, new) in &rep.forced {
+                println!("FORCED {z}/{b}: replaced remote head {} with {}", old.short(), new.short());
+                println!("  the old head is kept: it is in the operation log and the remote transaction log.");
+                println!(
+                    "  to get it back: vcs branch {b}-before-force --at {}   (then publish it or merge it)",
+                    old.to_hex()
+                );
+            }
+            for (z, b, old) in &rep.deleted {
+                println!("deleted remote branch {z}/{b} (it was at {})", old.short());
+                println!("  to restore: vcs branch {b} --at {}   then vcs publish {b}", old.to_hex());
             }
             for (z, n) in &rep.tags {
                 println!("tag {z}/{n}");
@@ -1842,10 +2160,21 @@ fn run(cli: Cli) -> Result<(), Error> {
                 println!("fetched {a}/{b} @ {}", id.short());
             }
         }
-        Cmd::Sync => {
+        Cmd::Prefetch { zones, stats } => {
             let (repo, _) = open()?;
             let backend = remote::open_backend(&need_remote(&repo)?)?;
-            let rep = repo.sync(backend.as_ref())?;
+            let counting = vcs_remote::CountingBackend::new(backend.as_ref());
+            let want = (!zones.is_empty()).then_some(zones.as_slice());
+            let n = repo.prefetch_subscribed(&counting, want)?;
+            if stats {
+                println!("{}", counting.stats());
+            }
+            println!("prefetched {n} object(s)");
+        }
+        Cmd::Sync => {
+            let (repo, _) = open()?;
+            let backend = remote::open_memo(&need_remote(&repo)?, false)?;
+            let rep = repo.sync(&backend)?;
             for (a, b, act) in &rep.actions {
                 let what = match act {
                     SyncAction::UpToDate => "up to date".to_owned(),
@@ -2030,13 +2359,16 @@ fn run(cli: Cli) -> Result<(), Error> {
                     r.deleted_packs.len(),
                     r.saved_by_remark
                 );
+                for (old, new) in &r.packs_rewritten {
+                    println!("  rewrote pack {old} -> {new}");
+                }
                 if r.stale_tombs_cleared > 0 {
                     println!("cleared {} stale tombstone(s) from a crashed collector", r.stale_tombs_cleared);
                 }
             }
             if r.packs_with_garbage_kept > 0 {
                 println!(
-                    "{} pack(s) hold some unreachable objects but were kept whole (remote pack rewriting is not implemented)",
+                    "{} pack(s) hold some unreachable objects but were kept whole (too young, recently used, or over 512 MiB)",
                     r.packs_with_garbage_kept
                 );
             }
@@ -2093,14 +2425,55 @@ fn run(cli: Cli) -> Result<(), Error> {
 }
 
 fn print_branches(repo: &Repo, zone: &str) -> Result<(), Error> {
-    for (b, id, cur) in repo.branches(zone)? {
-        println!("{} {zone}/{b:<24} {}", if cur { "*" } else { " " }, opt_short(id));
-    }
-    Ok(())
+    histcli::print_branches(repo, zone)
 }
 
 /// Run the command; if it fails because a cached object was evicted, fetch that one object
 /// (hash-verified) from the remote and run it again. See docs/cache.md.
+/// `repo.publish_with`, and (when `retries > 0`) on "the remote branch moved" fetch, merge the new
+/// remote head in if that merge is clean, wait a short randomized time and publish again. A merge
+/// with conflicts is aborted and the original error returned, so the repo is left as it was.
+fn publish_auto_merge(
+    repo: &vcs_repo::Repo,
+    backend: &dyn vcs_remote::Backend,
+    want: Option<&[String]>,
+    opts: &vcs_repo::PublishOpts,
+    retries: u32,
+) -> Result<vcs_repo::PublishReport, Error> {
+    let mut attempt = 0u32;
+    loop {
+        let e = match repo.publish_with(backend, want, author()?, &principal(), opts) {
+            Ok(r) => return Ok(r),
+            Err(e) => e,
+        };
+        let text = e.to_string();
+        if attempt >= retries || !(text.contains("Remote branch advanced") || text.contains("moved from")) {
+            return Err(e.into());
+        }
+        attempt += 1;
+        let rep = repo.sync(backend)?;
+        for (zone, branch, act) in &rep.actions {
+            if matches!(act, SyncAction::Diverged) {
+                match repo.merge_remote(zone, branch, author()?)? {
+                    vcs_repo::MergeOutcome::Conflicted { .. } => {
+                        repo.merge_abort()?;
+                        return Err(e.into());
+                    }
+                    _ => eprintln!("auto-merged remote {zone}/{branch} (attempt {attempt})"),
+                }
+            }
+        }
+        let window = (5u64 << attempt.min(5)).min(250);
+        let seed = std::process::id() as u64
+            ^ (std::time::SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |d| d.subsec_nanos() as u64));
+        std::thread::sleep(std::time::Duration::from_millis(
+            1 + seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) % window,
+        ));
+    }
+}
+
 fn run_lazy(cli: Cli) -> Result<(), Error> {
     let mut fetched = std::collections::BTreeSet::new();
     loop {
@@ -2121,7 +2494,11 @@ fn run_lazy(cli: Cli) -> Result<(), Error> {
 
 fn main() -> ExitCode {
     let _ = ROOT_ZONE;
-    let cli = Cli::parse();
+    let argv = gitmap::argv_for_shim();
+    let cli = match quick::parse(&argv) {
+        Some(c) => c,
+        None => Cli::parse_from(argv),
+    };
     hooks::set_disabled(cli.no_hooks);
     if let Some(ca) = &cli.ca_pem {
         // Resolved before `-C`; the config machinery reads it back as `remote.cainfo` (env VCS_CAINFO).
@@ -2234,6 +2611,16 @@ fn compact_remote(
 fn suggest_compaction(backend: &dyn vcs_remote::Backend, generation: u64) {
     if !generation.is_multiple_of(8) {
         return;
+    }
+    match vcs_remote::autocompact::maybe_compact(backend, &format!("vcs-auto-compact pid {}", std::process::id())) {
+        Ok(Some(r)) => {
+            println!(
+                "compacted the remote's packs: {} -> {} (VCS_AUTO_COMPACT=0 turns this off)",
+                r.packs_before, r.packs_after
+            );
+            return;
+        }
+        Ok(None) | Err(_) => {}
     }
     if let Ok(n) = vcs_remote::compact::count_packs(backend) {
         if n > vcs_remote::compact::SUGGEST_PACKS {

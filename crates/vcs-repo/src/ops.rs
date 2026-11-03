@@ -7,7 +7,8 @@
 use crate::error::{msg, Error, Result};
 use crate::meta::{frame, unframe, write_atomic, Workspace};
 use crate::repo::Repo;
-use crate::treeops::{self, Flat};
+use crate::treeops;
+use crate::StatusOpts;
 use std::collections::BTreeSet;
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -214,9 +215,11 @@ impl Repo {
                 affected.push(a.clone());
             }
         }
-        // 3. refuse when an affected, currently subscribed zone is dirty
+        // 3. refuse when an affected, currently subscribed zone is dirty. Only staged/unstaged/merge
+        // state matters, so the untracked-file walk is skipped (as `checkout` does).
+        let mut ix = self.index()?;
         if !affected.is_empty() {
-            let st = self.status()?;
+            let st = self.status_inner(StatusOpts::default(), &ix, false, None)?;
             for a in &affected {
                 if ws.subs.contains_key(a) {
                     self.require_clean(a, &st)?;
@@ -224,24 +227,29 @@ impl Repo {
             }
         }
         // 4. worktree + index first, refs/workspace last. Every zone is validated before any
-        // file moves, so a refusal in one zone cannot leave another half-restored.
+        // file moves, so a refusal in one zone cannot leave another half-restored. Subtrees that
+        // are identical on both sides are never read.
         let mut moves = Vec::new();
-        let mut ix = self.index()?;
         for a in &affected {
-            let old = if ws.subs.contains_key(a) {
-                self.head_flat(a, &zones, &ws, &refs)?
+            let prefix = zones.path_of(a).unwrap_or("");
+            let old_root = if ws.subs.contains_key(a) {
+                match self.current_head(a, &ws, &refs) {
+                    Some(h) => Some(self.commit_obj(&h)?.root),
+                    None => None,
+                }
             } else {
-                Flat::new()
+                None
             };
-            let new = match new_head(a) {
-                Some((_, Some(h))) => treeops::flatten(&self.store, Some(self.commit_obj(&h)?.root), zones.path_of(a).unwrap_or(""))?,
-                _ => Flat::new(),
+            let new_root = match new_head(a) {
+                Some((_, Some(h))) => Some(self.commit_obj(&h)?.root),
+                _ => None,
             };
-            self.transition_check(a, &zones, &old, &new, &ix)?;
-            moves.push((a, old, new));
+            let diff = treeops::diff_trees(&self.store, old_root, new_root, prefix)?;
+            self.transition_diff_check(a, &zones, &diff)?;
+            moves.push((a, diff));
         }
-        for (a, old, new) in &moves {
-            self.transition(a, &zones, old, new, &mut ix)?;
+        for (a, diff) in &moves {
+            self.transition_diff_apply(a, diff, &mut ix)?;
         }
         if !affected.is_empty() {
             self.save_index(&mut ix)?;
