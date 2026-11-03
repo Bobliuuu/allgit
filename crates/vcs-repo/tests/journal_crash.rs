@@ -266,3 +266,52 @@ fn no_raw_refs_writes_outside_the_journal_funnel() {
     }
     assert!(bad.is_empty(), "use Repo::write_refs / commit_refs_op instead: {bad:?}");
 }
+
+/// The first journalled operation marks the repository with the `ref-journal` feature, so a
+/// binary that does not know the journal refuses to open it instead of ignoring the journal.
+#[test]
+fn journal_marks_repo_with_ref_journal_feature() {
+    let (d, r) = setup();
+    r.tag_create("root", "a", None, None).unwrap();
+    let feats = fs::read_to_string(vcs(&r).join("features")).unwrap();
+    assert!(feats.lines().any(|l| l == "ref-journal"), "features: {feats:?}");
+    drop(r);
+    // the current binary still opens it
+    Repo::discover(&d.path().join("r")).unwrap();
+    // a future/unknown feature is refused (the same gate an older binary applies to `ref-journal`)
+    fs::write(d.path().join("r/.vcs/features"), format!("{feats}some-future-feature\n")).unwrap();
+    let e = Repo::discover(&d.path().join("r")).err().expect("must refuse").to_string();
+    assert!(e.contains("some-future-feature"), "{e}");
+}
+
+/// Crash after the journal record is durable but before any rename (refs, op_head stay old): the
+/// next writer rolls the record forward. If the record is torn instead, the op never happened.
+#[test]
+fn journal_written_but_refs_not_applied_then_torn_record() {
+    for tear in [false, true] {
+        let (d, r) = setup();
+        r.tag_create("root", "base", None, None).unwrap();
+        let before_refs = fs::read(vcs(&r).join("refs")).unwrap();
+        let before_head = fs::read(vcs(&r).join("op_head")).unwrap();
+        r.tag_create("root", "victim", None, None).unwrap();
+        drop(r);
+        // simulate: journal fsynced, renames never happened
+        fs::write(d.path().join("r/.vcs/refs"), &before_refs).unwrap();
+        fs::write(d.path().join("r/.vcs/op_head"), &before_head).unwrap();
+        if tear {
+            let jp = d.path().join("r/.vcs/oplog.journal");
+            let mut j = fs::read(&jp).unwrap();
+            let end = (64..j.len()).find(|&i| j[i..].iter().take(64).all(|b| *b == 0)).unwrap();
+            for b in &mut j[end - 8..end] {
+                *b ^= 0xFF; // tear the newest record's payload tail
+            }
+            fs::write(&jp, &j).unwrap();
+        }
+        let r = Repo::discover(&d.path().join("r")).unwrap();
+        r.tag_create("root", "after", None, None).unwrap(); // takes the lock => recovery
+        let t = tags(&r);
+        assert_eq!(t.contains(&"victim".to_string()), !tear, "tear={tear}: {t:?}");
+        assert!(t.contains(&"base".to_string()) && t.contains(&"after".to_string()));
+        assert_consistent(&r);
+    }
+}
