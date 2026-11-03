@@ -478,6 +478,7 @@ Options:
       --since <DATE>                Only commits at or after this date (UTC; see `vcs log --help` placeholders in docs/guide)
       --until <DATE>                Only commits at or before this date (a date without time includes that whole day)
       --grep <REGEX>                Only commits whose message matches this regular expression
+  -F, --fixed-strings               Treat the `--grep` text as a plain string, not a regular expression (`+`, `(`, `.` are literal)
       --merges                      Only merge commits (two or more parents)
       --no-merges                   Skip merge commits
       --first-parent                Follow only the first parent of each commit

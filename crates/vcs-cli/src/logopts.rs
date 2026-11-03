@@ -31,6 +31,9 @@ pub struct LogExtra {
     /// Only commits whose message matches this regular expression
     #[arg(long, value_name = "REGEX")]
     pub grep: Option<String>,
+    /// Treat the `--grep` text as a plain string, not a regular expression (`+`, `(`, `.` are literal)
+    #[arg(short = 'F', long)]
+    pub fixed_strings: bool,
     /// Only merge commits (two or more parents)
     #[arg(long, conflicts_with = "no_merges")]
     pub merges: bool,
@@ -138,7 +141,7 @@ impl LogExtra {
         let re = self
             .grep
             .as_deref()
-            .map(Regex::new)
+            .map(|g| Regex::new(&if self.fixed_strings { regex::escape(g) } else { g.to_owned() }))
             .transpose()
             .map_err(|e| Error::Msg(format!("--grep: {e}")))?;
         shown.retain(|(_, c)| {

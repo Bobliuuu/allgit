@@ -1,6 +1,6 @@
 # Agent benchmark: understanding a repository through vcs vs git
 
-Status: harness implemented and run once (two live runs, below). Small sample, one model: read the caveats before quoting any number.
+Status: harness implemented; round 1 (two live runs) and round 2 (after the vcs fixes, on held-out tasks) below. Small sample, one model: read the caveats before quoting any number.
 
 Question: does a zone-aware tool, plus the [zone ontology](../zone-ontology.md), let an agent answer repository questions in fewer steps
 and more correctly than the same agent using plain git? Code: `scripts/agent_bench/`. Raw data: `docs/research/data/agent-bench/`.
@@ -179,3 +179,88 @@ python3 harness.py --vcs-bin /path/to/vcs --build-fixture /tmp/fx
 OPENAI_API_KEY="$(cat keyfile)" python3 harness.py --mode live --prompt v1 --vcs-bin /path/to/vcs --fixture /tmp/fx --repeats 3 --out out.jsonl
 python3 report.py out.jsonl
 ```
+
+## Round 2: after the fixes, on held-out tasks
+
+Round 1 showed vcs losing on history/change questions and using far more tool output. Changes made in response (PR #448): `vcs log --all-zones -G` (and the existing
+`--all-zones` with `-S`/`--grep`/paths, which the round-1 agents never discovered), `vcs zone explain PATH`, `vcs zone changes A..B`, `zone describe --since/--limit/--format`, and a compact default JSON format
+(see [zone-ontology.md](../zone-ontology.md)). The vcs prompt (v3) now documents these commands; the git prompt is unchanged.
+
+**Held-out design.** 19 new task variants (`tasks_holdout.py`: different zones, paths, commits, two new "impact" tasks) were written and committed *before* the new vcs features were designed
+(commit `test(bench): held-out task variants written before round-2 changes`), and were never run against any vcs build until the final run below. The round-1 tasks are the tuning set. Disclosure: the two impact
+tasks were written knowing `zone explain` was planned, so that category favours vcs by construction.
+
+### Held-out tasks, 5 repeats per task and tool (95 episodes per tool; gpt-4.1-mini, temperature 0.7)
+
+| | episodes/tool | correct (git / vcs) | tool calls | tool output bytes | wall s | prompt tokens |
+|---|---|---|---|---|---|---|
+| **all tasks** | 95 | 82% / 86% | 5.4 / 3.1 | 396 / 1,577 | 4.9 / 3.2 | 3,594 / 4,083 |
+| changes | 15 | 87% / 40% | 2.5 / 4.3 | 216 / 2,087 | 2.7 / 4.5 | 1,488 / 5,732 |
+| dependencies | 20 | 65% / 100% | 8.9 / 1.0 | 546 / 1,582 | 7.5 / 1.3 | 5,399 / 1,386 |
+| history | 20 | 100% / 100% | 1.9 / 3.1 | 152 / 1,317 | 2.1 / 3.6 | 1,079 / 4,470 |
+| impact | 10 | 20% / 100% | 12.8 / 1.0 | 1,417 / 550 | 11.2 / 1.4 | 10,608 / 1,138 |
+| merge | 10 | 100% / 60% | 9.3 / 11.4 | 461 / 4,180 | 7.4 / 9.9 | 6,029 / 15,024 |
+| ontology | 5 | 100% / 100% | 4.8 / 1.0 | 208 / 1,162 | 4.2 / 1.3 | 2,362 / 1,325 |
+| ownership | 15 | 100% / 100% | 1.3 / 1.0 | 37 / 491 | 1.6 / 1.3 | 762 / 1,102 |
+
+
+Per task (git / vcs):
+
+| task | category | correct (of repeats) | mean calls | mean bytes |
+|---|---|---|---|---|
+| h_own1 | ownership | 5/5 / 5/5 | 1.0 / 1.0 | 28 / 574 |
+| h_own2 | ownership | 5/5 / 5/5 | 1.8 / 1.0 | 72 / 510 |
+| h_own3 | ownership | 5/5 / 5/5 | 1.0 / 1.0 | 11 / 390 |
+| h_deps_direct | dependencies | 5/5 / 5/5 | 2.0 / 1.0 | 190 / 1,511 |
+| h_build_api | dependencies | 5/5 / 5/5 | 6.2 / 1.0 | 680 / 1,606 |
+| h_dependents_trans | dependencies | 2/5 / 5/5 | 13.4 / 1.0 | 663 / 1,606 |
+| h_dependents_direct | dependencies | 1/5 / 5/5 | 14.0 / 1.0 | 651 / 1,606 |
+| h_owners | ontology | 5/5 / 5/5 | 4.8 / 1.0 | 208 / 1,162 |
+| h_top_author | history | 5/5 / 5/5 | 1.0 / 1.0 | 26 / 1,643 |
+| h_commit_count | history | 5/5 / 5/5 | 1.0 / 1.0 | 185 / 1,601 |
+| h_commit_files | changes | 5/5 / 0/5 | 2.0 / 2.4 | 92 / 613 |
+| h_commit_zones | changes | 4/5 / 1/5 | 2.0 / 4.4 | 90 / 1,327 |
+| h_range_zone | changes | 4/5 / 5/5 | 3.4 / 6.0 | 467 / 4,320 |
+| h_find_removed | history | 5/5 / 5/5 | 2.8 / 8.4 | 326 / 1,970 |
+| h_find_added | history | 5/5 / 5/5 | 2.8 / 2.2 | 70 / 56 |
+| h_merge_zones | merge | 5/5 / 1/5 | 12.4 / 12.4 | 678 / 4,729 |
+| h_merge_files | merge | 5/5 / 5/5 | 6.2 / 10.4 | 244 / 3,630 |
+| h_impact1 | impact | 2/5 / 5/5 | 12.4 / 1.0 | 2,231 / 557 |
+| h_impact2 | impact | 0/5 / 5/5 | 13.2 / 1.0 | 603 / 544 |
+
+### Tuning set (round-1 tasks), vcs re-run with the new build and prompt v3 (5 repeats) vs the round-1 run-2 git numbers (3 repeats)
+
+| | episodes/tool | correct (git / vcs) | tool calls | tool output bytes | wall s | prompt tokens |
+|---|---|---|---|---|---|---|
+| **all tasks** | 72 | 81% / 77% | 5.5 / 5.0 | 341 / 2,390 | 4.7 / 5.0 | 3,125 / 6,794 |
+| changes | 12 | 92% / 40% | 2.9 / 11.3 | 180 / 3,364 | 3.3 / 11.4 | 1,562 / 17,290 |
+| dependencies | 18 | 50% / 93% | 9.4 / 1.0 | 544 / 1,626 | 7.7 / 1.4 | 5,722 / 1,391 |
+| history | 12 | 100% / 95% | 2.9 / 3.2 | 356 / 1,282 | 3.0 / 3.3 | 1,930 / 3,266 |
+| merge | 12 | 67% / 35% | 7.9 / 12.4 | 552 / 3,613 | 6.0 / 11.0 | 4,266 / 15,624 |
+| ontology | 6 | 100% / 100% | 4.8 / 1.0 | 182 / 5,776 | 4.1 / 1.4 | 2,096 / 2,660 |
+| ownership | 12 | 100% / 100% | 2.7 / 1.0 | 50 / 757 | 2.6 / 1.4 | 1,358 / 1,166 |
+
+
+### Offline oracles after the changes (deterministic)
+
+Tuning set: vcs 1.04 calls and 2,697 bytes per task (was 1.42 / 5,648), git 2.25 / 834. Held-out set: vcs 1.05 calls and 2,297 bytes, git 2.16 / 782. All oracle answers are correct for both tools (`test_bench.py`, 8 tests).
+
+### What round 2 shows
+
+* **Held-out overall accuracy: git 82%, vcs 86%**, with tool calls 5.4 vs 3.1 and bytes 396 vs 1,577 (round 1 was 10-24x more bytes for vcs; now about 4x). Prompt tokens per episode were about equal (3.6k vs 4.1k).
+* **vcs wins clearly** on dependencies (65% vs 100%, 8.9 vs 1.0 calls) and impact (20% vs 100%; 12.8 vs 1.0 calls); ownership and ontology facts are 100% for both with fewer vcs calls; history questions are 100% for both
+  (vcs uses more calls: 3.1 vs 1.9, because `-S` across zones still needs a retry or two for some episodes).
+* **vcs still loses on changes (40% vs 87%) and merge (60% vs 100%).** Reading the transcripts: most failures are one cause, `vcs log --grep 'net+api: timeouts'`. vcs `--grep` is a regular expression where `+` is a quantifier, so a subject
+  containing `+` matches nothing, the agent gets an empty result and often answers `[]`; git's default regex treats `+` as a literal, so the git agent never hits this. This is partly an artifact of my fixture's commit subjects
+  (`net+api: ...`) and partly a real gap: it was fixed afterwards with `vcs log -F/--fixed-strings` (tested, and `--all-zones` with no match no longer prints "zone root: no commits yet"), but **that fix is not measured**:
+  it came after the held-out run, and re-running the same held-out tasks with a prompt that mentions it would no longer be held-out.
+* On the tuning set vcs reaches 77% vs git 81% (git has 3 repeats; changes 40% vs 92%, merge 35% vs 67%, dependencies 93% vs 50%). Same pattern: the tool wins where one ontology call answers the question and loses where the agent has to
+  find a commit by subject.
+
+### Round-2 caveats
+
+* Still one model, one synthetic 16-commit repository, 19 + 24 tasks, 5 (vcs) / 3 (git, tuning set) repeats. No confidence intervals. Differences of one or two tasks per category are noise-level.
+* The held-out set shares the fixture, the categories and the task style with the tuning set; it is held out from the *changes*, not independent data. The impact category favours vcs by construction (see above).
+* The git baseline is told the zone layout; the vcs agent learns commands from the prompt. Both prompts are fixed text in `harness.py`.
+* Spend: about US$0.72 in round 2 (US$0.34 held-out, US$0.38 tuning-set vcs), about US$1.4 over both rounds including the smoke run; list prices not re-verified.
+* Not measured: `log -F`, any further prompt, models other than gpt-4.1-mini, real repositories.

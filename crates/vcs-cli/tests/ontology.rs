@@ -339,3 +339,16 @@ fn log_all_zones_finds_pickaxe_and_regex_hits_in_one_call() {
     assert!(out.lines().any(|l| l == "core:initial import"), "{out}");
     assert!(!vcs(&a, &["log", "-G", "(", "--all-zones"]).status.success());
 }
+
+#[test]
+fn log_grep_fixed_strings_matches_plus_and_parens_literally() {
+    let t = tempfile::tempdir().unwrap();
+    let a = fixture(t.path());
+    write(&a, "crates/core/src/x.rs", "x\n");
+    ok(&a, &["add", "."]);
+    ok(&a, &["commit", "-m", "net+api: (odd) subject"]);
+    let none = ok(&a, &["log", "--all-zones", "--grep", "net+api: (odd)", "--format", "%s"]);
+    assert_eq!(none.trim(), "", "as a regex `net+api` does not match `net+api`");
+    let some = ok(&a, &["log", "--all-zones", "-F", "--grep", "net+api: (odd)", "--format", "%s"]);
+    assert_eq!(some.trim(), "net+api: (odd) subject");
+}
