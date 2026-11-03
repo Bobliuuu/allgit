@@ -28,6 +28,18 @@ fn env_signature() -> Signature {
     Signature { name, email, timestamp }
 }
 
+const OP_TAGS_CACHE: &str = "op-tags-hash";
+
+fn tags_digest(t: &std::collections::BTreeMap<(String, String), ObjectId>) -> ObjectId {
+    let mut h = blake3::Hasher::new();
+    for ((z, n), id) in t {
+        h.update(&(z.len() as u32).to_le_bytes()).update(z.as_bytes());
+        h.update(&(n.len() as u32).to_le_bytes()).update(n.as_bytes());
+        h.update(id.as_bytes());
+    }
+    ObjectId::from_bytes(*h.finalize().as_bytes())
+}
+
 /// Fewest tags for which an unchanged tag view is left out of an operation.
 const OP_TAGS_DELTA_MIN: usize = 64;
 /// How far back an omitted tag view is looked up when recording (full copy again beyond it).
@@ -77,12 +89,21 @@ impl Repo {
         let mut view = self.current_view()?;
         // Every operation used to store the whole tag set: 100,000 tags cost 4.4 MB per commit. A large,
         // unchanged set is now omitted (None) and read from the nearest earlier operation that has it.
-        // Bounded look-back, so the chain of None stays short; then one full copy is written again.
-        if let (Some(t), Some(p)) = (&view.tags, parents.first()) {
-            if t.len() >= OP_TAGS_DELTA_MIN && self.op_tags_before(p, OP_TAGS_LOOKBACK)?.as_ref() == Some(t) {
+        // "Unchanged" is decided from a hash cached for the previous operation (no re-read of its 4.4 MB);
+        // without the cache, a bounded look-back, so the chain of None stays short.
+        let mut tags_hash = None;
+        if let Some(t) = view.tags.as_ref().filter(|t| t.len() >= OP_TAGS_DELTA_MIN) {
+            let h = tags_digest(t);
+            let same = match (self.op_tags_cache(), parents.first()) {
+                (Some((op, ch)), Some(p)) if &op == p => ch == h,
+                (_, Some(p)) => self.op_tags_before(p, OP_TAGS_LOOKBACK)?.as_ref().map(tags_digest) == Some(h),
+                _ => false,
+            };
+            if same {
                 view.tags = None;
                 self.note_feature(crate::repo::FEATURE_OP_TAGS_DELTA)?;
             }
+            tags_hash = Some(h);
         }
         let op = Operation {
             parents,
@@ -92,7 +113,20 @@ impl Repo {
         };
         let id = self.store.put(&Object::Operation(op))?;
         self.write_op_head(&id)?;
+        if let Some(h) = tags_hash {
+            let _ = crate::meta::write_cache_atomic(
+                &self.common.join(OP_TAGS_CACHE),
+                format!("{} {}\n", id.to_hex(), h.to_hex()).as_bytes(),
+            );
+        }
         Ok(id)
+    }
+
+    /// (operation, hash of the tag view in effect after it) as cached by the last `record_op` that had a large set.
+    fn op_tags_cache(&self) -> Option<(ObjectId, ObjectId)> {
+        let t = fs::read_to_string(self.common.join(OP_TAGS_CACHE)).ok()?;
+        let (a, b) = t.trim().split_once(' ')?;
+        Some((ObjectId::from_hex(a).ok()?, ObjectId::from_hex(b).ok()?))
     }
 
     /// The tag view in effect after operation `id`: its own, or that of the nearest earlier operation that
