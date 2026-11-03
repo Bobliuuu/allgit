@@ -303,6 +303,9 @@ in the same document. Deep and binary 100k were not run in the quiet-box pass.
 ### 🔭 Other tools
 
 Perforce, Jujutsu and Sapling are covered by the scoreboards above
+
+Autosync (`clone --auto-profile`, `sync --auto`) and the status/diff hot path were re-run on a quiet box: [docs/research/autosync-hotpath.md](docs/research/autosync-hotpath.md). `--auto` clone fetches 19.5 percent of the bytes and beats git partial+sparse; `--auto` sync beats a full vcs sync 13x but is still slower than git pull. The hot path is unchanged from its baseline.
+
 ([command-scoreboard](docs/research/command-scoreboard.md),
 [jj and Sapling](docs/research/jj-sapling-benchmark.md)). Older whole-workflow comparisons with Perforce, Jujutsu,
 Sapling, Mercurial, Subversion, Fossil, Breezy and Pijul exist ([perforce](docs/research/perforce-benchmark.md),
