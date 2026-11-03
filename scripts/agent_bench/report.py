@@ -11,6 +11,9 @@ live = "tokens_in" in rows[0]
 
 def agg(rs):
     n = len(rs)
+    if not n:
+        nan = float('nan')
+        return dict(n=0, acc=nan, calls=nan, bytes=nan, wall=nan, tin=nan, cost=0, llm=nan)
     d = {"n": n, "acc": sum(r["correct"] for r in rs) / n, "calls": st.mean(r["tool_calls"] for r in rs),
          "bytes": st.mean(r["out_bytes"] for r in rs), "wall": st.mean(r["wall_secs"] for r in rs)}
     if live:
@@ -42,6 +45,8 @@ print("|---|---|---|---|---|")
 order = list(dict.fromkeys(r["task"] for r in rows))
 for t in order:
     g, v = by("git", lambda r: r["task"] == t), by("vcs", lambda r: r["task"] == t)
+    if not g or not v:
+        continue
     print(f"| {t} | {g[0]['category']} | {sum(r['correct'] for r in g)}/{len(g)} / {sum(r['correct'] for r in v)}/{len(v)} | "
           f"{st.mean(r['tool_calls'] for r in g):.1f} / {st.mean(r['tool_calls'] for r in v):.1f} | "
           f"{st.mean(r['out_bytes'] for r in g):,.0f} / {st.mean(r['out_bytes'] for r in v):,.0f} |")

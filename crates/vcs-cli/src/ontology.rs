@@ -6,7 +6,7 @@
 
 use crate::json::{doc, J};
 use crate::{Cmd, ZoneCmd};
-use clap::Args;
+use clap::{Args, ValueEnum};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use vcs_objects::ObjectId;
 use vcs_repo::meta::Zones;
@@ -17,15 +17,32 @@ use vcs_repo::{Error, Repo, ROOT_ZONE};
 /// Schema identifier carried in every ontology document.
 pub const SCHEMA: &str = "vcs.zone-ontology/1";
 
+/// Output size. `full` is the documented schema (every field, full ids, dependency reasons).
+/// `compact` (default) drops null/empty/false-default keys, redundant ids and fields agents rarely
+/// need, and shortens 64-hex ids to 12 (a unique prefix every command accepts). `brief` is
+/// `compact` with commit entries reduced to id, author, time and subject.
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Fmt {
+    Compact,
+    Full,
+    Brief,
+}
+
 #[derive(Args, Clone)]
 pub struct DescribeArgs {
     /// Describe only this zone (display name or id); default: every zone
     pub zone: Option<String>,
     /// Recent commits listed per zone (each with its changed files)
-    #[arg(long, default_value_t = 5)]
+    #[arg(long, default_value_t = 3, alias = "limit")]
     pub history: usize,
+    /// Only commits at or after this date (`YYYY-MM-DD`, Unix seconds, `N days ago`, ...)
+    #[arg(long, value_name = "DATE")]
+    pub since: Option<String>,
+    /// Output size: compact (default), brief, or full (the documented schema)
+    #[arg(long, value_enum, default_value_t = Fmt::Compact)]
+    pub format: Fmt,
     /// Recent operations (local transaction log) listed
-    #[arg(long, default_value_t = 10)]
+    #[arg(long, default_value_t = 3)]
     pub transactions: usize,
     /// Report which zone owns this repo-relative path (repeatable)
     #[arg(long = "path", value_name = "PATH")]
@@ -38,15 +55,37 @@ pub struct DescribeArgs {
 
 #[derive(Args, Clone)]
 pub struct GraphArgs {
+    /// Output size: compact (default, no `edges`), or full (with edges and reasons)
+    #[arg(long, value_enum, default_value_t = Fmt::Compact)]
+    pub format: Fmt,
     /// Also scan Go, Python and JS/TS imports (reads source files; slower)
     #[arg(long)]
     pub deep: bool,
+}
+
+#[derive(Args, Clone)]
+pub struct ExplainArgs {
+    /// Repo-relative path (file or directory; need not exist)
+    pub path: String,
+    #[arg(long, value_enum, default_value_t = Fmt::Compact)]
+    pub format: Fmt,
+}
+
+#[derive(Args, Clone)]
+pub struct ChangesArgs {
+    /// `A..B`: what changed in every zone after A up to and including B. A and B are commit ids
+    /// (any zone), operation ids, dates, or `HEAD` (B only). `..B` starts from the beginning.
+    pub range: String,
+    #[arg(long, value_enum, default_value_t = Fmt::Compact)]
+    pub format: Fmt,
 }
 
 pub fn intercept(cmd: &Cmd, json: bool) -> Option<Result<(), Error>> {
     match cmd {
         Cmd::Zone(ZoneCmd::Describe(a)) => Some(describe(a, json)),
         Cmd::Zone(ZoneCmd::Graph(a)) => Some(graph(a, json)),
+        Cmd::Zone(ZoneCmd::Explain(a)) => Some(explain(a, json)),
+        Cmd::Zone(ZoneCmd::Changes(a)) => Some(changes(a, json)),
         _ => None,
     }
 }
@@ -248,9 +287,9 @@ fn owners_for(rules: &[(String, Vec<String>)], path: &str) -> Vec<String> {
 
 // ------------------------------------------------------------------ per-zone documents
 
-fn changed_files(repo: &Repo, c: &vcs_objects::Commit) -> Vec<(String, &'static str)> {
+fn changed_files(repo: &Repo, c: &vcs_objects::Commit, prefix: &str) -> Vec<(String, &'static str)> {
     let parent_root = c.parents.first().and_then(|p| repo.commit_of(p).ok()).map(|p| p.root);
-    let Ok(d) = treeops::diff_trees_files(repo.store(), parent_root, Some(c.root), "") else {
+    let Ok(d) = treeops::diff_trees_files(repo.store(), parent_root, Some(c.root), prefix) else {
         return vec![];
     };
     let mut out: BTreeMap<String, &'static str> = BTreeMap::new();
@@ -267,13 +306,14 @@ const FILE_CAP: usize = 100;
 const COUNT_CAP: usize = 1000;
 const AUTHOR_WINDOW: usize = 200;
 
-fn history(repo: &Repo, zone: &str, branch: &str, n: usize) -> Result<(J, J, J), Error> {
+fn history(repo: &Repo, zone: &str, prefix: &str, branch: &str, n: usize, since: Option<u64>) -> Result<(J, J, J), Error> {
     let log = repo.log(zone, Some(branch), COUNT_CAP.max(n))?;
     let recent: Vec<J> = log
         .iter()
+        .filter(|(_, c)| since.is_none_or(|s| c.author.timestamp >= s))
         .take(n)
         .map(|(id, c)| {
-            let files = changed_files(repo, c);
+            let files = changed_files(repo, c, prefix);
             let truncated = files.len() > FILE_CAP;
             J::Obj(vec![
                 ("id", hex(id)),
@@ -346,6 +386,12 @@ fn deps_json(deps: &zd::Deps, zones: &Zones, zone: &str) -> (J, J) {
 
 fn describe(a: &DescribeArgs, json: bool) -> Result<(), Error> {
     let (repo, _) = crate::open()?;
+    let since = a
+        .since
+        .as_deref()
+        .map(|s| crate::logopts::parse_date(s, now_secs(), false))
+        .transpose()
+        .map_err(Error::Msg)?;
     let m = load(&repo)?;
     let deps = deps_of(&repo, &m, false);
     let ws = repo.workspace()?;
@@ -370,7 +416,7 @@ fn describe(a: &DescribeArgs, json: bool) -> Result<(), Error> {
         let path = m.zones.path_of(z).unwrap_or("").to_owned();
         let purpose = purpose(&repo, &m.flat, &m.zones, z).map_or(J::Null, |(t, src)| J::Obj(vec![("text", s(t)), ("source", s(src))]));
         let (recent, authors, count) = match m.heads.get(z) {
-            Some((b, _)) => history(&repo, z, b, a.history)?,
+            Some((b, _)) => history(&repo, z, m.zones.path_of(z).unwrap_or(""), b, a.history, since)?,
             None => (J::Arr(vec![]), J::Arr(vec![]), J::Null),
         };
         let co_rules = owners.as_ref().map(|(_, r)| owners_for(r, &path)).unwrap_or_default();
@@ -495,7 +541,7 @@ fn describe(a: &DescribeArgs, json: bool) -> Result<(), Error> {
             ("notes", arr_s(notes)),
         ],
     );
-    println!("{}", d.render());
+    println!("{}", finish(d, a.format, false).render());
     Ok(())
 }
 
@@ -708,6 +754,316 @@ fn graph(a: &GraphArgs, json: bool) -> Result<(), Error> {
             ("notes", arr_s(notes)),
         ],
     );
-    println!("{}", d.render());
+    println!("{}", finish(d, a.format, true).render());
+    Ok(())
+}
+
+// ------------------------------------------------------------------ compact output
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Keys never shown in compact output (recoverable with `--format full`).
+const DROP: &[&str] = &[
+    "change_id",
+    "parents",
+    "email",
+    "codeowners_file",
+    "author_window_commits",
+    "reasons",
+];
+/// Boolean keys omitted when false (absent means false).
+const FALSE_DEFAULT: &[&str] = &[
+    "is_root",
+    "capped",
+    "files_truncated",
+    "owns_rest_of_repo",
+    "checked_out",
+    "current",
+    "imports_scanned",
+];
+
+fn is_hex64(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn compact(j: J, brief: bool) -> J {
+    match j {
+        J::Str(s) if is_hex64(&s) => J::Str(s[..12].to_owned()),
+        J::Arr(v) => J::Arr(v.into_iter().map(|x| compact(x, brief)).collect()),
+        J::Obj(v) => {
+            let is_commit = brief && v.iter().any(|(k, _)| *k == "subject");
+            let same_id = matches!((v.iter().find(|(k, _)| *k == "id"), v.iter().find(|(k, _)| *k == "name")),
+                (Some((_, J::Str(a))), Some((_, J::Str(b)))) if a == b)
+                || matches!((v.iter().find(|(k, _)| *k == "id"), v.iter().find(|(k, _)| *k == "zone")),
+                    (Some((_, J::Str(a))), Some((_, J::Str(b)))) if a == b);
+            let mut out = Vec::new();
+            for (k, x) in v {
+                if DROP.contains(&k) || (k == "id" && same_id) {
+                    continue;
+                }
+                if is_commit && matches!(k, "files" | "files_changed") {
+                    continue;
+                }
+                if matches!(x, J::Bool(false)) && FALSE_DEFAULT.contains(&k) {
+                    continue;
+                }
+                let x = compact(x, brief);
+                match &x {
+                    J::Null => continue,
+                    J::Arr(a) if a.is_empty() => continue,
+                    J::Obj(o) if o.is_empty() => continue,
+                    _ => {}
+                }
+                out.push((k, x));
+            }
+            J::Obj(out)
+        }
+        x => x,
+    }
+}
+
+/// Apply the output format to a finished document.
+fn finish(d: J, f: Fmt, graph: bool) -> J {
+    let name = match f {
+        Fmt::Full => "full",
+        Fmt::Compact => "compact",
+        Fmt::Brief => "brief",
+    };
+    let mut d = match (f, d) {
+        (Fmt::Full, d) => d,
+        (f, J::Obj(mut v)) => {
+            if graph {
+                v.retain(|(k, _)| *k != "edges");
+            }
+            compact(J::Obj(v), f == Fmt::Brief)
+        }
+        (_, d) => d,
+    };
+    if let J::Obj(v) = &mut d {
+        v.insert(2, ("format", J::Str(name.into())));
+    }
+    d
+}
+
+// ------------------------------------------------------------------ explain
+
+fn adjacency(deps: &zd::Deps) -> (BTreeMap<String, BTreeSet<String>>, BTreeMap<String, BTreeSet<String>>) {
+    let mut fwd: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut rev: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (x, y) in deps.edges.keys() {
+        fwd.entry(x.clone()).or_default().insert(y.clone());
+        rev.entry(y.clone()).or_default().insert(x.clone());
+    }
+    (fwd, rev)
+}
+
+fn explain(a: &ExplainArgs, json: bool) -> Result<(), Error> {
+    let (repo, _) = crate::open()?;
+    let m = load(&repo)?;
+    let deps = deps_of(&repo, &m, false);
+    let (fwd, rev) = adjacency(&deps);
+    let path = a.path.trim_matches('/').to_owned();
+    let z = m.zones.owner(&path).to_owned();
+    let label = |v: Vec<String>| arr_s(v.into_iter().map(|x| m.zones.label(&x).to_owned()));
+    let rel = m.zones.relative(&z, &path).to_owned();
+    let exists = m.flat.contains_key(&path)
+        || m.flat
+            .keys()
+            .any(|k| k.strip_prefix(path.as_str()).is_some_and(|r| r.starts_with('/')));
+    let rules = codeowners(&repo, &m.flat);
+    let owners = rules.as_ref().map(|(_, r)| owners_for(r, &path)).unwrap_or_default();
+    let last = match m.heads.get(&z) {
+        Some((b, _)) => repo
+            .log_paths(&z, Some(b), std::slice::from_ref(&path), None, 1)
+            .ok()
+            .and_then(|(v, _)| v.into_iter().next()),
+        None => None,
+    };
+    let dependents_t = reach(&rev, &z);
+    let mut impacted = dependents_t.clone();
+    impacted.push(z.clone());
+    impacted.sort();
+    let doc_ = doc(
+        "zone-explain",
+        vec![
+            ("schema", s(SCHEMA)),
+            ("path", s(&path)),
+            ("exists", J::Bool(exists)),
+            ("zone", s(m.zones.label(&z))),
+            ("zone_path", s(m.zones.path_of(&z).unwrap_or(""))),
+            ("relative", s(&rel)),
+            (
+                "purpose",
+                purpose(&repo, &m.flat, &m.zones, &z).map_or(J::Null, |(t, src)| J::Obj(vec![("text", s(t)), ("source", s(src))])),
+            ),
+            ("codeowners", arr_s(owners)),
+            ("depends_on", label(fwd.get(&z).into_iter().flatten().cloned().collect())),
+            ("depends_on_transitive", label(reach(&fwd, &z))),
+            ("dependents", label(rev.get(&z).into_iter().flatten().cloned().collect())),
+            ("dependents_transitive", label(dependents_t)),
+            ("impacted", label(impacted)),
+            (
+                "last_commit",
+                last.map_or(J::Null, |(id, c)| {
+                    J::Obj(vec![
+                        ("id", hex(&id)),
+                        ("author", s(&c.author.name)),
+                        ("timestamp", J::Num(c.author.timestamp)),
+                        ("subject", s(c.message.lines().next().unwrap_or(""))),
+                    ])
+                }),
+            ),
+        ],
+    );
+    if !json {
+        let g = |k: &str| get(&doc_, k).map(|x| x.render()).unwrap_or_default();
+        println!(
+            "{path}: zone {} ({})",
+            str_of(get(&doc_, "zone")),
+            if exists { "exists" } else { "not in the head tree" }
+        );
+        println!("  depends on: {}", g("depends_on_transitive"));
+        println!("  impacted if changed: {}", g("impacted"));
+        println!("(use --json for the machine-readable document)");
+        return Ok(());
+    }
+    println!("{}", finish(doc_, a.format, false).render());
+    Ok(())
+}
+
+// ------------------------------------------------------------------ changes
+
+/// Position in `ops` (newest first) of the repository state named by one end of `A..B`: the
+/// oldest operation whose view has the commit as a branch head, an operation id prefix, or the
+/// newest operation not newer than a date. `None` is "before everything" (start) / "now" (end).
+fn range_end(repo: &Repo, ops: &[(ObjectId, vcs_objects::Operation)], tok: &str, start: bool) -> Result<Option<usize>, Error> {
+    // `X^` / `X~N`: the state N operations before the one that introduced X (git-style suffixes)
+    if let Some(i) = tok.rfind(['^', '~']).filter(|i| *i > 0) {
+        let (base, suffix) = (&tok[..i], &tok[i..]);
+        let n = match &suffix[1..] {
+            "" => Some(1),
+            d => d.parse::<usize>().ok(),
+        };
+        if let Some(n) = n {
+            return Ok(match range_end(repo, ops, base, start)? {
+                Some(k) if k + n < ops.len() => Some(k + n),
+                _ => None, // before the first operation: the empty repository
+            });
+        }
+    }
+    if tok.is_empty() || (tok == "HEAD" && !start) {
+        return Ok(if start { None } else { Some(0) });
+    }
+    let zones = repo.zones()?;
+    for z in zones.names() {
+        if let Ok(id) = repo.resolve_rev(z, tok) {
+            // ops are newest first: the last match is the oldest operation containing the commit
+            if let Some(i) = ops.iter().rposition(|(_, o)| o.view.branches.values().any(|h| *h == id)) {
+                return Ok(Some(i));
+            }
+        }
+    }
+    if let Ok(oid) = repo.op_resolve(tok) {
+        if let Some(i) = ops.iter().position(|(i, _)| *i == oid) {
+            return Ok(Some(i));
+        }
+    }
+    let ts = crate::logopts::parse_date(tok, now_secs(), !start)
+        .map_err(|e| Error::Msg(format!("{tok:?} is not a commit, an operation or a date ({e})")))?;
+    Ok(ops.iter().position(|(_, o)| o.author.timestamp <= ts))
+}
+
+fn changes(a: &ChangesArgs, json: bool) -> Result<(), Error> {
+    let (repo, _) = crate::open()?;
+    // `X` alone means "what commit X changed": `X^..X`
+    let range = if a.range.contains("..") {
+        a.range.clone()
+    } else {
+        format!("{0}^..{0}", a.range)
+    };
+    let Some((from, to)) = range.split_once("..") else {
+        return Err(Error::Msg("expected A..B".into()));
+    };
+    let zones = repo.zones()?;
+    let ops = repo.op_log(usize::MAX)?;
+    let (ia, ib) = (range_end(&repo, &ops, from, true)?, range_end(&repo, &ops, to, false)?);
+    // positions grow into the past: A must be older (larger index) than B
+    if let (Some(x), Some(y)) = (ia, ib) {
+        if x < y {
+            return Err(Error::Msg("A is newer than B".into()));
+        }
+    }
+    let ws = repo.workspace()?;
+    let mut out = Vec::new();
+    let mut text = String::new();
+    let mut touched = Vec::new();
+    for z in zones.names() {
+        let b = ws.subs.get(z).map_or("main", String::as_str);
+        let key = (z.to_owned(), b.to_owned());
+        let head_at = |i: Option<usize>| i.and_then(|i| ops[i].1.view.branches.get(&key).copied());
+        let (ha, hb) = (head_at(ia), head_at(ib));
+        if ha == hb {
+            continue;
+        }
+        let log = repo.log(z, Some(b), usize::MAX)?;
+        let pos = |h: Option<ObjectId>| h.and_then(|h| log.iter().position(|(i, _)| *i == h));
+        let n = match (pos(ha), pos(hb)) {
+            (Some(x), Some(y)) => x.saturating_sub(y),
+            (None, Some(y)) => log.len() - y,
+            _ => 0,
+        } as u64;
+        let root = |h: Option<ObjectId>| h.and_then(|h| repo.commit_of(&h).ok()).map(|c| c.root);
+        let prefix = zones.path_of(z).unwrap_or("");
+        let d = treeops::diff_trees_files(repo.store(), root(ha), root(hb), prefix)?;
+        let mut files: BTreeMap<String, &'static str> = BTreeMap::new();
+        for p in d.old.keys() {
+            files.insert(p.clone(), if d.new.contains_key(p) { "modified" } else { "deleted" });
+        }
+        for p in d.new.keys() {
+            files.entry(p.clone()).or_insert("added");
+        }
+        if files.is_empty() {
+            continue;
+        }
+        touched.push(zones.label(z).to_owned());
+        text.push_str(&format!("zone {} ({} commit(s))\n", zones.label(z), n));
+        for (p, k) in &files {
+            text.push_str(&format!("  {} {p}\n", &k[..1].to_uppercase()));
+        }
+        out.push(J::Obj(vec![
+            ("zone", s(zones.label(z))),
+            ("path", s(prefix)),
+            ("commits", J::Num(n)),
+            (
+                "files",
+                J::Arr(files.iter().map(|(p, k)| J::Obj(vec![("path", s(p)), ("kind", s(*k))])).collect()),
+            ),
+        ]));
+    }
+    if !json {
+        print!("{}", if text.is_empty() { "no changes\n".to_owned() } else { text });
+        return Ok(());
+    }
+    let d = doc(
+        "zone-changes",
+        vec![
+            ("schema", s(SCHEMA)),
+            ("range", s(&a.range)),
+            ("from_operation", ia.map_or(J::Null, |i| hex(&ops[i].0))),
+            ("to_operation", ib.map_or(J::Null, |i| hex(&ops[i].0))),
+            ("zones_touched", arr_s(touched)),
+            ("zones", J::Arr(out)),
+            (
+                "notes",
+                arr_s(["A and B name repository states through the operation log (the first operation that made the commit a branch head, or the newest one not newer than a date); each zone is compared at its checked-out branch, files are the net difference".to_owned()]),
+            ),
+        ],
+    );
+    println!("{}", finish(d, a.format, false).render());
     Ok(())
 }

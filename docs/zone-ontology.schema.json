@@ -133,7 +133,7 @@
         "files_changed": { "type": "integer" }, "files_truncated": { "type": "boolean" },
         "files": {
           "type": "array",
-          "items": { "type": "object", "required": ["path", "kind"], "properties": { "path": { "type": "string", "description": "Zone-relative" }, "kind": { "enum": ["added", "modified", "deleted"] } } }
+          "items": { "type": "object", "required": ["path", "kind"], "properties": { "path": { "type": "string", "description": "Repo-relative" }, "kind": { "enum": ["added", "modified", "deleted"] } } }
         }
       }
     },

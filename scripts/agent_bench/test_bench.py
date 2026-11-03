@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fixture  # noqa: E402
 import harness  # noqa: E402
 import tasks as TK  # noqa: E402
+import oracles_holdout as OH  # noqa: E402
 
 VCS = os.environ.get("VCS_BIN")
 
@@ -21,6 +22,7 @@ class OfflineBench(unittest.TestCase):
         fixture.build(cls.dir, VCS)
         cls.ex = harness.Executor({"git": cls.dir + "/git", "vcs": cls.dir + "/vcs"}, VCS)
         cls.tasks = TK.make_tasks()
+        cls.holdout = OH.make()
 
     @classmethod
     def tearDownClass(cls):
@@ -28,16 +30,22 @@ class OfflineBench(unittest.TestCase):
 
     def test_task_count_and_ground_truth_is_independent(self):
         self.assertTrue(15 <= len(self.tasks) <= 25)
+        self.assertGreaterEqual(len(self.holdout), 8)
+        self.assertFalse({t.question for t in self.tasks} & {t.question for t in self.holdout}, 'holdout questions must be new')
         self.assertEqual(len({t.id for t in self.tasks}), len(self.tasks))
 
     def test_every_oracle_is_correct_for_both_tools(self):
         bad = []
-        for t in self.tasks:
+        for t in self.tasks + self.holdout:
             for tool in ("git", "vcs"):
                 r = harness.run_oracle(self.ex, t, tool)
                 if not r["correct"]:
                     bad.append((t.id, tool, r["answer"], t.answer, r["error"]))
         self.assertEqual(bad, [])
+
+    def test_vcs_needs_fewer_calls_for_pickaxe(self):
+        t = next(x for x in self.holdout if x.id == 'h_find_removed')
+        self.assertEqual(harness.run_oracle(self.ex, t, 'vcs')['tool_calls'], 1)
 
     def test_graders_reject_wrong_answers(self):
         t = next(x for x in self.tasks if x.id == "build_cli")
