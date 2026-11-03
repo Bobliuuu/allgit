@@ -1,13 +1,13 @@
 # High-load push matrix: vcs vs git and walgit
 
-Measured on box D (c6i.4xlarge, 16 vCPU, ext4 on gp3, Ubuntu 24.04, git 2.56), 2025-11-02, with
+Measured on box D (c6i.4xlarge, 16 vCPU, ext4 on gp3, Ubuntu 24.04, git 2.56), 2026-11-02, with
 `scripts/highload_bench/highload.py` (PRs #442, #445). Each pusher has its own clone and does
 commit + push, 10 commits per pusher (5 for the same-branch runs). Three repetitions per cell, rotated
 arm order. "pushes/s" is commit plus push per second over the push phase only (clones excluded).
 Raw JSON is in `docs/research/highload-data/`.
 
 Arms: **git** = `git daemon` on local disk; **vcs disk** = `vcs-server --root`; **walgit** and **vcs RustFS** = the
-same RustFS 1.x on local disk. Pairs compared: vcs disk vs git, vcs RustFS vs walgit.
+same RustFS on local disk. Pairs compared: vcs disk vs git, vcs RustFS vs walgit.
 
 Tie rule: TIE when the medians are within 10 percent or the min..max ranges overlap; otherwise WIN or LOSS for vcs.
 Every push in every cell was verified by a fresh clone unless noted.
