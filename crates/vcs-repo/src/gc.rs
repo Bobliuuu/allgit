@@ -90,6 +90,7 @@ impl Repo {
         let doomed: BTreeSet<ObjectId> = first.would_delete.iter().map(|x| x.0).filter(|i| confirmed.contains(i)).collect();
         let deleted: Vec<(ObjectId, Kind)> = second.would_delete.iter().filter(|x| doomed.contains(&x.0)).copied().collect();
         let sweep = self.store.sweep(&doomed)?;
+        self.warm_commit_graph();
         Ok(GcRun {
             rechecked_out: first.would_delete.len() - doomed.len(),
             plan: second,
