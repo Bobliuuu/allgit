@@ -748,6 +748,10 @@ enum ZoneCmd {
     Describe(ontology::DescribeArgs),
     /// Zone dependency graph with reasons, transitive closures and path index (docs/zone-ontology.md)
     Graph(ontology::GraphArgs),
+    /// One call: owner zone of a path, its owners, dependencies, dependents and impacted zones (docs/zone-ontology.md)
+    Explain(ontology::ExplainArgs),
+    /// Per zone, the files that changed between two commits or dates (`A..B`), in one call
+    Changes(ontology::ChangesArgs),
 }
 
 #[derive(Subcommand, Clone)]
@@ -1906,7 +1910,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                     repo.zone_delete(&name, force)?;
                     println!("deleted zone {name}");
                 }
-                ZoneCmd::Suggest(_) | ZoneCmd::Apply(_) | ZoneCmd::Subscribe(_) | ZoneCmd::Describe(_) | ZoneCmd::Graph(_) => unreachable!("handled by autozone::intercept"),
+                ZoneCmd::Suggest(_) | ZoneCmd::Apply(_) | ZoneCmd::Subscribe(_) | ZoneCmd::Describe(_) | ZoneCmd::Graph(_) | ZoneCmd::Explain(_) | ZoneCmd::Changes(_) => unreachable!("handled by autozone::intercept"),
             }
         }
         Cmd::Snapshot(s) => {

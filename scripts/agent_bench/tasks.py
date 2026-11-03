@@ -124,7 +124,7 @@ def vcs_all_commits(t, n=20):
     merged = {}
     for z in d["zones"]:
         for c in z["history"]["recent"]:
-            e = merged.setdefault(c["subject"], [c["timestamp"], set()])
+            e = merged.setdefault(c["subject"], [c["timestamp"], set(), c["id"]])
             for f in c["files"]:
                 e[1].add((z["path"] + "/" + f["path"]) if z["path"] else f["path"])
     return merged
@@ -195,7 +195,7 @@ def make_tasks():
     # --- dependencies
     add("deps_direct", "dependencies", "Which zones does zone `api` depend on directly? Answer with a list of zone names.",
         F.DEPS["api"], "set", lambda t: list(git_deps(t)["api"]),
-        lambda t: next(n["depends_on"] for n in vcs_graph(t)["nodes"] if n["name"] == "api"))
+        lambda t: next(n.get("depends_on", []) for n in vcs_graph(t)["nodes"] if n["name"] == "api"))
 
     def g_trans(t, z):
         d, out, todo = git_deps(t), set(), [z]
@@ -208,10 +208,10 @@ def make_tasks():
     add("build_cli", "dependencies",
         "Which zones must be subscribed (checked out) to build zone `cli`? Include `cli` itself and everything it depends on, directly or indirectly.",
         sorted(trans_deps("cli") | {"cli"}), "set", lambda t: g_trans(t, "cli") | {"cli"},
-        lambda t: set(next(n["depends_on_transitive"] for n in vcs_graph(t)["nodes"] if n["name"] == "cli")) | {"cli"})
+        lambda t: set(next(n.get("depends_on_transitive", []) for n in vcs_graph(t)["nodes"] if n["name"] == "cli")) | {"cli"})
     add("build_net", "dependencies", "Which zones must be subscribed (checked out) to build zone `net`? Include `net` itself and everything it depends on.",
         sorted(trans_deps("net") | {"net"}), "set", lambda t: g_trans(t, "net") | {"net"},
-        lambda t: set(next(n["depends_on_transitive"] for n in vcs_graph(t)["nodes"] if n["name"] == "net")) | {"net"})
+        lambda t: set(next(n.get("depends_on_transitive", []) for n in vcs_graph(t)["nodes"] if n["name"] == "net")) | {"net"})
 
     def g_dependents(t, z, trans):
         d = git_deps(t)
@@ -227,19 +227,19 @@ def make_tasks():
                     todo.append(a)
         return out
     add("dependents_direct", "dependencies", "Which zones depend directly on zone `core`?", sorted(dependents("core")), "set",
-        lambda t: g_dependents(t, "core", False), lambda t: next(n["dependents"] for n in vcs_graph(t)["nodes"] if n["name"] == "core"))
+        lambda t: g_dependents(t, "core", False), lambda t: next(n.get("dependents", []) for n in vcs_graph(t)["nodes"] if n["name"] == "core"))
     add("dependents_trans", "dependencies", "If zone `util` changes, which zones are affected, directly or indirectly (all zones that depend on it)?",
         sorted(trans_dependents("util")), "set", lambda t: g_dependents(t, "util", True),
-        lambda t: next(n["dependents_transitive"] for n in vcs_graph(t)["nodes"] if n["name"] == "util"))
+        lambda t: next(n.get("dependents_transitive", []) for n in vcs_graph(t)["nodes"] if n["name"] == "util"))
     leaves = sorted(set(F.ZONES) - {z for z in F.DEPS if F.DEPS[z]})  # zones with no dependencies at all
     add("no_deps", "dependencies", "Which zones (not `root`) depend on no other zone? Answer with a list of zone names.", leaves, "set",
         lambda t: {z for z, ds in git_deps(t).items() if not ds},
-        lambda t: [n["name"] for n in vcs_graph(t)["nodes"] if n["name"] != "root" and not n["depends_on"]])
+        lambda t: [n["name"] for n in vcs_graph(t)["nodes"] if n["name"] != "root" and not n.get("depends_on", [])])
 
     # --- owners and activity
     add("owners", "ontology", "Who are the CODEOWNERS of zone `api`? Answer with a list of handles such as `@name`.", codeowners("api"), "set",
         lambda t: _git_owners(t, "api"),
-        lambda t: vj(t, "zone", "describe", "api", "--fields", "owners", "--history", "0", "--transactions", "0")["zones"][0]["owners"]["codeowners"])
+        lambda t: vj(t, "zone", "describe", "api", "--fields", "owners", "--history", "0", "--transactions", "0")["zones"][0]["owners"].get("codeowners", []))
     cnt = Counter(F.COMMITS[i][0] for i in commits_touching("net"))
     top = F.AUTHORS[cnt.most_common(1)[0][0]]
     assert sorted(cnt.values())[-1] > (sorted(cnt.values())[-2] if len(cnt) > 1 else 0)
@@ -320,25 +320,15 @@ def _vcs_common_zones(t, P, Q):
 
 
 def _vcs_range(t, A, B, zone):
-    d = memo(t, ("hist", 20), lambda: vj(t, "zone", "describe", "--fields", "path,history", "--history", "20", "--transactions", "0"))
-    times = {}
-    for z in d["zones"]:
-        for c in z["history"]["recent"]:
-            times[c["subject"]] = c["timestamp"]
-    lo, hi = times[A], times[B]
+    c = vcs_all_commits(t)
+    d = vj(t, "zone", "changes", f"{c[A][2]}..{c[B][2]}")
     out = set()
-    for z in d["zones"]:
-        if z["name"] == zone:
-            for c in z["history"]["recent"]:
-                if lo < c["timestamp"] <= hi:
-                    out |= {z["path"] + "/" + f["path"] for f in c["files"]}
+    for z in d.get("zones", []):
+        if z["zone"] == zone:
+            out |= {f["path"] for f in z["files"]}
     return out
 
 
 def _vcs_pickaxe(t, needle):
-    for n in vcs_graph(t)["nodes"]:
-        out = t(["vcs", "log", "--zone", n["id"], "-S", needle, "--format", "%s"]).strip().splitlines()
-        out = [l for l in out if not l.startswith("no matching")]
-        if out:
-            return out[-1]
-    return ""
+    out = [l for l in t(["vcs", "log", "--all-zones", "-S", needle, "--format", "%s"]).strip().splitlines() if not l.startswith("no matching")]
+    return out[-1] if out else ""

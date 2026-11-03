@@ -21,10 +21,19 @@ fn ok(dir: &Path, args: &[&str]) -> String {
 }
 fn json(dir: &Path, args: &[&str]) -> Value {
     let mut a = args.to_vec();
+    a.extend(["--format", "full"]);
     a.push("--json");
     let out = ok(dir, &a);
     assert_eq!(out.matches('\n').count(), 1, "one line: {out:?}");
     serde_json::from_str(out.trim()).unwrap()
+}
+/// Default (compact) format.
+fn jsonc(dir: &Path, args: &[&str]) -> (Value, usize) {
+    let mut a = args.to_vec();
+    a.push("--json");
+    let out = ok(dir, &a);
+    assert_eq!(out.matches('\n').count(), 1, "one line: {out:?}");
+    (serde_json::from_str(out.trim()).unwrap(), out.len())
 }
 fn write(dir: &Path, f: &str, c: &str) {
     let p = dir.join(f);
@@ -235,4 +244,98 @@ fn read_only() {
     json(&a, &["zone", "describe"]);
     json(&a, &["zone", "graph"]);
     assert_eq!((ok(&a, &["op", "log"]), ok(&a, &["status"])), before);
+}
+
+#[test]
+fn compact_default_is_smaller_and_keeps_the_answers() {
+    let t = tempfile::tempdir().unwrap();
+    let a = fixture(t.path());
+    let full = ok(&a, &["zone", "describe", "--format", "full", "--json"]).len();
+    let (c, clen) = jsonc(&a, &["zone", "describe"]);
+    let (b, blen) = jsonc(&a, &["zone", "describe", "--format", "brief"]);
+    assert!(clen * 10 < full * 6, "compact {clen} vs full {full}");
+    assert!(blen < clen);
+    assert_eq!(c["format"], "compact");
+    let core = zone(&c, "core");
+    assert!(core.get("id").is_none(), "id equal to name is redundant");
+    assert!(core["history"]["recent"][0].get("change_id").is_none());
+    assert_eq!(core["history"]["recent"][0]["files"][0]["path"], "src/lib.rs");
+    assert_eq!(core["history"]["recent"][0]["id"].as_str().unwrap().len(), 12);
+    assert!(zone(&b, "core")["history"]["recent"][0].get("files").is_none());
+    assert_eq!(zone(&b, "core")["history"]["recent"][0]["subject"], "touch core and api");
+    assert!(core.get("locks").is_none() && core["owners"].get("email").is_none());
+    let (g, _) = jsonc(&a, &["zone", "graph"]);
+    assert!(g.get("edges").is_none());
+    assert_eq!(
+        g["nodes"].as_array().unwrap().iter().find(|n| n["name"] == "app").unwrap()["depends_on_transitive"],
+        serde_json::json!(["api", "core"])
+    );
+}
+
+#[test]
+fn since_and_limit_filter_history() {
+    let t = tempfile::tempdir().unwrap();
+    let a = fixture(t.path());
+    let v = json(&a, &["zone", "describe", "core", "--limit", "1"]);
+    assert_eq!(v["zones"][0]["history"]["recent"].as_array().unwrap().len(), 1);
+    let v = json(&a, &["zone", "describe", "core", "--since", "2100-01-01"]);
+    assert_eq!(v["zones"][0]["history"]["recent"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn explain_answers_ownership_and_impact_in_one_call() {
+    let t = tempfile::tempdir().unwrap();
+    let a = fixture(t.path());
+    let (v, _) = jsonc(&a, &["zone", "explain", "crates/core/src/lib.rs"]);
+    assert_eq!(v["zone"], "core");
+    assert_eq!(v["relative"], "src/lib.rs");
+    assert_eq!(v["exists"], true);
+    assert_eq!(v["codeowners"], serde_json::json!(["@alice", "@bob"]));
+    assert_eq!(v["dependents_transitive"], serde_json::json!(["api", "app"]));
+    assert_eq!(v["impacted"], serde_json::json!(["api", "app", "core"]));
+    assert_eq!(v["last_commit"]["subject"], "touch core and api");
+    let (v, _) = jsonc(&a, &["zone", "explain", "top.txt"]);
+    assert_eq!(v["zone"], "root");
+    let (v, _) = jsonc(&a, &["zone", "explain", "crates/api/nope.rs"]);
+    assert!(v.get("exists").is_none() || v["exists"] == false);
+    assert!(ok(&a, &["zone", "explain", "crates/api/src/lib.rs"]).contains("zone api"));
+}
+
+#[test]
+fn changes_lists_files_per_zone_between_two_commits() {
+    let t = tempfile::tempdir().unwrap();
+    let a = fixture(t.path());
+    let d = json(&a, &["zone", "describe", "core", "--history", "5"]);
+    let first = d["zones"][0]["history"]["recent"][1]["id"].as_str().unwrap().to_owned();
+    let last = d["zones"][0]["history"]["recent"][0]["id"].as_str().unwrap().to_owned();
+    let v = json(&a, &["zone", "changes", &format!("{first}..{last}")]);
+    assert_eq!(v["zones_touched"], serde_json::json!(["api", "core"]));
+    let core = v["zones"].as_array().unwrap().iter().find(|z| z["zone"] == "core").unwrap();
+    assert_eq!(
+        core["files"],
+        serde_json::json!([{"path": "crates/core/src/lib.rs", "kind": "modified"}])
+    );
+    let api = v["zones"].as_array().unwrap().iter().find(|z| z["zone"] == "api").unwrap();
+    assert_eq!(api["files"][0]["path"], "crates/api/src/new.rs");
+    assert_eq!(api["files"][0]["kind"], "added");
+    // open start and a text rendering
+    let text = ok(&a, &["zone", "changes", &format!("..{first}")]);
+    assert!(text.contains("A crates/core/Cargo.toml"), "{text}");
+    assert!(!vcs(&a, &["zone", "changes", "nonsense"]).status.success());
+}
+
+#[test]
+fn log_all_zones_finds_pickaxe_and_regex_hits_in_one_call() {
+    let t = tempfile::tempdir().unwrap();
+    let a = fixture(t.path());
+    let out = ok(&a, &["log", "--all-zones", "-S", "pub fn g()", "--format", "%z:%s"]);
+    assert_eq!(out.trim(), "api:touch core and api");
+    let out = ok(&a, &["log", "--all-zones", "-G", "v2|fn g", "--format", "%z:%s"]);
+    let mut lines: Vec<&str> = out.lines().collect();
+    lines.sort();
+    assert_eq!(lines, ["api:touch core and api", "core:touch core and api"]);
+    // -G ignores an unchanged line and a non-matching change
+    let out = ok(&a, &["log", "--all-zones", "-G", "^pub fn f", "--format", "%z:%s"]);
+    assert!(out.lines().any(|l| l == "core:initial import"), "{out}");
+    assert!(!vcs(&a, &["log", "-G", "(", "--all-zones"]).status.success());
 }

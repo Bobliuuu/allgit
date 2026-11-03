@@ -36,7 +36,7 @@ The ontology stores nothing. Every field is computed when you ask, from state vc
 | `dependencies` | the same analysis as `vcs zone subscribe --for`: Cargo path/workspace deps, package.json deps, go.mod `require`/`replace`, pyproject deps; `graph --deep` also scans Go/Python/JS/TS imports. Each edge carries human-readable `reasons`. Unreadable manifests are listed in `notes`, never guessed |
 | `subscription` | the workspace file: subscribed or not, checked-out branch, sparse paths (`vcs sparse`) |
 | `branches` | refs |
-| `history` | the zone's branch head, a commit count (capped at 1000, `capped: true` then), and the newest `--history N` commits (default 5) each with its changed files (zone-relative paths, `added`/`modified`/`deleted`, first parent diff, capped at 100 files per commit) |
+| `history` | the zone's branch head, a commit count (capped at 1000, `capped: true` then), and the newest `--history N` (alias `--limit`, default 3) commits, optionally only `--since DATE` each with its changed files (zone-relative paths, `added`/`modified`/`deleted`, first parent diff, capped at 100 files per commit) |
 | `locks.held_locally` | the locks this checkout believes it holds (`lockable-held`). Remote lock state needs a network call, so it is not included: use `vcs locks` |
 | `transactions` | the operation log: each entry lists the zones whose branch heads it moved (`branch_moves` with from/to), `zones_touched`, and subscription changes. A multi-zone `vcs commit` is one entry touching several zones, which is how "which zones does this change touch" is answered |
 

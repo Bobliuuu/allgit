@@ -20,6 +20,7 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fixture  # noqa: E402
 import tasks as TK  # noqa: E402
+import oracles_holdout as OH  # noqa: E402
 
 MAX_OUT = 40000
 MAX_CALLS = 14
@@ -142,9 +143,20 @@ def parse_answer(text):
     return None
 
 
+V3_VCS = (" Commands: `vcs zone graph --json` (zones, paths, direct and transitive dependencies and dependents); "
+          "`vcs zone explain PATH --json` (owner zone of a path, its CODEOWNERS, dependencies, dependents, impacted zones, last commit); "
+          "`vcs zone describe [ZONE] [--fields purpose,owners,history,...] [--history N] [--since DATE] [--format compact|brief|full] --json` "
+          "(per-zone purpose, owners, recent commits with changed files relative to the zone `path`, operations with the zones they touched); "
+          "`vcs zone changes A..B --json` (files changed per zone between two commits, ids from describe or log); "
+          "`vcs log --all-zones [-S text | -G regex] [--grep re] [--format '%z %h %s'] [-- path]` searches every zone's history at once; "
+          "`vcs log --zone Z`, `vcs diff`, `vcs --help`. JSON output is compact by default (12-hex ids are valid prefixes; empty fields are omitted).")
+
+
 def run_live(ex, task, tool, key, prompt="v1"):
     ep = Episode(ex, tool)
     sysmsg = PREAMBLE[tool].format(max=MAX_OUT) + (V2_VCS_HINT if tool == "vcs" and prompt == "v2" else "")
+    if tool == "vcs" and prompt == "v3":
+        sysmsg = PREAMBLE_COMMON.format(max=MAX_OUT) + "This is a vcs repository (use the `vcs` tool commands only). vcs knows zones natively." + V3_VCS
     msgs = [{"role": "system", "content": sysmsg}, {"role": "user", "content": task.question}]
     tin = tout = 0
     t0 = time.time()
@@ -204,14 +216,17 @@ def main():
     ap.add_argument("--build-fixture", metavar="DIR", help="build the fixture into DIR and exit")
     ap.add_argument("--ssh-target", help="run tools over ssh on this user@host (the repos live there; --fixture is a path there)")
     ap.add_argument("--ssh-key", help="ssh identity file")
-    ap.add_argument("--prompt", choices=["v1", "v2"], default="v1", help="v2 adds a vcs hint about per-zone history (written after seeing v1 results)")
+    ap.add_argument("--prompt", choices=["v1", "v2", "v3"], default="v3", help="v1/v2: round-1 vcs prompts (see docs); v3: describes the round-2 commands")
     ap.add_argument("--repeats", type=int, default=3)
-    ap.add_argument("--tasks", help="comma-separated task ids (default all)")
+    ap.add_argument("--tasks", help="comma-separated task ids (default all of the suite)")
+    ap.add_argument("--suite", choices=["tuning", "holdout", "all"], default="tuning",
+                    help="tuning: the 24 round-1 tasks; holdout: the 19 tasks written before the round-2 changes")
+    ap.add_argument("--tools", default="git,vcs", help="comma-separated: git,vcs")
     ap.add_argument("--budget-usd", type=float, default=0.9)
     ap.add_argument("--out", help="write raw JSONL here")
     ap.add_argument("--list", action="store_true")
     a = ap.parse_args()
-    all_tasks = TK.make_tasks()
+    all_tasks = (TK.make_tasks() if a.suite != "holdout" else []) + (OH.make() if a.suite != "tuning" else [])
     if a.list:
         for t in all_tasks:
             print(f"{t.id:20} {t.cat:13} {t.question}")
@@ -237,7 +252,7 @@ def main():
     outf = open(a.out, "w") if a.out else None
     for rep in range(reps):
         for t in sel:
-            for tool in ("git", "vcs"):
+            for tool in a.tools.split(","):
                 if a.mode == "live" and spent >= a.budget_usd:
                     print(f"budget reached (${spent:.3f}); stopping", file=sys.stderr)
                     reps = rep + 1 if rep else 0

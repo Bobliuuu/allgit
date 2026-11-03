@@ -43,6 +43,9 @@ pub struct LogExtra {
     /// Only commits that change the number of occurrences of this string in some file (pickaxe)
     #[arg(short = 'S', value_name = "STRING")]
     pub pickaxe: Option<String>,
+    /// Only commits that add or remove a line matching this regular expression in some file (like `git log -G`)
+    #[arg(short = 'G', value_name = "REGEX")]
+    pub pickaxe_regex: Option<String>,
     /// Template per commit. Placeholders: %H %h %P %p %an %ae %at %ad %s %b %B %C %z %n %%
     #[arg(long, value_name = "TEMPLATE")]
     pub format: Option<String>,
@@ -91,6 +94,7 @@ impl LogExtra {
             || self.no_merges
             || self.first_parent
             || self.pickaxe.is_some()
+            || self.pickaxe_regex.is_some()
             || self.follow
     }
     pub fn lists_files(&self) -> bool {
@@ -179,6 +183,16 @@ impl LogExtra {
                 flags.extend(h?);
             }
             let mut it = flags.into_iter();
+            shown.retain(|_| it.next().unwrap_or(false));
+        }
+        if let Some(pat) = &self.pickaxe_regex {
+            let re = Regex::new(pat).map_err(|e| Error::Msg(format!("-G: {e}")))?;
+            let by_id: BTreeMap<ObjectId, &Commit> = all.iter().map(|(i, c)| (*i, c)).collect();
+            let mut keep = Vec::with_capacity(shown.len());
+            for (_, c) in shown.iter() {
+                keep.push(pickaxe_regex_hit(repo, prefix, &by_id, c, &re)?);
+            }
+            let mut it = keep.into_iter();
             shown.retain(|_| it.next().unwrap_or(false));
         }
         Ok(())
@@ -385,6 +399,43 @@ fn pickaxe_hit(
             continue;
         }
         if occurrences(o)? != occurrences(n)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// `-G`: does the commit add or remove (net, per file) a line matching `re`? Lines are compared
+/// as a multiset per file, so a moved or unchanged line does not count. Non-UTF-8 bytes are
+/// decoded lossily.
+fn pickaxe_regex_hit(repo: &Repo, prefix: &str, by_id: &BTreeMap<ObjectId, &Commit>, c: &Commit, re: &Regex) -> Result<bool, Error> {
+    let old_root = match c.parents.first().and_then(|p| by_id.get(p)) {
+        Some(pc) => Some(pc.root),
+        None if c.parents.is_empty() => None,
+        None => return Ok(false),
+    };
+    let d = treeops::diff_trees_files(repo.store(), old_root, Some(c.root), prefix)?;
+    let paths: BTreeSet<&String> = d.new.keys().chain(d.old.keys()).collect();
+    for p in paths {
+        let (o, n) = (d.old.get(p), d.new.get(p));
+        if o == n {
+            continue;
+        }
+        let text = |e: Option<&(vcs_objects::EntryMode, ObjectId)>| -> Result<String, Error> {
+            Ok(match e {
+                Some((_, id)) => String::from_utf8_lossy(&repo.store().get_content(id)?).into_owned(),
+                None => String::new(),
+            })
+        };
+        let (old, new) = (text(o)?, text(n)?);
+        let mut bal: HashMap<&str, i64> = HashMap::new();
+        for l in old.lines() {
+            *bal.entry(l).or_default() -= 1;
+        }
+        for l in new.lines() {
+            *bal.entry(l).or_default() += 1;
+        }
+        if bal.iter().any(|(l, b)| *b != 0 && re.is_match(l)) {
             return Ok(true);
         }
     }
