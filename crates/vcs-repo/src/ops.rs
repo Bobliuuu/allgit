@@ -41,7 +41,7 @@ fn tags_digest(t: &std::collections::BTreeMap<(String, String), ObjectId>) -> Ob
 }
 
 /// Fewest tags for which an unchanged tag view is left out of an operation.
-const OP_TAGS_DELTA_MIN: usize = 64;
+pub(crate) const OP_TAGS_DELTA_MIN: usize = 64;
 /// How far back an omitted tag view is looked up when recording (full copy again beyond it).
 const OP_TAGS_LOOKBACK: usize = 64;
 

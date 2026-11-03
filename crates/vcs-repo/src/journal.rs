@@ -351,6 +351,11 @@ mod imp {
 
         pub(super) fn try_journaled_op(&self, refs: &Refs, description: &str, author: &Option<Signature>) -> Result<Option<ObjectId>> {
             let Some(boot) = boot_id() else { return Ok(None) };
+            // A large tag set is stored once and omitted from unchanged operations (ops.rs `record_op`);
+            // the journal record always carries the full view, so large sets take the synced path.
+            if refs.tags.len() >= crate::ops::OP_TAGS_DELTA_MIN {
+                return Ok(None);
+            }
             // Data objects the new state names (annotation, commits, ...) are durable first.
             self.store.sync()?;
             let ws = self.workspace()?;
