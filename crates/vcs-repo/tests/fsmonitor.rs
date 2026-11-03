@@ -362,6 +362,44 @@ fn state_survives_patched_index_writes_and_commits() {
     assert_same(&r, &m, "end");
 }
 
+/// A branch switch rewrites the index at the paths the two branches differ in and logs them: the state
+/// stays usable (an unreported change elsewhere is not looked for), the switched files are right, and
+/// an edit to a file the switch rewrote is found once reported.
+#[test]
+fn state_survives_a_branch_switch() {
+    let (_d, r) = base();
+    let sig = |t| vcs_objects::Signature {
+        name: "T".into(),
+        email: "t@x".into(),
+        timestamp: t,
+    };
+    r.create_branch("root", "side").unwrap();
+    r.checkout("root", "side").unwrap();
+    w(&r, "a/x.txt", "side version");
+    r.add(&["a/x.txt".to_string()]).unwrap();
+    r.commit("side", sig(2)).unwrap();
+    r.checkout("root", "main").unwrap();
+    settle();
+    let m = MockMonitor::new();
+    assert_same(&r, &m, "cold");
+    // the switch itself writes a/x.txt (the watcher would report it)
+    r.checkout("root", "side").unwrap();
+    m.event("a/x.txt");
+    assert_eq!(fs::read_to_string(r.worktree().join("a/x.txt")).unwrap(), "side version");
+    w(&r, "d/e/f.txt", "silent edit, never reported");
+    let s = r.status_monitored(opts(), &m).unwrap();
+    assert!(
+        s.zones[0].unstaged.is_empty(),
+        "switch threw the state away: {:?}",
+        s.zones[0].unstaged
+    );
+    m.event("d/e/f.txt");
+    assert_same(&r, &m, "after switch");
+    w(&r, "a/x.txt", "edited after the switch");
+    m.event("a/x.txt");
+    assert_same(&r, &m, "edit of a switched file");
+}
+
 /// A state bound to an index the log does not connect to the current one is never trusted.
 #[test]
 fn a_broken_rebind_chain_means_a_full_scan() {

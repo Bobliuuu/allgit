@@ -460,7 +460,7 @@ pub(crate) fn state_exists(vcs: &Path) -> bool {
 
 const REBIND: &str = "rebind";
 const REBIND_MAX_BYTES: u64 = 256 << 10;
-const REBIND_MAX_PATHS: usize = 2000;
+const REBIND_MAX_PATHS: usize = 20_000;
 
 fn hex(b: &[u8; 32]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()

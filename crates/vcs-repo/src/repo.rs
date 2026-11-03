@@ -2096,8 +2096,9 @@ impl Repo {
             }
         }
         let mut ix = self.index()?;
-        // Only staged/unstaged/merge state matters here, so skip the untracked-file walk.
-        let st = self.status_inner(StatusOpts::default(), &ix, false, None)?;
+        // Only staged/unstaged/merge state matters here, so skip the untracked-file walk (a running
+        // watcher also skips the stat of every unchanged tracked file).
+        let st = self.status_tracked_auto(StatusOpts::default())?;
         if same {
             // the cached tree was missing or stale: an unstaged edit still cannot be lost here
             let mut st = st;
@@ -2127,8 +2128,16 @@ impl Repo {
                 .store_trees(zones_fp(&zones), std::iter::once((prefix.to_owned(), new_root)).collect());
         }
         ws.subs.insert(zone.into(), branch.into());
+        // The index differs from the one on disk only at the paths the two trees differ in: tell the
+        // filesystem monitor, so the next status does not have to scan everything again.
+        let old_fp = self.fsmon_fp_of_disk_index();
         self.save_index(&mut ix)?;
         self.save_ws(&ws)?;
+        if old_fp.is_some() {
+            // after `save_ws`: the state's fingerprint covers the subscribed branches too
+            let touched: Vec<String> = diff.old.keys().chain(diff.new.keys()).cloned().collect();
+            self.fsmon_log_rewrite(old_fp, &self.rd("index")?, &touched);
+        }
         if cur == vcs_objects::names::DETACHED_BRANCH {
             self.drop_detached_ref(zone)?;
         }
