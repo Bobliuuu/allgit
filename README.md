@@ -263,6 +263,32 @@ flat 100k only, and the jj and Sapling cells mix sessions (see [the document](do
 - **vs walgit** (older data, below): warm one-commit fetch is a tie, object-store request counts and client store size
   are worse for vcs.
 
+#### Newer measurements recovered from the timing boxes (2026-11-03)
+
+These are not in the table above and were not interleaved on the same build as `8da0be2`; they are small samples (n=3 to 9,
+medians) and the build is not recorded in the data. Details, rules and the runs that did not finish:
+[docs/research/box-harvest.md](docs/research/box-harvest.md).
+
+| cell (flat 100k, git 2.43.0) | git wall / CPU ms | vcs wall / CPU ms | verdict |
+|---|---|---|---|
+| `status`, clean (quiet box H, load1 0.1) | 62.9 / 175 | 29.5 / 43 | WIN (0.47 / 0.25); the box E row above says 0.88 / 1.04, so treat both as unsettled |
+| `diff`, clean | 21.5 / 133 | 7.0 / 6.5 | WIN |
+| `diff`, dirty | 64.0 / 173 | 58.6 / 552 | TIE in wall, **3.2x git's CPU** |
+| `diff --name-only`, dirty | 29.9 / 140 | 56.2 / 550 | **LOSS** (1.9x wall, 3.9x CPU) |
+| `ls-files` after fix | 14.2 / 14.0 | 8.6 / 19.5 | TIE (mixed): faster wall, 1.4x CPU |
+| `grep` whole tree | 728 / 2,490 | 91 / 1,019 | WIN |
+| `grep -- path` after fix | 11.1 / 13.8 | 11.2 / 26.2 | TIE (1.9x CPU) |
+| `log --stat` | 3.4 / 3.3 | 5.6 / 5.5 | **LOSS** (no re-run after any fix) |
+| `bundle create` | 337 to 540 / about 640 | 331 to 1,122 / 800 to 1,377 | **LOSS** in 3 of 5 repeats, noisy (load1 9 to 23) |
+| `gc` after fix | 527 / 825 | 272 / 1,920 | TIE (mixed): half the wall time, 2.3x CPU |
+
+vs Perforce (box E, 3 runs): `status` clean is 30 ms against p4's 1,155 ms (WIN), `submit` of 100k files 646 ms against
+18.3 s (WIN), but one-file `add`, `opened`, `diff`, `revert`, `delete` and `submit` remain 5x to 19x p4's wall time (LOSS),
+and `sync` after a 1% change is 1.17x p4 (LOSS).
+
+Durability: a 14-minute kill -9 chaos run (157 server kills, 245 acknowledged files) lost 0 acknowledged files, 0 wrong
+contents, and the fresh clone passed `fsck`. It is a short run on one box, with no resource trend under kills.
+
 ### 🌐 Remote workflows: vcs, git and walgit
 
 [walgit](https://github.com/tobi/walgit) is a git server over S3-compatible storage (tool compared, not used by
