@@ -210,10 +210,18 @@ impl Repo {
         if let Some(h) = refs.head(zone, base) {
             return Ok(h);
         }
+        // `origin/<branch>`: the remote-tracking head as last fetched (what a CI job checks out after `vcs fetch`)
+        if let Some(b) = base.strip_prefix("origin/") {
+            if let Some(h) = self.remote_refs()?.head(zone, b) {
+                return Ok(h);
+            }
+        }
         let p = base.to_ascii_lowercase();
         if p.len() >= 4 && p.bytes().all(|b| b.is_ascii_hexdigit()) {
             let mut roots: Vec<ObjectId> = refs.branches_of(zone).into_iter().map(|(_, h)| h).collect();
             roots.extend(refs.detached(zone));
+            // fetched but not yet merged commits are addressable by id prefix too
+            roots.extend(self.remote_refs()?.branches_of(zone).into_iter().map(|(_, h)| h));
             for ((a, _), id) in &refs.tags {
                 if a == zone {
                     roots.push(self.peel(zone, *id)?.0);

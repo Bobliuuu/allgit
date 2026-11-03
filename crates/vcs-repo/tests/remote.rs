@@ -364,3 +364,45 @@ fn tags_travel_through_publish_clone_fetch_and_sync() {
     let rep = a.publish(&remote, None, sig()).unwrap();
     assert_eq!(rep.tag_conflicts, vec![("root".to_string(), "v2".to_string())]);
 }
+
+#[test]
+fn fetched_commit_is_addressable_by_id_prefix_and_origin_name() {
+    let d = tempfile::tempdir().unwrap();
+    let remote = MemBackend::new();
+    let a = seeded(&remote, d.path());
+    let b = Repo::clone_from(&remote, "mem", &d.path().join("b"), None).unwrap();
+    // a new commit lands on the remote after b cloned
+    write(&a, "engine/core.rs", "core v2");
+    commit_all(&a, "second");
+    a.publish(&remote, None, sig()).unwrap();
+    let new_id = a.resolve_rev("engine", "HEAD").unwrap();
+    // before fetch the commit is unknown
+    assert!(b.resolve_rev("engine", &new_id.to_hex()[..12]).is_err());
+    b.fetch(&remote, None).unwrap();
+    // after fetch (no merge): by id prefix and by origin/<branch>, as a CI job checks out an exact commit
+    assert_eq!(b.resolve_rev("engine", &new_id.to_hex()[..12]).unwrap(), new_id);
+    assert_eq!(b.resolve_rev("engine", &new_id.to_hex()).unwrap(), new_id);
+    assert_eq!(b.resolve_rev("engine", "origin/main").unwrap(), new_id);
+    assert_eq!(b.resolve_rev("engine", "origin/main~1").unwrap(), b.resolve_rev("engine", "HEAD").unwrap());
+}
+
+#[test]
+fn prefetch_rev_makes_a_fetched_commit_checkable_without_lazy_fetches() {
+    let d = tempfile::tempdir().unwrap();
+    let remote = MemBackend::new();
+    let a = seeded(&remote, d.path());
+    let b = Repo::clone_from(&remote, "mem", &d.path().join("b"), Some(&["engine".to_string()])).unwrap();
+    write(&a, "engine/core.rs", "core v2");
+    write(&a, "engine/new.rs", "new file");
+    commit_all(&a, "second");
+    a.publish(&remote, None, sig()).unwrap();
+    let new_id = a.resolve_rev("engine", "HEAD").unwrap();
+    b.fetch(&remote, None).unwrap();
+    let n = b.prefetch_rev(&remote, "engine", &new_id.to_hex()[..12]).unwrap();
+    assert_eq!(n, 2, "the two new blobs");
+    assert_eq!(b.prefetch_rev(&remote, "engine", &new_id.to_hex()[..12]).unwrap(), 0, "idempotent");
+    b.checkout_detached("engine", &new_id.to_hex()[..12]).unwrap();
+    assert_eq!(read(&b, "engine/core.rs"), "core v2");
+    assert_eq!(read(&b, "engine/new.rs"), "new file");
+    assert!(b.fsck().unwrap().problems.is_empty());
+}
