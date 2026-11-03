@@ -93,9 +93,10 @@ impl Repo {
         let zone = self.resolve_zone(zone)?;
         let refs = self.refs()?;
         let mut v: Vec<ObjectId> = refs.branches_of(&zone).into_iter().map(|(_, h)| h).collect();
+        let mut memo = std::collections::HashMap::new();
         for ((a, _), id) in &refs.tags {
             if *a == zone {
-                v.push(self.peel(&zone, *id)?.0);
+                v.push(self.peel_memo(&zone, *id, &mut memo)?.0);
             }
         }
         v.extend(self.detached_head(&zone)?);
@@ -217,9 +218,10 @@ impl Repo {
         let zone = self.resolve_zone(zone)?;
         let refs = self.refs()?;
         let mut tips: Vec<ObjectId> = refs.branches_of(&zone).into_iter().map(|(_, h)| h).collect();
+        let mut memo = std::collections::HashMap::new();
         for ((a, _), id) in &refs.tags {
             if *a == zone {
-                tips.push(self.peel(&zone, *id)?.0);
+                tips.push(self.peel_memo(&zone, *id, &mut memo)?.0);
             }
         }
         self.range_ids_ordered(&[d], &tips, usize::MAX)

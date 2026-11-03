@@ -77,7 +77,7 @@ impl Repo {
         Ok(OpView {
             branches: refs.branches,
             workspace: ws.subs,
-            tags: Some(refs.tags),
+            tags: Some(refs.tags.into_map()),
         })
     }
 
@@ -333,7 +333,7 @@ impl Repo {
         }
         refs.branches = target.branches.clone();
         if let Some(tags) = &target.tags {
-            refs.tags = tags.clone();
+            refs.tags = tags.clone().into();
         }
         self.write_refs(&refs)?;
         // A zone that stays subscribed keeps its sparse set.
