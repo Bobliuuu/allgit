@@ -2623,6 +2623,8 @@ Options:
           Also delete every remote branch of a subscribed zone that has no local branch (`git push --prune`); each deletion needs the head you last fetched (or your lease) and is audited
       --mirror
           Make the remote match this repo: force every checked-out branch (leased, like --force-with-lease), prune remote branches with no local one, and publish tags (`git push --mirror`)
+      --auto-merge[=<N>]
+          When the remote branch moved, fetch, merge it in (only if the merge is clean) and publish again, up to N times with a short randomized wait (default 20; env VCS_PUBLISH_AUTOMERGE=N also turns it on)
   -h, --help
           Print help
 ```
