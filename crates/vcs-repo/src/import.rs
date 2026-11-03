@@ -701,8 +701,17 @@ impl Importer<'_> {
 }
 
 fn remove_prefix(flat: &mut Flat, p: &str) {
-    let dir = format!("{p}/");
-    flat.retain(|k, _| k != p && !k.starts_with(&dir));
+    // `flat` is ordered, so everything under `p/` is the key range ["p/", "p0") ('0' is '/' + 1): O(log n + removed)
+    // instead of a scan of the whole tree per file (quadratic for a directory of 300k files).
+    flat.remove(p);
+    let (lo, hi) = (format!("{p}/"), format!("{p}0"));
+    let doomed: Vec<String> = flat
+        .range::<str, _>((std::ops::Bound::Included(lo.as_str()), std::ops::Bound::Excluded(hi.as_str())))
+        .map(|(k, _)| k.clone())
+        .collect();
+    for k in doomed {
+        flat.remove(&k);
+    }
 }
 
 fn load_map(text: &str) -> Result<BTreeMap<String, ObjectId>> {
@@ -945,4 +954,21 @@ pub(crate) fn is_ancestor(repo: &Repo, anc: &ObjectId, of: &ObjectId) -> Result<
         }
     }
     Ok(false)
+}
+
+#[cfg(test)]
+mod prefix_tests {
+    use super::*;
+
+    #[test]
+    fn remove_prefix_removes_exactly_the_path_and_its_subtree() {
+        let id = ObjectId::from_bytes([1; 32]);
+        let mut flat: Flat = Flat::new();
+        for k in ["a", "a/x", "a/y/z", "a-b", "a0", "a.txt", "b", "a/", "ab/c"] {
+            flat.insert(k.to_owned(), (EntryMode::File, id));
+        }
+        remove_prefix(&mut flat, "a");
+        let left: Vec<&str> = flat.keys().map(String::as_str).collect();
+        assert_eq!(left, vec!["a-b", "a.txt", "a0", "ab/c", "b"]);
+    }
 }
