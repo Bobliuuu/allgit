@@ -2140,6 +2140,7 @@ Options:
       --transactions <TRANSACTIONS>  Recent operations (local transaction log) listed [default: 10]
       --ca-pem <FILE>                PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --path <PATH>                  Report which zone owns this repo-relative path (repeatable)
+      --fields <KEYS>                Keep only these keys of each zone object (comma separated, e.g. `purpose,history`); `id` and `name` are always kept. Smaller output for agents; the schema's per-zone `required` list then does not apply
       --no-hooks                     Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help                         Print help
 ```

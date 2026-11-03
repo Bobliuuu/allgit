@@ -209,6 +209,27 @@ impl Repo {
             }
             return Ok(RestoreReport { restored: n });
         }
+        // A few named paths: restore them against just their index entries and patch the index file,
+        // instead of decoding and re-encoding every entry.
+        if let Some((f, mut part, before)) = self.small_index_view(specs)? {
+            let n = self.restore_worktree(specs, &zones, &ws, &mut part)?;
+            let mut edits = crate::index_file::Edits::new();
+            for (p, e) in part.entries.iter() {
+                if before.get(p) != Some(e) {
+                    edits.insert(p.clone(), Some(e.clone()));
+                }
+            }
+            let patched = if edits.is_empty() {
+                None
+            } else {
+                self.prepare_index_patch(&f, &edits)?.0
+            };
+            self.record_op(&format!("{what} {}", specs.join(" ")), None)?;
+            if let Some(bytes) = patched {
+                self.write_index_bytes(&bytes)?;
+            }
+            return Ok(RestoreReport { restored: n });
+        }
         let mut ix = self.index()?;
         let n = self.restore_worktree(specs, &zones, &ws, &mut ix)?;
         if n > 0 {
@@ -216,6 +237,35 @@ impl Repo {
         }
         self.record_op(&format!("{what} {}", specs.join(" ")), None)?;
         Ok(RestoreReport { restored: n })
+    }
+
+    /// The index entries at or under `specs`, as a small [`Index`] (plus a copy to diff against), read
+    /// from the lazily parsed index file. `None` when a spec is empty (the whole tree), the index is
+    /// in an older layout, or the specs cover more than a few thousand entries: those take the full path.
+    fn small_index_view(&self, specs: &[String]) -> Result<Option<(crate::index_file::IndexFile, Index, BTreeMap<String, IndexEntry>)>> {
+        const MAX: usize = 2048;
+        if specs.iter().any(|p| p.is_empty()) {
+            return Ok(None);
+        }
+        let Ok(raw) = self.rd("index") else { return Ok(None) };
+        let Some(f) = crate::index_file::IndexFile::parse(raw)? else {
+            return Ok(None);
+        };
+        let mut part = Index {
+            written_ns: f.written_ns,
+            ..Index::default()
+        };
+        let mut before = BTreeMap::new();
+        for p in specs {
+            for (k, e) in f.under(p)? {
+                before.insert(k.clone(), e.clone());
+                part.entries.insert(k, e);
+                if before.len() > MAX {
+                    return Ok(None);
+                }
+            }
+        }
+        Ok(Some((f, part, before)))
     }
 
     fn restore_worktree(&self, specs: &[String], zones: &Zones, ws: &Workspace, ix: &mut Index) -> Result<usize> {

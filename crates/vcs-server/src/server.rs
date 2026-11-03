@@ -140,6 +140,11 @@ struct Shared {
     /// the store again; the store's own compare-and-swap on that tag still decides whether it
     /// commits, so a stale entry (another replica wrote meanwhile) costs a 412, never a wrong accept.
     manifest_cache: Mutex<Option<(String, Arc<Vec<u8>>)>>,
+    /// Serializes manifest writes in this process. Concurrent conditional PUTs of one key queue inside
+    /// the object store (RustFS polls its per-key lock, so a loser can wait 100s of ms for a 412 and
+    /// stalls the readers behind it); queued here instead, a loser finds the winner's tag in
+    /// `manifest_cache` and gets its 412 from one cheap GET.
+    manifest_put: Mutex<()>,
     limiter: Option<Limiter>,
     fail_throttle: Option<crate::ratelimit::FailThrottle>,
     per_ip: Mutex<std::collections::HashMap<std::net::IpAddr, usize>>,
@@ -230,6 +235,7 @@ impl Server {
             tls: RwLock::new(cfg.tls.clone()),
             read_index: Mutex::new(Default::default()),
             manifest_cache: Mutex::new(None),
+            manifest_put: Mutex::new(()),
             cfg,
             active: AtomicUsize::new(0),
             inflight_body: AtomicUsize::new(0),
@@ -1171,6 +1177,7 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str, extra: &mu
         }
     }
     let is_manifest = key == manifest::KEY;
+    let _manifest_turn = is_manifest.then(|| sh.manifest_put.lock().unwrap_or_else(|e| e.into_inner()));
     let mut body = std::borrow::Cow::Borrowed(req.body.as_slice());
     // Read the manifest we are about to replace; validate against exactly that version.
     let mut cur = Manifest::default();

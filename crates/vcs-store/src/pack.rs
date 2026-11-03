@@ -42,6 +42,8 @@ pub const MAX_READ_DEPTH: usize = 50;
 pub const MAX_WRITE_DEPTH: u32 = 8;
 const DELTA_WINDOW: usize = 8;
 pub const ZSTD_LEVEL: i32 = 3;
+/// Pseudo level for [`build_pack_fast_v2`]: zstd level 1, objects under 1 KiB stored raw.
+pub const RAW_SMALL: i32 = 0;
 pub const PACK_MAGIC_V3: &[u8; 8] = b"VCSPACK3";
 pub const IDX_MAGIC_V3: &[u8; 8] = b"VCSPIDX3";
 /// v3 block codecs (first byte of a block payload): zstd or raw body, and whether the block holds
@@ -154,16 +156,46 @@ pub fn looks_incompressible(data: &[u8]) -> bool {
     comp * 100 >= total * 97
 }
 
+/// zstd at [`ZSTD_LEVEL`] with one compression context per thread (building a context per call
+/// was a fifth of the time of a pack write). Same bytes as `zstd::bulk::compress`.
+pub fn zstd_level3(data: &[u8]) -> std::io::Result<Vec<u8>> {
+    zstd_at(ZSTD_LEVEL, data)
+}
+
+/// [`zstd_level3`] at an explicit level.
+pub fn zstd_at(level: i32, data: &[u8]) -> std::io::Result<Vec<u8>> {
+    type Ctx = Option<(i32, zstd::bulk::Compressor<'static>)>;
+    thread_local! {
+        static CCTX: std::cell::RefCell<Ctx> = const { std::cell::RefCell::new(None) };
+    }
+    CCTX.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.as_ref().is_none_or(|(l, _)| *l != level) {
+            let z = zstd::bulk::Compressor::new(level)?;
+            *c = Some((level, z));
+        }
+        c.as_mut().expect("set above").1.compress(data)
+    })
+}
+
 /// Turn an encoded object into a pack entry payload. v1: the bytes as they are. v2: a codec byte
 /// then zstd level 3 output, or the raw bytes when compression does not make them smaller (so an
 /// entry never grows by more than the one codec byte).
 pub fn encode_payload(fmt: PackFormat, enc: &[u8]) -> Vec<u8> {
+    encode_payload_at(fmt, enc, ZSTD_LEVEL)
+}
+
+/// [`encode_payload`] with an explicit zstd level (any level decodes the same).
+pub fn encode_payload_at(fmt: PackFormat, enc: &[u8], level: i32) -> Vec<u8> {
+    // level 0 (zstd's "default") is never used here; it selects "store small objects raw":
+    // objects under 1 KiB gain little from zstd and cost a context set-up each.
+    let (level, small_raw) = if level == RAW_SMALL { (1, true) } else { (level, false) };
     match fmt {
         PackFormat::V1 => enc.to_vec(),
         // v3 stores blocks, not entries; a single object is sized as a v2 entry
         PackFormat::V2 | PackFormat::V3 | PackFormat::V4 => {
-            if !looks_incompressible(enc) {
-                if let Ok(c) = zstd::bulk::compress(enc, ZSTD_LEVEL) {
+            if !looks_incompressible(enc) && !(small_raw && enc.len() < 1024) {
+                if let Ok(c) = zstd_at(level, enc) {
                     if c.len() < enc.len() {
                         let mut out = Vec::with_capacity(c.len() + 1);
                         out.push(CODEC_ZSTD);
@@ -688,7 +720,7 @@ fn encode_block(objs: &[&(ObjectId, Vec<u8>)]) -> Vec<u8> {
         raw.extend_from_slice(&o.1);
     }
     if !looks_incompressible(&raw) {
-        if let Ok(c) = zstd::bulk::compress(&raw, ZSTD_LEVEL) {
+        if let Ok(c) = zstd_level3(&raw) {
             if c.len() < raw.len() {
                 let mut out = Vec::with_capacity(c.len() + 1);
                 out.push(if meta { CODEC_BLOCK_ZSTD_META } else { CODEC_BLOCK_ZSTD_DATA });
@@ -1026,6 +1058,16 @@ pub fn build_pack_fmt(objects: Vec<(ObjectId, Vec<u8>)>, fmt: PackFormat) -> Bui
 
 /// [`build_pack_fmt`] with an explicit block size for v3 (ignored for v1/v2).
 pub fn build_pack_blocks(objects: Vec<(ObjectId, Vec<u8>)>, fmt: PackFormat, block_target: usize) -> BuiltPack {
+    build_pack_at(objects, fmt, block_target, ZSTD_LEVEL)
+}
+
+/// [`build_pack_fmt`] with a zstd level for v2 entries (v1/v3/v4 ignore it): a lower level
+/// writes faster and larger; readers cannot tell the difference.
+pub fn build_pack_fast_v2(objects: Vec<(ObjectId, Vec<u8>)>, level: i32) -> BuiltPack {
+    build_pack_at(objects, PackFormat::V2, BLOCK_TARGET, level)
+}
+
+fn build_pack_at(objects: Vec<(ObjectId, Vec<u8>)>, fmt: PackFormat, block_target: usize, level: i32) -> BuiltPack {
     let mut seen = std::collections::HashSet::new();
     let objects: Vec<_> = objects.into_iter().filter(|o| seen.insert(o.0)).collect();
     let (order, planned): (Vec<usize>, Vec<Planned>) = if fmt == PackFormat::V4 {
@@ -1082,7 +1124,7 @@ pub fn build_pack_blocks(objects: Vec<(ObjectId, Vec<u8>)>, fmt: PackFormat, blo
             pack.extend_from_slice(&pl);
         }
     } else {
-        let payloads = encode_all(&objects, fmt);
+        let payloads = encode_all(&objects, fmt, level);
         pack.extend_from_slice(&(objects.len() as u32).to_le_bytes());
         for ((id, _), pl) in objects.iter().zip(&payloads) {
             pack.extend_from_slice(&(pl.len() as u32).to_le_bytes());
@@ -1172,7 +1214,7 @@ fn plan_v4(objects: &[(ObjectId, Vec<u8>)]) -> (Vec<usize>, Vec<Planned>) {
                     continue;
                 }
                 if let Some(d) = crate::delta::create(idx, target, target.len()) {
-                    if let Ok(z) = zstd::bulk::compress(&d, ZSTD_LEVEL) {
+                    if let Ok(z) = zstd_level3(&d) {
                         let l = 1 + 3 + z.len();
                         if l < best_len {
                             best_len = l;
@@ -1240,17 +1282,17 @@ fn encode_blocks(blocks: &[Vec<&(ObjectId, Vec<u8>)>]) -> Vec<Vec<u8>> {
 }
 
 /// Entry payloads for all objects; v2 compression runs on several threads for large inputs.
-fn encode_all(objects: &[(ObjectId, Vec<u8>)], fmt: PackFormat) -> Vec<Vec<u8>> {
+fn encode_all(objects: &[(ObjectId, Vec<u8>)], fmt: PackFormat, level: i32) -> Vec<Vec<u8>> {
     let total: usize = objects.iter().map(|o| o.1.len()).sum();
     if fmt == PackFormat::V1 || total < 256 * 1024 || objects.len() < 2 {
-        return objects.iter().map(|o| encode_payload(fmt, &o.1)).collect();
+        return objects.iter().map(|o| encode_payload_at(fmt, &o.1, level)).collect();
     }
     let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(16);
     let per = objects.len().div_ceil(threads).max(1);
     std::thread::scope(|sc| {
         let parts: Vec<_> = objects
             .chunks(per)
-            .map(|c| sc.spawn(move || c.iter().map(|o| encode_payload(fmt, &o.1)).collect::<Vec<_>>()))
+            .map(|c| sc.spawn(move || c.iter().map(|o| encode_payload_at(fmt, &o.1, level)).collect::<Vec<_>>()))
             .collect();
         parts.into_iter().flat_map(|p| p.join().unwrap()).collect()
     })
@@ -1411,6 +1453,14 @@ mod incompressible_tests {
     use super::*;
 
     #[test]
+    fn reused_zstd_context_gives_the_same_bytes() {
+        let a: Vec<u8> = (0..5000u32).flat_map(|i| (i % 91).to_le_bytes()).collect();
+        for d in [&a[..], &a[..100], b"x", &a[..4000]] {
+            assert_eq!(zstd_level3(d).unwrap(), zstd::bulk::compress(d, ZSTD_LEVEL).unwrap());
+        }
+    }
+
+    #[test]
     fn looks_incompressible_tells_random_from_text_and_ignores_small_inputs() {
         let mut x = 7u64;
         let random: Vec<u8> = (0..1 << 20)
@@ -1423,7 +1473,12 @@ mod incompressible_tests {
             .collect();
         assert!(looks_incompressible(&random));
         assert!(!looks_incompressible(&random[..100_000]), "small inputs are always tried");
-        let text: Vec<u8> = b"fn main() { println!(\"hello\"); }\n".iter().cycle().take(1 << 20).copied().collect();
+        let text: Vec<u8> = b"fn main() { println!(\"hello\"); }\n"
+            .iter()
+            .cycle()
+            .take(1 << 20)
+            .copied()
+            .collect();
         assert!(!looks_incompressible(&text));
         // a random entry is stored raw (codec byte + bytes), a text entry is compressed
         assert_eq!(encode_payload(PackFormat::V2, &random).len(), random.len() + 1);
