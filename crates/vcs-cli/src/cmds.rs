@@ -37,6 +37,11 @@ pub enum More {
     Reset(crate::everyday::ResetArgs),
     /// Delete untracked files (-n lists, -f deletes)
     Clean(crate::everyday::CleanArgs),
+    /// Local usage profile that `sync --auto` / `pull --auto` / `clone --auto` predict zones from (docs/zone-profile.md)
+    #[command(subcommand)]
+    Profile(crate::zoneprofile_cmd::ProfileCmd),
+    /// Same as `sync` (fetch, then fast-forward); `--auto` chooses zones from your usage profile
+    Pull(crate::zoneprofile_cmd::SyncAuto),
     /// Run a git command line as its vcs equivalent, e.g. `vcs git log --oneline` (table: docs/git-to-vcs.md; `--map` lists it)
     #[command(name = "git")]
     Git(crate::gitmap::GitArgs),
@@ -58,6 +63,8 @@ pub fn dispatch(cmd: &More, json: bool) -> Result<(), Error> {
         More::DiffTree(a) => crate::histcmds::diff_tree(a, json),
         More::Reset(a) => crate::everyday::reset(a),
         More::Clean(a) => crate::everyday::clean(a),
+        More::Profile(c) => crate::zoneprofile_cmd::run(c),
+        More::Pull(a) => crate::zoneprofile_cmd::sync(a),
         More::Git(a) => crate::gitmap::run(&a.args, json),
     }
 }

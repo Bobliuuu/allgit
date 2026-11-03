@@ -1,7 +1,7 @@
 //! Staging index: tracked path -> (blob id, mode, stat cache).
 
 use crate::error::{Error, Result};
-use crate::meta::{frame, unframe};
+use crate::meta::unframe;
 use std::collections::BTreeMap;
 use std::ops::Deref;
 use vcs_objects::codec::{Reader, Writer};
@@ -329,7 +329,7 @@ impl Index {
                 }
             }
         }
-        frame(b"AGI2", w.finish())
+        crate::meta::frame(b"AGI2", w.finish())
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self> {
@@ -369,45 +369,8 @@ impl Index {
             written_ns,
         };
         let mut list: Vec<(String, IndexEntry)>;
-        if v4 {
-            // AGI4: every block states its own byte length and entry count (a patched index has
-            // uneven blocks).
-            let nblocks = r.count(2).map_err(c)?;
-            let mut meta = Vec::with_capacity(nblocks);
-            let mut total = 0usize;
-            for _ in 0..nblocks {
-                let len = r.varint().map_err(c)? as usize;
-                let cnt = r.varint().map_err(c)? as usize;
-                if cnt == 0 || cnt > n {
-                    return Err(Error::Corrupt("index: bad block table".into()));
-                }
-                total = total.saturating_add(cnt);
-                meta.push((len, cnt));
-            }
-            if total != n {
-                return Err(Error::Corrupt("index: bad block table".into()));
-            }
-            let mut slices: Vec<(&[u8], usize)> = Vec::with_capacity(nblocks);
-            for (l, cnt) in meta {
-                slices.push((r.raw(l).map_err(c)?, cnt));
-            }
-            list = decode_blocks(&slices)?;
-        } else if v3 {
-            let per = r.varint().map_err(c)? as usize;
-            let nblocks = r.count(1).map_err(c)?;
-            if per == 0 || per > (1 << 20) || nblocks != n.div_ceil(per) {
-                return Err(Error::Corrupt("index: bad block table".into()));
-            }
-            let mut lens = Vec::with_capacity(nblocks);
-            for _ in 0..nblocks {
-                lens.push(r.varint().map_err(c)? as usize);
-            }
-            let mut slices: Vec<(&[u8], usize)> = Vec::with_capacity(nblocks);
-            for (i, l) in lens.iter().enumerate() {
-                let cnt = if i + 1 == nblocks { n - per * i } else { per };
-                slices.push((r.raw(*l).map_err(c)?, cnt));
-            }
-            list = decode_blocks(&slices)?;
+        if v3 {
+            list = decode_blocks(&block_table(&mut r, v4, n)?)?;
         } else {
             list = Vec::with_capacity(n);
             for _ in 0..n {
@@ -434,30 +397,9 @@ impl Index {
                 idx.insert(&p, e)?;
             }
         }
-        if r.remaining() > 0 {
-            let n = if v3 {
-                r.varint().map_err(c)? as usize
-            } else {
-                r.count(33).map_err(c)?
-            };
-            if !v3 && n == 0 {
-                return Err(Error::Corrupt("index: empty tree section".into()));
-            }
-            if n > 0 {
-                let fp = r.id().map_err(c)?;
-                let mut trees = BTreeMap::new();
-                for _ in 0..n {
-                    let d = r.str(4096).map_err(c)?;
-                    if !d.is_empty() {
-                        validate_path(&d)?;
-                    }
-                    trees.insert(d, r.id().map_err(c)?);
-                }
-                idx.entries.trees = trees;
-                idx.entries.trees_fp = Some(fp);
-            }
-        } else if v3 {
-            return Err(Error::Corrupt("index: missing tree section".into()));
+        if let Some((fp, trees)) = read_tail(&mut r, v3)? {
+            idx.entries.trees = trees;
+            idx.entries.trees_fp = Some(fp);
         }
         r.finish().map_err(c)?;
         idx.entries.rev = 0;
@@ -488,29 +430,8 @@ const PAR_MIN: usize = 16 * 1024;
 /// Read one entry. `prev` is the previous (already validated) path of the same block, or "":
 /// path components shared with it are not validated again.
 pub(crate) fn read_entry(r: &mut Reader<'_>, legacy: bool, prev: &str) -> Result<(String, IndexEntry)> {
-    let c = |e: vcs_objects::DecodeError| Error::Corrupt(format!("index: {e}"));
-    let p = r.str(4096).map_err(c)?;
-    validate_path_after(prev, &p)?;
-    let mode = match r.u8().map_err(c)? {
-        1 => EntryMode::File,
-        2 => EntryMode::Executable,
-        4 => EntryMode::Symlink,
-        _ => return Err(Error::Corrupt("index: bad mode".into())),
-    };
-    let id = r.id().map_err(c)?;
-    let size = r.varint().map_err(c)?;
-    let mtime_ns = r.varint().map_err(c)?;
-    let ctime_ns = if legacy { 0 } else { r.varint().map_err(c)? };
-    Ok((
-        p,
-        IndexEntry {
-            id,
-            mode,
-            size,
-            mtime_ns,
-            ctime_ns,
-        },
-    ))
+    let (p, e) = read_entry_ref(r, legacy, prev)?;
+    Ok((p.to_owned(), e))
 }
 
 #[inline]
@@ -580,13 +501,211 @@ fn decode_blocks(blocks: &[(&[u8], usize)]) -> Result<Vec<(String, IndexEntry)>>
     Ok(out)
 }
 
+/// The block table of an `AGI3`/`AGI4` body: each block's bytes and entry count. `AGI4` blocks
+/// state their own length and count (a patched index has uneven blocks); `AGI3` blocks are
+/// fixed-size.
+fn block_table<'a>(r: &mut Reader<'a>, v4: bool, n: usize) -> Result<Vec<(&'a [u8], usize)>> {
+    let c = |e: vcs_objects::DecodeError| Error::Corrupt(format!("index: {e}"));
+    if v4 {
+        let nblocks = r.count(2).map_err(c)?;
+        let mut meta = Vec::with_capacity(nblocks);
+        let mut total = 0usize;
+        for _ in 0..nblocks {
+            let len = r.varint().map_err(c)? as usize;
+            let cnt = r.varint().map_err(c)? as usize;
+            if cnt == 0 || cnt > n {
+                return Err(Error::Corrupt("index: bad block table".into()));
+            }
+            total = total.saturating_add(cnt);
+            meta.push((len, cnt));
+        }
+        if total != n {
+            return Err(Error::Corrupt("index: bad block table".into()));
+        }
+        let mut slices = Vec::with_capacity(nblocks);
+        for (l, cnt) in meta {
+            slices.push((r.raw(l).map_err(c)?, cnt));
+        }
+        Ok(slices)
+    } else {
+        let per = r.varint().map_err(c)? as usize;
+        let nblocks = r.count(1).map_err(c)?;
+        if per == 0 || per > (1 << 20) || nblocks != n.div_ceil(per) {
+            return Err(Error::Corrupt("index: bad block table".into()));
+        }
+        let mut lens = Vec::with_capacity(nblocks);
+        for _ in 0..nblocks {
+            lens.push(r.varint().map_err(c)? as usize);
+        }
+        let mut slices = Vec::with_capacity(nblocks);
+        for (i, l) in lens.iter().enumerate() {
+            let cnt = if i + 1 == nblocks { n - per * i } else { per };
+            slices.push((r.raw(*l).map_err(c)?, cnt));
+        }
+        Ok(slices)
+    }
+}
+
+type Trees = (ObjectId, BTreeMap<String, ObjectId>);
+
+/// The optional cache-tree section after the entries (validated).
+fn read_tail(r: &mut Reader<'_>, v3: bool) -> Result<Option<Trees>> {
+    let c = |e: vcs_objects::DecodeError| Error::Corrupt(format!("index: {e}"));
+    if r.remaining() > 0 {
+        let n = if v3 {
+            r.varint().map_err(c)? as usize
+        } else {
+            r.count(33).map_err(c)?
+        };
+        if !v3 && n == 0 {
+            return Err(Error::Corrupt("index: empty tree section".into()));
+        }
+        if n > 0 {
+            let fp = r.id().map_err(c)?;
+            let mut trees = BTreeMap::new();
+            for _ in 0..n {
+                let d = r.str(4096).map_err(c)?;
+                if !d.is_empty() {
+                    validate_path(&d)?;
+                }
+                trees.insert(d, r.id().map_err(c)?);
+            }
+            return Ok(Some((fp, trees)));
+        }
+    } else if v3 {
+        return Err(Error::Corrupt("index: missing tree section".into()));
+    }
+    Ok(None)
+}
+
+/// One entry, borrowing its path from the input; validated exactly like [`read_entry`].
+#[inline]
+fn read_entry_ref<'a>(r: &mut Reader<'a>, legacy: bool, prev: &str) -> Result<(&'a str, IndexEntry)> {
+    let c = |e: vcs_objects::DecodeError| Error::Corrupt(format!("index: {e}"));
+    let p = std::str::from_utf8(r.bytes(4096).map_err(c)?).map_err(|_| c(vcs_objects::DecodeError::Invalid("utf-8")))?;
+    validate_path_after(prev, p)?;
+    let mode = match r.u8().map_err(c)? {
+        1 => EntryMode::File,
+        2 => EntryMode::Executable,
+        4 => EntryMode::Symlink,
+        _ => return Err(Error::Corrupt("index: bad mode".into())),
+    };
+    let id = r.id().map_err(c)?;
+    let size = r.varint().map_err(c)?;
+    let mtime_ns = r.varint().map_err(c)?;
+    let ctime_ns = if legacy { 0 } else { r.varint().map_err(c)? };
+    Ok((
+        p,
+        IndexEntry {
+            id,
+            mode,
+            size,
+            mtime_ns,
+            ctime_ns,
+        },
+    ))
+}
+
+/// Validate and visit one block; returns the visitor state and the block's paths.
+fn scan_block<'a, T>(
+    bytes: &'a [u8],
+    cnt: usize,
+    init: &impl Fn() -> T,
+    visit: &impl Fn(&mut T, &str, &IndexEntry),
+) -> Result<(T, Vec<&'a str>)> {
+    let mut rd = Reader::new(bytes);
+    let mut t = init();
+    let mut keys: Vec<&'a str> = Vec::with_capacity(cnt);
+    for _ in 0..cnt {
+        let (p, e) = read_entry_ref(&mut rd, false, keys.last().copied().unwrap_or(""))?;
+        visit(&mut t, p, &e);
+        keys.push(p);
+    }
+    rd.finish().map_err(|e| Error::Corrupt(format!("index: {e}")))?;
+    Ok((t, keys))
+}
+
+type Part<'a, T> = (T, Vec<&'a str>);
+
+fn scan_parts<'a, T: Send>(
+    blocks: &[(&'a [u8], usize)],
+    n: usize,
+    init: &(impl Fn() -> T + Sync),
+    visit: &(impl Fn(&mut T, &str, &IndexEntry) + Sync),
+) -> Vec<Result<Vec<Part<'a, T>>>> {
+    let cores = std::thread::available_parallelism().map_or(1, |t| t.get());
+    let threads = if n < PAR_MIN { 1 } else { (n / 8_000).clamp(1, 8).min(cores) }.min(blocks.len().max(1));
+    if threads <= 1 {
+        return vec![blocks.iter().map(|b| scan_block(b.0, b.1, init, visit)).collect()];
+    }
+    let per = blocks.len().div_ceil(threads);
+    std::thread::scope(|sc| {
+        let hs: Vec<_> = blocks
+            .chunks(per)
+            .map(|ch| sc.spawn(move || ch.iter().map(|b| scan_block(b.0, b.1, init, visit)).collect::<Result<Vec<_>>>()))
+            .collect();
+        hs.into_iter().map(|h| h.join().expect("index scan worker panicked")).collect()
+    })
+}
+
+impl Index {
+    /// Visit every entry of an encoded index in path order without building a list: `visit` is
+    /// called per entry on block-parallel workers, each filling its own `T` (made by `init`), and
+    /// the per-block `T`s come back in block order. Validation is the same as [`Index::decode`]
+    /// (paths, modes, sizes, ordering, file/directory conflicts, the cache-tree section); a
+    /// layout that cannot be streamed (legacy, or not strictly sorted) is decoded in full and
+    /// visited in one `T`.
+    pub fn scan<T: Send>(bytes: &[u8], init: impl Fn() -> T + Sync, visit: impl Fn(&mut T, &str, &IndexEntry) + Sync) -> Result<Vec<T>> {
+        let full = |bytes: &[u8]| -> Result<Vec<T>> {
+            let mut t = init();
+            for (p, e) in Self::decode_list(bytes)? {
+                visit(&mut t, &p, &e);
+            }
+            Ok(vec![t])
+        };
+        let v4 = bytes.starts_with(b"AGI4");
+        if !(v4 || bytes.starts_with(b"AGI3")) {
+            return full(bytes);
+        }
+        let c = |e: vcs_objects::DecodeError| Error::Corrupt(format!("index: {e}"));
+        let body = unframe(if v4 { b"AGI4" } else { b"AGI3" }, bytes, "index")?;
+        let mut r = Reader::new(body);
+        let _written = r.varint().map_err(c)?;
+        let n = r.count(36).map_err(c)?;
+        let blocks = block_table(&mut r, v4, n)?;
+        let parts = scan_parts(&blocks, n, &init, &visit);
+        let mut ts = Vec::new();
+        let mut keys: Vec<&str> = Vec::with_capacity(n);
+        for p in parts {
+            for (t, k) in p? {
+                ts.push(t);
+                keys.extend(k);
+            }
+        }
+        if !keys.windows(2).all(|w| w[0] < w[1]) {
+            return full(bytes); // decode reports duplicates / conflicts, or sorts
+        }
+        check_no_conflicts_by(&keys, |k: &&str| *k)?;
+        read_tail(&mut r, true)?;
+        r.finish().map_err(c)?;
+        Ok(ts)
+    }
+}
+
 /// `list` is strictly sorted: fail if some key has an ancestor directory that is itself a key.
 pub(crate) fn check_no_conflicts(list: &[(String, IndexEntry)]) -> Result<()> {
-    let check = |part: &[(String, IndexEntry)]| -> Result<()> {
+    check_no_conflicts_by(list, |(k, _)| k.as_str())
+}
+
+/// [`check_no_conflicts`] over any strictly sorted list, given how to read a key.
+fn check_no_conflicts_by<T: Sync>(list: &[T], key: impl Fn(&T) -> &str + Sync) -> Result<()> {
+    let key = &key;
+    let check = |part: &[T]| -> Result<()> {
         // Sorted keys cluster by directory: the ancestors of a key that are also ancestors of
         // the previous key were already looked up, so only the new ones are searched.
         let mut prev_dir: &str = "";
-        for (k, _) in part {
+        for item in part {
+            let k = key(item);
             let Some(dir_end) = k.rfind('/') else {
                 prev_dir = "";
                 continue;
@@ -602,7 +721,7 @@ pub(crate) fn check_no_conflicts(list: &[(String, IndexEntry)]) -> Result<()> {
                 let seen = prev_dir.len() >= anc.len()
                     && prev_dir.as_bytes().starts_with(anc.as_bytes())
                     && (prev_dir.len() == anc.len() || prev_dir.as_bytes()[anc.len()] == b'/');
-                if !seen && list.binary_search_by(|(p, _)| p.as_str().cmp(anc)).is_ok() {
+                if !seen && list.binary_search_by(|p| key(p).cmp(anc)).is_ok() {
                     return Err(Error::Msg(format!("cannot track {k:?}: {anc:?} is tracked as a file")));
                 }
             }
@@ -669,6 +788,40 @@ mod tests {
             keys.sort_unstable();
             let list: Vec<(String, IndexEntry)> = keys.iter().map(|k| (k.to_string(), e())).collect();
             assert_eq!(check_no_conflicts(&list).is_err(), naive(&keys), "{keys:?}");
+        }
+    }
+    #[test]
+    fn scan_matches_decode_list_and_rejects_the_same_inputs() {
+        let mut i = Index::default();
+        for n in 0..5000u32 {
+            i.insert(&format!("d{:03}/f{n}", n % 37), e()).unwrap();
+        }
+        i.insert("top", e()).unwrap();
+        let bytes = i.encode();
+        let want: Vec<String> = Index::decode_list(&bytes).unwrap().into_iter().map(|(p, _)| p).collect();
+        let got: Vec<String> = Index::scan(&bytes, Vec::new, |t: &mut Vec<String>, p, _| t.push(p.to_owned()))
+            .unwrap()
+            .into_iter()
+            .flatten()
+            .collect();
+        assert_eq!(got, want);
+        // every single-byte truncation or flip that decode rejects, scan rejects too
+        for cut in (0..bytes.len()).step_by(997) {
+            let b = &bytes[..cut];
+            assert_eq!(
+                Index::decode_list(b).is_err(),
+                Index::scan(b, || (), |_, _, _| {}).is_err(),
+                "cut {cut}"
+            );
+        }
+        for at in (5..bytes.len()).step_by(499) {
+            let mut b = bytes.clone();
+            b[at] ^= 0x55;
+            assert_eq!(
+                Index::decode_list(&b).is_err(),
+                Index::scan(&b, || (), |_, _, _| {}).is_err(),
+                "flip {at}"
+            );
         }
     }
     #[test]

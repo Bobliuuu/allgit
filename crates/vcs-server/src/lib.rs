@@ -14,6 +14,7 @@ pub mod backend_url;
 pub mod client;
 pub mod config;
 pub mod glob;
+pub mod groupcommit;
 pub mod http;
 pub mod log;
 pub mod metrics;

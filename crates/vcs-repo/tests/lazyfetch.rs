@@ -353,3 +353,30 @@ fn backend_failing_mid_fetch_leaves_no_partial_worktree_write_on_sync() {
         );
     }
 }
+
+/// A merge that brings in files whose blobs are not local fails with `NotFound` BEFORE any file is
+/// written: `vcs` fetches the object and re-runs the command, and a half-applied first run made
+/// the re-run refuse with "untracked path would be overwritten".
+#[test]
+fn merge_with_missing_blobs_writes_nothing_before_failing() {
+    let d = tempfile::tempdir().unwrap();
+    let remote = MemBackend::new();
+    let a = seeded(&remote, d.path());
+    let b = Repo::clone_from(&remote, "mem", &d.path().join("b"), Some(&["engine".to_string()])).unwrap();
+    for i in 0..20 {
+        write(&a, &format!("engine/new{i}.rs"), &format!("new {i} {}", pad(i, "n")));
+    }
+    commit_all(&a, "adds");
+    a.publish(&remote, None, sig()).unwrap();
+    write(&b, "engine/mine.rs", "local change");
+    commit_all(&b, "local");
+    b.fetch(&remote, None).unwrap(); // commits and trees only: the 20 new blobs are not local
+    let err = b.merge_remote("engine", "main", sig()).unwrap_err();
+    assert!(matches!(err, vcs_repo::Error::Store(vcs_store::StoreError::NotFound(_))), "{err}");
+    for i in 0..20 {
+        assert!(!b.worktree().join(format!("engine/new{i}.rs")).exists(), "new{i}.rs written before the failure");
+    }
+    // the re-run `vcs` does after fetching the missing object succeeds
+    b.with_lazy_fetch(&remote, || Ok(b.merge_remote("engine", "main", sig())?)).expect("merge after lazy fetch");
+    assert!(b.worktree().join("engine/new7.rs").exists());
+}
