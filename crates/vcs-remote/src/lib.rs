@@ -6,8 +6,8 @@
 
 pub mod autocompact;
 pub mod backend;
-pub mod compact;
 pub mod clientcache;
+pub mod compact;
 pub mod diskcache;
 pub mod fsbackend;
 pub mod gc;
@@ -28,8 +28,8 @@ pub mod stats;
 pub mod timeline;
 
 pub use backend::{Backend, BackendError, Conditional, SharedBytes, Versioned};
-pub use compact::{compact, CompactOptions, CompactReport};
 pub use clientcache::ClientCache;
+pub use compact::{compact, CompactOptions, CompactReport};
 pub use diskcache::DiskCacheBackend;
 pub use fsbackend::FsBackend;
 pub use gc::{remote_gc, GcError, RemoteGcOptions, RemoteGcReport};

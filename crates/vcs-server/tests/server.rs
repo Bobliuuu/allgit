@@ -313,15 +313,31 @@ fn gc_primitives_over_http_follow_roles_and_the_backend() {
     // roles: the clock is for anyone, ages for admins, touch for writers
     fs.put_if_absent("objects/aa/bb", b"x").unwrap();
     assert!(client(&url, "t-reader").now_ms().is_ok());
-    assert!(client(&url, "t-alice").modified_ms("objects/aa/bb").unwrap_err().to_string().contains("403"));
-    assert!(client(&url, "t-reader").touch("objects/aa/bb").unwrap_err().to_string().contains("403"));
+    assert!(client(&url, "t-alice")
+        .modified_ms("objects/aa/bb")
+        .unwrap_err()
+        .to_string()
+        .contains("403"));
+    assert!(client(&url, "t-reader")
+        .touch("objects/aa/bb")
+        .unwrap_err()
+        .to_string()
+        .contains("403"));
     assert!(client(&url, "t-alice").touch("objects/aa/bb").unwrap());
     assert!(!client(&url, "t-alice").touch("objects/aa/missing").unwrap());
     assert!(admin.modified_ms("objects/aa/bb").unwrap().is_some());
     // the manifest and shelf keys are not for a writer to touch
     fs.put_if_absent(manifest::KEY, b"m").unwrap();
-    assert!(client(&url, "t-alice").touch(manifest::KEY).unwrap_err().to_string().contains("403"));
-    assert!(client(&url, "t-alice").touch("shelves/alice/w/meta").unwrap_err().to_string().contains("403"));
+    assert!(client(&url, "t-alice")
+        .touch(manifest::KEY)
+        .unwrap_err()
+        .to_string()
+        .contains("403"));
+    assert!(client(&url, "t-alice")
+        .touch("shelves/alice/w/meta")
+        .unwrap_err()
+        .to_string()
+        .contains("403"));
     // unauthenticated requests learn nothing
     assert!(client(&url, "nope").now_ms().is_err());
     // a backend that cannot be collected: 501, supports_gc stays false (no handshake is attempted)

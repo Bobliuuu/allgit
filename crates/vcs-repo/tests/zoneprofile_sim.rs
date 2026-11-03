@@ -67,7 +67,11 @@ fn sessions(z: usize, days: usize, g: &Graph, hidden_deps: bool, rng: &mut Rng) 
         let mut s = vec![];
         for _ in 0..(4 + rng.below(5)) {
             let (zone, kind, rec) = if rng.chance(65) {
-                (name(home[rng.below(home.len())]), if rng.chance(40) { Kind::Edit } else { Kind::Read }, true)
+                (
+                    name(home[rng.below(home.len())]),
+                    if rng.chance(40) { Kind::Edit } else { Kind::Read },
+                    true,
+                )
             } else if rng.chance(55) {
                 (deps[rng.below(deps.len())].clone(), Kind::Build, !hidden_deps)
             } else {
@@ -91,12 +95,28 @@ enum Pred {
     Oracle,
 }
 
-fn hot_set(p: Pred, k: usize, z: usize, hist: &[Vec<(String, Kind, bool)>], g: &Graph, now_day: u64, rng: &mut Rng, truth: &BTreeSet<String>) -> BTreeSet<String> {
+fn hot_set(
+    p: Pred,
+    k: usize,
+    z: usize,
+    hist: &[Vec<(String, Kind, bool)>],
+    g: &Graph,
+    now_day: u64,
+    rng: &mut Rng,
+    truth: &BTreeSet<String>,
+) -> BTreeSet<String> {
     let names: Vec<String> = (0..z).map(name).collect();
     let events: Vec<Event> = hist
         .iter()
         .enumerate()
-        .flat_map(|(d, s)| s.iter().enumerate().filter(|(_, e)| e.2).map(move |(i, (zn, kd, _))| Event { ts_ms: d as u64 * DAY + i as u64 * 60_000, kind: *kd, zone: zn.clone(), dir: String::new() }))
+        .flat_map(|(d, s)| {
+            s.iter().enumerate().filter(|(_, e)| e.2).map(move |(i, (zn, kd, _))| Event {
+                ts_ms: d as u64 * DAY + i as u64 * 60_000,
+                kind: *kd,
+                zone: zn.clone(),
+                dir: String::new(),
+            })
+        })
         .collect();
     match p {
         Pred::Random => {
@@ -127,12 +147,24 @@ fn hot_set(p: Pred, k: usize, z: usize, hist: &[Vec<(String, Kind, bool)>], g: &
         }
         Pred::OursNoDeps | Pred::Ours | Pred::OursDep(_) => {
             let prof = Profile { disabled: false, events };
-            let mut params = Params { now_ms: now_day * DAY, ..Params::default() };
+            let mut params = Params {
+                now_ms: now_day * DAY,
+                ..Params::default()
+            };
             if let Pred::OursDep(f) = p {
                 params.dep_factor = f;
             }
-            let gr = if matches!(p, Pred::OursNoDeps) { Graph::default() } else { g.clone() };
-            rank(&prof, &Hints::default(), &gr, &names, &params).into_iter().filter(|r| r.score >= params.min_score).take(k).map(|r| r.zone).collect()
+            let gr = if matches!(p, Pred::OursNoDeps) {
+                Graph::default()
+            } else {
+                g.clone()
+            };
+            rank(&prof, &Hints::default(), &gr, &names, &params)
+                .into_iter()
+                .filter(|r| r.score >= params.min_score)
+                .take(k)
+                .map(|r| r.zone)
+                .collect()
         }
         Pred::Oracle => truth.iter().take(k).cloned().collect(),
     }
@@ -181,7 +213,17 @@ fn stats(v: &[f64]) -> (f64, f64, f64) {
 fn prediction_hit_rate_on_simulated_sessions() {
     let devs: usize = std::env::var("ZP_SIM_DEVS").ok().and_then(|v| v.parse().ok()).unwrap_or(40);
     let (z, days) = (50, 60);
-    for (k, warmup, hidden) in [(4usize, 10usize, false), (6, 10, false), (8, 10, false), (12, 10, false), (6, 4, false), (4, 10, true), (6, 10, true), (8, 10, true), (12, 10, true)] {
+    for (k, warmup, hidden) in [
+        (4usize, 10usize, false),
+        (6, 10, false),
+        (8, 10, false),
+        (12, 10, false),
+        (6, 4, false),
+        (4, 10, true),
+        (6, 10, true),
+        (8, 10, true),
+        (12, 10, true),
+    ] {
         let r = run(devs, z, k, days, warmup, hidden);
         println!("zones={z} budget k={k} hot zones, {devs} simulated developers, {} evaluated sessions each after {warmup} training session(s), dependency accesses {}", days - warmup, if hidden { "NOT recorded" } else { "recorded" });
         println!("| predictor | mean hit rate | p10 | p90 |");
@@ -191,7 +233,10 @@ fn prediction_hit_rate_on_simulated_sessions() {
             println!("| {n} | {:.1}% | {:.1}% | {:.1}% |", m * 100.0, lo * 100.0, hi * 100.0);
         }
         let get = |n: &str| stats(&r.iter().find(|(x, _)| *x == n).unwrap().1).0;
-        assert!(get("ours (default, dep 0.3)") > get("random") * 2.0, "the predictor must clearly beat random under this model");
+        assert!(
+            get("ours (default, dep 0.3)") > get("random") * 2.0,
+            "the predictor must clearly beat random under this model"
+        );
     }
 }
 
@@ -199,5 +244,8 @@ fn prediction_hit_rate_on_simulated_sessions() {
 fn simulation_is_deterministic() {
     let a = run(5, 30, 6, 30, 5, true);
     let b = run(5, 30, 6, 30, 5, true);
-    assert_eq!(a.iter().map(|x| x.1.clone()).collect::<Vec<_>>(), b.iter().map(|x| x.1.clone()).collect::<Vec<_>>());
+    assert_eq!(
+        a.iter().map(|x| x.1.clone()).collect::<Vec<_>>(),
+        b.iter().map(|x| x.1.clone()).collect::<Vec<_>>()
+    );
 }

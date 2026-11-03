@@ -276,9 +276,7 @@ struct DropsMidFetch<'a> {
 }
 impl DropsMidFetch<'_> {
     fn gate(&self, key: &str) -> Result<(), vcs_remote::BackendError> {
-        if (key.starts_with("objects/") || key.starts_with("packs/"))
-            && self.allow.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) <= 0
-        {
+        if (key.starts_with("objects/") || key.starts_with("packs/")) && self.allow.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) <= 0 {
             return Err(vcs_remote::BackendError::Unavailable("connection dropped mid-fetch".into()));
         }
         Ok(())
@@ -327,7 +325,10 @@ fn backend_failing_mid_fetch_leaves_no_partial_worktree_write_on_sync() {
             .map(|i| fs::read_to_string(b.worktree().join(format!("engine/f{i}.rs"))).unwrap())
             .collect();
         let head_before = b.refs().unwrap().head("engine", "main");
-        let flaky = DropsMidFetch { inner: &remote, allow: std::sync::atomic::AtomicI64::new(allow) };
+        let flaky = DropsMidFetch {
+            inner: &remote,
+            allow: std::sync::atomic::AtomicI64::new(allow),
+        };
         let err = match b.sync(&flaky) {
             Err(e) => e.to_string(),
             Ok(r) => panic!("allow={allow}: sync succeeded: {:?}", r.actions),
@@ -374,9 +375,13 @@ fn merge_with_missing_blobs_writes_nothing_before_failing() {
     let err = b.merge_remote("engine", "main", sig()).unwrap_err();
     assert!(matches!(err, vcs_repo::Error::Store(vcs_store::StoreError::NotFound(_))), "{err}");
     for i in 0..20 {
-        assert!(!b.worktree().join(format!("engine/new{i}.rs")).exists(), "new{i}.rs written before the failure");
+        assert!(
+            !b.worktree().join(format!("engine/new{i}.rs")).exists(),
+            "new{i}.rs written before the failure"
+        );
     }
     // the re-run `vcs` does after fetching the missing object succeeds
-    b.with_lazy_fetch(&remote, || Ok(b.merge_remote("engine", "main", sig())?)).expect("merge after lazy fetch");
+    b.with_lazy_fetch(&remote, || Ok(b.merge_remote("engine", "main", sig())?))
+        .expect("merge after lazy fetch");
     assert!(b.worktree().join("engine/new7.rs").exists());
 }

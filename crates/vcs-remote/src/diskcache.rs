@@ -112,7 +112,9 @@ impl DiskCacheBackend {
         if n > self.cap / 2 {
             return;
         }
-        let tmp = self.dir.join(format!(".{}.{}.tmp", std::process::id(), self.seq.fetch_add(1, Ordering::Relaxed)));
+        let tmp = self
+            .dir
+            .join(format!(".{}.{}.tmp", std::process::id(), self.seq.fetch_add(1, Ordering::Relaxed)));
         let r = (|| -> std::io::Result<()> {
             use std::io::Write;
             let mut f = std::fs::File::create(&tmp)?;
@@ -284,7 +286,11 @@ mod tests {
         for i in 0..40u64 {
             c.get_range("packs/p.pack", i % 8, 4 + (i / 8)).unwrap();
         }
-        let total: u64 = std::fs::read_dir(d.path()).unwrap().flatten().map(|e| e.metadata().unwrap().len()).sum();
+        let total: u64 = std::fs::read_dir(d.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.metadata().unwrap().len())
+            .sum();
         assert!(total <= 400, "cache grew to {total}");
     }
 }

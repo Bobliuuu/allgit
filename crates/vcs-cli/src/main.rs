@@ -2058,7 +2058,9 @@ fn run(cli: Cli) -> Result<(), Error> {
             let backend = remote::open_backend(&need_remote(&repo)?)?;
             let auto_merge = auto_merge
                 .or_else(|| std::env::var("VCS_PUBLISH_AUTOMERGE").ok().and_then(|v| v.parse().ok()))
-                .filter(|_| !(force || mirror || force_without_lease || !force_with_lease.is_empty() || tags || !delete.is_empty() || prune));
+                .filter(|_| {
+                    !(force || mirror || force_without_lease || !force_with_lease.is_empty() || tags || !delete.is_empty() || prune)
+                });
             if repair {
                 println!("repaired {} object(s) on the remote", repo.repair_remote(backend.as_ref())?);
             }
@@ -2474,8 +2476,13 @@ fn publish_auto_merge(
             }
         }
         let window = (5u64 << attempt.min(5)).min(250);
-        let seed = std::process::id() as u64 ^ (std::time::SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.subsec_nanos() as u64));
-        std::thread::sleep(std::time::Duration::from_millis(1 + seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) % window));
+        let seed = std::process::id() as u64
+            ^ (std::time::SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |d| d.subsec_nanos() as u64));
+        std::thread::sleep(std::time::Duration::from_millis(
+            1 + seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) % window,
+        ));
     }
 }
 

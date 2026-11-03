@@ -131,7 +131,11 @@ fn publish_compacts_the_remote_automatically() {
         said |= String::from_utf8_lossy(&o.stdout).contains("compacted the remote's packs");
     }
     assert!(said, "publish reports the automatic compaction");
-    assert!(packs(&remote) < 24, "automatic compaction keeps the pack count down: {}", packs(&remote));
+    assert!(
+        packs(&remote) < 24,
+        "automatic compaction keeps the pack count down: {}",
+        packs(&remote)
+    );
     let b = t.path().join("b");
     ok(t.path(), &["clone", remote.to_str().unwrap(), "b"]);
     assert!(ok(&b, &["fsck"]).contains("ok"));
