@@ -639,8 +639,10 @@ impl Repo {
     /// head visible at once. Caller holds the repository lock.
     fn bundle_commit(&self, file: &Path, p: &Prepared, author: Signature) -> Result<()> {
         let mut f = io(file, fs::File::open(file))?;
-        scan_pack(&mut f, file, &p.header, |_, obj, _| {
-            self.store.put(&obj)?;
+        // scan_pack verified framing, canonical decoding and the id of every object: store the
+        // encoding as it is instead of encoding and hashing each object a second time
+        scan_pack(&mut f, file, &p.header, |id, _, enc| {
+            self.store.put_encoded_prehashed(&id, enc)?;
             Ok(())
         })?;
         self.store.sync()?;
@@ -692,7 +694,12 @@ impl Repo {
     /// each zone checked out on `main` (else its first branch). Bundles with prerequisites cannot
     /// be cloned (they need an existing repository: use `fetch`).
     pub fn clone_from_bundle(file: &Path, dest: &Path, author: Signature) -> Result<Repo> {
-        let info = verify_file(file)?;
+        // header only: `bundle_prepare` below scans the pack and checks the graph against the (empty)
+        // new store, which is the same check `verify_file` would do, so do not scan a third time
+        let info = {
+            let mut f = io(file, fs::File::open(file))?;
+            read_header(&mut f, file)?.info
+        };
         if !info.prerequisites.is_empty() {
             return msg(
                 "this is an incremental bundle (it has prerequisites); fetch it into a repository that has them instead of cloning",
