@@ -199,6 +199,18 @@ fn describe_one_zone_sparse_and_text() {
 }
 
 #[test]
+fn fields_filter_keeps_only_requested_keys() {
+    let t = tempfile::tempdir().unwrap();
+    let a = fixture(t.path());
+    let v = json(&a, &["zone", "describe", "--fields", "purpose,history", "--history", "0"]);
+    let z = zone(&v, "core").as_object().unwrap();
+    let mut keys: Vec<&str> = z.keys().map(String::as_str).collect();
+    keys.sort();
+    assert_eq!(keys, ["history", "id", "name", "purpose"]);
+    assert!(!vcs(&a, &["zone", "describe", "--fields", "bogus"]).status.success());
+}
+
+#[test]
 fn graph_has_edges_closures_and_path_index() {
     let t = tempfile::tempdir().unwrap();
     let a = fixture(t.path());

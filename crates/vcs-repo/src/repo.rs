@@ -22,7 +22,10 @@ pub(crate) const FORMAT_FILE: &str = "format";
 /// Absent in repositories that never used one; written the first time a large-file manifest is stored.
 pub(crate) const FEATURES_FILE: &str = "features";
 pub(crate) const FEATURE_LARGE_CHUNKED: &str = "large-chunked";
-const KNOWN_FEATURES: &[&str] = &[FEATURE_LARGE_CHUNKED];
+/// Operations may omit the tag view when it equals the nearest earlier one that has it (see ops.rs).
+pub(crate) const FEATURE_OP_TAGS_DELTA: &str = "op-tags-delta";
+pub(crate) const FEATURE_REF_JOURNAL: &str = "ref-journal";
+const KNOWN_FEATURES: &[&str] = &[FEATURE_LARGE_CHUNKED, FEATURE_OP_TAGS_DELTA, FEATURE_REF_JOURNAL];
 pub(crate) const FORMAT_TEXT: &str = "all-git repository format 1\n";
 /// Checkout streams files of at least this many bytes chunk by chunk instead of reassembling them in memory.
 const STREAM_CHECKOUT_MIN: u64 = 8 << 20;
@@ -345,6 +348,7 @@ impl Repo {
                     counters: Counters::default(),
                 };
                 repo.recover_torn_index();
+                repo.journal_open_check();
                 return Ok(repo);
             }
             if !cur.pop() {
@@ -408,7 +412,9 @@ impl Repo {
     // ---------- state ----------
 
     pub(crate) fn lock(&self) -> Result<LockGuard> {
-        LockGuard::acquire(self.common.join("lock"))
+        let guard = LockGuard::acquire(self.common.join("lock"))?;
+        self.journal_verify()?; // finish an interrupted journalled operation before anyone reads refs
+        Ok(guard)
     }
     /// Path of a state file: shared files live in the common directory, the rest per worktree.
     pub(crate) fn state_path(&self, name: &str) -> PathBuf {
@@ -565,6 +571,9 @@ impl Repo {
         let _l = self.lock()?;
         let zones = self.zones()?;
         let ws = self.workspace()?;
+        if let Some(rep) = self.add_tracked_files_patched(rel_paths, &zones, &ws)? {
+            return Ok(rep);
+        }
         let mut ix = self.index()?;
         let mut rep = AddReport::default();
         let mut todo = Vec::new();
@@ -588,6 +597,77 @@ impl Repo {
         }
         self.save_index_verified(&mut ix, |p| verified.contains(p))?;
         Ok(rep)
+    }
+
+    /// `add` of a few named files, tracked already (re-staging edits) or new: stage them against just
+    /// their own index entries and patch the index file, instead of decoding and re-encoding all of it.
+    /// `None` (nothing done) for anything else: a directory, an empty spec, a missing file,
+    /// an old index layout, or when no entry changes (the full path may still move `written_ns`).
+    fn add_tracked_files_patched(&self, rel_paths: &[String], zones: &Zones, ws: &Workspace) -> Result<Option<AddReport>> {
+        const MAX: usize = 256;
+        if rel_paths.is_empty() || rel_paths.len() > MAX || rel_paths.iter().any(|p| p.is_empty()) {
+            return Ok(None);
+        }
+        let Ok(raw) = self.rd("index") else { return Ok(None) };
+        let Some(f) = crate::index_file::IndexFile::parse(raw)? else {
+            return Ok(None);
+        };
+        if f.is_empty() {
+            return Ok(None);
+        }
+        let mut part = Index {
+            written_ns: f.written_ns,
+            ..Index::default()
+        };
+        for p in rel_paths {
+            match fs::symlink_metadata(self.worktree.join(p)) {
+                Ok(m) if m.is_file() || m.file_type().is_symlink() => {}
+                _ => return Ok(None),
+            }
+            match f.get(p)? {
+                Some(e) => {
+                    part.entries.insert(p.clone(), e);
+                }
+                None => {
+                    // A new file: it may not clash by case or normalization with a tracked name (checked
+                    // against its own neighbours only), nor with a file/directory (checked by the patch).
+                    if let Some((a, _)) = f.find_new_path_collision(p)? {
+                        return crate::portable::require_no_collision([a.as_str(), p.as_str()], "add").map(|()| None);
+                    }
+                }
+            }
+        }
+        let news: Vec<&str> = rel_paths
+            .iter()
+            .filter(|p| !part.entries.contains_key(p.as_str()))
+            .map(String::as_str)
+            .collect();
+        if news.len() > 1 {
+            crate::portable::require_no_collision(news, "add")?;
+        }
+        let before: BTreeMap<String, IndexEntry> = part.entries.iter().map(|(k, e)| (k.clone(), e.clone())).collect();
+        let mut rep = AddReport::default();
+        let mut todo = Vec::new();
+        for p in rel_paths {
+            self.add_one(p, zones, ws, &mut part, &mut rep, &mut todo)?;
+        }
+        let verified = self.stage_files(&todo, &mut part)?;
+        self.note_resolved(rel_paths, &part)?;
+        self.store.sync()?;
+        let mut edits = crate::index_file::Edits::new();
+        for (p, e) in part.entries.iter() {
+            if before.get(p) != Some(e) {
+                edits.insert(p.clone(), Some(e.clone()));
+            }
+        }
+        let _ = verified; // a patch keeps `written_ns`, so the entries it changes are re-read once by status
+        if edits.is_empty() {
+            return Ok(None);
+        }
+        if let (Some(bytes), _) = self.prepare_index_patch(&f, &edits)? {
+            self.write_index_bytes(&bytes)?;
+        }
+        Ok(Some(rep))
     }
 
     fn add_one(&self, p: &str, zones: &Zones, ws: &Workspace, ix: &mut Index, rep: &mut AddReport, todo: &mut Vec<String>) -> Result<()> {
@@ -1936,10 +2016,12 @@ impl Repo {
         refs.apply(&updates)?;
         // Durability barrier: trees, commits and the transaction are durable before refs name them.
         self.store.sync()?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?; // linearization point
-                                                                  // Remember the tree ids just computed so the next commit/status can skip unchanged
-                                                                  // directories. `written_ns` is deliberately untouched: no entry was re-verified. Best
-                                                                  // effort: a lost cache write only costs time.
+        let first = message.lines().next().unwrap_or("");
+        // linearization point: the ref move and its operation record are one journalled step
+        self.commit_refs_op(&refs, &format!("commit: {first}"), Some(op_author))?;
+        // Remember the tree ids just computed so the next commit/status can skip unchanged
+        // directories. `written_ns` is deliberately untouched: no entry was re-verified. Best
+        // effort: a lost cache write only costs time.
         if !fresh_trees.is_empty() {
             ix.entries.store_trees(fp, fresh_trees);
             let new_bytes = ix.encode();
@@ -1950,8 +2032,6 @@ impl Repo {
         if merging.is_some() {
             self.clear_merge_state()?;
         }
-        let first = message.lines().next().unwrap_or("");
-        self.record_op(&format!("commit: {first}"), Some(op_author))?;
         Ok(CommitReport { transaction: tx, commits })
     }
 
@@ -2000,8 +2080,7 @@ impl Repo {
             old: None,
             new: head,
         }])?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
-        self.record_op(&format!("create branch {zone}/{branch}"), None)?;
+        self.commit_refs_op(&refs, &format!("create branch {zone}/{branch}"), None)?;
         Ok(head)
     }
 
@@ -2036,8 +2115,7 @@ impl Repo {
             old: None,
             new: id,
         }])?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
-        self.record_op(&format!("create branch {zone}/{branch} at {}", id.short()), None)?;
+        self.commit_refs_op(&refs, &format!("create branch {zone}/{branch} at {}", id.short()), None)?;
         Ok(id)
     }
 
@@ -2372,6 +2450,16 @@ impl Repo {
         let skip = |p: &str| ws.skips(zone, p);
         let all_changed: Vec<&String> = new.iter().filter(|(p, v)| old.get(*p) != Some(v)).map(|(p, _)| p).collect();
         let (virt, changed): (Vec<&String>, Vec<&String>) = all_changed.into_iter().partition(|p| skip(p));
+        // Every blob must be present before the first file is touched. A blob that is absent (a
+        // partial clone, a merge that brings in unfetched content) surfaces as `NotFound`, and
+        // `vcs` fetches it and re-runs the whole command; if some files were already written by
+        // then, the re-run refuses with "untracked path would be overwritten".
+        for p in &changed {
+            let id = &new[*p].1;
+            if !self.store.contains(id)? {
+                return Err(vcs_store::StoreError::NotFound(*id).into());
+            }
+        }
         // deletions
         let mut dirs: BTreeSet<String> = BTreeSet::new();
         for p in old.keys().filter(|p| !new.contains_key(*p)) {
@@ -2497,8 +2585,7 @@ impl Repo {
         }))?;
         refs.snapshots.insert(name.to_owned(), id);
         self.store.sync()?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
-        self.record_op(&format!("snapshot create {name}"), None)?;
+        self.commit_refs_op(&refs, &format!("snapshot create {name}"), None)?;
         Ok(id)
     }
 

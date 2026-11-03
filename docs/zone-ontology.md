@@ -10,8 +10,10 @@ Two read-only commands:
 
 | Command | Answers |
 |---|---|
-| `vcs zone describe [ZONE] [--history N] [--transactions N] [--path P]... --json` | what each zone is, who owns it, what it depends on, how it is subscribed, what changed recently |
+| `vcs zone describe [ZONE] [--history N] [--transactions N] [--path P]... [--fields K,..] --json` | what each zone is, who owns it, what it depends on, how it is subscribed, what changed recently |
 | `vcs zone graph [--deep] --json` | the dependency graph: edges with reasons, direct and transitive closures both ways, cycles, path index |
+
+`--fields purpose,history` keeps only those keys per zone (plus `id`, `name`) to cut output for agents; the schema's per-zone `required` list applies to unfiltered output.
 
 Without `--json` both print a short human summary. Schema: [`zone-ontology.schema.json`](zone-ontology.schema.json)
 (`$defs.describe`, `$defs.graph`; id `vcs.zone-ontology/1`). Rules are those of [cli.md](cli.md): one JSON object on
