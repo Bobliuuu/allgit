@@ -938,6 +938,9 @@ impl Repo {
         }
         report.refs_ignored = ignored.into_iter().collect();
         report.refs_rejected = rejected;
+        if report.commits_imported > 0 {
+            self.warm_commit_graph();
+        }
         Ok(report)
     }
 }
