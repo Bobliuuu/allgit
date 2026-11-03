@@ -59,6 +59,7 @@ pub mod worktree_fs;
 mod writer_threads;
 mod zone_batch;
 pub mod zonedetect;
+pub mod zoneprofile;
 mod zonesplit;
 
 pub use assist::{AssistResult, ProposalInfo};

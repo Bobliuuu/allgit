@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 use vcs_objects::{ObjectId, Signature};
 use vcs_remote::Outcome;
-use vcs_repo::{AssistResult, ChangeKind, Error, MergeOutcome, RebaseOutcome, Repo, Resolution, SyncAction, ROOT_ZONE};
+use vcs_repo::{AssistResult, ChangeKind, Error, MergeOutcome, RebaseOutcome, Repo, Resolution, ROOT_ZONE};
 
 mod archive;
 mod auth;
@@ -36,6 +36,7 @@ mod remote;
 mod shelve_cmd;
 mod signing_cmd;
 mod worktree_cmd;
+mod zoneprofile_cmd;
 
 /// The assist command: `--assist`, else the opt-in `merge.assist` setting (announced, because file
 /// contents are then handed to that command), unless `--no-assist`.
@@ -539,6 +540,8 @@ enum Cmd {
         stats: bool,
         #[command(flatten)]
         sel: autozone::ForArgs,
+        #[command(flatten)]
+        auto: zoneprofile_cmd::CloneAuto,
     },
     /// Publish checked-out branches to the remote in one atomic transaction
     Publish {
@@ -614,8 +617,8 @@ enum Cmd {
         #[arg(long)]
         stats: bool,
     },
-    /// Fetch, then fast-forward local branches where safe
-    Sync,
+    /// Fetch, then fast-forward local branches where safe (`--auto`: choose zones from your usage profile)
+    Sync(zoneprofile_cmd::SyncAuto),
     /// Verify all objects and graph invariants
     Fsck,
     /// Move loose objects into a pack (one pack + index under .vcs/objects/pack).
@@ -983,6 +986,9 @@ fn need_remote(repo: &Repo) -> Result<String, Error> {
 fn run(cli: Cli) -> Result<(), Error> {
     if let Cmd::More(m) = &cli.cmd {
         return cmds::dispatch(m, cli.json);
+    }
+    if let Some(r) = zoneprofile_cmd::intercept(&cli.cmd) {
+        return r;
     }
     if let Some(r) = autozone::intercept(&cli.cmd, cli.json) {
         return r;
@@ -2185,27 +2191,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             }
             println!("prefetched {n} object(s)");
         }
-        Cmd::Sync => {
-            let (repo, _) = open()?;
-            let backend = remote::open_memo(&need_remote(&repo)?, false)?;
-            let rep = repo.sync(&backend)?;
-            for (a, b, act) in &rep.actions {
-                let what = match act {
-                    SyncAction::UpToDate => "up to date".to_owned(),
-                    SyncAction::FastForwarded { from, to } => {
-                        format!("fast-forwarded {} -> {}", opt_short(*from), to.short())
-                    }
-                    SyncAction::Ahead => "ahead of remote (run `vcs publish`)".into(),
-                    SyncAction::Diverged => {
-                        let r = if a == ROOT_ZONE { String::new() } else { format!(" --zone {a}") };
-                        format!("diverged; merge with `vcs merge --remote {b}{r}`")
-                    }
-                    SyncAction::Dirty => "dirty (left untouched; commit or discard changes first)".into(),
-                    SyncAction::NoRemote => "not on the remote yet (run `vcs publish`)".into(),
-                };
-                println!("{a}/{b}: {what}");
-            }
-        }
+        Cmd::Sync(a) => zoneprofile_cmd::sync(&a)?,
         Cmd::Op(c) => {
             let (repo, _) = open()?;
             match c {
@@ -2485,6 +2471,7 @@ fn publish_auto_merge(
 
 fn run_lazy(cli: Cli) -> Result<(), Error> {
     let mut fetched = std::collections::BTreeSet::new();
+    let pre = zoneprofile_cmd::before(&cli.cmd);
     loop {
         match run(cli.clone()) {
             Err(Error::Store(vcs_store::StoreError::NotFound(id))) if fetched.insert(id) => {
@@ -2496,7 +2483,12 @@ fn run_lazy(cli: Cli) -> Result<(), Error> {
                 repo.fetch_missing(backend.as_ref(), &id)?;
                 eprintln!("fetched missing object {}", id.short());
             }
-            r => return r,
+            r => {
+                if r.is_ok() {
+                    zoneprofile_cmd::observe(&cli.cmd, pre);
+                }
+                return r;
+            }
         }
     }
 }
