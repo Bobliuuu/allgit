@@ -89,8 +89,12 @@ def start_server():
     tok = os.path.join(W, "tokens")
     open(tok, "w").write(f"# principal role zones token-hash\nalice write * {h}\n")
     p = subprocess.Popen([a.server, "--root", os.path.join(W, "data"), "--tokens", tok, "--listen", "127.0.0.1:0"],
-                         stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True)
-    line = p.stderr.readline()
+                         stderr=open(os.path.join(W, "server.log"), "w"), stdout=subprocess.DEVNULL, text=True)
+    for _ in range(100):  # the server prints its address as its first stderr line
+        time.sleep(0.1)
+        line = open(os.path.join(W, "server.log")).readline()
+        if "http://" in line:
+            break
     url = [w for w in line.split() if w.startswith("http://")][0]
     return p, url
 
@@ -150,6 +154,7 @@ res = {"zones": a.zones, "files_per_zone": a.files, "runs": a.runs, "load1_start
        "cores": os.cpu_count()}
 pub, gsrc, bare = (os.path.join(W, x) for x in ("pub", "gitsrc", "bare.git"))
 srv, url = start_server()
+vcs(["remote", "set", url], pub)  # the server restarted on a new port
 out = os.path.join(W, "runs")
 shutil.rmtree(out, ignore_errors=True)
 os.makedirs(out)
