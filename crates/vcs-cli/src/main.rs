@@ -2453,7 +2453,7 @@ fn publish_auto_merge(
         attempt += 1;
         let rep = repo.sync(backend)?;
         for (zone, branch, act) in &rep.actions {
-            if matches!(act, SyncAction::Diverged) {
+            if matches!(act, vcs_repo::SyncAction::Diverged) {
                 match repo.merge_remote(zone, branch, author()?)? {
                     vcs_repo::MergeOutcome::Conflicted { .. } => {
                         repo.merge_abort()?;
