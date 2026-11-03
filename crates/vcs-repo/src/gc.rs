@@ -83,9 +83,12 @@ impl Repo {
         }
         let _lock = self.lock()?;
         let orphans = self.store.clean_orphans(now, opts.grace)?;
-        let first = self.gc_plan_at(now, opts.grace)?;
+        // Objects are immutable by id, so what the first pass learned (kind, children) is reused by the
+        // second; its list, roots and ages are still taken fresh.
+        let mut known = Known::new();
+        let first = self.gc_plan_known(now, opts.grace, &mut known)?;
         // Fresh list + fresh roots + fresh ages, immediately before deleting.
-        let second = self.gc_plan_at(now, opts.grace)?;
+        let second = self.gc_plan_known(now, opts.grace, &mut known)?;
         let confirmed: BTreeSet<ObjectId> = second.would_delete.iter().map(|x| x.0).collect();
         let doomed: BTreeSet<ObjectId> = first.would_delete.iter().map(|x| x.0).filter(|i| confirmed.contains(i)).collect();
         let deleted: Vec<(ObjectId, Kind)> = second.would_delete.iter().filter(|x| doomed.contains(&x.0)).copied().collect();
@@ -117,8 +120,12 @@ impl Repo {
     /// listed and becomes referenced after the roots were read was written recently, so the
     /// grace period keeps it.
     pub fn gc_plan_at(&self, now: SystemTime, grace: Duration) -> Result<GcReport> {
+        self.gc_plan_known(now, grace, &mut Known::new())
+    }
+
+    fn gc_plan_known(&self, now: SystemTime, grace: Duration, known: &mut Known) -> Result<GcReport> {
         let ids = self.store.list()?;
-        let roots = self.gc_roots()?;
+        let roots = self.gc_roots(&ids, known)?;
         let mut missing = 0usize;
         let mut marked: std::collections::HashSet<ObjectId> = std::collections::HashSet::with_capacity(ids.len());
         // Mark level by level; each level's objects are read (and hash-verified) on several threads.
@@ -127,23 +134,34 @@ impl Repo {
             level.sort_unstable();
             level.dedup();
             level.retain(|id| !marked.contains(id));
-            let got = par_map(&level, |id| match self.store.get(id) {
-                Ok(o) => {
-                    let mut kids = Vec::new();
-                    children(&o, &mut kids);
-                    Ok(Some(kids))
-                }
+            let todo: Vec<ObjectId> = level.iter().filter(|id| !known.contains_key(*id)).copied().collect();
+            let got = par_map(&todo, |id| match self.store.get(id) {
+                Ok(o) => Ok(Some(Info::of(&o))),
                 Err(vcs_store::StoreError::NotFound(_)) => Ok(None),
                 Err(e) => Err(crate::Error::from(e)),
             });
-            let mut next = Vec::new();
-            for (id, r) in level.iter().zip(got) {
+            let mut absent = std::collections::HashSet::new();
+            for (id, r) in todo.iter().zip(got) {
                 match r? {
-                    Some(kids) => {
-                        marked.insert(*id);
-                        next.extend(kids);
+                    Some(info) => {
+                        known.insert(*id, info);
                     }
-                    None => missing += 1,
+                    None => {
+                        absent.insert(*id);
+                    }
+                }
+            }
+            let mut next = Vec::new();
+            for id in &level {
+                match known.get(id) {
+                    Some(info) => {
+                        marked.insert(*id);
+                        next.extend_from_slice(&info.kids);
+                    }
+                    None => {
+                        debug_assert!(absent.contains(id));
+                        missing += 1;
+                    }
                 }
             }
             level = next;
@@ -199,7 +217,7 @@ impl Repo {
     }
 
     /// Everything that pins objects locally. See docs/gc.md for why each one is a root.
-    fn gc_roots(&self) -> Result<Vec<ObjectId>> {
+    fn gc_roots(&self, all: &[ObjectId], known: &mut Known) -> Result<Vec<ObjectId>> {
         let mut roots = Vec::new();
         let refs = self.refs()?;
         roots.extend(refs.branches.values().copied());
@@ -215,12 +233,38 @@ impl Repo {
         }
         // Transactions are not reachable from commits and there is no local transaction log yet,
         // so every stored Transaction is a root until the remote/tx-log design lands.
-        let all = self.store.list()?;
-        let is_tx = par_map(&all, |id| matches!(self.store.get(id), Ok(Object::Transaction(_))));
-        roots.extend(all.iter().zip(is_tx).filter(|(_, t)| *t).map(|(id, _)| *id));
+        // Reading each object here also records its children, so the mark phase need not read it again.
+        let todo: Vec<ObjectId> = all.iter().filter(|id| !known.contains_key(*id)).copied().collect();
+        let got = par_map(&todo, |id| self.store.get(id).ok().map(|o| Info::of(&o)));
+        for (id, info) in todo.into_iter().zip(got) {
+            if let Some(info) = info {
+                known.insert(id, info);
+            }
+        }
+        roots.extend(all.iter().filter(|id| known.get(*id).is_some_and(|i| i.tx)).copied());
         Ok(roots)
     }
 }
+
+/// What one read of an object tells gc: whether it is a transaction and which objects it names.
+struct Info {
+    tx: bool,
+    kids: Box<[ObjectId]>,
+}
+
+impl Info {
+    fn of(o: &Object) -> Info {
+        let mut kids = Vec::new();
+        children(o, &mut kids);
+        Info {
+            tx: matches!(o, Object::Transaction(_)),
+            kids: kids.into_boxed_slice(),
+        }
+    }
+}
+
+/// Objects already read during one gc run (content-addressed, so a result never goes stale).
+type Known = std::collections::HashMap<ObjectId, Info>;
 
 /// `f` over `items` on several threads (small inputs stay on the caller), results in order.
 fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
