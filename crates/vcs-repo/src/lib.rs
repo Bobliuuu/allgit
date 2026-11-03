@@ -42,6 +42,7 @@ pub mod portable;
 pub mod prefetch;
 pub mod rebase;
 pub mod rebase_todo;
+pub mod reftags;
 pub mod repo;
 pub mod reset;
 pub mod revrange;
