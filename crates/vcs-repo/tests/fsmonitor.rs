@@ -320,6 +320,64 @@ fn clean_tree_trusts_the_monitor_and_events_reveal_changes() {
     assert_same(&r, &m, "revert");
 }
 
+/// An index rewrite that changes only known entries (a patched `rm --cached`, a `commit` storing cache
+/// trees) keeps the saved state usable: an unreported change elsewhere is still not looked for, which is
+/// how the test tells a trusted state from a full scan. The touched path itself is re-checked.
+#[test]
+fn state_survives_patched_index_writes_and_commits() {
+    let (_d, r) = base();
+    let m = MockMonitor::new();
+    assert_same(&r, &m, "cold");
+    // patched write: a/x.txt leaves the index, its file stays (now untracked)
+    r.rm(&["a/x.txt".to_string()], true, false).unwrap();
+    w(&r, "d/e/f.txt", "silent edit, never reported");
+    let s = r.status_monitored(opts(), &m).unwrap();
+    assert!(s.zones[0].unstaged.is_empty(), "state was thrown away: {:?}", s.zones[0].unstaged);
+    assert!(s.untracked.contains(&"a/x.txt".to_string()), "touched path must be re-checked");
+    // once reported, the edit shows and the full scan agrees
+    m.event("d/e/f.txt");
+    assert_same(&r, &m, "reported edit after patched write");
+    // commit stores cache trees (same entries, new index bytes)
+    w(&r, "top.txt", "edited and reported");
+    m.event("top.txt");
+    r.add(&["top.txt".to_string()]).unwrap();
+    assert_same(&r, &m, "after add");
+    r.commit(
+        "c2",
+        vcs_objects::Signature {
+            name: "T".into(),
+            email: "t@x".into(),
+            timestamp: 2,
+        },
+    )
+    .unwrap();
+    w(&r, "a/b/y.txt", "silent edit two, never reported");
+    let s = r.status_monitored(opts(), &m).unwrap();
+    assert!(
+        s.zones[0].unstaged.iter().all(|c| c.path != "a/b/y.txt"),
+        "commit threw the state away: {:?}",
+        s.zones[0].unstaged
+    );
+    m.event("a/b/y.txt");
+    assert_same(&r, &m, "end");
+}
+
+/// A state bound to an index the log does not connect to the current one is never trusted.
+#[test]
+fn a_broken_rebind_chain_means_a_full_scan() {
+    let (_d, r) = base();
+    let m = MockMonitor::new();
+    assert_same(&r, &m, "cold");
+    r.rm(&["a/x.txt".to_string()], true, false).unwrap();
+    // someone drops the log (or an index writer that does not log runs): no chain
+    let log = r.worktree().join(".vcs/fsmon/rebind");
+    fs::remove_file(&log).unwrap();
+    w(&r, "d/e/f.txt", "unreported");
+    let s = r.status_monitored(opts(), &m).unwrap();
+    assert_eq!(s.zones[0].unstaged.len(), 1, "full scan must find the unreported edit");
+    assert_same(&r, &m, "after");
+}
+
 /// Regression for the flake seen under load (shrunk case `Swap(2,3)`, `Remove(2,3)`): a tracked
 /// name that was a directory holding untracked files is removed; the saved untracked list must not
 /// keep the names that vanished with it. Deterministic: no timing involved.
@@ -449,6 +507,47 @@ mod real {
         // an ignore file changes what is untracked
         w(&r, ".vcsignore", "fresh/\n");
         same(&r, &m, "ignore file");
+    }
+
+    /// `diff` narrowed by the watcher returns what the reference scan returns, across edits, deletes,
+    /// renames, an mtime-preserving edit and a patched index write in between.
+    #[test]
+    fn watcher_narrowed_diff_equals_the_reference() {
+        let (_d, r) = base();
+        let (_dm, m) = start(&r);
+        let diff_ok = |ctx: &str| {
+            let _ = r.status_monitored(opts(), &m).unwrap(); // saves the state `diff` narrows with
+            let fast: Vec<_> = r.diff_pairs(false).unwrap().into_iter().map(|p| (p.path, p.old, p.new)).collect();
+            let full: Vec<_> = r
+                .diff_pairs_full(false)
+                .unwrap()
+                .into_iter()
+                .map(|p| (p.path, p.old, p.new))
+                .collect();
+            assert_eq!(fast, full, "diff after {ctx}");
+        };
+        diff_ok("setup");
+        w(&r, "a/x.txt", "edited");
+        diff_ok("edit");
+        fs::remove_file(r.worktree().join("d/e/f.txt")).unwrap();
+        diff_ok("delete");
+        fs::rename(r.worktree().join("a/b"), r.worktree().join("a/c")).unwrap();
+        diff_ok("directory rename");
+        let p = r.worktree().join("top.txt");
+        let old = fs::metadata(&p).unwrap().modified().unwrap();
+        fs::write(&p, "TOP.TXT").unwrap();
+        set_mtime(&p, old);
+        diff_ok("mtime restored");
+        // a patched index write (rm --cached) between two diffs
+        r.rm(&["a/x.txt".to_string()], true, false).unwrap();
+        w(&r, "a/c/y.txt", "edited under the renamed directory");
+        diff_ok("patched index write");
+        // no state for this index at all: still the reference answer
+        r.rm(&["top.txt".to_string()], true, false).unwrap();
+        let _ = fs::remove_file(r.worktree().join(".vcs/fsmon/rebind"));
+        let fast: Vec<_> = r.diff_pairs(false).unwrap().into_iter().map(|p| p.path).collect();
+        let full: Vec<_> = r.diff_pairs_full(false).unwrap().into_iter().map(|p| p.path).collect();
+        assert_eq!(fast, full);
     }
 
     #[test]

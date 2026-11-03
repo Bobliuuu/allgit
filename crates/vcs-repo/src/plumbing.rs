@@ -2,7 +2,7 @@
 //! `describe`) and the checkout used by `bisect`.
 
 use crate::error::{msg, Error, Result};
-use crate::meta::{write_atomic, ROOT_ZONE};
+use crate::meta::ROOT_ZONE;
 use crate::repo::{Repo, StatusOpts};
 use crate::treeops::{self, Flat};
 use vcs_objects::names::validate_branch_name;
@@ -18,6 +18,17 @@ impl Repo {
             .into_iter()
             .map(|(p, e)| (p, e.mode, e.id))
             .collect())
+    }
+
+    /// Stream the staged entries (same validation as [`Repo::tracked_files`]) through `visit` on
+    /// parallel workers, one `T` per index block, in path order. See [`crate::index::Index::scan`].
+    pub fn scan_tracked<T: Send>(
+        &self,
+        init: impl Fn() -> T + Sync,
+        visit: impl Fn(&mut T, &str, &crate::index::IndexEntry) + Sync,
+    ) -> Result<Vec<T>> {
+        let raw = self.rd("index")?;
+        crate::index::Index::scan(&raw, init, visit)
     }
 
     /// Files of revision `rev` across the subscribed zones in which `rev` resolves (so `HEAD`
@@ -161,7 +172,7 @@ impl Repo {
         }
         ws.subs.insert(zone.into(), branch.into());
         self.save_index(&mut ix)?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
+        self.write_refs(&refs)?;
         self.save_ws(&ws)?;
         self.record_op(&format!("checkout {zone}/{branch} at {}", target.short()), None)?;
         Ok(())

@@ -20,6 +20,11 @@ use vcs_objects::codec::Reader;
 use vcs_objects::ObjectId;
 use vcs_store::ObjectStore;
 
+thread_local! {
+    /// Set by `prepare_index_patch`, consumed by the `write_index_bytes` that follows it.
+    static PENDING: std::cell::RefCell<Option<([u8; 32], Vec<String>)>> = const { std::cell::RefCell::new(None) };
+}
+
 struct Blk {
     off: usize,
     len: usize,
@@ -93,6 +98,11 @@ impl IndexFile {
             blocks,
             tail: off,
         }))
+    }
+
+    /// No entries at all (a patch needs a block to start from).
+    pub(crate) fn is_empty(&self) -> bool {
+        self.blocks.is_empty()
     }
 
     #[cfg(test)]
@@ -311,6 +321,68 @@ impl IndexFile {
         Ok((out, changed))
     }
 
+    /// Is there a tracked path or directory that differs from `path` (not tracked itself) only by case or
+    /// Unicode normalization, so that both could not exist on a folding filesystem? Returns the colliding
+    /// pair like `portable::find_collision`. Looks only at the names that can clash: walking down `path`,
+    /// a component that already exists spelled the same cannot have a variant (the index holds no such
+    /// pair), and the first one that does not exist is compared with its parent's children; below a new
+    /// directory nothing exists. A big directory costs one scan of its own entries, never of the tree.
+    pub(crate) fn find_new_path_collision(&self, path: &str) -> Result<Option<(String, String)>> {
+        let mut parent_end = 0usize; // `path[..parent_end]` is the existing parent (0: the root)
+        loop {
+            let rest = &path[if parent_end == 0 { 0 } else { parent_end + 1 }..];
+            let name_end = rest.find('/').map_or(path.len(), |i| path.len() - rest.len() + i);
+            let start = path.len() - rest.len();
+            let upto = &path[..name_end];
+            let is_leaf = name_end == path.len();
+            let exists = if is_leaf {
+                false // `path` itself is not tracked
+            } else {
+                let dir = format!("{upto}/");
+                self.get(upto)?.is_some() || self.lower_bound(&dir)?.is_some_and(|k| k.starts_with(&dir))
+            };
+            if exists {
+                parent_end = name_end;
+                continue;
+            }
+            let parent = &path[..parent_end];
+            let name = &path[start..name_end];
+            let want = crate::portable::fold_component(name);
+            let (lo, hi) = if parent.is_empty() {
+                (String::new(), String::new())
+            } else {
+                (format!("{parent}/"), format!("{parent}0"))
+            };
+            let first = if parent.is_empty() { 0 } else { self.block_for(&lo) };
+            let mut last_child = String::new();
+            for i in first..self.blocks.len() {
+                if !parent.is_empty() && self.blocks[i].first.as_str() >= hi.as_str() {
+                    break;
+                }
+                for (k, _) in self.decode_block(i)? {
+                    if !k.starts_with(&lo) || (!parent.is_empty() && k.as_str() >= hi.as_str()) {
+                        continue;
+                    }
+                    let child = k[lo.len()..].split('/').next().unwrap_or("");
+                    if child == last_child || child == name {
+                        continue;
+                    }
+                    last_child.clear();
+                    last_child.push_str(child);
+                    if crate::portable::fold_component(child) == want {
+                        let a = if parent.is_empty() {
+                            child.to_owned()
+                        } else {
+                            format!("{parent}/{child}")
+                        };
+                        return Ok(Some((a, upto.to_owned())));
+                    }
+                }
+            }
+            return Ok(None);
+        }
+    }
+
     /// Would adding `path` (not tracked before) clash with a tracked file/directory once `edits` are applied?
     fn check_conflicts(&self, path: &str, edits: &Edits) -> Result<()> {
         let mut pos = 0;
@@ -362,6 +434,16 @@ impl crate::repo::Repo {
     /// do not have to wait for a freshly written index to reach the disk.
     pub(crate) fn prepare_index_patch(&self, f: &IndexFile, edits: &Edits) -> Result<(Option<Vec<u8>>, usize)> {
         let (bytes, changed) = f.patch(edits)?;
+        // For the filesystem monitor: remember which index this patch starts from and what it touches.
+        let pending = if changed > 0 && crate::fsmonitor::state_exists(&self.vcs) {
+            match (self.rd("zones"), self.rd("workspace")) {
+                (Ok(z), Ok(w)) => Some((crate::fsmonitor::fingerprint(&f.bytes, &z, &w), edits.keys().cloned().collect())),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        PENDING.with(|p| *p.borrow_mut() = pending);
         Ok((if changed == 0 { None } else { Some(bytes) }, changed))
     }
 
@@ -372,6 +454,9 @@ impl crate::repo::Repo {
         let clean = self.index_holds_no_attrs();
         crate::meta::write_atomic_nosync(&self.vcs.join("index"), bytes)?;
         self.carry_attrs_marker(clean, bytes);
+        if let Some((old, touched)) = PENDING.with(|p| p.borrow_mut().take()) {
+            self.fsmon_log_rewrite(Some(old), bytes, &touched);
+        }
         Ok(())
     }
 }
@@ -650,5 +735,54 @@ mod tests {
         let enc = ix.encode();
         assert!(IndexFile::parse(enc).unwrap().is_some());
         assert!(IndexFile::parse(b"AGI2\x01\x00\x00\x00".to_vec()).unwrap().is_none());
+    }
+
+    #[test]
+    fn new_path_collision_matches_the_whole_index_check() {
+        let mut ix = Index::default();
+        let mut names: Vec<String> = Vec::new();
+        for d in ["Src", "docs", "Docs2", "a/B", "a/b2", "ünï", "z"] {
+            for k in 0..700u32 {
+                names.push(format!("{d}/File{k}.TXT"));
+            }
+        }
+        names.push("Top.txt".into());
+        names.push("lib".into());
+        names.sort();
+        names.dedup();
+        for n in &names {
+            ix.insert(n, en(1, 1)).unwrap();
+        }
+        let f = IndexFile::parse(ix.encode()).unwrap().unwrap();
+        let probes = [
+            "src/new.txt",
+            "SRC/File1.TXT",
+            "Src/file1.txt",
+            "Src/brandnew.txt",
+            "Src/sub/x.txt",
+            "DOCS/x",
+            "docs/x",
+            "a/b/x",
+            "a/B/File9.txt",
+            "a/B/new",
+            "A/b2/x",
+            "top.txt",
+            "Top2.txt",
+            "LIB/x",
+            "lib2",
+            "UNI\u{308}/x",
+            "ünï/new",
+            "ÜNÏ/new",
+            "newdir/deep/er/x",
+            "Z/x",
+        ];
+        for p in probes {
+            if ix.entries.contains_key(p) {
+                continue;
+            }
+            let want = crate::portable::find_collision(names.iter().map(String::as_str).chain([p])).is_some();
+            let got = f.find_new_path_collision(p).unwrap().is_some();
+            assert_eq!(got, want, "{p}");
+        }
     }
 }

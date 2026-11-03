@@ -16,7 +16,6 @@
 //! names the rescue (`vcs branch <name> <id>` before leaving, or `vcs op undo` after).
 
 use crate::error::{msg, Result};
-use crate::meta::write_atomic;
 use crate::repo::{Repo, StatusOpts};
 use crate::treeops;
 use vcs_objects::names::{validate_branch_name, DETACHED_BRANCH};
@@ -69,7 +68,7 @@ impl Repo {
         refs.branches.insert((zone.to_owned(), DETACHED_BRANCH.to_owned()), target);
         ws.subs.insert(zone.to_owned(), DETACHED_BRANCH.to_owned());
         self.save_index(&mut ix)?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
+        self.write_refs(&refs)?;
         self.save_ws(&ws)?;
         self.record_op(&format!("checkout {zone} detached at {}", target.short()), None)?;
         Ok(target)
@@ -99,8 +98,7 @@ impl Repo {
             old: None,
             new: target,
         }])?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
-        self.record_op(&format!("create branch {zone}/{branch} at {}", target.short()), None)?;
+        self.commit_refs_op(&refs, &format!("create branch {zone}/{branch} at {}", target.short()), None)?;
         Ok(target)
     }
 
@@ -162,7 +160,7 @@ impl Repo {
         }
         refs.branches.remove(&(zone.to_owned(), old.to_owned()));
         refs.branches.insert((zone.to_owned(), new.to_owned()), head);
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
+        self.write_refs(&refs)?;
         if checked_out {
             ws.subs.insert(zone.to_owned(), new.to_owned());
             self.save_ws(&ws)?;
@@ -176,7 +174,7 @@ impl Repo {
     pub(crate) fn drop_detached_ref(&self, zone: &str) -> Result<()> {
         let mut refs = self.refs()?;
         if refs.branches.remove(&(zone.to_owned(), DETACHED_BRANCH.to_owned())).is_some() {
-            write_atomic(&self.common.join("refs"), &refs.encode())?;
+            self.write_refs(&refs)?;
         }
         Ok(())
     }
