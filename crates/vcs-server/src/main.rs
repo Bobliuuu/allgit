@@ -18,7 +18,7 @@ use vcs_server::log::{Format, Level, Logger, V};
 use vcs_server::{auth, backend_url, AuditLog, Config, Policy, RateLimit, Server, TokenTable};
 
 const USAGE: &str = "usage: vcs-server (--root <dir> | --backend <s3://...|dir>) --tokens <file> [--listen host:port] [--audit-log <file> [--audit-key <file>]] \
-[--rate-limit <burst>,<per-sec>] [--max-connections <n>] [--max-conns-per-ip <n>] [--auth-fail-limit <burst>,<per-sec>] [--max-body <bytes>] [--cache-dir <dir> [--cache-size <bytes>]] [--policy <file>] [--allowed-signers <file>] [--revoked-signers <file>] [--max-lease-secs N] [--skew-epsilon-ms N] [--tls-cert <pem> --tls-key <pem> [--tls-client-ca <pem>]] \
+[--rate-limit <burst>,<per-sec>] [--max-connections <n>] [--max-conns-per-ip <n>] [--auth-fail-limit <burst>,<per-sec>] [--max-body <bytes>] [--max-inflight-body <bytes>] [--cache-dir <dir> [--cache-size <bytes>]] [--policy <file>] [--allowed-signers <file>] [--revoked-signers <file>] [--max-lease-secs N] [--skew-epsilon-ms N] [--tls-cert <pem> --tls-key <pem> [--tls-client-ca <pem>]] \
 [--config <file>] [--log-format json|text] [--log-level error|warn|info|debug] [--shutdown-grace <secs>] [--metrics-token <token|@file>] \
 [--backend-retries N] [--backend-timeout <secs>] [--breaker-threshold N] [--breaker-cooldown <secs>] [--check-client-cannot-write-manifest]\n       \
 vcs-server hash-token <token>\n       vcs-server audit verify <file> [--key <file>]";
@@ -84,6 +84,7 @@ fn main() {
     }
     let (mut root, mut tokens, mut listen) = (None, None, "127.0.0.1:8480".to_owned());
     let (mut audit_log, mut audit_key, mut rate, mut maxc, mut maxb) = (None, None, None, None, None);
+    let mut maxib: Option<String> = None;
     let (mut maxc_ip, mut auth_fail): (Option<String>, Option<String>) = (None, None);
     let (mut tls_cert, mut tls_key, mut tls_client_ca) = (None, None, None);
     let (mut backend_arg, mut policy_path, mut max_lease, mut eps) = (None, None, None, None);
@@ -107,6 +108,7 @@ fn main() {
             "--max-conns-per-ip" => maxc_ip = Some(val("--max-conns-per-ip")),
             "--auth-fail-limit" => auth_fail = Some(val("--auth-fail-limit")),
             "--max-body" => maxb = Some(val("--max-body")),
+            "--max-inflight-body" => maxib = Some(val("--max-inflight-body")),
             "--tls-cert" => tls_cert = Some(val("--tls-cert")),
             "--tls-key" => tls_key = Some(val("--tls-key")),
             "--tls-client-ca" => tls_client_ca = Some(val("--tls-client-ca")),
@@ -164,8 +166,12 @@ fn main() {
     let backend: std::sync::Arc<dyn vcs_remote::Backend> = match cache_dir {
         None => backend,
         Some(d) => {
-            let cap = cache_size.map_or(8u64 << 30, |n| n.parse().unwrap_or_else(|_| die("--cache-size expects a number of bytes")));
-            std::sync::Arc::new(vcs_remote::DiskCacheBackend::new(backend, d, cap).unwrap_or_else(|e| die(&format!("cannot use --cache-dir: {e}"))))
+            let cap = cache_size.map_or(8u64 << 30, |n| {
+                n.parse().unwrap_or_else(|_| die("--cache-size expects a number of bytes"))
+            });
+            std::sync::Arc::new(
+                vcs_remote::DiskCacheBackend::new(backend, d, cap).unwrap_or_else(|e| die(&format!("cannot use --cache-dir: {e}"))),
+            )
         }
     };
     let mut cfg = Config::new(table);
@@ -248,6 +254,11 @@ fn main() {
     }
     if let Some(n) = maxb {
         cfg.max_body = n.parse().unwrap_or_else(|_| die("--max-body expects a number of bytes"));
+    }
+    if let Some(n) = maxib {
+        cfg.max_inflight_body = n
+            .parse()
+            .unwrap_or_else(|_| die("--max-inflight-body expects a number of bytes (0 = unlimited)"));
     }
     if let Some(p) = audit_log {
         let key = audit_key.as_deref().map(read_key);

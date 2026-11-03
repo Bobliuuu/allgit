@@ -178,6 +178,8 @@ pub enum ParseError {
     Io(std::io::Error),
     Bad(&'static str),
     TooLarge,
+    /// The server-wide budget for bytes of request bodies in flight is exhausted (answer 503).
+    Overloaded,
     HeadersTooLarge,
     Unsupported(&'static str),
 }
@@ -233,6 +235,7 @@ pub fn read_request(
     limits: &Limits,
     body_limit: &dyn Fn(&Request) -> usize,
     on_headers: &mut dyn FnMut(),
+    reserve: &mut dyn FnMut(usize) -> bool,
 ) -> Result<Request, ParseError> {
     let mut budget = limits.max_header_bytes;
     let (line, n) = read_line(r, budget)?;
@@ -302,6 +305,9 @@ pub fn read_request(
         let n: usize = cl.parse().map_err(|_| ParseError::TooLarge)?;
         if n > body_limit(&req) {
             return Err(ParseError::TooLarge);
+        }
+        if !reserve(n) {
+            return Err(ParseError::Overloaded);
         }
         // Grow as data arrives (a client that announces a large body and stalls costs no memory), by
         // doubling up to exactly `n`: no over-allocation and no probe read past the end.
