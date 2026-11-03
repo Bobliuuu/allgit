@@ -1843,6 +1843,8 @@ Commands:
   suggest    Propose zone boundaries from manifests, ownership files, directories (read-only; see docs/zones-autodetect.md)
   apply      Turn one suggestion into a zone (plan only without --yes; history is not rewritten)
   subscribe  Subscribe to the minimal zone set for a path, symbol, task or person, plus their dependencies
+  describe   Machine-readable description of zones: purpose, owners, dependencies, subscriptions, locks, history (docs/zone-ontology.md)
+  graph      Zone dependency graph with reasons, transitive closures and path index (docs/zone-ontology.md)
   help       Print this message or the help of the given subcommand(s)
 
 Options:
@@ -2102,6 +2104,43 @@ Options:
       --search-content     Search file contents for definitions of symbol-ish queries (remote: downloads source files)
       --partial            Continue when some `--for` queries match nothing (default: refuse)
   -h, --help               Print help
+```
+
+################ `vcs zone describe`
+
+```text
+Machine-readable description of zones: purpose, owners, dependencies, subscriptions, locks, history (docs/zone-ontology.md)
+
+Usage: vcs zone describe [OPTIONS] [ZONE]
+
+Arguments:
+  [ZONE]  Describe only this zone (display name or id); default: every zone
+
+Options:
+  -C <DIR>                           Run as if vcs was started in <DIR> (applied before repository discovery)
+      --history <HISTORY>            Recent commits listed per zone (each with its changed files) [default: 5]
+      --json                         Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --transactions <TRANSACTIONS>  Recent operations (local transaction log) listed [default: 10]
+      --ca-pem <FILE>                PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --path <PATH>                  Report which zone owns this repo-relative path (repeatable)
+      --no-hooks                     Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help                         Print help
+```
+
+################# `vcs zone graph`
+
+```text
+Zone dependency graph with reasons, transitive closures and path index (docs/zone-ontology.md)
+
+Usage: vcs zone graph [OPTIONS]
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --deep           Also scan Go, Python and JS/TS imports (reads source files; slower)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
 ```
 
 ## `vcs worktree`

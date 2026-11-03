@@ -26,6 +26,7 @@ mod json;
 mod lockable_cmd;
 mod logfmt;
 mod logopts;
+mod ontology;
 mod p4map;
 mod patchcmd;
 mod plumb;
@@ -743,6 +744,10 @@ enum ZoneCmd {
     Apply(autozone::ApplyArgs),
     /// Subscribe to the minimal zone set for a path, symbol, task or person, plus their dependencies
     Subscribe(autozone::ForArgs),
+    /// Machine-readable description of zones: purpose, owners, dependencies, subscriptions, locks, history (docs/zone-ontology.md)
+    Describe(ontology::DescribeArgs),
+    /// Zone dependency graph with reasons, transitive closures and path index (docs/zone-ontology.md)
+    Graph(ontology::GraphArgs),
 }
 
 #[derive(Subcommand, Clone)]
@@ -964,6 +969,9 @@ fn run(cli: Cli) -> Result<(), Error> {
         return cmds::dispatch(m, cli.json);
     }
     if let Some(r) = autozone::intercept(&cli.cmd, cli.json) {
+        return r;
+    }
+    if let Some(r) = ontology::intercept(&cli.cmd, cli.json) {
         return r;
     }
     if cli.json {
@@ -1898,7 +1906,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                     repo.zone_delete(&name, force)?;
                     println!("deleted zone {name}");
                 }
-                ZoneCmd::Suggest(_) | ZoneCmd::Apply(_) | ZoneCmd::Subscribe(_) => unreachable!("handled by autozone::intercept"),
+                ZoneCmd::Suggest(_) | ZoneCmd::Apply(_) | ZoneCmd::Subscribe(_) | ZoneCmd::Describe(_) | ZoneCmd::Graph(_) => unreachable!("handled by autozone::intercept"),
             }
         }
         Cmd::Snapshot(s) => {
