@@ -1,10 +1,10 @@
 use std::io::{Read, Write};
 use std::process::ExitCode;
-use vcs_assist_claude::{api, eval, parse_request, resolve, response_json, Outcome};
+use vcs_assist_claude::{api, baseline, eval, parse_request, resolve, response_json, Outcome};
 
 const HELP: &str = "vcs-assist-claude: assistant for `vcs merge --assist`.\n\n\
 usage:\n  vcs-assist-claude                         read a request on stdin, write a response on stdout\n  \
-vcs-assist-claude eval <dir> [--live] [--json]   score the assistant on recorded fixtures\n\n\
+vcs-assist-claude eval <dir> [--live [--record] | --mock xours|xtheirs|refuse] [--json]   score the assistant on recorded fixtures\n\n\
 File contents are sent to the Anthropic API. Needs ANTHROPIC_API_KEY; model from VCS_ASSIST_MODEL.\nSee docs/assist.md.\n";
 
 fn env(k: &str) -> Option<String> {
@@ -71,10 +71,19 @@ fn run_assist() -> ExitCode {
 }
 
 fn run_eval(args: &[String]) -> ExitCode {
-    let (mut dir, mut live, mut json) = (None, false, false);
-    for a in args {
+    let (mut dir, mut live, mut json, mut record, mut mock) = (None, false, false, false, None);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
         match a.as_str() {
             "--live" => live = true,
+            "--record" => record = true,
+            "--mock" => match it.next().and_then(|m| baseline::Baseline::parse(m)) {
+                Some(b) => mock = Some(b),
+                None => {
+                    eprintln!("vcs-assist-claude eval: --mock needs xours, xtheirs or refuse");
+                    return ExitCode::from(2);
+                }
+            },
             "--json" => json = true,
             s if !s.starts_with('-') && dir.is_none() => dir = Some(s.to_owned()),
             s => {
@@ -84,15 +93,22 @@ fn run_eval(args: &[String]) -> ExitCode {
         }
     }
     let Some(dir) = dir else {
-        eprintln!("usage: vcs-assist-claude eval <dir> [--live] [--json]");
+        eprintln!("usage: vcs-assist-claude eval <dir> [--live [--record] | --mock xours|xtheirs|refuse] [--json]");
         return ExitCode::from(2);
     };
-    let rep = if live {
+    if (record && !live) || (live && mock.is_some()) {
+        eprintln!("vcs-assist-claude eval: --record needs --live; --mock excludes --live");
+        return ExitCode::from(2);
+    }
+    let rep = if let Some(b) = mock {
+        eval::run_source(dir.as_ref(), eval::Source::Mock(b))
+    } else if live {
         let cfg = match api::ApiConfig::from_env(&env) {
             Ok(c) => c,
             Err(e) => return fail(&e),
         };
-        eval::run(dir.as_ref(), Some(&|s: &str, u: &str, m: u32| api::complete(&cfg, s, u, m)))
+        let f = |s: &str, u: &str, m: u32| api::complete(&cfg, s, u, m);
+        eval::run_source(dir.as_ref(), eval::Source::Live { complete: &f, record })
     } else {
         eval::run(dir.as_ref(), None)
     };

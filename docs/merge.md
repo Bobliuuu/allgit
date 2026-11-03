@@ -293,3 +293,24 @@ What this says, and what it does not:
 * Default: unchanged. Rename detection stays opt-in. It was never worse in the data, but it removed a sizeable share of conflicts in only one of eight
   repositories (flask) and one or two paths in two others, so the data does not show a strictly better result across the board; turning it on by default is a
   one-line change in `Repo` (`renames: true`) if the owner decides the evidence is enough.
+
+### Re-run and follow-ups (issue #220)
+
+Re-run 2026-11-03 on macOS arm64 (not the Lambda box) with `scripts/replay.sh <bare-clone> HEAD 300` at the same
+revisions as the table above, for flask, requests and gin. The merge counts are identical to the table in every engine
+(flask clean 275 / 276 / 276 / 277 of 299, requests 295 of 300 in all four, gin 194 of 215 in all four with 193 exact
+trees), so the replay is reproducible across machines. `renames_applied` (renames the detector paired, summed over the
+sampled merges): flask 210, requests 43, gin 15; only flask turns those into fewer conflicts. Timings on this machine
+(299 merges, ms): flask text 521, struct 1561, text+ren 684, struct+ren 2047, so rename detection costs about 30% on
+top of the text merge here, and struct is about 3x text.
+
+Decision input for "should `renames` become the default": in all eight repositories the rename engines never added a
+conflict and never changed a clean result; they removed 19 of 79 conflicted paths in flask and 1-2 elsewhere, at about
++30% merge time in the cheapest engine. The evidence supports turning it on for the text engine, but the sample is
+eight repositories, one even-stride sample each, and does not include rebase or cherry-pick, so the default is **left
+off** until the owner decides (one line in `Repo`, `renames: true`).
+
+Follow-ups, not done: directory renames; copy detection; renames in `stash`; replay of rebase and cherry-pick; the one
+gin merge that is clean but differs from history (unexplained, identical in all engines); `vcs-assist-claude eval`
+on these conflicts with a real model, see [assist.md](assist.md#recording-live-runs-mock-providers-and-a-real-history-corpus-issue-209).
+`replay --dump-conflicts DIR` now writes the text conflicts as eval cases for that purpose.
