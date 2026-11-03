@@ -124,7 +124,7 @@ for sid, g, v in [
     ("lsfiles", "git ls-files", "{B} ls-files"),
     ("lsfiles_s", "git ls-files -s", "{B} ls-files -s"),
     ("lstree", "git ls-tree -r --name-only HEAD", "{B} ls-files --rev HEAD"),
-    ("lstree_flat", "git ls-tree HEAD", "{B} ls-files -s --rev HEAD"),
+    ("lstree_flat", "git ls-tree HEAD", "{B} ls-files -s --rev HEAD --depth 1"),
     ("mergebase", "git merge-base main side", "{B} merge-base main side"),
     ("difftree", "git diff-tree -r main side", "{B} diff-tree main side"),
     ("blame", "git blame {F}", "{B} blame {F}"),

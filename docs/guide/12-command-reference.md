@@ -1398,6 +1398,7 @@ Options:
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --rev <REV>      List the files of this revision instead of the working tree's tracked files
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --depth <N>      With --rev: list only the entries directly inside the root of the revision (`1`), directories as mode 040000 with their tree id, like `git ls-tree <rev>`; reads one tree
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
