@@ -183,19 +183,26 @@ pub fn entries(pairs: Vec<FilePair>, a: &DiffArgs) -> Vec<Entry> {
             }
         }
     }
+    // A rename / copy source may be moved out of its own pair before the pair that names it is reached.
+    let mut src_old: HashMap<usize, (String, Option<Vec<u8>>)> = HashMap::new();
+    for &(src, _, _) in renamed.values() {
+        src_old
+            .entry(src)
+            .or_insert_with(|| (pairs[src].path.clone(), pairs[src].old.clone()));
+    }
     let mut out = Vec::new();
-    for (i, p) in pairs.iter().enumerate() {
+    for (i, p) in pairs.into_iter().enumerate() {
         if consumed.contains(&i) {
             continue;
         }
         if let Some(&(src, score, copy)) = renamed.get(&i) {
-            let s = &pairs[src];
+            let (src_path, src_old) = src_old[&src].clone();
             out.push(Entry {
                 status: if copy { Status::Copied(score) } else { Status::Renamed(score) },
-                old_path: Some(s.path.clone()),
-                path: p.path.clone(),
-                old: s.old.clone(),
-                new: p.new.clone(),
+                old_path: Some(src_path),
+                path: p.path,
+                old: src_old,
+                new: p.new,
                 mode_changed: false,
             });
             continue;
@@ -208,10 +215,10 @@ pub fn entries(pairs: Vec<FilePair>, a: &DiffArgs) -> Vec<Entry> {
         out.push(Entry {
             status,
             old_path: None,
-            path: p.path.clone(),
-            old: p.old.clone(),
-            new: p.new.clone(),
             mode_changed: p.old == p.new,
+            path: p.path,
+            old: p.old,
+            new: p.new,
         });
     }
     out.sort_by(|x, y| x.path.cmp(&y.path));
@@ -634,7 +641,12 @@ pub fn show_diff(repo: &Repo, rep: &vcs_repo::ShowReport, a: &DiffArgs) -> Resul
 
 /// `vcs show <rev>`: the commit header, then its diff (or stat / name list) against the first parent.
 pub fn print_show(repo: &Repo, zone: &str, rev: &str, opts: &DiffArgs) -> Result<(), Error> {
-    let rep = repo.show(zone, rev)?;
+    // the unified text is only used by the plain renderer; the others build their own from the pairs
+    let rep = if opts.is_plain() && !opts.stat {
+        repo.show(zone, rev)?
+    } else {
+        repo.show_meta(zone, rev)?
+    };
     let defs = repo.zones()?;
     if let Some(t) = &rep.tag {
         println!("tag {}", t.name);
@@ -713,6 +725,56 @@ mod tests {
             old_mode: Some(vcs_objects::EntryMode::File),
             new_mode: Some(vcs_objects::EntryMode::File),
         }]
+    }
+
+    /// `entries` moves contents out of the pairs; renames and copies must still see their source's old bytes.
+    #[test]
+    fn entries_keep_rename_and_copy_sources_after_moving_contents() {
+        let body = "line one\nline two\nline three\nline four\nline five\n".repeat(4);
+        let fp = |path: &str, old: Option<&str>, new: Option<&str>| FilePair {
+            path: path.into(),
+            old: old.map(|s| s.as_bytes().to_vec()),
+            new: new.map(|s| s.as_bytes().to_vec()),
+            old_mode: old.map(|_| vcs_objects::EntryMode::File),
+            new_mode: new.map(|_| vcs_objects::EntryMode::File),
+        };
+        let edited = body.replace("line two", "line 2");
+        // z.txt (gone) is renamed to a.txt (sorted first, so it is reached before its source's pair);
+        // m.txt (modified in place) is copied to c.txt
+        let pairs = vec![
+            fp("a.txt", None, Some(&body)),
+            fp("c.txt", None, Some(&format!("{body}tail\n"))),
+            fp("m.txt", Some(&body), Some(&edited)),
+            fp("z.txt", Some(&body), None),
+        ];
+        let a = DiffArgs {
+            find_renames: true,
+            find_copies: true,
+            rename_threshold: 50,
+            ..Default::default()
+        };
+        let es = entries(pairs, &a);
+        let by = |p: &str| es.iter().find(|e| e.path == p).unwrap_or_else(|| panic!("no entry for {p}"));
+        let a_txt = by("a.txt");
+        assert!(matches!(a_txt.status, Status::Renamed(_)), "{:?}", a_txt.status);
+        assert_eq!(
+            (a_txt.old_path.as_deref(), a_txt.old.as_deref()),
+            (Some("z.txt"), Some(body.as_bytes()))
+        );
+        assert_eq!(a_txt.new.as_deref(), Some(body.as_bytes()));
+        let c_txt = by("c.txt");
+        assert!(matches!(c_txt.status, Status::Copied(_)), "{:?}", c_txt.status);
+        assert_eq!(
+            (c_txt.old_path.as_deref(), c_txt.old.as_deref()),
+            (Some("m.txt"), Some(body.as_bytes()))
+        );
+        let m = by("m.txt");
+        assert_eq!(
+            (m.status, m.old.as_deref(), m.new.as_deref()),
+            (Status::Modified, Some(body.as_bytes()), Some(edited.as_bytes()))
+        );
+        assert!(es.iter().all(|e| e.path != "z.txt"), "the renamed-away source is consumed");
+        assert_eq!(es.len(), 3);
     }
 
     #[test]
