@@ -14,6 +14,7 @@ pub const KEYS: &[&str] = &[
     "rate-limit",
     "max-connections",
     "max-body",
+    "max-inflight-body",
     "cache-dir",
     "cache-size",
     "policy",

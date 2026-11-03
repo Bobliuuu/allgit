@@ -49,6 +49,9 @@ pub struct Config {
     pub body_timeout: Duration,
     /// Simultaneous connections served; further ones are refused with 503 (plain) or dropped (TLS).
     pub max_connections: usize,
+    /// Most bytes of request bodies buffered at once across all connections (announced Content-Length is
+    /// reserved before the body is read); a request that does not fit gets 503 + Retry-After. 0 = unlimited.
+    pub max_inflight_body: usize,
     /// How long an idle persistent (keep-alive) connection waits for its next request before it is closed.
     pub keepalive_idle: Duration,
     /// Requests served on one connection before the server asks the client to reconnect.
@@ -92,6 +95,7 @@ impl Config {
             header_timeout: Duration::from_secs(10),
             body_timeout: Duration::from_secs(600),
             max_connections: 256,
+            max_inflight_body: 2 << 30,
             keepalive_idle: Duration::from_secs(5),
             max_requests_per_conn: 1000,
             rate_limit: None,
@@ -140,6 +144,7 @@ struct Shared {
     fail_throttle: Option<crate::ratelimit::FailThrottle>,
     per_ip: Mutex<std::collections::HashMap<std::net::IpAddr, usize>>,
     active: AtomicUsize,
+    inflight_body: AtomicUsize,
     stop: AtomicBool,
 }
 
@@ -227,6 +232,7 @@ impl Server {
             manifest_cache: Mutex::new(None),
             cfg,
             active: AtomicUsize::new(0),
+            inflight_body: AtomicUsize::new(0),
             stop: AtomicBool::new(false),
         });
         let s2 = shared.clone();
@@ -235,7 +241,21 @@ impl Server {
                 if s2.stop.load(Ordering::SeqCst) {
                     break;
                 }
-                let Ok(conn) = conn else { continue };
+                let conn = match conn {
+                    Ok(c) => c,
+                    Err(e) => {
+                        // EMFILE/ENFILE/ENOBUFS/ENOMEM leave the pending connection in the queue, so retrying
+                        // at once spins a core at 100 percent; back off until descriptors are freed.
+                        if !matches!(
+                            e.kind(),
+                            std::io::ErrorKind::ConnectionAborted | std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::Interrupted
+                        ) {
+                            s2.log.warn("accept failed, backing off", &[("error", V::S(&e.to_string()))]);
+                            std::thread::sleep(Duration::from_millis(50));
+                        }
+                        continue;
+                    }
+                };
                 if s2.active.fetch_add(1, Ordering::SeqCst) >= s2.cfg.max_connections {
                     s2.active.fetch_sub(1, Ordering::SeqCst);
                     refuse(&s2, conn);
@@ -438,6 +458,22 @@ impl Write for DeadlineTcp {
     }
 }
 
+/// Bytes reserved from the in-flight body budget by the current request; released on every exit path.
+struct BodyReservation<'a>(&'a Shared, std::cell::Cell<usize>);
+impl BodyReservation<'_> {
+    fn release(&self) {
+        let r = self.1.take();
+        if r > 0 {
+            self.0.inflight_body.fetch_sub(r, Ordering::SeqCst);
+        }
+    }
+}
+impl Drop for BodyReservation<'_> {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
 fn handle_conn(sh: &Shared, conn: TcpStream) {
     let _ = conn.set_nodelay(true);
     let peer = if sh.fail_throttle.is_some() {
@@ -482,6 +518,20 @@ fn handle_conn(sh: &Shared, conn: TcpStream) {
             sh.cfg.max_body
         }
     };
+    let reserved = BodyReservation(sh, std::cell::Cell::new(0usize));
+    let mut reserve = |n: usize| -> bool {
+        let cap = sh.cfg.max_inflight_body;
+        if cap == 0 || n == 0 {
+            return true;
+        }
+        let prev = sh.inflight_body.fetch_add(n, Ordering::SeqCst);
+        if prev + n > cap && prev > 0 {
+            sh.inflight_body.fetch_sub(n, Ordering::SeqCst);
+            return false;
+        }
+        reserved.1.set(n);
+        true
+    };
     let body_dl = sh.cfg.body_timeout;
     let dl2 = deadline.clone();
     let mut on_headers = move || *dl2.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now() + body_dl;
@@ -496,7 +546,7 @@ fn handle_conn(sh: &Shared, conn: TcpStream) {
             request_id: String::new(),
         };
         let (mut method, mut path, mut bytes_in) = (String::from("-"), String::from("-"), 0u64);
-        let (mut resp, head, mut want_ka) = match read_request(&mut rd, &limits, &body_limit, &mut on_headers) {
+        let (mut resp, head, mut want_ka) = match read_request(&mut rd, &limits, &body_limit, &mut on_headers, &mut reserve) {
             Ok(req) => {
                 let head = req.method == "HEAD";
                 ctx.request_id = request_id(sh, &req);
@@ -524,6 +574,15 @@ fn handle_conn(sh: &Shared, conn: TcpStream) {
                 error_reply = true;
                 (text(413, "body too large"), false, false)
             }
+            Err(ParseError::Overloaded) => {
+                error_reply = true;
+                sh.metrics.rate_limited.fetch_add(1, Ordering::Relaxed);
+                (
+                    text(503, "server busy: too many request bytes in flight").with("Retry-After", "1"),
+                    false,
+                    false,
+                )
+            }
             Err(ParseError::HeadersTooLarge) => {
                 error_reply = true;
                 (text(431, "request headers too large"), false, false)
@@ -533,6 +592,7 @@ fn handle_conn(sh: &Shared, conn: TcpStream) {
                 (text(501, m), false, false)
             }
         };
+        reserved.release();
         // A client that sent garbage or stalled gets a short, best-effort error reply (on TLS this may
         // be cut short if the handshake never completed); real responses get the full write budget.
         let reply_budget = if error_reply {
