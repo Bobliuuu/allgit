@@ -476,6 +476,30 @@ impl Repo {
         self.carry_attrs_marker(clean, &bytes);
         Ok(())
     }
+    /// Fingerprint of the index file as it is on disk, when a monitor state is saved (else `None`: nothing
+    /// would use it).
+    pub(crate) fn fsmon_fp_of_disk_index(&self) -> Option<[u8; 32]> {
+        if !fsmonitor::state_exists(&self.vcs) {
+            return None;
+        }
+        Some(fsmonitor::fingerprint(
+            &self.rd("index").ok()?,
+            &self.rd("zones").ok()?,
+            &self.rd("workspace").ok()?,
+        ))
+    }
+
+    /// Record that the index went from fingerprint `old` to `new_bytes` changing only entries in `touched`.
+    pub(crate) fn fsmon_log_rewrite(&self, old: Option<[u8; 32]>, new_bytes: &[u8], touched: &[String]) {
+        let (Some(old), Ok(z), Ok(w)) = (old, self.rd("zones"), self.rd("workspace")) else {
+            return;
+        };
+        let new = fsmonitor::fingerprint(new_bytes, &z, &w);
+        if new != old {
+            fsmonitor::log_rebind(&self.vcs, &old, &new, touched);
+        }
+    }
+
     pub(crate) fn save_ws(&self, ws: &Workspace) -> Result<()> {
         // Backstop for every path that changes a subscription: a branch of a zone is checked out
         // in at most one worktree. (Callers that move files check earlier, before touching any.)
@@ -1225,6 +1249,9 @@ impl Repo {
             if let Some(m) = crate::fsmonitor::JournalMonitor::open(&self.vcs) {
                 return self.status_monitored(opts, &m);
             }
+            // No journal (no watcher, or it stopped cleanly): a saved state can never be used again,
+            // and keeping it would make index writers keep logging for it.
+            fsmonitor::State::remove(&self.vcs);
         }
         self.status_with(opts)
     }
@@ -1249,10 +1276,13 @@ impl Repo {
         let ix_bytes = self.rd("index")?;
         let ix = Index::decode(&ix_bytes)?;
         let fp = fsmonitor::fingerprint(&ix_bytes, &self.rd("zones")?, &self.rd("workspace")?);
-        let prev = fsmonitor::State::load(&self.vcs).filter(|s| s.fp == fp);
+        let (prev, extra) = self.saved_state_for(fp);
         let ans = mon.changed_since(prev.as_ref().map(|s| s.token.as_str()));
         let (token, inc) = match (prev.as_ref(), ans) {
-            (Some(p), Changed::Paths { paths, new_token }) => (Some(new_token), self.incremental(&ix, p, &paths)?),
+            (Some(p), Changed::Paths { mut paths, new_token }) => {
+                paths.extend(extra);
+                (Some(new_token), self.incremental(&ix, p, &paths)?)
+            }
             (_, Changed::Paths { new_token, .. }) => (Some(new_token), None),
             (_, Changed::FullScan { new_token }) => (new_token, None),
         };
@@ -1284,6 +1314,45 @@ impl Repo {
             new.store(&self.vcs);
         }
         Ok(st)
+    }
+
+    /// The saved monitor state usable for an index with fingerprint `fp`, and extra paths to treat as
+    /// changed: the state itself when bound to `fp`, or one bound to an earlier index that a logged
+    /// chain of rewrites (see `fsmonitor::log_rebind`) connects to `fp`, with the paths those rewrites touched.
+    fn saved_state_for(&self, fp: [u8; 32]) -> (Option<fsmonitor::State>, Vec<String>) {
+        let Some(st) = fsmonitor::State::load(&self.vcs) else {
+            return (None, Vec::new());
+        };
+        if st.fp == fp {
+            return (Some(st), Vec::new());
+        }
+        match fsmonitor::follow_rebinds(&self.vcs, &st.fp, &fp) {
+            Some(touched) => (Some(st), touched),
+            None => (None, Vec::new()),
+        }
+    }
+
+    /// Tracked paths that may differ from the index, from the monitor: the unstaged set saved with the
+    /// state plus whatever changed since its token. `None` (do a full scan) without a running watcher, a
+    /// state for this index, or a usable answer. Untracked files are not covered.
+    pub(crate) fn monitored_candidates(&self, ix_bytes: &[u8]) -> Option<Vec<String>> {
+        if std::env::var_os("VCS_NO_FSMONITOR").is_some() {
+            return None;
+        }
+        let mon = fsmonitor::JournalMonitor::open(&self.vcs)?;
+        let fp = fsmonitor::fingerprint(ix_bytes, &self.rd("zones").ok()?, &self.rd("workspace").ok()?);
+        let (prev, extra) = self.saved_state_for(fp);
+        let prev = prev?;
+        let Changed::Paths { paths, .. } = mon.changed_since(Some(&prev.token)) else {
+            return None;
+        };
+        let mut all: Vec<String> = prev.dirty.keys().cloned().chain(paths).chain(extra).collect();
+        if all.len() > 20_000 || !all.iter().all(|p| fsmonitor::plain_path(p)) {
+            return None;
+        }
+        all.sort_unstable();
+        all.dedup();
+        Some(all)
     }
 
     /// Apply the monitor's changed paths to the saved state: re-check only tracked files at or
@@ -1932,7 +2001,10 @@ impl Repo {
         // effort: a lost cache write only costs time.
         if !fresh_trees.is_empty() {
             ix.entries.store_trees(fp, fresh_trees);
-            let _ = crate::meta::write_cache_atomic(&self.vcs.join("index"), &ix.encode());
+            let new_bytes = ix.encode();
+            let old_fp = self.fsmon_fp_of_disk_index();
+            let _ = crate::meta::write_cache_atomic(&self.vcs.join("index"), &new_bytes);
+            self.fsmon_log_rewrite(old_fp, &new_bytes, &[]); // entries are unchanged: only cache trees are new
         }
         if merging.is_some() {
             self.clear_merge_state()?;

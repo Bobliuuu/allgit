@@ -33,6 +33,7 @@ How to read it:
 | vcs | git | p4 | note |
 |---|---|---|---|
 | `vcs status` | `git status` | `p4 opened`, `p4 status`, `p4 reconcile -n` | vcs lists staged, unstaged and untracked per zone |
+| `vcs watch` | `git fsmonitor--daemon run` | (the p4 server) | journals changed paths so `status` and `diff` skip the full scan; started on its own for big repositories, see benchmarks.md |
 | `vcs add f` | `git add f` | `p4 add f` (new), `p4 edit f` then nothing | an edit is found by content; `p4 edit` is a no-op except for lockable files |
 | `vcs rm f` | `git rm f` | `p4 delete f` | |
 | `vcs mv a b` | `git mv a b` | `p4 move a b` | within one zone |

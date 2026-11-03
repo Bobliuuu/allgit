@@ -168,7 +168,11 @@ enum Cmd {
     Status,
     /// Watch the working tree and journal changed paths so `status` can skip a full scan (runs until killed)
     #[cfg(feature = "watcher")]
-    Watch,
+    Watch {
+        /// Stop after this many seconds without a `status` asking for the journal (set when a command starts the watcher itself)
+        #[arg(long)]
+        idle_exit: Option<u64>,
+    },
     /// Show unstaged changes (or --staged)
     Diff {
         #[arg(long)]
@@ -891,7 +895,15 @@ fn principal() -> String {
 
 fn open() -> Result<(Repo, PathBuf), Error> {
     let cwd = std::env::current_dir().map_err(|source| Error::Io { path: ".".into(), source })?;
-    Ok((Repo::discover(&cwd)?, cwd))
+    let repo = Repo::discover(&cwd)?;
+    // Big repositories get a background watcher so `status`, `diff` and friends can skip the full scan.
+    #[cfg(feature = "watcher")]
+    if std::env::args_os().nth(1).is_none_or(|a| a != "watch") {
+        if let Ok(exe) = std::env::current_exe() {
+            repo.autostart_watcher(&exe);
+        }
+    }
+    Ok((repo, cwd))
 }
 
 pub(crate) fn zone_of_cwd(repo: &Repo, cwd: &Path, explicit: Option<String>) -> Result<String, Error> {
@@ -1117,13 +1129,17 @@ fn run(cli: Cli) -> Result<(), Error> {
             maybe_auto_repack(&repo);
         }
         #[cfg(feature = "watcher")]
-        Cmd::Watch => {
+        Cmd::Watch { idle_exit } => {
             let (repo, _) = open()?;
             eprintln!(
                 "watching {} (Ctrl-C to stop); `vcs status` uses the journal while this runs",
                 repo.worktree().display()
             );
-            vcs_repo::watcher::run(&repo, &std::sync::atomic::AtomicBool::new(false))?;
+            vcs_repo::watcher::run_idle(
+                &repo,
+                &std::sync::atomic::AtomicBool::new(false),
+                idle_exit.map(std::time::Duration::from_secs),
+            )?;
         }
         Cmd::Status => {
             let (repo, _) = open()?;
@@ -1910,7 +1926,9 @@ fn run(cli: Cli) -> Result<(), Error> {
                     repo.zone_delete(&name, force)?;
                     println!("deleted zone {name}");
                 }
-                ZoneCmd::Suggest(_) | ZoneCmd::Apply(_) | ZoneCmd::Subscribe(_) | ZoneCmd::Describe(_) | ZoneCmd::Graph(_) => unreachable!("handled by autozone::intercept"),
+                ZoneCmd::Suggest(_) | ZoneCmd::Apply(_) | ZoneCmd::Subscribe(_) | ZoneCmd::Describe(_) | ZoneCmd::Graph(_) => {
+                    unreachable!("handled by autozone::intercept")
+                }
             }
         }
         Cmd::Snapshot(s) => {

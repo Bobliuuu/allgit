@@ -28,6 +28,7 @@ Commands:
   verify-tag     Check the Ed25519 signature of an annotated tag (exit 1 unless good)
   config         Get, set, list or unset settings (repo .vcs/config, user config, environment)
   status         Show staged, unstaged and untracked changes per zone
+  watch          Watch the working tree and journal changed paths so `status` can skip a full scan (runs until killed)
   diff           Show unstaged changes (or --staged)
   import-git     Import a `git fast-export` stream (file, or `-` for stdin) into the root zone
   import-p4      Import recorded Perforce output (fixture directory, see docs/import-p4.md) into the root zone. Checked once against real p4d output on a small history; see that document
@@ -362,6 +363,22 @@ Options:
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
+```
+
+## `vcs watch`
+
+```text
+Watch the working tree and journal changed paths so `status` can skip a full scan (runs until killed)
+
+Usage: vcs watch [OPTIONS]
+
+Options:
+  -C <DIR>                     Run as if vcs was started in <DIR> (applied before repository discovery)
+      --idle-exit <IDLE_EXIT>  Stop after this many seconds without a `status` asking for the journal (set when a command starts the watcher itself)
+      --json                   Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>          PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks               Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help                   Print help
 ```
 
 ## `vcs diff`
