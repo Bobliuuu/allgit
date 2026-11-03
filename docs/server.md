@@ -201,7 +201,7 @@ handshake), `body_timeout` (600 s overall for the body and again for the respons
 The overall deadlines are what stop slowloris-style trickling; per-read timeouts alone would not. Bodies are read
 incrementally, so announcing a huge `Content-Length` and stalling costs no memory. Malformed request lines, header
 names, duplicate or non-numeric `Content-Length`, NUL bytes and non-UTF-8 headers are 400. Defaults are unmeasured
-guesses, not tuned values; the binary exposes `--max-connections`, `--max-body`, `--max-conns-per-ip` and
+guesses, not tuned values; the binary exposes `--max-connections`, `--max-body`, `--max-inflight-body` (server-wide bytes of request bodies in flight, default 2 GiB, 503 + Retry-After beyond), `--max-conns-per-ip` and
 `--auth-fail-limit`.
 
 **Abuse limits (opt-in, security review finding 14).** `--auth-fail-limit <burst>,<per-sec>` keeps a leaky counter

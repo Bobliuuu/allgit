@@ -200,6 +200,10 @@ Zone definitions travel in the manifest, merged atomically with the publishing t
 
 **Not done:** S3 and HTTP remote GC and remote pack compaction (#232, #248), S3 connection reuse (#243), a cloud TLS interop test, manifest `applied` window > 4096 (older retries are rejected as Diverged, never double-applied). Locks are enforced when publishing through `vcs-server` ([server.md](server.md)); against a bare directory or bucket they are validated by the client only ([locks.md](locks.md)). Remote objects are published as one pack per transaction ([remote-packs.md](remote-packs.md)).
 
+## Scalability
+
+What breaks first as scale grows (manifest contention, refs file, connection and body-memory limits, deep history, wide trees) is measured in [scalability.md](scalability.md), with fixes landed and designs for the rest.
+
 ## Garbage collection [impl: local and directory remotes]
 Mark from: all branch heads, named snapshots, tags, protected operation history, in-flight transactions (leases).
 Sweep only objects older than the grace window and absent from the mark set; `put` refreshes the age of a deduplicated

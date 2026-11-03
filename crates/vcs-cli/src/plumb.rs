@@ -112,6 +112,30 @@ pub fn ls_files(a: &LsFilesArgs, json: bool) -> Result<(), Error> {
                 .iter()
                 .any(|f| f.is_empty() || p == f || p.strip_prefix(f.as_str()).is_some_and(|r| r.starts_with('/')))
     };
+    if a.rev.is_none() && !json {
+        // Plain listing of the index: stream it straight into the output text, no entry list.
+        let parts = repo.scan_tracked(String::new, |t, p, e| {
+            if !keep(p) {
+                return;
+            }
+            if a.stage {
+                t.push_str(mode_str(e.mode));
+                t.push(' ');
+                push_hex(t, &e.id);
+                t.push(' ');
+            }
+            t.push_str(p);
+            t.push('\n');
+        })?;
+        let mut o = std::io::stdout().lock();
+        for t in &parts {
+            o.write_all(t.as_bytes()).map_err(|source| Error::Io {
+                path: "stdout".into(),
+                source,
+            })?;
+        }
+        return Ok(());
+    }
     let mut files: Vec<_> = match (&a.rev, a.depth) {
         (Some(r), Some(1)) => {
             if !filters.is_empty() {

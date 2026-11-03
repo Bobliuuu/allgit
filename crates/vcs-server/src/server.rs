@@ -49,6 +49,11 @@ pub struct Config {
     pub body_timeout: Duration,
     /// Simultaneous connections served; further ones are refused with 503 (plain) or dropped (TLS).
     pub max_connections: usize,
+    /// Most bytes of request bodies buffered at once across all connections (announced Content-Length is
+    /// reserved before the body is read); a request that does not fit gets 503 + Retry-After. 0 = unlimited.
+    pub max_inflight_body: usize,
+    /// Reconcile stale manifest writes in the server instead of answering 412 (see [`crate::groupcommit`]).
+    pub group_commit: bool,
     /// How long an idle persistent (keep-alive) connection waits for its next request before it is closed.
     pub keepalive_idle: Duration,
     /// Requests served on one connection before the server asks the client to reconnect.
@@ -92,6 +97,8 @@ impl Config {
             header_timeout: Duration::from_secs(10),
             body_timeout: Duration::from_secs(600),
             max_connections: 256,
+            max_inflight_body: 2 << 30,
+            group_commit: true,
             keepalive_idle: Duration::from_secs(5),
             max_requests_per_conn: 1000,
             rate_limit: None,
@@ -136,10 +143,17 @@ struct Shared {
     /// the store again; the store's own compare-and-swap on that tag still decides whether it
     /// commits, so a stale entry (another replica wrote meanwhile) costs a 412, never a wrong accept.
     manifest_cache: Mutex<Option<(String, Arc<Vec<u8>>)>>,
+    /// Serializes manifest writes in this process (so they stop racing each other) and remembers recent
+    /// head changes so stale writes can be reconciled (see [`crate::groupcommit`]).
+    manifest_write: Mutex<crate::groupcommit::Chain>,
+    /// The decoded form of the manifest version in `manifest_cache` when this process wrote it.
+    manifest_parsed: Mutex<Option<(String, Arc<Manifest>)>>,
+    merged_writes: AtomicU64,
     limiter: Option<Limiter>,
     fail_throttle: Option<crate::ratelimit::FailThrottle>,
     per_ip: Mutex<std::collections::HashMap<std::net::IpAddr, usize>>,
     active: AtomicUsize,
+    inflight_body: AtomicUsize,
     stop: AtomicBool,
 }
 
@@ -225,8 +239,12 @@ impl Server {
             tls: RwLock::new(cfg.tls.clone()),
             read_index: Mutex::new(Default::default()),
             manifest_cache: Mutex::new(None),
+            manifest_write: Mutex::new(Default::default()),
+            manifest_parsed: Mutex::new(None),
+            merged_writes: AtomicU64::new(0),
             cfg,
             active: AtomicUsize::new(0),
+            inflight_body: AtomicUsize::new(0),
             stop: AtomicBool::new(false),
         });
         let s2 = shared.clone();
@@ -235,7 +253,21 @@ impl Server {
                 if s2.stop.load(Ordering::SeqCst) {
                     break;
                 }
-                let Ok(conn) = conn else { continue };
+                let conn = match conn {
+                    Ok(c) => c,
+                    Err(e) => {
+                        // EMFILE/ENFILE/ENOBUFS/ENOMEM leave the pending connection in the queue, so retrying
+                        // at once spins a core at 100 percent; back off until descriptors are freed.
+                        if !matches!(
+                            e.kind(),
+                            std::io::ErrorKind::ConnectionAborted | std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::Interrupted
+                        ) {
+                            s2.log.warn("accept failed, backing off", &[("error", V::S(&e.to_string()))]);
+                            std::thread::sleep(Duration::from_millis(50));
+                        }
+                        continue;
+                    }
+                };
                 if s2.active.fetch_add(1, Ordering::SeqCst) >= s2.cfg.max_connections {
                     s2.active.fetch_sub(1, Ordering::SeqCst);
                     refuse(&s2, conn);
@@ -331,6 +363,10 @@ impl Server {
     /// [`join`](Self::join) has taken the server.
     pub fn handle(&self) -> Handle {
         Handle(self.shared.clone())
+    }
+    /// Manifest writes whose `If-Match` was stale and that the server reconciled instead of answering 412.
+    pub fn merged_writes(&self) -> u64 {
+        self.shared.merged_writes.load(Ordering::Relaxed)
     }
     /// Connections currently being served.
     pub fn active_connections(&self) -> usize {
@@ -438,6 +474,22 @@ impl Write for DeadlineTcp {
     }
 }
 
+/// Bytes reserved from the in-flight body budget by the current request; released on every exit path.
+struct BodyReservation<'a>(&'a Shared, std::cell::Cell<usize>);
+impl BodyReservation<'_> {
+    fn release(&self) {
+        let r = self.1.take();
+        if r > 0 {
+            self.0.inflight_body.fetch_sub(r, Ordering::SeqCst);
+        }
+    }
+}
+impl Drop for BodyReservation<'_> {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
 fn handle_conn(sh: &Shared, conn: TcpStream) {
     let _ = conn.set_nodelay(true);
     let peer = if sh.fail_throttle.is_some() {
@@ -482,6 +534,20 @@ fn handle_conn(sh: &Shared, conn: TcpStream) {
             sh.cfg.max_body
         }
     };
+    let reserved = BodyReservation(sh, std::cell::Cell::new(0usize));
+    let mut reserve = |n: usize| -> bool {
+        let cap = sh.cfg.max_inflight_body;
+        if cap == 0 || n == 0 {
+            return true;
+        }
+        let prev = sh.inflight_body.fetch_add(n, Ordering::SeqCst);
+        if prev + n > cap && prev > 0 {
+            sh.inflight_body.fetch_sub(n, Ordering::SeqCst);
+            return false;
+        }
+        reserved.1.set(n);
+        true
+    };
     let body_dl = sh.cfg.body_timeout;
     let dl2 = deadline.clone();
     let mut on_headers = move || *dl2.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now() + body_dl;
@@ -496,7 +562,7 @@ fn handle_conn(sh: &Shared, conn: TcpStream) {
             request_id: String::new(),
         };
         let (mut method, mut path, mut bytes_in) = (String::from("-"), String::from("-"), 0u64);
-        let (mut resp, head, mut want_ka) = match read_request(&mut rd, &limits, &body_limit, &mut on_headers) {
+        let (mut resp, head, mut want_ka) = match read_request(&mut rd, &limits, &body_limit, &mut on_headers, &mut reserve) {
             Ok(req) => {
                 let head = req.method == "HEAD";
                 ctx.request_id = request_id(sh, &req);
@@ -524,6 +590,15 @@ fn handle_conn(sh: &Shared, conn: TcpStream) {
                 error_reply = true;
                 (text(413, "body too large"), false, false)
             }
+            Err(ParseError::Overloaded) => {
+                error_reply = true;
+                sh.metrics.rate_limited.fetch_add(1, Ordering::Relaxed);
+                (
+                    text(503, "server busy: too many request bytes in flight").with("Retry-After", "1"),
+                    false,
+                    false,
+                )
+            }
             Err(ParseError::HeadersTooLarge) => {
                 error_reply = true;
                 (text(431, "request headers too large"), false, false)
@@ -533,6 +608,7 @@ fn handle_conn(sh: &Shared, conn: TcpStream) {
                 (text(501, m), false, false)
             }
         };
+        reserved.release();
         // A client that sent garbage or stalled gets a short, best-effort error reply (on TLS this may
         // be cut short if the handshake never completed); real responses get the full write budget.
         let reply_budget = if error_reply {
@@ -983,7 +1059,12 @@ impl Shared {
         let g = self.manifest_cache.lock().unwrap_or_else(|e| e.into_inner());
         g.as_ref().filter(|(t, _)| t == tag).map(|(_, b)| b.clone())
     }
+    fn manifest_parsed(&self, tag: &str) -> Option<Arc<Manifest>> {
+        let g = self.manifest_parsed.lock().unwrap_or_else(|e| e.into_inner());
+        g.as_ref().filter(|(t, _)| t == tag).map(|(_, m)| m.clone())
+    }
     fn manifest_remember(&self, tag: &str, data: Option<&[u8]>) {
+        *self.manifest_parsed.lock().unwrap_or_else(|e| e.into_inner()) = None;
         let mut g = self.manifest_cache.lock().unwrap_or_else(|e| e.into_inner());
         *g = data
             .filter(|d| d.len() <= MANIFEST_CACHE_MAX)
@@ -1111,16 +1192,48 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str, extra: &mu
         }
     }
     let is_manifest = key == manifest::KEY;
+    let mut if_match = if_match;
+    // One manifest write at a time per process: concurrent clients queue here instead of losing the swap.
+    let mut chain_guard = if is_manifest && !if_none {
+        Some(sh.manifest_write.lock().unwrap_or_else(|e| e.into_inner()))
+    } else {
+        None
+    };
+    let mut merged = false; // reconciled against a newer version
     let mut body = std::borrow::Cow::Borrowed(req.body.as_slice());
     // Read the manifest we are about to replace; validate against exactly that version.
-    let mut cur = Manifest::default();
+    let mut cur: Arc<Manifest> = Arc::new(Manifest::default());
+    let mut new_parsed: Option<Arc<Manifest>> = None;
     let mut rewrites: Vec<Rewrite> = Vec::new();
     if is_manifest {
-        let cached = if_match.as_deref().and_then(|t| sh.manifest_cached(t));
+        let mut cached = if_match.as_deref().and_then(|t| sh.manifest_cached(t));
+        let mut stale_merge: Option<Manifest> = None;
+        if cached.is_none() && chain_guard.is_some() && sh.cfg.group_commit {
+            // Stale If-Match: try to reconcile with the version this process last wrote.
+            if let (Some(base), Some((ctag, cbytes))) = (
+                if_match.clone(),
+                sh.manifest_cache.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+            ) {
+                let c = sh
+                    .manifest_parsed(&ctag)
+                    .or_else(|| Manifest::decode(&cbytes).ok().map(Arc::new));
+                if let (Some(c), Ok(n)) = (c, Manifest::decode(&req.body)) {
+                    if let Some(m) = chain_guard.as_ref().and_then(|g| g.merge(&base, &ctag, &c, &n)) {
+                        stale_merge = Some(m);
+                        merged = true;
+                        if_match = Some(ctag);
+                        cached = Some(cbytes);
+                    }
+                }
+            }
+        }
         if let Some(bytes) = &cached {
-            cur = match Manifest::decode(bytes) {
-                Ok(m) => m,
-                Err(e) => return text(500, &format!("stored manifest invalid: {e}")),
+            cur = match if_match.as_deref().and_then(|t| sh.manifest_parsed(t)) {
+                Some(m) => m,
+                None => match Manifest::decode(bytes) {
+                    Ok(m) => Arc::new(m),
+                    Err(e) => return text(500, &format!("stored manifest invalid: {e}")),
+                },
             };
         } else {
             let v = match sh.backend.get(key) {
@@ -1139,14 +1252,17 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str, extra: &mu
             }
             if let Some(v) = v {
                 cur = match Manifest::decode(&v.data) {
-                    Ok(m) => m,
+                    Ok(m) => Arc::new(m),
                     Err(e) => return text(500, &format!("stored manifest invalid: {e}")),
                 };
             }
         }
-        let mut new = match Manifest::decode(&req.body) {
-            Ok(m) => m,
-            Err(e) => return text(422, &format!("Invalid: {e}")),
+        let mut new = match stale_merge {
+            Some(m) => m,
+            None => match Manifest::decode(&req.body) {
+                Ok(m) => m,
+                Err(e) => return text(422, &format!("Invalid: {e}")),
+            },
         };
         let vcfg = sh.validator.read().unwrap_or_else(|e| e.into_inner()).clone();
         if sh.cfg.audit.is_some() {
@@ -1176,6 +1292,7 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str, extra: &mu
         extra.vtime = Some(new.time_hw);
         // the server may have rewritten lock times: store its version, not the client's bytes
         body = std::borrow::Cow::Owned(new.encode());
+        new_parsed = Some(Arc::new(new));
     }
     if if_none {
         if is_manifest {
@@ -1187,10 +1304,20 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str, extra: &mu
             Err(e) => backend_err(e),
         }
     } else {
+        let used_tag = if_match.clone();
         match sh.backend.put_if_match(key, &body, &if_match.unwrap_or_default()) {
             Ok(Some(t)) => {
                 if is_manifest {
+                    if merged {
+                        sh.merged_writes.fetch_add(1, Ordering::Relaxed);
+                    }
+                    if let (Some(g), Some(tag), Some(newm)) = (chain_guard.as_mut(), used_tag.as_deref(), new_parsed.as_ref()) {
+                        g.record(tag, &cur, &t, newm);
+                    }
                     sh.manifest_remember(&t, Some(&body));
+                    if let Some(newm) = new_parsed.take() {
+                        *sh.manifest_parsed.lock().unwrap_or_else(|e| e.into_inner()) = Some((t.clone(), newm));
+                    }
                 }
                 audit_rewrites(sh, who, &rewrites);
                 Response::new(200, "").with("ETag", etag(&t))

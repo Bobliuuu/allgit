@@ -71,8 +71,8 @@ pub fn select(
         }
         merged.sort_by_key(|(id, c)| std::cmp::Reverse((c.author.timestamp, *id)));
         merged.truncate(limit);
-        let e = merged.is_empty();
-        (merged, e)
+        // never the "no commits yet" message: an empty result here means "nothing matched"
+        (merged, false)
     } else {
         select_zone(repo, cwd, zone, branch, limit, o, o.x.all)?
     };

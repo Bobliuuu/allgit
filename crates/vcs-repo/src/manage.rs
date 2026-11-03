@@ -112,7 +112,7 @@ impl Repo {
             rep.switched.push((a.clone(), target_branch.clone(), *c));
         }
         self.save_index(&mut ix)?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
+        self.write_refs(&refs)?;
         self.save_ws(&ws)?;
         self.record_op(&format!("snapshot checkout {name}"), None)?;
         Ok(rep)
@@ -185,7 +185,7 @@ impl Repo {
         refs.tags.retain(|(a, _), _| a != zone);
         ws.subs.remove(zone);
         ws.sparse.remove(zone);
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
+        self.write_refs(&refs)?;
         write_atomic(&self.common.join("zones"), &zones.encode())?;
         self.save_ws(&ws)?;
         self.record_op(&format!("zone delete {zone}"), None)?;
@@ -251,8 +251,7 @@ impl Repo {
             }
         }
         refs.branches.remove(&(zone.to_owned(), branch.to_owned()));
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
-        self.record_op(&format!("delete branch {zone}/{branch}"), None)?;
+        self.commit_refs_op(&refs, &format!("delete branch {zone}/{branch}"), None)?;
         Ok(head)
     }
 

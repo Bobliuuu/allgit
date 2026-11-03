@@ -56,7 +56,7 @@ fn v3_manifests_stay_readable_and_unchanged_files_keep_their_id() {
     let (old_id, old_m) = manifest_of(&r);
     assert!(!old_m.large && old_m.chunks.len() > 500);
     assert_ne!(old_id, content_id(&data), "the same bytes have a different canonical id now");
-    assert!(!r.worktree().join(".vcs/features").exists());
+    assert!(!has_large(&r));
     // status is clean, also after a touch; re-adding the unchanged file keeps the old id (no phantom change)
     let clean = |r: &Repo| {
         r.status()
@@ -73,7 +73,7 @@ fn v3_manifests_stay_readable_and_unchanged_files_keep_their_id() {
     assert!(clean(&r));
     r.add(&["big.bin".into()]).unwrap();
     assert!(clean(&r), "re-adding an unchanged v3 file must not change its id");
-    assert!(!r.worktree().join(".vcs/features").exists(), "nothing large was written");
+    assert!(!has_large(&r), "nothing large was written");
     // a change is stored in the new layout and records the feature
     let mut v2 = data.clone();
     v2[5 << 20] ^= 1;
@@ -92,4 +92,9 @@ fn v3_manifests_stay_readable_and_unchanged_files_keep_their_id() {
     assert!(e.contains("future-thing"), "{e}");
     fs::write(d.path().join("a/.vcs/features"), "large-chunked\n").unwrap();
     Repo::discover(&d.path().join("a")).unwrap();
+}
+
+/// `<common>/features` names `large-chunked` (other features, like `ref-journal`, may be there too).
+fn has_large(r: &Repo) -> bool {
+    fs::read_to_string(r.worktree().join(".vcs/features")).is_ok_and(|f| f.lines().any(|l| l == "large-chunked"))
 }

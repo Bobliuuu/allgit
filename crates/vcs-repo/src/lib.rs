@@ -23,6 +23,7 @@ pub mod import_p4;
 pub mod index;
 mod index_file;
 mod indexview;
+mod journal;
 mod largeeq;
 pub mod lockable;
 pub mod manage;
@@ -55,8 +56,10 @@ pub mod treeops;
 pub mod watcher;
 pub mod worktree;
 pub mod worktree_fs;
+mod writer_threads;
 mod zone_batch;
 pub mod zonedetect;
+pub mod zoneprofile;
 mod zonesplit;
 
 pub use assist::{AssistResult, ProposalInfo};

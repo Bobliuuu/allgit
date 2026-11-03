@@ -67,6 +67,9 @@ impl State {
     pub fn load(vcs: &Path) -> Option<State> {
         Self::decode(&fs::read(vcs.join(DIR).join(STATE)).ok()?)
     }
+    pub fn remove(vcs: &Path) {
+        let _ = fs::remove_file(vcs.join(DIR).join(STATE));
+    }
     pub fn store(&self, vcs: &Path) {
         let p = vcs.join(DIR).join(STATE);
         let _ = fs::create_dir_all(vcs.join(DIR));
@@ -146,6 +149,11 @@ impl JournalMonitor {
             dir,
             timeout: Duration::from_millis(400),
         })
+    }
+
+    /// Is a watcher journaling for the repository whose metadata directory is `vcs`?
+    pub fn daemon_running(vcs: &Path) -> bool {
+        Self::open(vcs).is_some_and(|m| m.daemon_alive())
     }
 
     fn daemon_alive(&self) -> bool {
@@ -379,4 +387,129 @@ pub(crate) fn fingerprint(index: &[u8], zones: &[u8], workspace: &[u8]) -> [u8; 
         h.update(part);
     }
     *h.finalize().as_bytes()
+}
+
+/// Index files at least this big (about 14,000 entries) are worth a watcher: below it a full
+/// `status` scan is a few tens of milliseconds.
+const AUTOWATCH_MIN_INDEX: u64 = 1_000_000;
+/// After a start attempt, wait this long before trying again (a watcher that cannot start, e.g.
+/// out of inotify watches, must not be respawned by every command).
+const AUTOWATCH_RETRY_SECS: u64 = 600;
+/// A watcher started by a command stops after this long without a query.
+pub const AUTOWATCH_IDLE_SECS: u64 = 1800;
+
+impl crate::repo::Repo {
+    /// Start a detached `<exe> watch --idle-exit N` for this repository when it is big enough that
+    /// `status` benefits, none is running, and none was tried in the last ten minutes. Never fails
+    /// and never waits: the command that called this still does its own (full) scan this time; the
+    /// next one finds the journal. `VCS_NO_FSMONITOR` and `VCS_NO_AUTOWATCH` turn it off.
+    pub fn autostart_watcher(&self, exe: &Path) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            if std::env::var_os("VCS_NO_FSMONITOR").is_some() || std::env::var_os("VCS_NO_AUTOWATCH").is_some() {
+                return;
+            }
+            let big = fs::metadata(self.vcs.join("index")).is_ok_and(|m| m.len() >= AUTOWATCH_MIN_INDEX);
+            if !big || JournalMonitor::daemon_running(&self.vcs) {
+                return;
+            }
+            let dir = self.vcs.join(DIR);
+            let stamp = dir.join("autowatch");
+            let recent = fs::metadata(&stamp)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|e| e.as_secs() < AUTOWATCH_RETRY_SECS);
+            if recent {
+                return;
+            }
+            let _ = fs::create_dir_all(&dir);
+            if fs::write(&stamp, b"").is_err() {
+                return;
+            }
+            let _ = std::process::Command::new(exe)
+                .arg("watch")
+                .arg("--idle-exit")
+                .arg(AUTOWATCH_IDLE_SECS.to_string())
+                .current_dir(&self.worktree)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .process_group(0)
+                .spawn();
+        }
+        #[cfg(not(unix))]
+        let _ = exe;
+    }
+}
+
+pub(crate) fn state_exists(vcs: &Path) -> bool {
+    vcs.join(DIR).join(STATE).is_file()
+}
+
+// ---- rebinding a saved state across index rewrites ----
+//
+// A saved [`State`] is bound to the exact index (fingerprint). Commands that rewrite the index
+// while changing only known entries (a patched `add`/`restore`/`rm`, or `commit` storing cache
+// trees) append `old new <touched paths>` to `.vcs/fsmon/rebind`. `status` may then follow the
+// chain from the state's fingerprint to the current one and treat the touched paths as changed
+// (they are re-checked), instead of throwing the state away. Any gap in the chain, an index
+// written by something that did not log, or a damaged line means the chain does not reach the
+// current fingerprint and `status` does a full scan, as before.
+
+const REBIND: &str = "rebind";
+const REBIND_MAX_BYTES: u64 = 256 << 10;
+const REBIND_MAX_PATHS: usize = 20_000;
+
+fn hex(b: &[u8; 32]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+pub(crate) fn log_rebind(vcs: &Path, old: &[u8; 32], new: &[u8; 32], touched: &[String]) {
+    if touched.len() > REBIND_MAX_PATHS || touched.iter().any(|p| p.contains(['\t', '\n', '\r'])) {
+        return;
+    }
+    let path = vcs.join(DIR).join(REBIND);
+    let mut line = format!("{} {}", hex(old), hex(new));
+    for t in touched {
+        line.push('\t');
+        line.push_str(t);
+    }
+    line.push('\n');
+    let big = fs::metadata(&path).is_ok_and(|m| m.len() > REBIND_MAX_BYTES);
+    let f = fs::OpenOptions::new()
+        .create(true)
+        .append(!big)
+        .write(true)
+        .truncate(big)
+        .open(&path);
+    if let Ok(mut f) = f {
+        use std::io::Write;
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
+/// The paths touched by the logged rewrites that lead from fingerprint `from` to `to`, or `None`
+/// when the log does not connect them.
+pub(crate) fn follow_rebinds(vcs: &Path, from: &[u8; 32], to: &[u8; 32]) -> Option<Vec<String>> {
+    let text = fs::read_to_string(vcs.join(DIR).join(REBIND)).ok()?;
+    let mut cur = hex(from);
+    let want = hex(to);
+    let mut out = Vec::new();
+    for _ in 0..512 {
+        if cur == want {
+            return Some(out);
+        }
+        let line = text
+            .lines()
+            .rev()
+            .find(|l| l.starts_with(&cur) && l.as_bytes().get(64) == Some(&b' '))?;
+        let mut parts = line.split('\t');
+        let head = parts.next()?;
+        let next = head.get(65..129)?;
+        out.extend(parts.map(str::to_owned));
+        cur = next.to_owned();
+    }
+    None
 }

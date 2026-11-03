@@ -33,4 +33,14 @@ impl Repo {
         }
         Ok(total)
     }
+
+    /// Download, in batches, the missing file blobs of the commit `rev` names in `zone` (a fetched
+    /// but not yet checked-out commit: id prefix, `origin/<branch>`, tag, ...), so that checking it
+    /// out needs no per-object round trips. The commit and its trees must be stored (`fetch`).
+    /// Respects the zone's sparse set. Returns how many objects were fetched.
+    pub fn prefetch_rev(&self, backend: &dyn Backend, zone: &str, rev: &str) -> Result<usize> {
+        let zone = self.resolve_zone(zone)?;
+        let id = self.resolve_rev(&zone, rev)?;
+        self.prefetch_zone_files(backend, &zone, self.commit_obj(&id)?.root)
+    }
 }
