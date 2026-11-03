@@ -152,11 +152,17 @@ V3_VCS = (" Commands: `vcs zone graph --json` (zones, paths, direct and transiti
           "`vcs log --zone Z`, `vcs diff`, `vcs --help`. JSON output is compact by default (12-hex ids are valid prefixes; empty fields are omitted).")
 
 
+V4_VCS = V3_VCS.replace("changed files relative to the zone `path`", "changed files as repo-relative paths").replace(
+    "`vcs zone changes A..B --json` (files changed per zone between two commits, ids from describe or log); ",
+    "`vcs zone changes A..B --json` or `vcs zone changes COMMIT --json` (files changed per zone between two commits, or by one commit; ids from describe or log); ").replace(
+    "`--grep re`", "`--grep re`").replace("[--grep re]", "[--grep re (basic regex like git; -E extended, -F fixed string, -i ignore case)]")
+
+
 def run_live(ex, task, tool, key, prompt="v1"):
     ep = Episode(ex, tool)
     sysmsg = PREAMBLE[tool].format(max=MAX_OUT) + (V2_VCS_HINT if tool == "vcs" and prompt == "v2" else "")
-    if tool == "vcs" and prompt == "v3":
-        sysmsg = PREAMBLE_COMMON.format(max=MAX_OUT) + "This is a vcs repository (use the `vcs` tool commands only). vcs knows zones natively." + V3_VCS
+    if tool == "vcs" and prompt in ("v3", "v4"):
+        sysmsg = PREAMBLE_COMMON.format(max=MAX_OUT) + "This is a vcs repository (use the `vcs` tool commands only). vcs knows zones natively." + (V3_VCS if prompt == "v3" else V4_VCS)
     msgs = [{"role": "system", "content": sysmsg}, {"role": "user", "content": task.question}]
     tin = tout = 0
     t0 = time.time()
@@ -216,7 +222,7 @@ def main():
     ap.add_argument("--build-fixture", metavar="DIR", help="build the fixture into DIR and exit")
     ap.add_argument("--ssh-target", help="run tools over ssh on this user@host (the repos live there; --fixture is a path there)")
     ap.add_argument("--ssh-key", help="ssh identity file")
-    ap.add_argument("--prompt", choices=["v1", "v2", "v3"], default="v3", help="v1/v2: round-1 vcs prompts (see docs); v3: describes the round-2 commands")
+    ap.add_argument("--prompt", choices=["v1", "v2", "v3", "v4"], default="v4", help="v1/v2: round-1 vcs prompts; v3: round-2 prompt (matches the round-2 live data); v4: after the round-3 offline fixes (repo-relative paths, git-style --grep, zone changes COMMIT); NOT yet run live")
     ap.add_argument("--repeats", type=int, default=3)
     ap.add_argument("--tasks", help="comma-separated task ids (default all of the suite)")
     ap.add_argument("--suite", choices=["tuning", "holdout", "all"], default="tuning",

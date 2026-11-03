@@ -210,7 +210,7 @@ enum Cmd {
         /// Zone (default: the zone containing the current directory)
         #[arg(long)]
         zone: Option<String>,
-        #[arg(short = 'n', long, default_value_t = 20)]
+        #[arg(short = 'n', long, default_value_t = 20, alias = "max-count")]
         limit: usize,
         /// One line per commit: short id and subject
         #[arg(long)]

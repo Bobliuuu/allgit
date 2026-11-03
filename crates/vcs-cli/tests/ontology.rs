@@ -165,7 +165,7 @@ fn describe_matches_schema_and_real_state() {
     assert_eq!(core["owners"]["top_authors"][0]["name"], "Dev");
     assert_eq!(core["history"]["count"]["commits"], 2);
     assert_eq!(core["history"]["recent"][0]["subject"], "touch core and api");
-    assert_eq!(core["history"]["recent"][0]["files"][0]["path"], "src/lib.rs");
+    assert_eq!(core["history"]["recent"][0]["files"][0]["path"], "crates/core/src/lib.rs");
     assert_eq!(core["history"]["recent"][0]["files"][0]["kind"], "modified");
     assert_eq!(core["history"]["recent"][1]["files_changed"], 2);
     assert_eq!(core["subscription"]["subscribed"], true);
@@ -259,7 +259,7 @@ fn compact_default_is_smaller_and_keeps_the_answers() {
     let core = zone(&c, "core");
     assert!(core.get("id").is_none(), "id equal to name is redundant");
     assert!(core["history"]["recent"][0].get("change_id").is_none());
-    assert_eq!(core["history"]["recent"][0]["files"][0]["path"], "src/lib.rs");
+    assert_eq!(core["history"]["recent"][0]["files"][0]["path"], "crates/core/src/lib.rs");
     assert_eq!(core["history"]["recent"][0]["id"].as_str().unwrap().len(), 12);
     assert!(zone(&b, "core")["history"]["recent"][0].get("files").is_none());
     assert_eq!(zone(&b, "core")["history"]["recent"][0]["subject"], "touch core and api");
@@ -351,4 +351,34 @@ fn log_grep_fixed_strings_matches_plus_and_parens_literally() {
     assert_eq!(none.trim(), "", "as a regex `net+api` does not match `net+api`");
     let some = ok(&a, &["log", "--all-zones", "-F", "--grep", "net+api: (odd)", "--format", "%s"]);
     assert_eq!(some.trim(), "net+api: (odd) subject");
+}
+
+#[test]
+fn changes_accepts_a_single_commit_and_caret_suffix() {
+    let t = tempfile::tempdir().unwrap();
+    let a = fixture(t.path());
+    let d = json(&a, &["zone", "describe", "core", "--history", "5"]);
+    let last = d["zones"][0]["history"]["recent"][0]["id"].as_str().unwrap().to_owned();
+    let first = d["zones"][0]["history"]["recent"][1]["id"].as_str().unwrap().to_owned();
+    let one = json(&a, &["zone", "changes", &last]);
+    assert_eq!(one["zones_touched"], serde_json::json!(["api", "core"]));
+    let same = json(&a, &["zone", "changes", &format!("{last}^..{last}")]);
+    assert_eq!(one["zones"], same["zones"]);
+    // the first commit has nothing before it: everything it added shows up
+    let init = json(&a, &["zone", "changes", &first]);
+    assert!(init["zones_touched"].as_array().unwrap().len() >= 4);
+    let tilde = json(&a, &["zone", "changes", &format!("{last}~1..{last}")]);
+    assert_eq!(one["zones"], tilde["zones"]);
+}
+
+#[test]
+fn log_max_count_alias_limits() {
+    let t = tempfile::tempdir().unwrap();
+    let a = fixture(t.path());
+    assert_eq!(
+        ok(&a, &["log", "--all-zones", "--max-count", "1", "--format", "%s"])
+            .lines()
+            .count(),
+        1
+    );
 }
