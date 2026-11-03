@@ -597,9 +597,9 @@ impl Repo {
         Ok(rep)
     }
 
-    /// `add` of a few files that are all tracked already (re-staging edits): stage them against just
+    /// `add` of a few named files, tracked already (re-staging edits) or new: stage them against just
     /// their own index entries and patch the index file, instead of decoding and re-encoding all of it.
-    /// `None` (nothing done) for anything else: a directory, a new path, an empty spec, a missing file,
+    /// `None` (nothing done) for anything else: a directory, an empty spec, a missing file,
     /// an old index layout, or when no entry changes (the full path may still move `written_ns`).
     fn add_tracked_files_patched(&self, rel_paths: &[String], zones: &Zones, ws: &Workspace) -> Result<Option<AddReport>> {
         const MAX: usize = 256;
@@ -610,6 +610,9 @@ impl Repo {
         let Some(f) = crate::index_file::IndexFile::parse(raw)? else {
             return Ok(None);
         };
+        if f.is_empty() {
+            return Ok(None);
+        }
         let mut part = Index {
             written_ns: f.written_ns,
             ..Index::default()
@@ -619,8 +622,26 @@ impl Repo {
                 Ok(m) if m.is_file() || m.file_type().is_symlink() => {}
                 _ => return Ok(None),
             }
-            let Some(e) = f.get(p)? else { return Ok(None) };
-            part.entries.insert(p.clone(), e);
+            match f.get(p)? {
+                Some(e) => {
+                    part.entries.insert(p.clone(), e);
+                }
+                None => {
+                    // A new file: it may not clash by case or normalization with a tracked name (checked
+                    // against its own neighbours only), nor with a file/directory (checked by the patch).
+                    if let Some((a, _)) = f.find_new_path_collision(p)? {
+                        return crate::portable::require_no_collision([a.as_str(), p.as_str()], "add").map(|()| None);
+                    }
+                }
+            }
+        }
+        let news: Vec<&str> = rel_paths
+            .iter()
+            .filter(|p| !part.entries.contains_key(p.as_str()))
+            .map(String::as_str)
+            .collect();
+        if news.len() > 1 {
+            crate::portable::require_no_collision(news, "add")?;
         }
         let before: BTreeMap<String, IndexEntry> = part.entries.iter().map(|(k, e)| (k.clone(), e.clone())).collect();
         let mut rep = AddReport::default();
