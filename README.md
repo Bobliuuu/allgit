@@ -89,8 +89,8 @@ vcs --help
 ```
 
 Tagged releases publish Linux and macOS tarballs with checksums; see [docs/install.md](docs/install.md), which also
-covers Windows (compile-checked only) and the optional `git` shim (`--features git-shim`). HTTPS remotes need
-`--features tls`.
+covers Windows (compile-checked only) and the optional `git` shim (`--features git-shim`). HTTPS remotes are in the default build
+(`tls` feature).
 
 ## 🚀 Quickstart
 
