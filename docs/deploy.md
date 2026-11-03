@@ -129,8 +129,8 @@ private interface only. (The Dockerfile and unit file were written for this docu
 
 The server can terminate TLS itself when built with `cargo build --release -p vcs-server --features tls` and started
 with `--tls-cert <pem> --tls-key <pem>`; otherwise put nginx, Caddy or a load balancer in front and keep the server on
-loopback (`reverse_proxy 127.0.0.1:8480`). The `vcs` CLI opens `https://` remotes when built with
-`cargo build --release -p vcs-cli --features tls` (opt-in; the default build is plain-HTTP-only and says so):
+loopback (`reverse_proxy 127.0.0.1:8480`). The `vcs` CLI opens `https://` remotes in the default build
+(`tls` is on by default; `--no-default-features --features watcher` gives a plain-HTTP-only build that says so):
 
 ```sh
 vcs config set --user remote.cainfo /etc/ssl/private-ca.pem   # only for a private CA; omit for a public certificate

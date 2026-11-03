@@ -22,10 +22,9 @@ Without the feature the server speaks **plain HTTP**: bearer tokens and data cro
 loopback, a private network or a TLS-terminating proxy. Certificate and hostname verification are always on on the
 client side; there is no insecure switch.
 
-**CLI.** The `vcs` CLI opens `https://host:port` remotes when it is built with `--features tls` (`cargo build -p vcs-cli
---features tls`; this also enables `https://` S3 endpoints). It is **opt-in**: the default build has no TLS dependencies
-and builds offline, and the test `s3_https_endpoint_without_tls_feature_names_the_feature` checks that a default build
-says which feature is missing. A default build given an `https://` vcs-server remote fails with the same hint. Trust:
+**CLI.** The `vcs` CLI opens `https://host:port` remotes in the default build (the `tls` feature, rustls, is on by default and also enables `https://` S3 endpoints). A TLS-free
+build is `cargo build -p vcs-cli --no-default-features --features watcher`, and the test `s3_https_endpoint_without_tls_feature_names_the_feature` checks that a default build
+says which feature is missing. A TLS-free build given an `https://` vcs-server remote fails with the same hint. Trust:
 
 * default: the built-in web roots;
 * a private CA: `vcs --ca-pem ca.pem <command>` (per invocation), env `VCS_CAINFO`, or the config key `remote.cainfo`
