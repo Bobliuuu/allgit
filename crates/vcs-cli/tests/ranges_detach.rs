@@ -196,3 +196,32 @@ fn branch_rename_and_start_point() {
     assert!(fails(&d, &["branch", "-m", "nope", "x"]).contains("nope"));
     ok(&d, &["fsck"]);
 }
+
+/// CI shape: a runner fetches a commit that landed after it cloned and checks out exactly that
+/// commit by id (no merge, no sync), also by `origin/main`.
+#[test]
+fn fetched_commit_can_be_detached_by_id_and_origin_name() {
+    let t = tempfile::tempdir().unwrap();
+    let remote = t.path().join("remote");
+    std::fs::create_dir(&remote).unwrap();
+    ok(t.path(), &["init", "dev"]);
+    let dev = t.path().join("dev");
+    commit(&dev, "a.txt", "one", 1_700_000_000);
+    ok(&dev, &["remote", "set", remote.to_str().unwrap()]);
+    ok(&dev, &["publish"]);
+    ok(t.path(), &["clone", remote.to_str().unwrap(), "runner"]);
+    let runner = t.path().join("runner");
+    commit(&dev, "a.txt", "two", 1_700_000_100);
+    commit(&dev, "b.txt", "new", 1_700_000_200);
+    ok(&dev, &["publish"]);
+    let id = ok(&dev, &["log", "-n", "1", "--format=%H"]).trim().to_owned();
+    fails(&runner, &["switch", "--detach", &id[..12]]);
+    ok(&runner, &["fetch"]);
+    ok(&runner, &["switch", "--detach", &id[..12]]);
+    assert_eq!(std::fs::read_to_string(runner.join("a.txt")).unwrap(), "two");
+    assert_eq!(std::fs::read_to_string(runner.join("b.txt")).unwrap(), "new");
+    ok(&runner, &["switch", "--detach", "origin/main~1"]);
+    assert!(!runner.join("b.txt").exists());
+    ok(&runner, &["switch", "--detach", "origin/main"]);
+    assert!(runner.join("b.txt").exists());
+}

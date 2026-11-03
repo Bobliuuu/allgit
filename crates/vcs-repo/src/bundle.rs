@@ -17,7 +17,7 @@ use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use vcs_objects::names::{validate_branch_name, validate_path, validate_zone_name};
 use vcs_objects::{id_of_encoded, Object, ObjectId, RefUpdate, Signature, Transaction};
-use vcs_store::pack::{build_pack_fmt, decode_payload_max, PackFormat, PACK_MAGIC, PACK_MAGIC_V2};
+use vcs_store::pack::{build_pack_fast_v2, decode_payload_max, PACK_MAGIC, PACK_MAGIC_V2};
 use vcs_store::ObjectStore;
 
 pub const MAGIC: &[u8; 8] = b"VCSBNDL\n";
@@ -92,7 +92,23 @@ fn encode_header(info: &BundleInfo, pack_len: u64) -> String {
     for p in &info.prerequisites {
         s.push_str(&format!("prereq\t{}\n", p.to_hex()));
     }
+    // Last line: BLAKE3 of every header byte before it. Lets `verify` vouch for the header (heads,
+    // zones, lengths) without hashing the pack. Readers that predate it ignore `x-` lines.
+    let h = blake3::hash(s.as_bytes());
+    s.push_str(&format!("{HDR_HASH}\t{}\n", h.to_hex()));
     s
+}
+
+const HDR_HASH: &str = "x-hdr-blake3";
+
+/// The header text with its trailing `x-hdr-blake3` line checked and removed: `Some(true)` if the
+/// line is there and right, `Some(false)` if it is there and wrong, `None` if the header has none.
+fn header_hash_ok(text: &str) -> Option<bool> {
+    let body = text.strip_suffix('\n')?;
+    let at = body.rfind('\n').map_or(0, |i| i + 1);
+    let (head, last) = body.split_at(at);
+    let want = last.strip_prefix(HDR_HASH)?.strip_prefix('\t')?;
+    Some(blake3::hash(head.as_bytes()).to_hex().as_str() == want)
 }
 
 fn parse_header(text: &str) -> Result<(BundleInfo, u64)> {
@@ -200,7 +216,7 @@ fn check_trailer(f: &mut fs::File, len: u64, path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn read_header(f: &mut fs::File, path: &Path) -> Result<Header> {
+fn read_header(f: &mut fs::File, path: &Path, full: bool) -> Result<Header> {
     let len = io(path, f.metadata())?.len();
     io(path, f.seek(SeekFrom::Start(0)))?;
     let mut magic = [0u8; 8];
@@ -210,7 +226,9 @@ fn read_header(f: &mut fs::File, path: &Path) -> Result<Header> {
     if len < PREFACE + TRAILER {
         return bad("file too short");
     }
-    check_trailer(f, len, path)?;
+    if full {
+        check_trailer(f, len, path)?;
+    }
     io(path, f.seek(SeekFrom::Start(8)))?;
     let mut w = [0u8; 8];
     io(path, f.read_exact(&mut w))?;
@@ -225,10 +243,30 @@ fn read_header(f: &mut fs::File, path: &Path) -> Result<Header> {
     let mut hb = vec![0u8; hlen as usize];
     io(path, f.read_exact(&mut hb))?;
     let text = String::from_utf8(hb).or_else(|_| bad("header is not utf-8"))?;
+    if !full {
+        match header_hash_ok(&text) {
+            Some(true) => {}
+            Some(false) => return bad("header hash mismatch (file is corrupt)"),
+            // a bundle written before the header hash existed: only the whole-file hash vouches for it
+            None => check_trailer(f, len, path)?,
+        }
+    }
     let (mut info, pack_len) = parse_header(&text)?;
     let pack_start = PREFACE + hlen;
     if pack_start + pack_len + TRAILER != len {
         return bad("pack length does not match the file size");
+    }
+    if !full {
+        // the pack's own preface: format magic and the object count the header promises
+        let mut head = [0u8; 12];
+        io(path, f.seek(SeekFrom::Start(pack_start)))?;
+        let want = if info.pack_format == PACK_V2 { PACK_MAGIC_V2 } else { PACK_MAGIC };
+        if pack_len < 12 + 32 || f.read_exact(&mut head).is_err() || &head[..8] != want {
+            return bad("pack header");
+        }
+        if u32::from_le_bytes(head[8..].try_into().unwrap()) as usize != info.objects {
+            return bad("object count in the pack differs from the header");
+        }
     }
     info.bytes = len;
     Ok(Header {
@@ -388,11 +426,22 @@ fn check_graph(info: &BundleInfo, scan: &Scan, outside: &dyn Fn(&ObjectId) -> bo
 /// head's history is complete inside the bundle apart from what the prerequisites supply.
 pub fn verify_file(path: &Path) -> Result<BundleInfo> {
     let mut f = io(path, fs::File::open(path))?;
-    let h = read_header(&mut f, path)?;
+    let h = read_header(&mut f, path, true)?;
     let scan = scan_nodes(&mut f, path, &h)?;
     let has_prereqs = !h.info.prerequisites.is_empty();
     check_graph(&h.info, &scan, &|_| has_prereqs)?;
     Ok(h.info)
+}
+
+/// The default `bundle verify`: preface, header (checked against its own hash), the length
+/// equation `header + pack + trailer == file size` (catches truncation and appended bytes) and the
+/// pack's magic and object count. It reads a few hundred bytes and does not hash or decode the
+/// pack: a flipped byte inside the pack body or the trailer is only found by [`verify_file`]
+/// (`--full`), which `fetch` and `clone` always run. A bundle written before the header hash
+/// existed is hashed whole instead, so it is never vouched for on less evidence.
+pub fn verify_quick(path: &Path) -> Result<BundleInfo> {
+    let mut f = io(path, fs::File::open(path))?;
+    Ok(read_header(&mut f, path, false)?.info)
 }
 
 // ---------- create ----------
@@ -468,20 +517,46 @@ impl Repo {
                 children(&self.store.get(&id)?, &mut stack);
             }
         }
+        // Breadth-first by level; each level's objects are read and encoded on several threads.
         let mut objs: BTreeMap<ObjectId, Vec<u8>> = BTreeMap::new();
-        let mut stack: Vec<ObjectId> = heads.iter().map(|h| h.2).collect();
-        while let Some(id) = stack.pop() {
-            if have.contains(&id) || objs.contains_key(&id) {
-                continue;
+        let mut level: Vec<ObjectId> = heads.iter().map(|h| h.2).collect();
+        while !level.is_empty() {
+            level.sort_unstable();
+            level.dedup();
+            level.retain(|id| !have.contains(id) && !objs.contains_key(id));
+            let fetch = |id: &ObjectId| -> Result<(ObjectId, Vec<u8>, Vec<ObjectId>)> {
+                let o = self.store.get(id).map_err(|e| match e {
+                    vcs_store::StoreError::NotFound(i) => Error::Msg(format!(
+                        "cannot bundle: object {i} is not in this repository (a sparse clone must fetch it first)"
+                    )),
+                    e => e.into(),
+                })?;
+                let mut kids = Vec::new();
+                children(&o, &mut kids);
+                Ok((*id, o.encode(), kids))
+            };
+            let threads = if level.len() < 256 {
+                1
+            } else {
+                std::thread::available_parallelism().map_or(1, |n| n.get()).min(16)
+            };
+            let per = level.len().div_ceil(threads).max(1);
+            let parts: Vec<Result<Vec<_>>> = std::thread::scope(|sc| {
+                let fetch = &fetch;
+                let hs: Vec<_> = level
+                    .chunks(per)
+                    .map(|ch| sc.spawn(move || ch.iter().map(fetch).collect::<Result<Vec<_>>>()))
+                    .collect();
+                hs.into_iter().map(|h| h.join().expect("bundle worker panicked")).collect()
+            });
+            let mut next = Vec::new();
+            for part in parts {
+                for (id, enc, kids) in part? {
+                    objs.insert(id, enc);
+                    next.extend(kids);
+                }
             }
-            let o = self.store.get(&id).map_err(|e| match e {
-                vcs_store::StoreError::NotFound(i) => Error::Msg(format!(
-                    "cannot bundle: object {i} is not in this repository (a sparse clone must fetch it first)"
-                )),
-                e => e.into(),
-            })?;
-            children(&o, &mut stack);
-            objs.insert(id, o.encode());
+            level = next;
         }
         let used_zones: BTreeSet<&str> = heads.iter().map(|h| h.0.as_str()).collect();
         let info = BundleInfo {
@@ -503,7 +578,8 @@ impl Repo {
             prerequisites: prereqs,
             bytes: 0,
         };
-        let pack = build_pack_fmt(objs.into_iter().collect(), PackFormat::V2).pack;
+        // zstd level 1: a bundle is written once and read once, so write speed beats size
+        let pack = build_pack_fast_v2(objs.into_iter().collect(), vcs_store::pack::RAW_SMALL).pack;
         let header = encode_header(&info, pack.len() as u64);
         let tmp = PathBuf::from(format!("{}.tmp{}", file.display(), std::process::id()));
         let mut hasher = blake3::Hasher::new();
@@ -538,7 +614,7 @@ impl Repo {
     /// Writes nothing.
     fn bundle_prepare(&self, file: &Path) -> Result<Prepared> {
         let mut f = io(file, fs::File::open(file))?;
-        let h = read_header(&mut f, file)?;
+        let h = read_header(&mut f, file, true)?;
         let scan = scan_nodes(&mut f, file, &h)?;
         for p in &h.info.prerequisites {
             match self.store.get(p) {
@@ -612,8 +688,10 @@ impl Repo {
     /// head visible at once. Caller holds the repository lock.
     fn bundle_commit(&self, file: &Path, p: &Prepared, author: Signature) -> Result<()> {
         let mut f = io(file, fs::File::open(file))?;
-        scan_pack(&mut f, file, &p.header, |_, obj, _| {
-            self.store.put(&obj)?;
+        // scan_pack verified framing, canonical decoding and the id of every object: store the
+        // encoding as it is instead of encoding and hashing each object a second time
+        scan_pack(&mut f, file, &p.header, |id, _, enc| {
+            self.store.put_encoded_prehashed(&id, enc)?;
             Ok(())
         })?;
         self.store.sync()?;
@@ -665,7 +743,12 @@ impl Repo {
     /// each zone checked out on `main` (else its first branch). Bundles with prerequisites cannot
     /// be cloned (they need an existing repository: use `fetch`).
     pub fn clone_from_bundle(file: &Path, dest: &Path, author: Signature) -> Result<Repo> {
-        let info = verify_file(file)?;
+        // header only: `bundle_prepare` below scans the pack and checks the graph against the (empty)
+        // new store, which is the same check `verify_file` would do, so do not scan a third time
+        let info = {
+            let mut f = io(file, fs::File::open(file))?;
+            read_header(&mut f, file, false)?.info
+        };
         if !info.prerequisites.is_empty() {
             return msg(
                 "this is an incremental bundle (it has prerequisites); fetch it into a repository that has them instead of cloning",
@@ -683,7 +766,7 @@ impl Repo {
                 repo.bundle_commit(file, &p, author)?;
                 let mut local = Refs::default();
                 local.apply(&p.updates)?;
-                write_atomic(&repo.common.join("refs"), &local.encode())?;
+                repo.write_refs(&local)?;
                 repo.save_ws(&Workspace::default())?;
             }
             let mut pick: BTreeMap<&str, &str> = BTreeMap::new();

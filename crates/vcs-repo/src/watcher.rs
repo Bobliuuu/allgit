@@ -31,6 +31,8 @@ struct Daemon {
     watcher: notify::RecommendedWatcher,
     rx: Receiver<notify::Result<Event>>,
     dirs: HashSet<PathBuf>,
+    idle: Option<Duration>,
+    last_query: std::time::Instant,
 }
 
 fn werr(e: impl std::fmt::Display) -> Error {
@@ -46,6 +48,13 @@ fn new_epoch() -> String {
 
 /// Run the watcher for `repo` until `stop` is set. Removes the journal on the way out.
 pub fn run(repo: &Repo, stop: &AtomicBool) -> Result<()> {
+    run_idle(repo, stop, None)
+}
+
+/// [`run`] that also stops once no client has queried the journal (dropped a probe) for `idle`.
+/// A watcher started on its own by a command (not by the user) uses this so it does not outlive
+/// the work that wanted it.
+pub fn run_idle(repo: &Repo, stop: &AtomicBool, idle: Option<Duration>) -> Result<()> {
     let root = repo.worktree().to_path_buf();
     let dir = repo.vcs.join(DIR);
     let probe = dir.join(PROBE_DIR);
@@ -65,6 +74,8 @@ pub fn run(repo: &Repo, stop: &AtomicBool) -> Result<()> {
         watcher,
         rx,
         dirs,
+        idle,
+        last_query: std::time::Instant::now(),
     };
     let r = d.event_loop(stop);
     let _ = fs::remove_file(d.dir.join(PID));
@@ -158,7 +169,12 @@ impl Daemon {
         while !stop.load(Ordering::Relaxed) {
             let first = match self.rx.recv_timeout(Duration::from_millis(50)) {
                 Ok(e) => e,
-                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Timeout) => {
+                    if self.idle.is_some_and(|i| self.last_query.elapsed() > i) {
+                        return Ok(());
+                    }
+                    continue;
+                }
                 Err(RecvTimeoutError::Disconnected) => {
                     self.append("X\n")?;
                     return Err(werr("event channel closed"));
@@ -185,6 +201,9 @@ impl Daemon {
                 }
             } else if !out.is_empty() {
                 self.append(&out)?;
+            }
+            if out.contains("\nB ") || out.starts_with("B ") {
+                self.last_query = std::time::Instant::now();
             }
         }
         Ok(())

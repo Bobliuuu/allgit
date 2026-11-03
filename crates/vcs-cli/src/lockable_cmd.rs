@@ -46,7 +46,7 @@ pub fn refresh_target(cmd: &crate::Cmd) -> Option<PathBuf> {
         | Snapshot(_)
         | Sparse(_)
         | Stash(_)
-        | Sync
+        | Sync(_)
         | Op(_) => Some(PathBuf::from(".")),
         _ => None,
     }

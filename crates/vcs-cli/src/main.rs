@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 use vcs_objects::{ObjectId, Signature};
 use vcs_remote::Outcome;
-use vcs_repo::{AssistResult, ChangeKind, Error, MergeOutcome, RebaseOutcome, Repo, Resolution, SyncAction, ROOT_ZONE};
+use vcs_repo::{AssistResult, ChangeKind, Error, MergeOutcome, RebaseOutcome, Repo, Resolution, ROOT_ZONE};
 
 mod archive;
 mod auth;
@@ -36,6 +36,7 @@ mod remote;
 mod shelve_cmd;
 mod signing_cmd;
 mod worktree_cmd;
+mod zoneprofile_cmd;
 
 /// The assist command: `--assist`, else the opt-in `merge.assist` setting (announced, because file
 /// contents are then handed to that command), unless `--no-assist`.
@@ -168,7 +169,11 @@ enum Cmd {
     Status,
     /// Watch the working tree and journal changed paths so `status` can skip a full scan (runs until killed)
     #[cfg(feature = "watcher")]
-    Watch,
+    Watch {
+        /// Stop after this many seconds without a `status` asking for the journal (set when a command starts the watcher itself)
+        #[arg(long)]
+        idle_exit: Option<u64>,
+    },
     /// Show unstaged changes (or --staged)
     Diff {
         #[arg(long)]
@@ -535,6 +540,8 @@ enum Cmd {
         stats: bool,
         #[command(flatten)]
         sel: autozone::ForArgs,
+        #[command(flatten)]
+        auto: zoneprofile_cmd::CloneAuto,
     },
     /// Publish checked-out branches to the remote in one atomic transaction
     Publish {
@@ -570,6 +577,10 @@ enum Cmd {
         /// prune remote branches with no local one, and publish tags (`git push --mirror`)
         #[arg(long, conflicts_with_all = ["tags", "delete"])]
         mirror: bool,
+        /// When the remote branch moved, fetch, merge it in (only if the merge is clean) and publish again,
+        /// up to N times with a short randomized wait (default 20; env VCS_PUBLISH_AUTOMERGE=N also turns it on)
+        #[arg(long, value_name = "N", num_args = 0..=1, require_equals = true, default_missing_value = "20")]
+        auto_merge: Option<u32>,
     },
     /// Lock files on the remote so others cannot publish changes to them
     Lock {
@@ -606,8 +617,8 @@ enum Cmd {
         #[arg(long)]
         stats: bool,
     },
-    /// Fetch, then fast-forward local branches where safe
-    Sync,
+    /// Fetch, then fast-forward local branches where safe (`--auto`: choose zones from your usage profile)
+    Sync(zoneprofile_cmd::SyncAuto),
     /// Verify all objects and graph invariants
     Fsck,
     /// Move loose objects into a pack (one pack + index under .vcs/objects/pack).
@@ -891,7 +902,15 @@ fn principal() -> String {
 
 fn open() -> Result<(Repo, PathBuf), Error> {
     let cwd = std::env::current_dir().map_err(|source| Error::Io { path: ".".into(), source })?;
-    Ok((Repo::discover(&cwd)?, cwd))
+    let repo = Repo::discover(&cwd)?;
+    // Big repositories get a background watcher so `status`, `diff` and friends can skip the full scan.
+    #[cfg(feature = "watcher")]
+    if std::env::args_os().nth(1).is_none_or(|a| a != "watch") {
+        if let Ok(exe) = std::env::current_exe() {
+            repo.autostart_watcher(&exe);
+        }
+    }
+    Ok((repo, cwd))
 }
 
 pub(crate) fn zone_of_cwd(repo: &Repo, cwd: &Path, explicit: Option<String>) -> Result<String, Error> {
@@ -971,6 +990,9 @@ fn need_remote(repo: &Repo) -> Result<String, Error> {
 fn run(cli: Cli) -> Result<(), Error> {
     if let Cmd::More(m) = &cli.cmd {
         return cmds::dispatch(m, cli.json);
+    }
+    if let Some(r) = zoneprofile_cmd::intercept(&cli.cmd) {
+        return r;
     }
     if let Some(r) = autozone::intercept(&cli.cmd, cli.json) {
         return r;
@@ -1117,13 +1139,17 @@ fn run(cli: Cli) -> Result<(), Error> {
             maybe_auto_repack(&repo);
         }
         #[cfg(feature = "watcher")]
-        Cmd::Watch => {
+        Cmd::Watch { idle_exit } => {
             let (repo, _) = open()?;
             eprintln!(
                 "watching {} (Ctrl-C to stop); `vcs status` uses the journal while this runs",
                 repo.worktree().display()
             );
-            vcs_repo::watcher::run(&repo, &std::sync::atomic::AtomicBool::new(false))?;
+            vcs_repo::watcher::run_idle(
+                &repo,
+                &std::sync::atomic::AtomicBool::new(false),
+                idle_exit.map(std::time::Duration::from_secs),
+            )?;
         }
         Cmd::Status => {
             let (repo, _) = open()?;
@@ -1910,7 +1936,15 @@ fn run(cli: Cli) -> Result<(), Error> {
                     repo.zone_delete(&name, force)?;
                     println!("deleted zone {name}");
                 }
-                ZoneCmd::Suggest(_) | ZoneCmd::Apply(_) | ZoneCmd::Subscribe(_) | ZoneCmd::Describe(_) | ZoneCmd::Graph(_) | ZoneCmd::Explain(_) | ZoneCmd::Changes(_) => unreachable!("handled by autozone::intercept"),
+                ZoneCmd::Suggest(_)
+                | ZoneCmd::Apply(_)
+                | ZoneCmd::Subscribe(_)
+                | ZoneCmd::Describe(_)
+                | ZoneCmd::Graph(_)
+                | ZoneCmd::Explain(_)
+                | ZoneCmd::Changes(_) => {
+                    unreachable!("handled by autozone::intercept")
+                }
             }
         }
         Cmd::Snapshot(s) => {
@@ -2018,9 +2052,13 @@ fn run(cli: Cli) -> Result<(), Error> {
             tags,
             prune,
             mirror,
+            auto_merge,
         } => {
             let (repo, _) = open()?;
             let backend = remote::open_backend(&need_remote(&repo)?)?;
+            let auto_merge = auto_merge
+                .or_else(|| std::env::var("VCS_PUBLISH_AUTOMERGE").ok().and_then(|v| v.parse().ok()))
+                .filter(|_| !(force || mirror || force_without_lease || !force_with_lease.is_empty() || tags || !delete.is_empty() || prune));
             if repair {
                 println!("repaired {} object(s) on the remote", repo.repair_remote(backend.as_ref())?);
             }
@@ -2053,7 +2091,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                 }
                 opts.force = Some(spec);
             }
-            let rep = repo.publish_with(backend.as_ref(), want, author()?, &principal(), &opts)?;
+            let rep = publish_auto_merge(&repo, backend.as_ref(), want, &opts, auto_merge.unwrap_or(0))?;
             let done: String = rep.updated.iter().map(|(a, b, old, new)| hooks::line(a, b, *old, *new)).collect();
             if !done.is_empty() {
                 hooks::fire_with_stdin(&repo, "post-publish", &done)?;
@@ -2163,27 +2201,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             }
             println!("prefetched {n} object(s)");
         }
-        Cmd::Sync => {
-            let (repo, _) = open()?;
-            let backend = remote::open_memo(&need_remote(&repo)?, false)?;
-            let rep = repo.sync(&backend)?;
-            for (a, b, act) in &rep.actions {
-                let what = match act {
-                    SyncAction::UpToDate => "up to date".to_owned(),
-                    SyncAction::FastForwarded { from, to } => {
-                        format!("fast-forwarded {} -> {}", opt_short(*from), to.short())
-                    }
-                    SyncAction::Ahead => "ahead of remote (run `vcs publish`)".into(),
-                    SyncAction::Diverged => {
-                        let r = if a == ROOT_ZONE { String::new() } else { format!(" --zone {a}") };
-                        format!("diverged; merge with `vcs merge --remote {b}{r}`")
-                    }
-                    SyncAction::Dirty => "dirty (left untouched; commit or discard changes first)".into(),
-                    SyncAction::NoRemote => "not on the remote yet (run `vcs publish`)".into(),
-                };
-                println!("{a}/{b}: {what}");
-            }
-        }
+        Cmd::Sync(a) => zoneprofile_cmd::sync(&a)?,
         Cmd::Op(c) => {
             let (repo, _) = open()?;
             match c {
@@ -2422,8 +2440,48 @@ fn print_branches(repo: &Repo, zone: &str) -> Result<(), Error> {
 
 /// Run the command; if it fails because a cached object was evicted, fetch that one object
 /// (hash-verified) from the remote and run it again. See docs/cache.md.
+/// `repo.publish_with`, and (when `retries > 0`) on "the remote branch moved" fetch, merge the new
+/// remote head in if that merge is clean, wait a short randomized time and publish again. A merge
+/// with conflicts is aborted and the original error returned, so the repo is left as it was.
+fn publish_auto_merge(
+    repo: &vcs_repo::Repo,
+    backend: &dyn vcs_remote::Backend,
+    want: Option<&[String]>,
+    opts: &vcs_repo::PublishOpts,
+    retries: u32,
+) -> Result<vcs_repo::PublishReport, Error> {
+    let mut attempt = 0u32;
+    loop {
+        let e = match repo.publish_with(backend, want, author()?, &principal(), opts) {
+            Ok(r) => return Ok(r),
+            Err(e) => e,
+        };
+        let text = e.to_string();
+        if attempt >= retries || !(text.contains("Remote branch advanced") || text.contains("moved from")) {
+            return Err(e.into());
+        }
+        attempt += 1;
+        let rep = repo.sync(backend)?;
+        for (zone, branch, act) in &rep.actions {
+            if matches!(act, vcs_repo::SyncAction::Diverged) {
+                match repo.merge_remote(zone, branch, author()?)? {
+                    vcs_repo::MergeOutcome::Conflicted { .. } => {
+                        repo.merge_abort()?;
+                        return Err(e.into());
+                    }
+                    _ => eprintln!("auto-merged remote {zone}/{branch} (attempt {attempt})"),
+                }
+            }
+        }
+        let window = (5u64 << attempt.min(5)).min(250);
+        let seed = std::process::id() as u64 ^ (std::time::SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.subsec_nanos() as u64));
+        std::thread::sleep(std::time::Duration::from_millis(1 + seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) % window));
+    }
+}
+
 fn run_lazy(cli: Cli) -> Result<(), Error> {
     let mut fetched = std::collections::BTreeSet::new();
+    let pre = zoneprofile_cmd::before(&cli.cmd);
     loop {
         match run(cli.clone()) {
             Err(Error::Store(vcs_store::StoreError::NotFound(id))) if fetched.insert(id) => {
@@ -2435,7 +2493,12 @@ fn run_lazy(cli: Cli) -> Result<(), Error> {
                 repo.fetch_missing(backend.as_ref(), &id)?;
                 eprintln!("fetched missing object {}", id.short());
             }
-            r => return r,
+            r => {
+                if r.is_ok() {
+                    zoneprofile_cmd::observe(&cli.cmd, pre);
+                }
+                return r;
+            }
         }
     }
 }

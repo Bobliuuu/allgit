@@ -743,6 +743,39 @@ What changed:
   watch-limit exhaustion (`vcs watch` fails to start, or writes `X` and exits, which clients treat as a full scan).
   Index-decode memory per entry is unchanged (`BTreeMap<String, IndexEntry>`); a path arena was not attempted.
 
+## Watcher on by default for big repositories (2026-11-03)
+
+`vcs` is now built with the `watcher` feature by default. When a repository's index is at least 1 MB (about 14,000
+files) and no watcher runs, a command that opens the repository starts a detached `vcs watch --idle-exit 1800` in the
+background (Unix; once per ten minutes at most, marker `.vcs/fsmon/autowatch`). The command that started it does its
+usual full scan; later ones use the journal. The watcher stops by itself after 30 minutes without a `status`/`diff`
+asking it anything. `VCS_NO_AUTOWATCH=1` stops the start, `VCS_NO_FSMONITOR=1` stops all use of the journal. If it cannot
+start (no inotify watches left, no permission) nothing changes: every query without a journal is the full scan.
+
+Two things keep the saved state useful across the repository's own writes, which used to throw it away every time:
+
+- **Rebind log** (`.vcs/fsmon/rebind`). A patched index write (`rm`, `restore --staged`, `reset <path>`, `mv`) and
+  the cache-tree write of `commit` append `old-fingerprint new-fingerprint <touched paths>`. `status` follows the chain
+  from the state's fingerprint to the current index and re-checks the touched paths together with what the watcher
+  reports. A gap in the chain, a missing log, an index written by something that does not log, or a damaged line means
+  no chain, and `status` does the full scan. The log is cut when it passes 256 KiB.
+- **`diff` (working tree against index)** with no pathspec asks the same state: only the paths that were dirty at the
+  state plus those changed since can differ, so only they are read. Without a state for this index it scans as before.
+
+100k files, `datagen flat`, box with a p4d running next to it (`scripts/command_scoreboard_p4.py`, median of 3, ms):
+
+| cell | p4 | vcs before | vcs now |
+|---|---|---|---|
+| status (p4: `reconcile -n //...`) clean | 956 | 928 | 43 |
+| status, 1% modified | 890 | 892 | 45 |
+| opened (`vcs status` after one edit) | 2 | 934 | 44 |
+| diff of one edited file | 2 | 883 | 39 |
+| submit of one edited file | 3 | 974 | 143 |
+
+The first `status` after the watcher starts, and the first after any index write that does not log (`switch`, `reset
+--hard`, a full `add .`, ...), still costs the full scan. Not measured: macOS FSEvents under the autostart, repositories
+with more files than the inotify watch limit allows (the watcher fails to start and the full scan stays).
+
 ## Remote workflows: walgit vs vcs-server vs plain git (local RustFS)
 
 See [research/walgit-benchmark.md](research/walgit-benchmark.md): push, clone, partial clone, fetch, cold variants, store request counts and server CPU, 10k and 100k files (JSON under `docs/research/data/walgit-bench/`). walgit has no client of its own, so its add/commit/status/log/checkout cost is the git column above.

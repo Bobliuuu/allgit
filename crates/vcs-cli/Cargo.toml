@@ -33,7 +33,7 @@ libc = "0.2"
 tempfile.workspace = true
 
 [features]
-default = []
+default = ["watcher"]
 # A `git`-named binary that runs `vcs git <args>` (docs/git-to-vcs.md). Off by default.
 git-shim = []
 # https:// for s3:// endpoints and for vcs-server remotes (rustls, certificate verification always on).
