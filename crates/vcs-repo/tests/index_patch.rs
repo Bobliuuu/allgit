@@ -225,3 +225,51 @@ fn add_and_restore_of_named_files_patch_the_index_and_match_the_full_path() {
     let rep = r.fsck().unwrap();
     assert!(rep.problems.is_empty(), "{:?}", rep.problems);
 }
+
+#[test]
+fn adding_new_files_patches_the_index_and_still_refuses_case_collisions() {
+    let d = tempfile::tempdir().unwrap();
+    let r = Repo::init(&d.path().join("r")).unwrap();
+    for k in 0..4000u32 {
+        let p = format!("Dir{:02}/f{k:05}.txt", k % 20);
+        let abs = r.worktree().join(&p);
+        fs::create_dir_all(abs.parent().unwrap()).unwrap();
+        fs::write(abs, format!("file {k}\n")).unwrap();
+    }
+    r.add(&s("")).unwrap();
+    r.commit("base", sig()).unwrap();
+    let write = |p: &str| {
+        let abs = r.worktree().join(p);
+        fs::create_dir_all(abs.parent().unwrap()).unwrap();
+        fs::write(abs, "n\n").unwrap();
+    };
+    // plain new files: top level, an existing directory, a new directory
+    for p in ["new1.txt", "Dir03/new2.txt", "fresh/deep/new3.txt"] {
+        write(p);
+        let rep = r.add(&s(p)).unwrap();
+        assert_eq!(rep.staged, 1, "{p}");
+        assert!(tracked(&r).contains(p), "{p}");
+    }
+    // case-variant of a tracked directory, of a tracked file, of each other
+    write("dir03/x.txt");
+    let e = r.add(&s("dir03/x.txt")).unwrap_err().to_string();
+    assert!(e.contains("differ only by case"), "{e}");
+    write("NEW1.txt");
+    let e = r.add(&s("NEW1.txt")).unwrap_err().to_string();
+    assert!(e.contains("differ only by case"), "{e}");
+    write("Aa.txt");
+    write("aA.txt");
+    let e = r.add(&["Aa.txt".to_string(), "aA.txt".to_string()]).unwrap_err().to_string();
+    assert!(e.contains("differ only by case"), "{e}");
+    assert!(!tracked(&r).contains("Aa.txt") && !tracked(&r).contains("dir03/x.txt"));
+    // staged state is sound
+    let st = r.status().unwrap();
+    let staged: BTreeSet<String> = st.zones.iter().flat_map(|z| z.staged.iter().map(|x| x.path.clone())).collect();
+    assert_eq!(
+        staged,
+        names(&["new1.txt".into(), "Dir03/new2.txt".into(), "fresh/deep/new3.txt".into()])
+    );
+    r.commit("more", sig()).unwrap();
+    let rep = r.fsck().unwrap();
+    assert!(rep.problems.is_empty(), "{:?}", rep.problems);
+}

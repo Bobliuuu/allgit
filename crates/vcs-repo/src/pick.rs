@@ -257,8 +257,7 @@ impl Repo {
             self.save_index(&mut ix)?;
             refs.apply(&[update])?;
             self.store.sync()?;
-            write_atomic(&self.common.join("refs"), &refs.encode())?;
-            self.record_op(&format!("{verb} {} onto {zone}/{branch}", target.short()), None)?;
+            self.commit_refs_op(&refs, &format!("{verb} {} onto {zone}/{branch}", target.short()), None)?;
             return Ok(MergeOutcome::Merged { commit: cid });
         }
         let touched: BTreeSet<String> = diff

@@ -36,13 +36,13 @@ impl<'a> IdxCacheBackend<'a> {
     }
 
     /// `Some(hex)` if `key` is `packs/pack-<64 hex>.idx`.
-    fn stem_hex(key: &str) -> Option<&str> {
+    pub fn stem_hex(key: &str) -> Option<&str> {
         let h = key.strip_prefix("packs/pack-")?.strip_suffix(".idx")?;
         (h.len() == 64 && h.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))).then_some(h)
     }
 
     /// Whether `data` is a complete index of the pack whose checksum is `hex`.
-    fn valid(data: &[u8], hex: &str) -> bool {
+    pub fn valid(data: &[u8], hex: &str) -> bool {
         if data.len() < 32 + 32 {
             return false;
         }

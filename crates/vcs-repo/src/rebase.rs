@@ -714,7 +714,7 @@ impl Repo {
             old: Some(rs.cursor),
             new: rs.orig,
         }])?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
+        self.write_refs(&refs)?;
         self.clear_rebase_state()?;
         Ok(())
     }
@@ -747,7 +747,7 @@ impl Repo {
                 new: *target,
             }])?;
             self.store.sync()?;
-            write_atomic(&self.common.join("refs"), &refs.encode())?;
+            self.write_refs(&refs)?;
         }
         Ok(())
     }
@@ -776,7 +776,7 @@ impl Repo {
                 new: cursor,
             }])?;
             self.store.sync()?;
-            write_atomic(&self.common.join("refs"), &refs.encode())?;
+            self.write_refs(&refs)?;
         }
         run.ref_head = cursor;
         run.worktree = cursor_root;
@@ -1052,7 +1052,7 @@ impl Repo {
                 new: cursor,
             }])?;
             self.store.sync()?;
-            write_atomic(&self.common.join("refs"), &refs.encode())?;
+            self.write_refs(&refs)?;
         }
         Ok(RebaseOutcome::Conflicted {
             commit: pick,
@@ -1100,7 +1100,7 @@ impl Repo {
         self.save_index(&mut ix)?;
         refs.apply(&[update])?;
         self.store.sync()?; // rebuilt commits + transaction durable before refs name them
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
+        self.write_refs(&refs)?;
         self.clear_merge_state()?;
         self.clear_rebase_state()?;
         self.record_op(&message, Some(run.author))?;

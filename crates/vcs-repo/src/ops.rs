@@ -18,7 +18,7 @@ use vcs_store::ObjectStore;
 const OP_HEAD: &str = "op_head";
 
 /// Author for operations recorded by methods that take no explicit author.
-fn env_signature() -> Signature {
+pub(crate) fn env_signature() -> Signature {
     let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
     let name = env("VCS_AUTHOR_NAME").or_else(|| env("USER")).unwrap_or_else(|| "unknown".into());
     let email = env("VCS_AUTHOR_EMAIL").unwrap_or_else(|| format!("{name}@localhost"));
@@ -157,6 +157,7 @@ impl Repo {
     }
 
     pub(crate) fn write_op_head(&self, id: &ObjectId) -> Result<()> {
+        self.journal_checkpoint()?; // journalled state is made durable before this fully synced write
         self.store.sync()?; // the Operation object must be durable before op_head names it
         write_atomic(&self.common.join(OP_HEAD), &frame(b"AGOH", id.as_bytes().to_vec()))
     }
@@ -334,7 +335,7 @@ impl Repo {
         if let Some(tags) = &target.tags {
             refs.tags = tags.clone();
         }
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
+        self.write_refs(&refs)?;
         // A zone that stays subscribed keeps its sparse set.
         let mut sparse = ws.sparse.clone();
         sparse.retain(|z, _| target.workspace.contains_key(z));

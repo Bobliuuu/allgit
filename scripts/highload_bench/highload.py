@@ -77,6 +77,7 @@ def wait_port(port, tries=100):
 
 
 PROCS = {}
+AUTO = False  # vcs: let `publish` fetch/merge/retry by itself on a moved branch
 
 
 def start(name, argv, port, url=None, env=None):
@@ -202,7 +203,7 @@ class Arm:
 
     def push(self, d, br):
         """One push attempt; returns (ok, stderr)."""
-        r = sh("vcs publish" if self.kind == "vcs" else f"git push -q origin HEAD:refs/heads/{br}", cwd=d, check=False)
+        r = sh(("vcs publish --auto-merge=30" if AUTO else "vcs publish") if self.kind == "vcs" else f"git push -q origin HEAD:refs/heads/{br}", cwd=d, check=False)
         return r.returncode == 0, (r.stdout + r.stderr)[-300:]
 
     def recover(self, d, br):
@@ -239,7 +240,7 @@ def count_files(d, branch_files_prefix):
 
 def run_pushers(arm, url, work, n, k, shared, results, stop_ev=None, max_retries=30, tag="w"):
     """n threads, each with its own clone, k commit+push each. shared=True -> all on main."""
-    lat, att, fails, errs = [], [], [0], []
+    lat, att, fails, errs, cl = [], [], [0], [], []
     lock = threading.Lock()
     dirs = [f"{work}/{tag}{i}" for i in range(n)]
     for d in dirs:
@@ -253,7 +254,9 @@ def run_pushers(arm, url, work, n, k, shared, results, stop_ev=None, max_retries
         for j in range(k):
             if stop_ev and stop_ev.is_set():
                 break
+            tc = time.perf_counter()
             arm.commit(d, f"{tag}{i}_{j}")
+            cl.append((time.perf_counter() - tc) * 1000)
             t = time.perf_counter()
             a = 0
             while True:
@@ -281,11 +284,15 @@ def run_pushers(arm, url, work, n, k, shared, results, stop_ev=None, max_retries
                 att.append(a)
 
     ths = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
+    smp = Sampler(arm)  # CPU/RSS over the push phase only, not the per-worker clones above
+    t0 = time.perf_counter()
     for t in ths:
         t.start()
     for t in ths:
         t.join()
-    results.update(push_ms=stats(lat), attempts=stats(att), rejected_pushes=fails[0], errors=errs[:5], n_errors=len(errs),
+    results.update(smp.done())
+    results["phase_s"] = time.perf_counter() - t0
+    results.update(commit_ms=stats(cl), push_ms=stats(lat), attempts=stats(att), rejected_pushes=fails[0], errors=errs[:5], n_errors=len(errs),
                    pushed=len(lat))
     return dirs
 
@@ -293,9 +300,9 @@ def run_pushers(arm, url, work, n, k, shared, results, stop_ev=None, max_retries
 def scn_branches(arm, n, k):
     url = arm.fresh(); w = f"{WB}/work"; sh(f"rm -rf {w} && mkdir -p {w}")
     arm.seed(url, f"{w}/seed")
-    s = Sampler(arm); r = {}
+    r = {}
     run_pushers(arm, url, w, n, k, False, r)
-    r.update(s.done()); r["pushes_per_s"] = r["pushed"] / r["wall_s"]
+    r["pushes_per_s"] = r["pushed"] / r["phase_s"]
     # verify: all branches exist with k files
     if arm.kind == "git":
         out = sh(f"git ls-remote --heads {url}").stdout
@@ -312,9 +319,9 @@ def scn_branches(arm, n, k):
 def scn_same(arm, n, k):
     url = arm.fresh(); w = f"{WB}/work"; sh(f"rm -rf {w} && mkdir -p {w}")
     arm.seed(url, f"{w}/seed")
-    s = Sampler(arm); r = {}
+    r = {}
     run_pushers(arm, url, w, n, k, True, r)
-    r.update(s.done()); r["pushes_per_s"] = r["pushed"] / r["wall_s"]
+    r["pushes_per_s"] = r["pushed"] / r["phase_s"]
     d = f"{w}/verify"; arm.clone(url, d)
     landed = count_files(d, "w")
     r["files_landed"] = landed; r["files_expected"] = n * k - r["n_errors"] * 0
@@ -351,7 +358,7 @@ def scn_seq(arm, m):
 def scn_clones(arm, n, k, cloners=4):
     url = arm.fresh(); w = f"{WB}/work"; sh(f"rm -rf {w} && mkdir -p {w}")
     arm.seed(url, f"{w}/seed")
-    s = Sampler(arm); r = {}; clat = []; cerr = [0]; ev = threading.Event(); lk = threading.Lock()
+    r = {}; clat = []; cerr = [0]; ev = threading.Event(); lk = threading.Lock()
 
     def cl(i):
         j = 0
@@ -372,8 +379,8 @@ def scn_clones(arm, n, k, cloners=4):
     ev.set()
     for c in cs:
         c.join()
-    r.update(s.done()); r["clone_ms"] = stats(clat); r["clone_errors"] = cerr[0]
-    r["pushes_per_s"] = r["pushed"] / r["wall_s"]; r["verified"] = r["n_errors"] == 0 and r["pushed"] == max(1, n // 2) * k
+    r["clone_ms"] = stats(clat); r["clone_errors"] = cerr[0]
+    r["pushes_per_s"] = r["pushed"] / r["phase_s"]; r["verified"] = r["n_errors"] == 0 and r["pushed"] == max(1, n // 2) * k
     return r
 
 
@@ -393,8 +400,15 @@ def main():
     ap.add_argument("--n", default="8,32")
     ap.add_argument("--k", type=int, default=20)
     ap.add_argument("--m", type=int, default=1000)
+    ap.add_argument("--auto-merge", action="store_true", help="vcs arms publish with --auto-merge=30")
+    ap.add_argument("--git-fsync", action="store_true", help="git arm with core.fsync=all (durability comparable to vcs)")
     ap.add_argument("--reps", type=int, default=1)
     a = ap.parse_args()
+    global AUTO
+    AUTO = a.auto_merge
+    if a.git_fsync:
+        ENV.update(GIT_CONFIG_COUNT="2", GIT_CONFIG_KEY_0="core.fsync", GIT_CONFIG_VALUE_0="all",
+                   GIT_CONFIG_KEY_1="core.fsyncMethod", GIT_CONFIG_VALUE_1="fsync")
     sh(f"mkdir -p {WB}")
     res = {"meta": {"load": open('/proc/loadavg').read().split()[:3], "ncpu": os.cpu_count(), "args": vars(a),
                     "vcs_rev": os.environ.get("WB_VCS_REV", "?")}, "runs": []}
