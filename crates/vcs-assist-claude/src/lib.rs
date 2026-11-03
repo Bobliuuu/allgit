@@ -3,6 +3,7 @@
 //! are sent to the Anthropic API: see docs/assist.md.
 
 pub mod api;
+pub mod baseline;
 pub mod eval;
 pub mod prompt;
 pub mod validate;

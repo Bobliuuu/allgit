@@ -39,7 +39,31 @@ fn rd(p: &Path) -> Result<Option<String>, String> {
     }
 }
 
+/// Where the answers come from.
+pub enum Source<'a> {
+    /// `response.txt` in each case directory.
+    Recorded,
+    /// The model. With `record`, the raw model text is written to `response.txt` in the case directory
+    /// (also when validation rejects it, so a later offline run reproduces the verdict).
+    Live { complete: &'a Completer<'a>, record: bool },
+    /// A deterministic mock provider.
+    Mock(crate::baseline::Baseline),
+}
+
 pub fn run(dir: &Path, live: Option<&Completer>) -> Result<Report, String> {
+    run_source(
+        dir,
+        match live {
+            Some(c) => Source::Live {
+                complete: c,
+                record: false,
+            },
+            None => Source::Recorded,
+        },
+    )
+}
+
+pub fn run_source(dir: &Path, src: Source) -> Result<Report, String> {
     let mut names: Vec<_> = std::fs::read_dir(dir)
         .map_err(|e| format!("{}: {e}", dir.display()))?
         .filter_map(|e| e.ok())
@@ -62,9 +86,26 @@ pub fn run(dir: &Path, live: Option<&Completer>) -> Result<Report, String> {
             theirs: need("theirs")?,
         };
         let expected = need("expected")?;
-        let outcome = match live {
-            Some(c) => resolve(&req, c),
-            None => match rd(&d.join("response.txt"))? {
+        let outcome = match &src {
+            Source::Mock(b) => judge(&req, &crate::baseline::respond(*b, &req)),
+            Source::Live { complete, record } => {
+                if *record {
+                    let text = std::cell::RefCell::new(None);
+                    let rec = |s: &str, u: &str, m: u32| {
+                        let r = complete(s, u, m)?;
+                        *text.borrow_mut() = Some(r.clone());
+                        Ok(r)
+                    };
+                    let o = resolve(&req, &rec);
+                    if let Some(t) = text.into_inner() {
+                        std::fs::write(d.join("response.txt"), t).map_err(|e| format!("{name}: {e}"))?;
+                    }
+                    o
+                } else {
+                    resolve(&req, *complete)
+                }
+            }
+            Source::Recorded => match rd(&d.join("response.txt"))? {
                 Some(t) => judge(&req, &t),
                 None => {
                     rep.cases.push(CaseResult {
