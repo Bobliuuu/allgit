@@ -13,13 +13,15 @@ and `.idx`; the name is content-addressed, so re-uploading after a crash is idem
 Collect   find the new objects without asking the remote about individual objects
 PutPack   put_if_absent packs/<name>.pack
 PutIdx    put_if_absent packs/<name>.idx        <- the pack becomes visible here
-PutTx     put_if_absent tx/<txid>
+          (together with) put_if_absent tx/<txid>   one round trip: create-only, idempotent, read only
+                                                    through the manifest's applied window
 Load/Cas  manifest read, then compare-and-swap  <- the publish becomes visible here
 ```
 
 A crash after `PutPack` leaves a pack without an index: readers only enumerate `.idx` keys, so it is ignored (an orphan; there
 is no remote delete, so it stays). A crash after `PutIdx` leaves a complete, closed pack that no manifest references; also
-harmless. Zero objects: no pack. One object: a loose object (a pack would cost two requests instead of one).
+harmless; so is a `tx/` record whose objects are not visible (nothing reads `tx/` except through the manifest, and
+the GC never deletes it). The index never goes up before its pack finished. Zero objects: no pack. One object: a loose object (a pack would cost two requests instead of one).
 Objects inside the pack are ordered commits, then trees, then everything else, so a clone can read the metadata as a prefix.
 
 ### Why skipping the per-object HEAD walk is sound
@@ -71,3 +73,7 @@ Objects not in any pack are fetched loose, as before. Many small packs (one per 
 `crates/vcs-remote/tests/model.rs` explores every interleaving, crash and lost CAS for loose and packed layouts and checks
 the closure invariant after each write. `tests/packs.rs` covers the request counts, mixed layouts, a new branch off an old
 commit, moved directories, crash between pack and index, and a corrupt pack.
+
+## Clone request counts (small packs read whole, automatic compaction)
+
+A clone reads each pack in several waves (index, trailer check, commits, trees, files). Packs of at most 1 MiB (`VCS_SMALL_PACK_BYTES`, 0 disables; at most 16 MiB per clone, `VCS_SMALL_PACK_TOTAL`) are therefore read with one GET in the same parallel wave as their index: two requests per small pack however many waves read it, and the trailer check is answered from the body (kept only when its length and trailer match the index). Larger packs are cut into at most 8 ranges of at least 1 MiB each. Trailer checks run as one parallel wave. After a publish, every 8th remote generation, a remote with more than 24 packs gets one bounded tiered compaction pass (output v2, at most 64 MiB per merged pack, `VCS_AUTO_COMPACT=0` disables; the safety rules C1 to C5 of `compact.rs` apply). Pack v3 is NOT the default for transfers: docs/research/walgit-benchmark.md measures it slower for clone wall time. Tests: `crates/vcs-repo/tests/clone_requests.rs`, `crates/vcs-remote/tests/autocompact.rs`. A manifest-held pack list was not done: it would save one LIST that already runs concurrently with the manifest GET, and would make every compaction a manifest CAS.

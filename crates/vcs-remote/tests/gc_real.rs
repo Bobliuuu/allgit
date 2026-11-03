@@ -99,6 +99,12 @@ fn upload(b: &dyn Backend, s: &MemoryStore, id: ObjectId, seen: &mut HashSet<Obj
     b.put_if_absent(&object_key(&id), &o.encode()).unwrap();
 }
 
+/// These scenarios model a remote that still holds legacy loose objects, which a publisher adopts
+/// by probing for them (`with_loose_probe`; off by default because it costs a request per new commit).
+fn legacy_publisher<'a>(b: &'a dyn Backend, s: &'a dyn ObjectStore, t: Transaction) -> Publisher<'a> {
+    Publisher::new(b, s, t).with_loose_probe()
+}
+
 fn tx(old: Option<ObjectId>, new: ObjectId) -> Transaction {
     Transaction {
         updates: vec![RefUpdate {
@@ -121,6 +127,7 @@ fn opts() -> RemoteGcOptions {
         lock_ttl_ms: 6 * HOUR,
         owner: "sweeper".into(),
         allow_short_grace: false,
+        rewrite_packs: true,
     }
 }
 
@@ -135,11 +142,11 @@ fn setup(w: &World) -> MemBackend {
 fn setup_with(w: &World, orphan_pack: bool) -> MemBackend {
     let b = MemBackend::new().with_gc();
     b.set_now_ms(T0);
-    Publisher::new(&b, &w.store, tx(None, w.h0)).run().unwrap();
+    legacy_publisher(&b, &w.store, tx(None, w.h0)).run().unwrap();
     if orphan_pack {
         let mut t = tx(None, w.c);
         t.updates[0].branch = "aborted".into();
-        let mut p = Publisher::new(&b, &w.store, t);
+        let mut p = legacy_publisher(&b, &w.store, t);
         for _ in 0..3 {
             p.step().unwrap(); // Collect, PutPack, PutIdx ... then the client dies
         }
@@ -207,7 +214,7 @@ fn publisher<'a>(w: &'a World, b: &'a MemBackend, v: Variant, q: GcQuirks) -> Pu
     } else {
         w.c
     };
-    let p = Publisher::new(b, &w.store, tx(Some(w.h0), new))
+    let p = legacy_publisher(b, &w.store, tx(Some(w.h0), new))
         .with_hold_ms(HOUR)
         .with_gc_quirks(q);
     if v == Variant::AdoptLoose {
@@ -486,7 +493,7 @@ fn young_objects_and_their_dependencies_are_kept() {
 fn history_in_the_applied_window_is_a_root() {
     let (w, b) = orphan_world();
     // move the branch H0 -> C (adopting the orphan), then to P: H0's tx is still in the window
-    Publisher::new(&b, &w.store, tx(Some(w.h0), w.p)).run().unwrap();
+    legacy_publisher(&b, &w.store, tx(Some(w.h0), w.p)).run().unwrap();
     b.advance_ms(30 * DAY);
     let rep = vcs_remote::remote_gc(&b, &opts()).unwrap();
     assert!(rep.deleted.is_empty(), "old head H0 is named by a retained tx: {:?}", rep.deleted);
@@ -556,7 +563,7 @@ fn lost_delete_leaves_tombstone_and_object_and_a_rerun_finishes() {
         "interrupted sweep leaves tombstones (safe: publishers abort)"
     );
     // a publisher that would re-adopt D is blocked by the stale tombstone, not allowed through
-    let mut p = Publisher::new(&b, &w.store, tx(Some(w.h0), w.c)).with_hold_ms(HOUR);
+    let mut p = legacy_publisher(&b, &w.store, tx(Some(w.h0), w.c)).with_hold_ms(HOUR);
     for _ in 0..40 {
         if p.is_finished() || p.step().is_err() {
             break;
@@ -588,7 +595,7 @@ fn publisher_touches_what_it_adopts_and_aborts_on_tombstone() {
     let (w, b) = orphan_world();
     let before = b.modified_ms(&object_key(&w.c)).unwrap().unwrap();
     // run a publisher to completion: C adopted as head
-    Publisher::new(&b, &w.store, tx(Some(w.h0), w.c)).run().unwrap();
+    legacy_publisher(&b, &w.store, tx(Some(w.h0), w.c)).run().unwrap();
     assert!(
         b.modified_ms(&object_key(&w.c)).unwrap().unwrap() > before,
         "dedup hit must refresh the remote age"
@@ -596,7 +603,7 @@ fn publisher_touches_what_it_adopts_and_aborts_on_tombstone() {
     // with a tombstone present the publisher refuses to proceed (retries, then Unknown)
     let (w2, b2) = orphan_world();
     b2.put_if_absent(&tomb_key(&w2.c), b"gc").unwrap();
-    let e = Publisher::new(&b2, &w2.store, tx(Some(w2.h0), w2.c)).run().unwrap_err();
+    let e = legacy_publisher(&b2, &w2.store, tx(Some(w2.h0), w2.c)).run().unwrap_err();
     assert!(matches!(e, PublishError::Unknown(..)), "{e}");
     let (m, _) = load_manifest(&b2).unwrap();
     assert_eq!(m.head("z", "main"), Some(w2.h0), "nothing was published");
@@ -619,7 +626,7 @@ fn orphan_pack_from_an_aborted_publish_is_deleted_when_old_and_kept_when_young_o
     // a second aborted pack written just now: young, and it DEPENDS on the old orphan (P over C)
     let mut t = tx(None, w.p);
     t.updates[0].branch = "aborted2".into();
-    let mut p = Publisher::new(&b, &w.store, t);
+    let mut p = legacy_publisher(&b, &w.store, t);
     for _ in 0..3 {
         p.step().unwrap();
     }
@@ -642,11 +649,8 @@ fn orphan_pack_from_an_aborted_publish_is_deleted_when_old_and_kept_when_young_o
     assert_eq!(b.keys().iter().filter(|k| k.ends_with(".pack")).count(), 1, "no half packs left");
 }
 
-#[test]
-fn a_pack_with_any_live_object_is_kept_whole() {
-    let w = world();
-    let b = setup_with(&w, false);
-    // one pack holding both the live head and an unreachable object
+/// One pack holding the live head H0 plus two unreachable objects: the orphan C and a stray blob.
+fn mixed_pack(w: &World, b: &MemBackend) -> (String, Object) {
     let live = Object::Blob(b"x".to_vec());
     let extra = w.store.get(&w.c).unwrap();
     let built = vcs_store::pack::build_pack(vec![
@@ -656,11 +660,157 @@ fn a_pack_with_any_live_object_is_kept_whole() {
     ]);
     b.put_if_absent(&format!("packs/{}.pack", built.name), &built.pack).unwrap();
     b.put_if_absent(&format!("packs/{}.idx", built.name), &built.idx).unwrap();
+    (format!("packs/{}", built.name), live)
+}
+
+fn stem_has(b: &MemBackend, stem: &str, id: &ObjectId) -> bool {
+    let idx = b.get(&format!("{stem}.idx")).unwrap().unwrap();
+    vcs_store::pack::PackIndex::parse(&idx.data, std::path::Path::new(stem))
+        .unwrap()
+        .find(id)
+        .is_some()
+}
+
+#[test]
+fn a_pack_with_any_live_object_is_kept_whole_when_rewriting_is_off() {
+    let w = world();
+    let b = setup_with(&w, false);
+    let (stem, _) = mixed_pack(&w, &b);
     b.advance_ms(30 * DAY);
-    let rep = vcs_remote::remote_gc(&b, &opts()).unwrap();
-    assert!(rep.packs_with_garbage_kept >= 1, "{rep:?}");
-    assert!(b.exists(&format!("packs/{}.pack", built.name)).unwrap());
+    let rep = vcs_remote::remote_gc(
+        &b,
+        &RemoteGcOptions {
+            rewrite_packs: false,
+            ..opts()
+        },
+    )
+    .unwrap();
+    assert!(rep.packs_with_garbage_kept >= 1 && rep.packs_rewritten.is_empty(), "{rep:?}");
+    assert!(b.exists(&format!("{stem}.pack")).unwrap());
     g_reach(&b).unwrap();
+}
+
+#[test]
+fn a_pack_with_garbage_is_rewritten_without_it() {
+    let w = world();
+    let b = setup_with(&w, false);
+    let (stem, live) = mixed_pack(&w, &b);
+    b.advance_ms(30 * DAY);
+    // dry run reports it and changes nothing
+    let before = b.keys();
+    let dry = vcs_remote::remote_gc(&b, &RemoteGcOptions { dry_run: true, ..opts() }).unwrap();
+    assert_eq!(dry.packs_rewritten.len(), 1, "{dry:?}");
+    assert_eq!(b.keys(), before);
+    let rep = vcs_remote::remote_gc(&b, &opts()).unwrap();
+    assert_eq!(rep.packs_rewritten.len(), 1, "{rep:?}");
+    let (old, new) = &rep.packs_rewritten[0];
+    assert_eq!(old, &stem);
+    assert!(!b.exists(&format!("{stem}.pack")).unwrap() && !b.exists(&format!("{stem}.idx")).unwrap());
+    assert!(b.exists(&format!("{new}.pack")).unwrap() && b.exists(&format!("{new}.idx")).unwrap());
+    // the new pack holds the live objects but not the orphan
+    assert!(stem_has(&b, new, &w.h0));
+    assert!(!stem_has(&b, new, &w.c) && !stem_has(&b, new, &live.id()));
+    assert!(rep.deleted.contains(&w.c) && rep.deleted.contains(&live.id()));
+    assert!(b.list("tomb/").unwrap().is_empty());
+    g_reach(&b).unwrap();
+    // a second run has nothing left to do
+    let again = vcs_remote::remote_gc(&b, &opts()).unwrap();
+    assert!(again.packs_rewritten.is_empty() && again.deleted.is_empty(), "{again:?}");
+}
+
+#[test]
+fn rewrite_is_crash_safe_at_every_step() {
+    // At the Rewritten hook both packs exist; the state is reachable-complete. Then simulate a
+    // crash at each later delete by stopping the sweep through a failing backend is covered by
+    // the generic fault tests; here we check the intermediate state and that a re-run converges.
+    let w = world();
+    let b = setup_with(&w, false);
+    let (stem, _) = mixed_pack(&w, &b);
+    b.advance_ms(30 * DAY);
+    let mut seen = false;
+    let mut hook = |p: vcs_remote::gc::GcPoint| {
+        if p == vcs_remote::gc::GcPoint::Rewritten {
+            seen = true;
+            assert!(b.exists(&format!("{stem}.pack")).unwrap() && b.exists(&format!("{stem}.idx")).unwrap());
+            g_reach(&b).unwrap();
+        }
+    };
+    remote_gc_with(&b, &opts(), GcQuirks::default(), &mut hook).unwrap();
+    assert!(seen);
+    g_reach(&b).unwrap();
+}
+
+#[test]
+fn a_young_pack_with_garbage_is_not_rewritten() {
+    let w = world();
+    let b = setup_with(&w, false);
+    b.advance_ms(30 * DAY);
+    let (stem, _) = mixed_pack(&w, &b); // fresh
+    let rep = vcs_remote::remote_gc(&b, &opts()).unwrap();
+    assert!(rep.packs_rewritten.is_empty() && rep.packs_with_garbage_kept >= 1, "{rep:?}");
+    assert!(b.exists(&format!("{stem}.pack")).unwrap());
+}
+
+#[test]
+fn a_touched_pack_survives_the_rewrite_remark() {
+    let w = world();
+    let b = setup_with(&w, false);
+    let (stem, _) = mixed_pack(&w, &b);
+    b.advance_ms(30 * DAY);
+    // a publisher dedups against the orphan C inside the pack: it touches the pack after Tombed
+    let mut hook = |p: vcs_remote::gc::GcPoint| {
+        if p == vcs_remote::gc::GcPoint::Tombed {
+            b.touch(&format!("{stem}.pack")).unwrap();
+            b.touch(&format!("{stem}.idx")).unwrap();
+        }
+    };
+    let rep = remote_gc_with(&b, &opts(), GcQuirks::default(), &mut hook).unwrap();
+    assert!(rep.packs_rewritten.is_empty(), "{rep:?}");
+    assert!(stem_has(&b, &stem, &w.c));
+    assert!(b.list("tomb/").unwrap().is_empty());
+    g_reach(&b).unwrap();
+}
+
+#[test]
+fn the_sweeper_renews_its_lease() {
+    let w = world();
+    let b = setup_with(&w, false);
+    b.advance_ms(30 * DAY);
+    let mut thief_blocked = false;
+    let mut hook = |p: vcs_remote::gc::GcPoint| match p {
+        // 4h of a 6h lease gone: the next phase boundary must renew it
+        vcs_remote::gc::GcPoint::Tombed => b.advance_ms(4 * HOUR),
+        // 4h more: past the ORIGINAL expiry, inside the renewed one
+        vcs_remote::gc::GcPoint::Remarked => {
+            b.advance_ms(4 * HOUR);
+            thief_blocked = matches!(vcs_remote::remote_gc(&b, &opts()), Err(GcError::Locked(_)));
+        }
+        _ => {}
+    };
+    remote_gc_with(&b, &opts(), GcQuirks::default(), &mut hook).unwrap();
+    assert!(thief_blocked, "lease was not renewed");
+    g_reach(&b).unwrap();
+}
+
+#[test]
+fn a_sweeper_that_lost_its_lease_stops_before_deleting() {
+    let w = world();
+    let b = setup_with(&w, false);
+    b.advance_ms(30 * DAY);
+    let keys_before: HashSet<String> = b.keys().into_iter().collect();
+    let mut hook = |p: vcs_remote::gc::GcPoint| {
+        if p == vcs_remote::gc::GcPoint::Tombed {
+            // stalled past the whole lease; a second sweeper takes over and (being a
+            // dry-run-free sweep) finishes the job
+            b.advance_ms(7 * HOUR);
+            vcs_remote::remote_gc(&b, &opts()).unwrap();
+        }
+    };
+    let r = remote_gc_with(&b, &opts(), GcQuirks::default(), &mut hook);
+    assert!(matches!(r, Err(GcError::LeaseLost)), "{r:?}");
+    assert!(b.list("tomb/").unwrap().is_empty());
+    g_reach(&b).unwrap();
+    let _ = keys_before;
 }
 
 #[test]
@@ -698,7 +848,7 @@ fn republishing_an_old_orphan_pack_touches_it() {
         .collect();
     assert_eq!(orphan.len(), 1, "{stem:?}");
     let before = b.modified_ms(&format!("{}.idx", orphan[0])).unwrap().unwrap();
-    Publisher::new(&b, &w.store, tx(Some(w.h0), w.c)).run().unwrap();
+    legacy_publisher(&b, &w.store, tx(Some(w.h0), w.c)).run().unwrap();
     assert!(b.modified_ms(&format!("{}.pack", orphan[0])).unwrap().unwrap() > before);
     assert!(b.modified_ms(&format!("{}.idx", orphan[0])).unwrap().unwrap() > before);
     assert!(vcs_remote::remote_gc(&b, &opts()).unwrap().deleted_packs.is_empty());

@@ -321,8 +321,9 @@ fn apply_check_index_reverse_and_atomic() {
     let e = fail(&a, &["apply", p.to_str().unwrap()]);
     assert!(e.contains("dir/b.txt") && e.contains("does not apply"), "{e}");
     assert!(read(&a, "a.txt").starts_with("one\n"));
-    // 3-way and unsafe paths and binary are refused loudly
-    assert!(fail(&a, &["apply", "-3", p.to_str().unwrap()]).contains("not supported"));
+    // -3 cannot place the hunk either, and still changes nothing; unsafe paths and binary are refused loudly
+    assert!(fail(&a, &["apply", "-3", p.to_str().unwrap()]).contains("cannot be placed"));
+    assert!(read(&a, "a.txt").starts_with("one\n"));
     std::fs::write(&p, "--- a/../evil\n+++ b/../evil\n@@ -0,0 +1 @@\n+x\n").unwrap();
     assert!(fail(&a, &["apply", p.to_str().unwrap()]).contains("unsafe path"));
     std::fs::write(
@@ -457,4 +458,42 @@ fn binary_changes_are_refused_by_format_patch() {
     let e = fail(&a, &["format-patch", "-n", "1", "-o", t.path().join("o").to_str().unwrap()]);
     assert!(e.contains("blob.bin") && e.contains("binary"), "{e}");
     assert!(!t.path().join("o").exists() || std::fs::read_dir(t.path().join("o")).unwrap().count() == 0);
+}
+
+/// `apply --index` and `am` only look at the paths they touch (and at staged state): an
+/// unrelated local edit does not stop them, a local edit to a touched path or a staged change does.
+#[test]
+fn apply_index_and_am_check_only_what_they_touch() {
+    let t = tempfile::tempdir().unwrap();
+    let a = t.path().join("a");
+    std::fs::create_dir(&a).unwrap();
+    ok(&a, &["init"]);
+    write(&a, "p.txt", "1\n2\n3\n");
+    write(&a, "q.txt", "x\ny\nz\n");
+    commit_all(&a, "base", 1700000000);
+    let patch = "--- a/p.txt\n+++ b/p.txt\n@@ -1,3 +1,3 @@\n 1\n-2\n+TWO\n 3\n";
+    let pf = t.path().join("d.patch");
+    std::fs::write(&pf, patch).unwrap();
+    // unrelated unstaged edit: allowed
+    write(&a, "q.txt", "x\nY\nz\n");
+    ok(&a, &["apply", "--index", pf.to_str().unwrap()]);
+    assert!(ok(&a, &["diff", "--staged", "--name-only"]).contains("p.txt"));
+    ok(&a, &["restore", "--staged", "p.txt"]);
+    ok(&a, &["restore", "p.txt"]);
+    // unstaged edit to the touched path: refused, file unchanged
+    write(&a, "p.txt", "1\n2\n3\n4\n");
+    assert!(fail(&a, &["apply", "--index", pf.to_str().unwrap()]).contains("does not match the index"));
+    assert_eq!(read(&a, "p.txt"), "1\n2\n3\n4\n");
+    ok(&a, &["restore", "p.txt"]);
+    ok(&a, &["restore", "q.txt"]);
+    // am: dirty tracked file refused, then applies on a clean tree and commits the patch
+    let mbox = format!("From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001\nFrom: Dev <dev@example.com>\nDate: Tue, 14 Nov 2023 22:13:20 +0000\nSubject: [PATCH] two\n\nbody\n---\n{patch}");
+    let mf = t.path().join("m.mbox");
+    std::fs::write(&mf, mbox).unwrap();
+    write(&a, "q.txt", "dirty\n");
+    assert!(fail(&a, &["am", mf.to_str().unwrap()]).contains("uncommitted changes"));
+    ok(&a, &["restore", "q.txt"]);
+    ok(&a, &["am", mf.to_str().unwrap()]);
+    assert_eq!(read(&a, "p.txt"), "1\nTWO\n3\n");
+    assert_eq!(log_of(&a)[0], "Dev|dev@example.com|1700000000|two");
 }

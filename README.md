@@ -1,383 +1,405 @@
-<div align="center">
+# 🌳 vcs
 
-# 🌳 allgit
-
-**Version control for big repos where code, art, and docs shouldn't share one history.**
+*Big repos, small downloads: take only the slice you need.* 🍰
 
 [![CI](https://github.com/Bobliuuu/allgit/actions/workflows/ci.yml/badge.svg)](https://github.com/Bobliuuu/allgit/actions/workflows/ci.yml)
 ![Rust](https://img.shields.io/badge/rust-1.80%2B-orange)
 ![Status](https://img.shields.io/badge/status-early%20research-yellow)
 ![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)
 
-</div>
+**vcs** is a new version control system, written in Rust, for big repositories where code, art and docs should not
+share one history and where nobody wants to download everything. The command is `vcs`; the repository is
+[Bobliuuu/allgit](https://github.com/Bobliuuu/allgit).
 
-allgit is a version control tool (the command is `vcs`) written in Rust, for teams whose repository mixes very different things (say, game code, shaders, and gigabytes of art) and who want to download and work on only the parts they need. It is **not** a Git wrapper: it has its own storage and never calls Git.
+> 🐣 Early research software. There is no stable release and no on-disk format promise yet. Much of it is tested, but
+> parts have only been run against fixtures, local servers or a single cloud account. Read
+> [Status and limitations](#-status-and-limitations) before depending on it.
 
-> ⚠️ Early research project, no stable release yet. A lot works and is tested, but several pieces have only been run against fixtures or a single cloud account. See [what works today](#-what-works-today) and [what is not done or not verified](#-not-done-or-not-verified).
+## ✨ What it is
 
-## 💡 The big idea
+```text
+ one repo, many zones, each with its own history
 
-Imagine a game studio. Programmers touch `engine/`, artists touch `assets/`. With plain Git, everyone shares one history and downloads everything.
+   engine/  ──●──●──●──●        you subscribe to what you need
+   assets/  ──●────●            (engine only? assets are never downloaded)
+   root     ──●──●──────●
+        \________|_________/
+   one atomic publish: all heads move, or none
+```
 
-With allgit, each part of the repo is a **zone**:
+<p align="center"><img src="docs/img/object-model.svg" alt="Object model: one global content-addressed DAG, zones with their own commit DAGs, CAS manifest" width="900"></p>
+<p align="center"><sub>The object model: one store, per-zone histories, one manifest that orders publishes.</sub></p>
 
-- 🧩 Each zone has its **own branches and history**, so an artist's busy week doesn't clutter the programmers' log.
-- 📦 You **subscribe** only to the zones you need. Skipped zones are never downloaded (and never "deleted", just not there).
-- ⚛️ One commit can still change several zones **atomically**: either all of them move, or none do.
+- 🧬 **One global content-addressed DAG.** Every object (file chunk, tree, commit, transaction, operation) is named by
+  its BLAKE3 hash and stored once, whichever zone or branch uses it.
+- 🧩 **Zones.** A zone owns a path prefix (say `engine/` or `assets/`) and has its **own branches and history**. Zones
+  cannot overlap. A busy art zone does not clutter the code log.
+- 🎯 **Sparse subscription.** You subscribe to the zones you need. Zones you skip are never downloaded (and never
+  "deleted", they are just not there). Inside a zone, `vcs sparse` limits which paths are materialized.
+- ⚛️ **Atomic cross-zone transactions.** One commit can change several zones; `vcs publish` moves all the branch heads
+  you publish in one step, or none of them.
+- 🏠 **Local-first.** Everything except sharing works offline. Sharing is `publish`, `fetch`, `sync` and `clone`.
+- 🪣 **S3-compatible authoritative remote with a CAS manifest.** The remote is a directory, an S3-compatible bucket or
+  a `vcs-server`. A single manifest object, replaced by compare-and-swap, is the source of truth. A publish becomes
+  visible at one instant, and the protocol is checked by an executable model that explores crashes and interleavings.
+- ⏪ **Operation log and undo.** `vcs op log` records every local change to branches and workspace; `vcs op undo` and
+  `vcs op restore` go back.
+- 🤝 **Structured conflicts.** A conflicted merge or rebase keeps conflicts as recorded state you can list, show and
+  resolve (`vcs conflict`, `vcs resolve`), instead of leaving markers as the only record.
+- 🔐 **Locks.** `vcs lock`, `unlock` and `locks` for files that cannot be merged. Enforced only when you publish
+  through `vcs-server`; with a plain directory or bucket they are advisory.
+- 📦 **Built-in large-file engine.** Big files are content-defined chunked, stored once, added and checked out by
+  streaming, with no separate large-file tool. See [Large files](#-large-files).
+- 🧹 **Garbage collection.** `vcs gc` deletes unreachable objects older than a grace period, locally and on remotes.
 
-## 🚀 Try it in 60 seconds
+<p align="center"><img src="docs/img/atomic-publish.svg" alt="Animation: objects upload, then one conditional manifest write moves all zone heads" width="900"></p>
+<p align="center"><sub>An atomic cross-zone publish (animated): objects first, then a single compare-and-swap of the manifest.</sub></p>
 
-You need [Rust](https://rustup.rs) 1.80+. Every command and output below was run for real.
+### 🌱 It does not use git, Perforce or walgit
 
-**1. Build and make a repo**
+vcs has its own object format, packs, index and wire protocol. At runtime it needs no `git` binary, no libgit2, no
+`p4` and no git server (walgit included). A test checks that the core crates have no git or p4 dependencies. Object
+ids and pack formats are **not** compatible with git; see [docs/interop.md](docs/interop.md).
+
+What it offers for people coming from those tools:
+
+- 🔀 `vcs git <git-args>` runs a git command line as its vcs equivalent, for example `vcs git log --oneline -5` or
+  `vcs git commit -am "fix"`. `vcs git --map` lists the table. When git has something vcs does not, it stops and
+  names the native way. Map: [docs/git-to-vcs.md](docs/git-to-vcs.md).
+- 🔀 `vcs p4 <p4-args>` does the same for Perforce (`vcs p4 --list` shows the map, `--explain` prints the translation
+  and runs nothing). No p4 server or binary is involved. Map: [docs/p4-to-vcs.md](docs/p4-to-vcs.md).
+- ↔️ The reverse table, from each vcs command to its git and p4 spelling:
+  [docs/vcs-to-git-p4.md](docs/vcs-to-git-p4.md).
+- 📥 Moving history: `vcs import-git` reads a `git fast-export` stream (you run git to produce it), `vcs export-git`
+  writes one, `vcs import-p4` reads recorded `p4` output. See [docs/import-git.md](docs/import-git.md),
+  [docs/import-p4.md](docs/import-p4.md) and [docs/interop.md](docs/interop.md).
+
+<p align="center"><img src="docs/img/frontends.svg" alt="vcs git and vcs p4 rewrite to native vcs commands" width="900"></p>
+<p align="center"><sub><code>vcs git</code> and <code>vcs p4</code> (animated): an argument rewrite to native vcs, no git or p4 involved.</sub></p>
+
+## 🛠️ Install and build
+
+Needs Rust 1.80 or newer.
 
 ```bash
-cargo build --release
-export PATH="$PWD/target/release:$PATH"
-export VCS_AUTHOR_NAME=Ada VCS_AUTHOR_EMAIL=ada@example.com   # who you are
+git clone https://github.com/Bobliuuu/allgit && cd allgit      # any way of getting the sources works
+cargo build --release                                         # binaries in target/release
+cargo install --path crates/vcs-cli --locked                  # or install `vcs` onto your PATH
+vcs --help
+```
 
+Tagged releases publish Linux and macOS tarballs with checksums; see [docs/install.md](docs/install.md), which also
+covers Windows (compile-checked only) and the optional `git` shim (`--features git-shim`). HTTPS remotes need
+`--features tls`.
+
+## 🚀 Quickstart
+
+Set an identity, then make a repository with two zones (every command below was run against a current build):
+
+```bash
+export VCS_AUTHOR_NAME=Ada VCS_AUTHOR_EMAIL=ada@example.com
 vcs init demo && cd demo
-```
-```text
-Initialized empty vcs repository in /path/to/demo/.vcs
-```
-
-**2. Commit, change, and look at the history**
-
-```bash
-echo hello > hello.txt
-vcs add hello.txt && vcs commit -m "Initial commit"
-echo world >> hello.txt
-vcs status && vcs diff
-vcs add hello.txt && vcs commit -m "Update greeting"
-vcs log
-```
-```text
-staged 1 file(s), 0 removal(s)
-[root/main 96d49f6fc5b5] Initial commit
-zone root: branch main @ 96d49f6fc5b5
-  not staged:
-    modified:  hello.txt
-diff --vcs a/hello.txt b/hello.txt
---- a/hello.txt
-+++ b/hello.txt
-@@ -1,1 +1,2 @@
- hello
-+world
-staged 1 file(s), 0 removal(s)
-[root/main e670fef25d9b] Update greeting
-commit e670fef25d9b260392538cebb7f2eb9ac9170237e51c90ab1019bc7a5eb23927
-change e53b19aa3c7a90559906ac5a611c9321   zone root
-Author: Ada <ada@example.com>
-Date:   1793477306
-    Update greeting
-
-commit 96d49f6fc5b58621a3005c7c8508e00f5f64504fb533f219630c7954cd1e8850
-change 58ff190e27c4bafe507dbedca2a01929   zone root
-Author: Ada <ada@example.com>
-Date:   1793477306
-    Initial commit
-```
-
-**3. Split the repo into zones** (a commit touching both is one atomic transaction)
-
-```bash
 mkdir engine assets
-echo 'fn main(){}' > engine/main.rs && echo bin > assets/logo.bin
+echo 'fn main(){}' > engine/main.rs && echo bin > assets/logo.bin && echo hi > README.md
 vcs zone create engine --path engine
 vcs zone create assets --path assets
-vcs add engine assets && vcs commit -m "Add engine and assets"
-vcs zone branch engine feature       # branch just the engine
-vcs zone checkout engine feature     # assets stays on main
+vcs add . && vcs commit -m "initial"      # one atomic transaction covering 3 zones (assets, engine, root)
 vcs zone list
-vcs snapshot create v1 && vcs snapshot checkout v1   # every subscribed zone back to its pinned commit
-vcs zone rename old new                 # zones without history only; vcs zone delete <name> [--force]
-vcs branch -d feature                   # refuses the checked-out branch and unmerged work (--force to override)
-```
-```text
-created zone engine owning engine/
-created zone assets owning assets/
-staged 2 file(s), 0 removal(s)
-[assets/main 764099d40c74] Add engine and assets
-[engine/main d4fbb8635c1d] Add engine and assets
-atomic transaction 218e46ade70a covering 2 zones
-created engine/feature at d4fbb8635c1d
-zone engine: switched to feature
-assets         assets               subscribed, on main; 1 branch(es)
-engine         engine               subscribed, on feature; 2 branch(es)
-root           (rest of repo)       subscribed, on main; 1 branch(es)
 ```
 
-**4. Share it, then clone only the engine**
+Share it through any directory, then clone only the engine zone:
 
 ```bash
-vcs zone checkout engine main        # back to main; publish sends every branch
-vcs remote set ~/shared.vcs          # any directory works as a remote
+vcs remote set ../shared.vcs
+vcs publish                               # published atomically (remote generation 1)
+cd .. && vcs clone shared.vcs work --zone engine
+cd work && vcs status                     # assets and root: not subscribed, not downloaded, NOT deleted
+```
+
+Work, publish, and pull in another zone later:
+
+```bash
+echo x >> engine/main.rs
+vcs git commit -am "edit"                 # git spelling; native: vcs add + vcs commit
 vcs publish
-cd .. && vcs clone ~/shared.vcs work --zone engine
-cd work && vcs status
-```
-```text
-zone engine: switched to main
-remote set to /Users/you/shared.vcs
-assets/main (none) -> dfd635917b38
-engine/main (none) -> fd4d2ccc4144
-published atomically (remote generation 1)
-Cloned /Users/you/shared.vcs into work
-downloaded zones: engine
-skipped zones (not subscribed): assets, root
-  add one later with `vcs zone add <name>` then `vcs fetch --zone <name>`
-zone engine (engine/): branch main @ fd4d2ccc4144
-not subscribed (not downloaded/materialized, NOT deleted): assets, root
-clean
+vcs zone add assets && vcs fetch --zone assets
+vcs op log                                # every local operation; `vcs op undo` reverts the last one
+vcs gc --dry-run                          # reports what GC would delete
 ```
 
-Not sure which zones you need? `vcs zone suggest` proposes boundaries from manifests and ownership files (read-only), and `vcs clone <url> work --for path/or/symbol --dry-run` shows the smallest zone set, with dependencies, and how much it would download; see [Zone auto-detection](docs/zones-autodetect.md).
+Not sure which zones you need? `vcs zone suggest` proposes boundaries from manifests and ownership files (read-only),
+and `vcs clone <url> work --for path/or/symbol --dry-run` shows the smallest zone set, with dependencies, and how
+much it would download. See [docs/zones-autodetect.md](docs/zones-autodetect.md). The full tour, with pasted output
+from real runs, is the [user guide](docs/guide/README.md).
 
-That's it: `work/` contains only `engine/`. Later, `vcs fetch` downloads updates and `vcs sync` fast-forwards when safe (it reports dirty or diverged zones instead of touching them). A publish that would overwrite someone else's work is refused with guidance.
+## ☁️ Remotes and the server
 
-**5. Everyday commands** (run inside `work/engine`; all verified)
+<p align="center"><img src="docs/img/remote-architecture.svg" alt="Remote architecture: clients, vcs-server, backend layout, GC" width="900"></p>
+<p align="center"><sub>Remote architecture (animated): clients, the optional vcs-server, the backend layout and the GC handshake.</sub></p>
+
+A repository has one remote, set with `vcs remote set`:
+
+| Kind | URL | Use |
+|---|---|---|
+| directory | `../shared`, `/srv/repo`, `file:///srv/repo` | shared disk, tests |
+| S3-compatible | `s3://bucket/prefix?endpoint=URL&region=R` | object storage; credentials from `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`; the bucket must exist and support conditional writes |
+| vcs-server | `http://host:port` or `https://...` (needs `--features tls`) | a team: tokens, roles, path policy, lock enforcement, audit log |
 
 ```bash
-vcs tag v1.0 && vcs tag               # lightweight tag, then list tags
-vcs show                              # HEAD commit with its diff
-vcs blame main.rs                     # per-line commit attribution
-echo x >> main.rs
-vcs stash push && vcs stash pop       # set changes aside, bring them back
-vcs restore main.rs                   # discard working-tree changes (--staged to unstage)
-vcs mv main.rs lib.rs && vcs commit -m mv
-# also available: rm, revert, cherry-pick, rebase, resolve, config, import-git/export-git (see `vcs --help`)
-vcs log --json                        # --json works on status, log, diff, branch, zone list, op log, conflict list
-vcs gc --dry-run                      # report what GC would delete; plain `vcs gc` really deletes unreachable old objects
-vcs repack && vcs fsck                # loose objects into one pack, then verify
-vcs op log                            # operation log; `vcs op undo` reverts the last local operation
-vcs lock --lease-secs 60 main.rs && vcs locks   # advisory lock recorded on the remote
+vcs-server hash-token <token>                                  # hash to put in the tokens file
+vcs-server --root /srv/repo --tokens tokens.txt --listen 127.0.0.1:8480
+vcs login http://host:8480 && vcs clone http://host:8480 work
 ```
 
-> Hashes and timestamps differ on every run, and the outputs above are trimmed to the relevant lines. Step 4's output came from a separate fresh run of steps 1 to 3 (the hashes differ from step 3's).
+<p align="center"><img src="docs/img/sparse-clone.svg" alt="Animation: sparse clone of one zone" width="900"></p>
+<p align="center"><sub>Sparse subscription (animated): only the zones and paths you ask for are downloaded.</sub></p>
 
-## ✅ What works today
+`vcs fetch` downloads and updates remote-tracking refs, `vcs sync` fetches and fast-forwards where safe (it reports
+dirty or diverged zones instead of touching them), and a publish that would overwrite someone else's work is
+refused. Offline: `vcs bundle`. Details: [docs/s3.md](docs/s3.md), [docs/server.md](docs/server.md),
+[docs/deploy.md](docs/deploy.md), [docs/bundle.md](docs/bundle.md), [docs/remote-packs.md](docs/remote-packs.md),
+[guide chapter 5](docs/guide/05-remotes.md), [guide chapter 10](docs/guide/10-operating-a-server.md).
 
-✅ done and tested · 🟡 partial or limited · ⬜ not built. "Tested" means an executable test in the repo; the last column says what was and was not run for real.
+## 🐘 Large files
 
-| Area | Status | Notes |
-|---|---|---|
-| Objects and format | ✅ | BLAKE3, domain-separated ids, canonical codec, strict decode, proptests; symlink entries; big files stored as **chunk manifests** (format v2) |
-| Local VCS | ✅ | init, add, commit, status, diff, log, branch, switch, fsck, tags (lightweight and annotated), show, blame, restore, rm, mv, `.vcsignore`, stash, `config`, `--json` on read commands |
-| Zones and snapshots | ✅ | non-overlapping zones, independent heads, sparse subscribe/unsubscribe, atomic multi-zone commit, rename/delete, snapshots |
-| History editing | 🟡 | `cherry-pick`, `revert`, `rebase` (keeps change ids, linear ranges only), operation log with `op undo` (local state only) |
-| Merge | 🟡 | three-way text and tree merge, conflict state, `resolve`, `--abort`. **Rename-aware merge** is opt-in (`--renames`). **Structural merge** (tree-sitter) for Rust, Python, TypeScript and Go sits behind cargo feature flags, off by default. Criss-cross and file/directory conflicts are errors |
-| Assisted merge | 🟡 | `vcs merge --assist` plus the `vcs-assist-claude` helper. Fixture and mock tested; **never called against the live API** ([assist.md](docs/assist.md)) |
-| Remote protocol | ✅ | single CAS manifest, idempotent publish, model-checked (about 1.7M crash and interleaving schedules); tags sync through publish/fetch/clone |
-| Remote storage | 🟡 | directory remotes, `s3://` remotes (HTTP; HTTPS needs `--features tls`), `http(s)://` remotes served by `vcs-server`. **Remote packs**: one pack per publish, fetched by byte range |
-| Sparse and lazy | ✅ | clone and fetch by zone (tests assert unsubscribed bytes are never read); **lazy blob fetch** with batched prefetch and `--stats` |
-| Server | 🟡 | `vcs-server`: validating writer, bearer tokens and roles, path policy, lock enforcement, TLS (rustls, feature `tls`), tamper-evident audit log, rate limits, directory or S3 backend, deploy recipe ([server.md](docs/server.md), [deploy.md](docs/deploy.md)) |
-| Login | ✅ | `vcs login`, `logout`, `auth`, and a credential helper; tokens stay out of the repo config |
-| Locks | 🟡 | `lock`, `unlock`, `locks`; model-checked; **enforced only when you publish through `vcs-server`**; with a plain directory or bucket they are advisory |
-| Packfiles | 🟡 | `repack` writes one pack plus index (loose objects stay readable); no delta compression; pack format has no compression yet |
-| Garbage collection | 🟡 | `vcs gc` really deletes unreachable objects older than a grace period (local); `gc --remote --yes` works for **directory remotes only**. S3 and HTTP remote GC is not built ([gc.md](docs/gc.md)) |
-| Git interop | 🟡 | `import-git` (fast-export, with symlinks and tags), `export-git` (incremental), and a `git-remote-allgit` helper so `git` can talk to an allgit repo ([interop.md](docs/interop.md)) |
-| Perforce | 🟡 | `import-p4` reads recorded `p4` output from a fixture directory. Tested on hand-written fixtures only ([import-p4.md](docs/import-p4.md)) |
-| Speed work | 🟡 | commit-graph cache, directory-listing cache for `status`, stat-cache `add`, cache-tree `commit`, parallel checkout/fsck. Some cells are still slower than git: see [Performance](#-performance) |
-| Hardening | 🟡 | fuzz targets for decoders, import and S3 list parsing; threat review in [security.md](docs/security.md) |
-| Windows | ⬜ | CI only *compiles* for Windows (advisory job). The code has never been run there |
+<p align="center"><img src="docs/img/local-store.svg" alt="Local store: loose objects, packs, compaction, chunked large files" width="900"></p>
+<p align="center"><sub>Local store (animated): loose objects, pack v2, compaction, pack v3, and large-file chunking.</sub></p>
 
-Known gaps are listed in [docs/architecture.md](docs/architecture.md#known-limitations-honest-list).
+Files of 1 MiB and up are stored as chunk manifests; files of **16 MiB and up** use the large-file layout (kind 9):
+content-defined chunks of 512 KiB to 8 MiB over ordinary blob objects, no format bump. Add, checkout and `restore`
+stream with memory independent of file size; editing the middle of a file re-chunks only the changed stretch and
+stores only the new chunks; `status` skips files whose size and times match the index; chunks upload and download in
+parallel. Design and compatibility rules: [docs/object-model.md](docs/object-model.md#large-files-chunked-kind-9-no-format-bump).
 
-## 🔎 Not done or not verified
+Measured (source: [docs/research/large-files-bench.md](docs/research/large-files-bench.md)): one file of 1024 MiB
+on a c6i.4xlarge (16 vCPU, ext4, warm cache), **one run each, no medians**, `git` 2.43 and `git-lfs` 3.6.1 run while
+other jobs shared the box (load1 up to about 10, so their wall times are noisy; CPU is the robust column). Cells are
+CPU s / wall s / peak RSS MiB; "vcs" is the large-file build measured in that document. It is a single-file test, not a
+workload study.
 
-- **S3 was measured once**: one run against real AWS S3 (us-east-1) from a Mac, about 2,700 requests. Other clouds (R2, GCS, B2) are unmeasured.
-- **No cloud TLS interop test.** HTTPS for `s3://` and for `vcs-server` is implemented with rustls, but only exercised against local servers, not against a real cloud endpoint or a public CA.
-- **The tables comparing vcs with Perforce, walgit, Jujutsu, Sapling, Mercurial and others use an older `vcs` build (`28e2980`)** and were not re-run; only the git comparison is current.
-- **Perforce was run once, on loopback only.** Real `p4d` 2026.1 on the same box, no network latency, journal off, shared noisy machine. The importer was validated against real `p4` output and found real bugs ([details](docs/research/perforce-benchmark.md)).
-- **walgit was measured only on remote workflows, on loopback, with a local RustFS** (see [Compared with other version control tools](#compared-with-other-version-control-tools)); no cloud numbers.
-- **Windows has never been run**, only compiled.
-- **The Claude merge assistant has never been called live.** No quality or cost numbers exist.
-- **Structural and rename-aware merge** are measured on generated and replayed histories, not on a large body of real-world merges.
-- **No remote GC for S3/HTTP**, no pack compression or delta compression, and the optional status watcher (feature `watcher`) is not part of the published numbers. `status` and some other cells are slower than git (see [Performance](#-performance)).
-- Locks are not enforced without `vcs-server` in front of the storage.
+| step (1024 MiB file) | git | git-lfs | vcs |
+|---|---|---|---|
+| add | 31.44 / 40.59 / 5 | 3.82 / 2.28 / 15 | 2.69 / 7.71 / 114 |
+| status after touching the file | 27.48 / 27.49 / 5 | 7.89 / 7.99 / 28 | 0.94 / 0.07 / 126 |
+| re-add after changing 3 MiB | 31.34 / 38.14 / 4 | 3.91 / 3.53 / 15 | 0.91 / 0.19 / 134 |
+| switch back to v1 | 0.87 / 0.88 / 1029 | 2.51 / 1.50 / 1027 | 1.13 / 0.33 / 62 |
+| store after two versions | 2048 MiB | 3072 MiB | 1039 MiB |
+
+🙈 Where it does not win: for the first `add`, git-lfs has lower wall time (2.28 s against 7.71 s) and far lower peak
+memory (15 against 114 MiB), and for `switch_v1` git uses less CPU (0.87 against 1.13 s). git-lfs push, clone and
+fetch rows are not comparable in that run and are omitted; no claim is made about them. `git clone` of a local path
+hardlinks objects, so its clone row is not a transfer cost. The 256 MiB and 4096 MiB tables are in the same file.
 
 ## ⚡ Performance
 
-**Short version: we do not claim that vcs is faster than git.** Interleaved, same-box measurements (below) show vcs ahead of git in some cells and behind in others, and the cells where it is behind are listed explicitly. Every number in this section comes from a script in `scripts/` and a raw data file in `docs/research/`; if a number has no table behind it, it is not claimed. Method for the table below: [interleaved-comparison.md](docs/research/interleaved-comparison.md).
+Short version: **vcs is not uniformly faster than git.** It is ahead in some cells and behind in others, and the
+numbers below say which. Every number comes from a committed file or a merged PR, named next to it. Timing claims
+carry machine, load, run count and version, and none of them is a general statement about other machines.
 
-### vcs vs git, 100k files
+### 🏁 Local commands against git, 100,000 files
 
-Build: current `origin/main` at `08ff4cc`, release. Layout: **flat, 100,000 files** (`datagen flat 100000`, seed 42), warm cache, 5 interleaved runs per cell (every round runs git and vcs once in random order), median of 5. Ratio = median of the per-run vcs/git ratios with a bootstrap 95% interval; **below 1 means vcs used less, above 1 means vcs used more.** CPU = user+sys of the command and its children; wall is shown too. Harness: `scripts/bench_compare.sh`; raw runs: [docs/research/interleaved-data/readmefix/](docs/research/interleaved-data/readmefix/).
+Flat layout (`datagen flat 100000`, seed 42), warm cache, interleaved with git in random order per round, 5 runs (3 for
+the slowest cells), medians, vcs divided by git, **below 1 means vcs used less**. Machine: AWS c6i.4xlarge (box E),
+16 vCPU, load1 about 1.5 to 2.1 during the timed groups, git 2.43.0, run 2026-11-02, vcs release build of
+`origin/main` at `8da0be2`. Wall and CPU are user+sys from `wait4`.
 
-**Box 1: AWS c6i.4xlarge, 16 vCPU, quiet except for the benchmark's own data generation (load1 3 to 8 during the timed rounds, a few rounds up to 22), git 2.43.0, 2026-11-01. This is the run to trust.**
-
-| cell (flat 100k) | git CPU ms | vcs CPU ms | CPU ratio vcs/git | git wall ms | vcs wall ms | wall ratio |
-|---|---|---|---|---|---|---|
-| add . (fresh index) | 4,825 | 1,896 | 0.40 [0.37, 0.41] | 7,954 | 661 | 0.08 [0.04, 0.13] |
-| commit (all staged) | 461 | 273 | 0.58 [0.57, 0.60] | 355 | 260 | 0.74 [0.39, 0.99] |
-| status, clean | 175 | 303 | **1.73** [1.68, 2.02] | 64 | 70 | 1.10 [1.02, 1.21] |
-| status, 1% modified | 181 | 311 | **1.72** [1.66, 1.80] | 67 | 66 | 0.99 [0.95, 1.01] |
-| log (50 commits) | 3 | 3 | 1.03 [0.93, 1.04] | 3 | 3 | 1.03 [0.91, 1.06] |
-| checkout (1% differ) | 351 | 474 | **1.33** [1.11, 1.39] | 237 | 235 | 0.88 [0.82, 1.96] |
-
-**Box 2 (cross-check): shared 30-core Lambda box, load1 13 to 48 (very noisy; CPU max/min per cell up to 6x), git 2.56.0**, same build and method:
-
-| cell (flat 100k) | git CPU ms | vcs CPU ms | CPU ratio vcs/git | git wall ms | vcs wall ms | wall ratio |
-|---|---|---|---|---|---|---|
-| add . (fresh index) | 12,249 | 2,988 | 0.26 [0.22, 0.45] | 27,948 | 1,709 | 0.07 [0.03, 0.11] |
-| commit (all staged) | 2,014 | 324 | 0.16 [0.10, 0.37] | 1,307 | 343 | 0.19 [0.15, 0.49] |
-| status, clean | 1,501 | 1,487 | 0.99 [0.95, 1.67] | 234 | 245 | 1.02 [0.97, 1.10] |
-| status, 1% modified | 1,520 | 1,544 | 1.02 [0.92, 1.40] | 237 | 245 | 0.96 [0.90, 1.04] |
-| log (50 commits) | 12 | 15 | 1.22 [1.11, 1.40] | 26 | 42 | 1.51 [0.64, 1.77] |
-| checkout (1% differ) | 634 | 725 | 1.14 [0.33, 3.48] | 562 | 397 | 0.54 [0.40, 0.75] |
-
-**Deep (depth 8) and binary (4 KiB random files) layouts, 100k files, Lambda box only** (30 cores, shared; load1 4 to 20 for deep, 3 to 7 for binary; git 2.56.0; same build and method; not run on the quiet c6i box):
-
-| cell | git CPU ms | vcs CPU ms | CPU ratio vcs/git | git wall ms | vcs wall ms | wall ratio |
-|---|---|---|---|---|---|---|
-| deep: add . | 24,630 | 11,610 | 0.54 [0.23, 0.70] | 46,404 | 13,098 | 0.31 [0.09, 0.53] |
-| deep: commit | 16,109 | 1,411 | 0.09 [0.07, 0.10] | 16,801 | 931 | 0.05 [0.04, 0.06] |
-| deep: status, clean | 1,446 | 1,883 | **1.31** [1.29, 2.27] | 1,008 | 385 | 0.38 [0.38, 0.61] |
-| deep: status, 1% modified | 1,472 | 1,843 | **1.25** [1.20, 1.31] | 1,026 | 363 | 0.35 [0.34, 0.40] |
-| deep: log | 5 | 7 | 1.04 [0.80, 1.50] | 6 | 7 | 1.04 [0.77, 1.63] |
-| deep: checkout | 950 | 1,117 | **1.16** [1.12, 1.20] | 580 | 381 | 0.63 [0.52, 0.79] |
-| binary: add . | 22,654 | 8,136 | 0.36 [0.31, 0.38] | 23,792 | 2,075 | 0.09 [0.05, 0.09] |
-| binary: commit | 830 | 316 | 0.39 [0.36, 0.39] | 636 | 205 | 0.31 [0.29, 0.39] |
-| binary: status, clean | 311 | 416 | **1.35** [1.30, 1.63] | 115 | 107 | 0.98 [0.92, 1.02] |
-| binary: status, 1% modified | 309 | 439 | **1.42** [1.33, 1.47] | 118 | 110 | 1.00 [0.92, 1.06] |
-| binary: log | 5 | 5 | 0.95 [0.91, 1.03] | 5 | 5 | 0.96 [0.86, 1.04] |
-| binary: checkout | 536 | 690 | **1.29** [1.26, 1.33] | 338 | 257 | 0.76 [0.74, 0.83] |
-
-On these layouts vcs again uses less CPU for `add` and `commit` and more CPU (1.16x to 1.42x) for `status` and `checkout`. On deep, wall time for `status` and `checkout` is lower than git (the git run there had a long wall-to-CPU gap); do not read that as a CPU win.
-
-**What this says, and what it does not**
-
-- vcs used less CPU than git for `add` and `commit` on flat 100k on both boxes.
-- **Cells where vcs is slower than git (CPU):** clean and modified `status` on the quiet box (about 1.7x git; on the noisy box about equal, with intervals that include 1), `checkout` (1.33x on the quiet box; the noisy box's interval is too wide to say), and `log` on the noisy box (1.2x; equal on the quiet box). Wall time for `status` is within 10% of git on both boxes; vcs spends more CPU to get there.
-- An earlier version of this README said vcs was faster than git on `checkout` (285 vs 584 ms) and `log`. Interleaved runs do **not** reproduce that, so those claims are removed.
-- **Not re-measured:** deep and binary on the quiet box (they ran only on the shared Lambda box), 10k-file repos (see [interleaved-comparison.md](docs/research/interleaved-comparison.md) for an older, noisy 10k run), a git with fsmonitor, vcs with the optional `watcher` feature, cold cache, and any machine other than these two.
-
-### Compared with other version control tools
-
-Everything below was measured **earlier, with older `vcs` builds and often on other machines**. The `vcs` columns in these tables are **stale**: they predate the interleaved re-run above and must not be compared with it. Each table says which tool versions, machine and build it used. The git/vcs table above is the only current vcs-vs-git comparison.
-
-**Perforce (Helix Core)**, real `p4d` 2026.1 server on loopback, same 100k-file datasets, median of 5 runs, ms wall, Lambda box (30 cores) at load1 18 to 87, 2026-11-01. Perforce is client/server, so every command is a round trip to a server process; git and vcs are local programs. **This is not apples to apples** and the table has no git or vcs column on purpose: the old git/vcs numbers it used to sit next to were not reproduced by later interleaved runs. Do not read differences below about 2x as real.
-
-| workflow | Perforce flat | deep | binary |
-|---|---|---|---|
-| add everything (`reconcile -a`) | 5,348 | 20,233 | 7,694 |
-| initial submit / commit (100k files) | 67,985 | 105,148 | 64,297 |
-| status, clean (`reconcile -n`) | 2,303 | 5,578 | 2,983 |
-| submit 1 changed file | 44 | 21 | 13 |
-| log, 50 entries (`changes -m 50`) | 54 | 50 | 49 |
-| checkout, 1% differ (`sync @1->@2`) | 719 | 653 | 405 |
-| full clone (`sync` into empty workspace) | 32,203 | 37,013 | 16,564 |
-
-What this says: Perforce's "add and submit everything" costs 64 to 105 s because the server copies and stores every file; status takes seconds because it compares the whole workspace with the server's have list. A one-file submit is fast (13 to 44 ms). Perforce's submit includes the work of git's `add` plus `commit`, so it cannot be set against either alone. Not measured: remote server latency, multiple clients, `p4 sync --parallel`, cold cache. Full method, licence notes and disk usage: [perforce-benchmark.md](docs/research/perforce-benchmark.md).
-
-**walgit** ([tobi/walgit](https://github.com/tobi/walgit), rev `80e9a20b29e2`) is a Git *server*; it has no client. Its `add`, `commit`, `status`, `log` and `checkout` are stock `git` and cost what plain git costs (see the git column above); there is nothing walgit-specific to time there. What was measured is the remote path: git over HTTP to walgit-server backed by a local RustFS (S3-compatible, same box, loopback), against `vcs` (build `28e2980`, **stale**) through `vcs-server` backed by the same RustFS, and plain git to a bare repo on local disk (`file://`, the lower bound). Format per cell: **git / walgit / vcs-server**, milliseconds, median of 5 (10k) or 3 (100k); history of 50 one-file commits; git 2.56.0; 30-core shared Lambda box, load1 at start 12 to 22 (min-max per cell are in the JSON); warm caches; measured 2026-11-01; not re-run on current main.
-
-| ms, median | flat 10k | deep 10k | binary 10k | flat 100k | deep 100k | binary 100k |
-|---|---|---|---|---|---|---|
-| initial push, 51 commits | 2038 / 2858 / 333 | 3113 / 3355 / 631 | 3419 / 3896 / 585 | 14597 / 13845 / 7387 | 31462 / 21521 / 18727 | 26824 / 31074 / 13272 |
-| 1-file push | 30 / 102 / 37 | 145 / 91 / 32 | 49 / 78 / 35 | 155 / 134 / 35 | 467 / 244 / 50 | 92 / 143 / 47 |
-| full clone (warm) | 640 / 641 / 2741 | 1984 / 1821 / 7901 | 1063 / 832 / 2699 | 6434 / 6063 / 17868 | 16554 / 11425 / 40712 | 10281 / 8322 / 29892 |
-| partial clone, 10% (warm) | 169 / 556 / 274 | 551 / 506 / 821 | 184 / 207 / 336 | 1456 / 1425 / 1849 | 2613 / 3071 / 3860 | 1713 / 2004 / 2464 |
-| fetch 1 commit (warm) | 27 / 52 / 199 | 59 / 72 / 331 | 27 / 37 / 212 | 84 / 102 / 1463 | 203 / 231 / 1196 | 170 / 121 / 686 |
-
-Reading it: for pushes and clones walgit is within noise of plain git or somewhat slower (flat 10k initial push 2.9 s vs 2.0 s, 1-file push 102 ms vs 30 ms); it serves reads from a local copy on the server (a warm full clone is 4 conditional GETs and 0 payload bytes at the object store, but a cold server fetches the whole 42 MiB pack set once). In this older measurement `vcs` had the lower time in all 6 initial-push cells and 5 of 6 one-file-push cells (flat 10k: 37 ms vs git 30 ms), but its full clone is 2.5x to 4.3x slower than git and its fetch of one commit is 4x to 17x slower and reads tens of MiB from the store on 100k files: a measured weakness, cause not yet diagnosed. The `vcs` 10% column is a zone subscription (only that zone's history); the git/walgit one is `--filter=blob:none` plus a sparse cone (full history, lazy blobs), so they are not the same operation. The binary-100k `vcs` column needed `vcs-server --max-body` raised: the default 256 MiB limit made the 390 MiB publish fail with a connection reset. Not measured: real networks or clouds, TLS, concurrent clients. With git 2.34.1, 9 of walgit's 57 server tests failed; with 2.56.0, 56 pass and 1 fails (needs the web UI build). Details, request counts, CPU and caveats: [docs/research/walgit-benchmark.md](docs/research/walgit-benchmark.md). Design comparison: [walgit-analysis.md](docs/research/storage/walgit-analysis.md).
-
-**Jujutsu (jj 0.46.0, git backend, official Linux binary)**, same 100k-file datasets, one 8 vCPU AWS box (AMD EPYC 7R32, load1 1 to 10), git 2.43.0, `vcs` build `28e2980` (**stale**: not re-run, because the AWS boxes were unavailable), interleaved runs, median of 5, ms wall. jj has no staging area, so its "add" is the first snapshot (`jj status`). Format: **git / vcs / jj**.
-
-| workflow | flat | deep | binary |
-|---|---|---|---|
-| add (jj: first snapshot) | 30,988 / 1,278 / 153,403 | 10,272 / 2,342 / 405,602 | 18,452 / 5,462 / 112,848 |
-| status, clean | 113 / 141 / 96 | 938 / 476 / 991 | 113 / 141 / 97 |
-| status, 1% modified | 120 / 143 / 706 | 958 / 467 / 2,136 | 120 / 142 / 701 |
-| checkout, 1% differ | 343 / 541 / 382 | 476 / 579 / 1,442 | 352 / 540 / 380 |
-| undo last commit (git: `reset --hard`; vcs: `op undo`; jj: `undo`) | 268 / 632 / 130 | 571 / 3,087 / 1,025 | 272 / 633 / 131 |
-
-jj pays a large one-time cost to snapshot 100k files (2 to 7 minutes, single-threaded) and then has the fastest clean `status` on flat and binary, but a dirty `status` and `log` are slower than git and vcs. `vcs op undo` is the slowest of the three undo paths here. Qualitatively jj is the closest design relative: operation log with undo for the whole repo view, conflicts stored in commits, working copy as a commit; allgit has a narrower op log, explicit staging, and conflicts as in-progress merge state, but adds zones, lazy fetch and a CAS-manifest remote. Not measured: colocated jj repos, fsmonitor, networked remotes, jj rebase/conflicts. Raw runs, method and caveats: [jujutsu-benchmark.md](docs/research/jujutsu-benchmark.md).
-
-**Real S3** (client on a Mac over home internet to us-east-1, one run, 20 to 40 requests per cell): every request costs about 150 ms regardless of kind or size (p50: HEAD 153, 1 KiB GET 156, manifest compare-and-swap 176 ms). That is why remote packs matter: a one-file publish into a 5,000-entry directory went from 5,009 to 6 requests in the counting harness (an in-memory count, not a timed publish). The same run found that S3's ETag repeats for identical bytes, which is safe only because the manifest embeds an ever-growing generation number.
-
-**Sapling** (Meta `sl` 0.2.20261028, official prebuilt Linux x64 binary, SHA-256 checked against GitHub's published digest; **Git-backed store** via `sl init --git`), same 100k-file datasets, 5 runs interleaved with git 2.43.0 and `vcs` build `28e2980` (**stale**, not re-run), 8-vCPU AWS box. Median ms, **git / vcs / Sapling**. The **binary** run was on a quiet box (load1 1.8 to 3); the flat and deep runs shared the machine and its disk with other jobs (load1 13 to 29), so only CPU is quoted for those:
-
-| workflow | binary wall | binary CPU | flat CPU | deep CPU |
+| cell (flat 100k) | git wall / CPU ms | vcs wall / CPU ms | wall ratio | CPU ratio |
 |---|---|---|---|---|
-| add . | 18,156 / 6,769 / 8,489 | 18,060 / 11,568 / 9,084 | 13,326 / 2,876 / 13,697 | 12,614 / 4,029 / 15,057 |
-| commit (all staged) | 558 / 441 / 31,014 | 724 / 606 / 31,724 | 930 / 648 / 30,550 | 15,260 / 1,886 / 47,016 |
-| status, clean | 112 / 141 / 268 | 280 / 620 / 864 | 303 / 631 / 887 | 1,392 / 2,351 / 3,371 |
-| log (50 commits) | 5 / 11 / 298 | 5 / 11 / 298 | 6 / 11 / 339 | 6 / 16 / 299 |
-| checkout (1% differ) | 360 / 503 / 984 | 521 / 1,032 / 1,627 | 548 / 1,100 / 1,631 | 906 / 1,507 / 4,088 |
-| clone, 50 commits | 9,856 / 9,138 / 10,412 | 10,077 / 17,244 / 14,547 | 6,016 / 12,551 / 10,557 | 8,401 / 17,241 / 17,865 |
+| add (fresh index) | 4,810 / 4,751 | 538 / 1,772 | 0.11 | 0.37 |
+| commit (all staged) | 357 / 459 | 227 / 92 | 0.45 | 0.20 |
+| status, clean | 65 / 182 | 55 / 189 | 0.88 | **1.04** |
+| log -n 5 | 1.4 / 1.3 | 2.1 / 2.1 | **1.54** | **1.58** |
+| switch (1% of files differ) | 233 / 346 | 179 / 279 | 0.77 | 0.81 |
 
-What this says: Sapling's Git store has the cheapest `add` of the three on random binary data, but `commit` of 100k files takes about 31 s because it writes every Git object loose (git and vcs: under 1 s), and every Sapling command pays about 0.3 s of start-up (`log` 298 ms vs 5 and 11 ms). Not measured: Sapling's native store, EdenFS, Watchman, remotes, cold cache, merges; one machine, one build of each. Wall times on flat and deep are disk-contended and noisy (single runs vary up to 10x). Method, raw runs, verification and caveats: [sapling-benchmark.md](docs/research/sapling-benchmark.md).
+Source: [docs/research/data/command-scoreboard](docs/research/data/command-scoreboard) (`git-fresh.json`,
+`git-clean.json`, `git-small.json`), rendered by `scripts/command_scoreboard_render.py`; the complete per-command table
+is [docs/research/command-scoreboard.md](docs/research/command-scoreboard.md). The older interleaved harness
+(`scripts/bench_compare.py`, [docs/research/interleaved-comparison.md](docs/research/interleaved-comparison.md)) has
+other runs in `docs/research/interleaved-data/`; they predate the work in PRs #374 to #418 and are not quoted here.
+`status` on a clean tree is a CPU tie with git (1.04x) and about 12% faster in wall time; `log` of a handful of
+commits costs about 0.7 ms more process time than git (a start-up cost, below the 2 ms noise floor of the scoreboard,
+so it is scored a TIE). Not measured here: cold cache, git with fsmonitor, the optional `watcher` feature, other
+machines, deep and binary layouts for the per-command git/p4 scoreboards.
 
-**Mercurial, Subversion, Fossil, Breezy, Pijul and git variants** (Lambda box, 30 cores, git 2.56.0, `vcs` build `28e2980` (**stale**), hg 7.1.2, svn 1.15.0, Fossil 2.28, Breezy 3.3.17, Pijul 1.0.0-beta.26; same 100k-file datasets; runs interleaved round-robin over the tools, median of 5, 3 or 1 for very slow cells; wall ms). Add, commit and clone ran at load1 3.5 to 37 with three layouts at once, so absolute times are inflated; status, log and checkout are from a second pass at load1 1 to 15. Flat layout (deep and binary, CPU times, disk use and raw runs: [other-vcs-benchmark.md](docs/research/other-vcs-benchmark.md)):
+### 🏆 Per-command scoreboards
 
-| flat, 100k files | vcs | git | git + fsmonitor | Mercurial | Subversion | Fossil | Breezy | Pijul |
-|---|---|---|---|---|---|---|---|---|
-| add + commit (sum of medians, s) | 2.3 | 25.0 | 27.3 | 59.6 | 446 | 999 | 53.1 | 16.6 |
-| status, clean | 146 | 108 | 28 | 271 | 560 | 560 | 834 | 3,498 |
-| status, 1% modified | 136 | 114 | 36 | 282 | 651 | 590 | 893 | 3,556 |
-| log, 50 entries | 13 | 7 | 7 | 258 | 11 | 7 | 174 | 153 |
-| checkout, 1% differ | 441 | 350 | 347 | 748 | 2,459 | 12,228 | 12,033 | no equivalent |
-| full clone | 3,966 | 6,269 | n/a | 54,406 | 56,716 | 17,895 | 879,512 (1 run) | 22,925 |
+Every row of the [git to vcs](docs/git-to-vcs.md) and [p4 to vcs](docs/p4-to-vcs.md) tables that has a vcs equivalent
+was run against the real tool where a scenario exists; the rest is listed as NOT-MEASURED (never guessed). Verdicts:
+WIN = vcs at least 10% lower in both wall and CPU, LOSS = at least 10% higher in both, TIE = everything else (and any
+cell under 2 ms wall difference). Green is a win, amber a tie, red a loss. 🟢🟡🔴
 
-What this says (with the stale `vcs` build): for committing 100k files git and vcs were far ahead of everything else (Subversion 5 to 15 minutes, Fossil about 17); for `status` git with its built-in fsmonitor is the fastest of all (28 ms), plain git and vcs are next, and Pijul is slowest (3.5 s, 25 s of CPU). Mercurial, Fossil, Breezy and Pijul hash files at `commit`, not `add`, so compare the sum. Not measured: Git LFS, tuned Mercurial or Subversion setups, remote servers. Breezy did not finish a deep-layout clone in 30 minutes.
+<p align="center"><img src="docs/img/scoreboard-git.svg" alt="vcs vs git per-command scoreboard" width="900"></p>
+<p align="center"><img src="docs/img/scoreboard-p4.svg" alt="vcs vs Perforce per-command scoreboard" width="900"></p>
+<p align="center"><img src="docs/img/scoreboard-walgit.svg" alt="vcs vs walgit remote workflows scoreboard" width="900"></p>
+<p align="center"><img src="docs/img/scoreboard-jj.svg" alt="vcs vs Jujutsu per-command scoreboard" width="900"></p>
+<p align="center"><img src="docs/img/scoreboard-sapling.svg" alt="vcs vs Sapling per-command scoreboard" width="900"></p>
 
-## 🛡️ Why you can trust it
+| tool | 🟢 WIN | 🟡 TIE | 🔴 LOSS | not measured / n/a | how fresh |
+|---|---|---|---|---|---|
+| git (flat 100k, every doc row; rows sharing a scenario count once per row) | 46 | 68 | 17 | 93 not measured, 44 missing in vcs | 2026-11-02, build `8da0be2`, box E, interleaved |
+| Perforce (p4d on loopback) | 9 | 7 | 14 | 27 not measured, 2 missing | 2026-11-02, build `8da0be2`, box E, interleaved |
+| walgit (remote workflows) | 20 | 4 | 0 | 8 not measured | **older**: vcs build `84f3fa2`, box c, 3 reps, reused unchanged |
+| Jujutsu (3 layouts x 17 cells) | 43 | 2 | 6 | describe and amend n/a | vcs `8da0be2` re-run, **jj numbers from the earlier `34315b6` run, not interleaved** |
+| Sapling | 48 | 0 | 0 | gc, describe and amend n/a | same as Jujutsu |
 
-- **Integrity:** every read re-hashes the data; each object has exactly one valid encoding.
-- **Atomic publishing:** a publish becomes visible at one instant. An executable model tries every interleaving of two writers with crashes and lost messages injected, and checks nothing is lost or applied twice.
-- **Untrusted input:** paths like `..` or `.vcs` are rejected, checkout won't write through symlinks or overwrite untracked files, and the decoders are fuzzed.
+Before this refresh (earlier same-day run, same scenarios): git 30 WIN / 52 TIE / 49 LOSS, Perforce 6 / 7 / 17. The
+`diff`, `show`, `cat-file`, `reset`, `restore`, `rm` and `clone` rows moved from LOSS to WIN or TIE; the per-row
+before and after ratios are in the scoreboard document. Caveats: load1 was 1.5 to 2.1 (a shared box), p4 CPU is a lower
+bound (the p4d process is read in 10 ms ticks), p4 and jj/Sapling are different architectures than vcs, the git run is
+flat 100k only, and the jj and Sapling cells mix sessions (see [the document](docs/research/jj-sapling-benchmark.md)).
 
-Details: [architecture](docs/architecture.md), [security](docs/security.md).
+🙈 **Where git (or walgit, or jj) still wins today**, from the same runs:
 
-## 🗺️ How the pieces fit
+- **Tiny metadata commands cost vcs about 5x git's wall time** (`branch`, `tag`, `tag -d`, `branch -m`: 6 to 9 ms
+  against 1.4 ms) even though CPU is within 1.5x. `vcs switch -c` is 65 ms against git's 1.8 ms.
+- **`ls-tree HEAD` (non-recursive) is 19x git** (34 ms vs 1.8 ms), `bundle verify` is 370x (467 ms vs 1.3 ms),
+  `ls-files` 1.24x wall and 2.2x CPU, `grep -- path` 1.7x, `log --stat` 1.8x, `gc` 1.8x, `bundle create` 1.6x.
+- **`add -u`, `commit -a` and `add .` after a one-file change use 1.2 to 1.8x git's wall time**, and `mv` regressed (87 ms vs git's
+  46 ms, was a tie at 43 ms).
+- **vs Perforce**: `submit` of one file (115 ms vs 5.5 ms), `add`, `opened`, `revert`, `filelog` and `sync` of a full
+  tree (2.3 s vs 1.5 s) are all slower than p4's thin client; p4d did the work in a server process.
+- **vs Jujutsu**: `commit` of a big staged tree (1.1x to 1.9x), `switch` (1.4x to 1.5x, possible regression) and a deep
+  `clone` (1.6x) are slower than jj. **vs Sapling**: no losses in the measured cells.
+- **vs walgit** (older data, below): warm one-commit fetch is a tie, object-store request counts and client store size
+  are worse for vcs.
 
-```mermaid
-flowchart LR
-  W["Your sparse workspace<br/>engine only"] -->|publish: one atomic step| R[("Remote<br/>object store + manifest")]
-  R -->|fetch only subscribed zones| W
-  W -.->|"optional: http(s)"| S["vcs-server<br/>validating writer"]
-  S --> R
-```
+### 🌐 Remote workflows: vcs, git and walgit
 
-## 🧱 Code layout
+[walgit](https://github.com/tobi/walgit) is a git server over S3-compatible storage (tool compared, not used by
+vcs). Source: [docs/research/walgit-benchmark.md](docs/research/walgit-benchmark.md), section "quiet box, current vcs
+build, flat 100k files", raw data in [docs/research/data/walgit-full-boxc](docs/research/data/walgit-full-boxc).
+Machine: c6i.4xlarge, 16 vCPU, load1 1.33 to 1.19, dedicated, **3 reps only (read min and max, not just medians)**,
+object store is a local RustFS on loopback (**nothing here says anything about real S3 or a network**), vcs build
+`84f3fa2` default settings, walgit `80e9a20b29e2`, git 2.56.0 (local bare repo over `file://`, a lower bound with no
+HTTP). Flat layout, 100,000 files (57.2 MiB). Wall ms, median.
+
+| operation | git | walgit | vcs |
+|---|---|---|---|
+| initial push | 6,554 | 8,398 | 788 |
+| 1-file push | 46 | 93 | 40 |
+| full clone, warm | 4,023 | 3,392 | 2,174 |
+| full clone, cold | 3,654 | 3,735 | 1,241 |
+| zone / partial clone, warm | 1,266 | 814 | 414 |
+| fetch 1 commit, warm | 84 | 101 | 85 |
+| fetch 1 commit, cold | 710 | 1,206 | 218 |
+| no-op fetch, warm | 14 | 19 | 5 |
+
+🙈 Where git or walgit still win in that run (same file, scoreboards):
+
+- **Warm fetch of one commit is a tie with git** (84 ms vs 85 ms for vcs, with wide min-max), and with the "pack v3"
+  setting vcs is about 10 to 20% behind git there.
+- **Object-store request counts:** warm full clone is 4 store requests for walgit against 28 for vcs (14 with pack
+  v3); 1-file push is 7 against 13; warm zone clone 7 against 24.
+- **Warm store traffic:** walgit's warm clone moves 0 MiB through the store (it serves from a local copy); vcs moves
+  its pack set (46.5 MiB default).
+- **Client store size:** 78.2 MiB for vcs against 51.0 MiB for git and walgit after a full clone (1.5x).
+- **Server memory:** with pack v3, full-clone server RSS is 104 MiB for vcs against 76 MiB for walgit (default
+  settings: 57 MiB).
+- **Remote store size after the initial push:** 46.6 MiB (default) against 42.1 MiB for walgit and 42.5 MiB for git.
+
+The 10k-file runs for all three layouts are older (Lambda box, load around 20, build before PRs #343 to #353) and are
+in the same document. Deep and binary 100k were not run in the quiet-box pass.
+
+### 🔭 Other tools
+
+Perforce, Jujutsu and Sapling are covered by the scoreboards above
+([command-scoreboard](docs/research/command-scoreboard.md),
+[jj and Sapling](docs/research/jj-sapling-benchmark.md)). Older whole-workflow comparisons with Perforce, Jujutsu,
+Sapling, Mercurial, Subversion, Fossil, Breezy and Pijul exist ([perforce](docs/research/perforce-benchmark.md),
+[jujutsu](docs/research/jujutsu-benchmark.md), [sapling](docs/research/sapling-benchmark.md),
+[others](docs/research/other-vcs-benchmark.md)), but their vcs columns were measured with a build that predates the
+current performance work and were not re-run; read those files with that in mind. More method notes:
+[docs/benchmarks.md](docs/benchmarks.md).
+
+## 🔒 Security notes
+
+- 🧾 **Integrity:** objects are re-hashed on read and each has one valid encoding (strict decode); decoders are fuzzed.
+- 🚫 **Untrusted input:** paths such as `..` or `.vcs` are rejected, checkout refuses to write through symlinks or over
+  untracked files, and symlink targets are accepted only if they stay inside the worktree.
+- ⚛️ **Atomic publish:** a crash-and-interleaving model checker covers the manifest protocol, including locks.
+- 🖥️ **Servers:** `vcs-server` validates every manifest update and supports bearer tokens with roles, path policy, rate
+  limits, a tamper-evident audit log, TLS and optional mutual TLS (with `--features tls`). Without that feature it speaks
+  plain HTTP, so use loopback, a private network or a TLS-terminating proxy.
+- 🔑 **Credentials** stay out of the repository config; use `vcs login` and the credential helper. S3 secrets are never
+  stored in `.vcs/remote`.
+- 🤖 **Assisted merge** (`vcs merge --assist`) sends file contents to a third-party API if you enable it; it is opt-in.
+
+Details and what is not defended: [docs/security.md](docs/security.md), [docs/security-review.md](docs/security-review.md),
+[docs/signing.md](docs/signing.md) (Ed25519 signed commits and tags).
+
+## 🗺️ Repository layout
 
 | Crate | Role |
 |---|---|
-| `vcs-objects` | ids, canonical codec, object types, name/path validation (no I/O) |
-| `vcs-store` | `ObjectStore` trait; memory and loose-object filesystem stores; packs |
-| `vcs-repo` | zones, refs, index, workspace, commit/log/diff/status, snapshots, op log, locks, stash, rebase, GC, git and p4 import/export, fsck, publish/fetch/sync/clone |
-| `vcs-remote` | `Backend` trait + conformance suite, manifest, publish step machine, remote packs, sparse and lazy fetch, model checker |
-| `vcs-store-s3` | S3-compatible backend (hand-rolled SigV4, blocking, no async runtime) |
-| `vcs-merge` | merge-base, diff3 text merge, tree merge, rename-aware merge, optional tree-sitter structural merge |
-| `vcs-server` | the `vcs-server` binary: HTTP validating writer with auth, audit, rate limits, TLS |
-| `vcs-assist-claude` | helper binary for `merge --assist` (calls the Anthropic API) |
-| `vcs-bench` | seeded dataset generator, criterion benchmarks, `s3bench`, `storebench` |
-| `vcs-cli` | the `vcs` and `git-remote-allgit` binaries |
+| `crates/vcs-objects` | ids, canonical codec, object types, name and path validation (no I/O) |
+| `crates/vcs-store` | `ObjectStore` trait, memory and filesystem stores, packs, large-file chunking |
+| `crates/vcs-repo` | zones, refs, index, workspace, commit, log, diff, status, snapshots, op log, locks, stash, rebase, GC, git and p4 import/export, fsck, publish, fetch, sync, clone |
+| `crates/vcs-remote` | `Backend` trait and conformance suite, manifest, publish step machine, remote packs, sparse and lazy fetch, model checker |
+| `crates/vcs-store-s3` | S3-compatible backend (SigV4, blocking, no async runtime) |
+| `crates/vcs-merge` | merge base, text and tree merge, rename-aware merge, optional tree-sitter structural merge |
+| `crates/vcs-server` | the `vcs-server` binary, an HTTP validating writer |
+| `crates/vcs-assist-claude`, `crates/vcs-assist-openai` | helper binaries for opt-in `merge --assist` |
+| `crates/vcs-bench` | seeded dataset generator, criterion benchmarks, `s3bench`, `storebench` |
+| `crates/vcs-cli` | the `vcs` and `git-remote-allgit` binaries |
 
-`crates/vcs-storage-lab`, `vcs-storage-lab-packing` and `vcs-compress-lab` are research experiments and are **not** in the cargo workspace. `fuzz/` is a separate cargo-fuzz project.
+`crates/vcs-storage-lab*` and `crates/vcs-compress-lab` are research experiments outside the cargo workspace.
+`fuzz/` is a separate cargo-fuzz project; `deploy/` holds the server deploy recipe; `scripts/` holds benchmark
+harnesses.
 
-## 📚 Learn more
+## 📚 Documentation
 
-- Documentation: **[User guide](docs/guide/README.md)** (install, daily workflow, zones, remotes, Git interop, locks, troubleshooting, full command reference)
-- Start here: [CLI reference](docs/cli.md) · [Architecture](docs/architecture.md) · [Object model](docs/object-model.md) · [Roadmap](docs/roadmap.md) · [Install](docs/install.md)
-- Features: [Zones](docs/zones.md) · [Zone auto-detection](docs/zones-autodetect.md) · [Merge](docs/merge.md) · [Assisted merge](docs/assist.md) · [Rebase](docs/rebase.md) · [Operations](docs/operations.md) · [Locks](docs/locks.md) · [Git import](docs/import-git.md) · [Perforce import](docs/import-p4.md) · [Interop](docs/interop.md) · [GC](docs/gc.md) · [Cache](docs/cache.md) · [Remote packs](docs/remote-packs.md) · [S3 backend](docs/s3.md)
-- Server: [vcs-server](docs/server.md) · [Deploying](docs/deploy.md) · [Security](docs/security.md)
-- Quality: [Benchmarks](docs/benchmarks.md)
-- Research: [overview](docs/research.md) (the older notes there were written from memory and are unverified) · [storage engine study](docs/research/storage/README.md) with the [decision](docs/research/storage/architecture-decision.md), [results](docs/research/storage/results.md), [roadmap](docs/research/storage/implementation-roadmap.md) and [AWS S3 results](docs/research/storage/s3-aws-results.md)
+- Start: [User guide](docs/guide/README.md) (12 chapters, outputs pasted from real runs) · [CLI](docs/cli.md) ·
+  [Install](docs/install.md) · [Architecture](docs/architecture.md) · [Object model](docs/object-model.md) ·
+  [Roadmap](docs/roadmap.md)
+- Concepts: [Zones](docs/zones.md) · [Zone auto-detection](docs/zones-autodetect.md) · [Sparse paths](docs/sparse-paths.md) ·
+  [Worktrees](docs/worktrees.md) · [Operations](docs/operations.md) · [Merge](docs/merge.md) · [Rebase](docs/rebase.md) ·
+  [Locks](docs/locks.md) · [Shelves](docs/shelves.md) · [Hooks](docs/hooks.md) · [GC](docs/gc.md) · [Cache](docs/cache.md) ·
+  [History walks](docs/history-walks.md) · [Bundles](docs/bundle.md)
+- Coming from elsewhere: [git to vcs](docs/git-to-vcs.md) · [p4 to vcs](docs/p4-to-vcs.md) ·
+  [vcs to git and p4](docs/vcs-to-git-p4.md) · [Interop](docs/interop.md) · [Import git](docs/import-git.md) ·
+  [Import p4](docs/import-p4.md)
+- Remotes and servers: [S3](docs/s3.md) · [Remote packs](docs/remote-packs.md) · [Server](docs/server.md) ·
+  [Deploy](docs/deploy.md) · [Security](docs/security.md)
+- Assisted merge: [Claude](docs/assist.md) · [OpenAI](docs/assist-openai.md)
+- Measurements and design studies: [Benchmarks](docs/benchmarks.md) · [Research index](docs/research.md) ·
+  [Storage engine study](docs/research/storage/README.md). Older notes in `docs/research.md` were written from memory
+  and are unverified.
 
-## 🛠️ Contributing
+## 🧪 Testing
 
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace                 # includes the ~20 s protocol model checker
+cargo test --workspace                 # includes the protocol model checker (about 20 s)
 VCS_TEST_S3_ENDPOINT=http://127.0.0.1:9000 cargo test -p vcs-store-s3   # MinIO, see docs/s3.md
 ```
 
-The repository is [github.com/Bobliuuu/allgit](https://github.com/Bobliuuu/allgit). Work is tracked in [issues](https://github.com/Bobliuuu/allgit/issues); PRs use Conventional Commits and the template in `.github/`.
+After changing any CLI command or flag, run `scripts/gen_cli_reference.sh` and commit the regenerated chapter 12 of
+the guide, or `cargo test --workspace` fails. PRs use Conventional Commits and the template in `.github/`.
+
+## 🚧 Status and limitations
+
+Early research software; tested means an executable test exists in the repository.
+
+- ✅ **Solid and tested:** object format, local VCS (add, commit, status, diff, log, branches, tags, stash, blame, bisect,
+  worktrees), zones and snapshots, atomic multi-zone commit, sparse and lazy fetch, remote protocol (model-checked),
+  op log with undo, large-file engine, packs and GC.
+- 🟡 **Partial:** history editing (`rebase` keeps change ids), structural merge (tree-sitter for a few languages, behind
+  cargo features, off by default), locks (advisory unless `vcs-server` is in front), p4 import (checked once against
+  real `p4d` output on a small history, otherwise fixtures).
+- 🤖 **Assisted merge:** the Claude helper has never been called against the live API (fixture and mock tests only). The OpenAI helper had one small live run, documented in [docs/assist-openai.md](docs/assist-openai.md); there are no broader quality or cost numbers.
+- 🪣 **S3:** exercised against MinIO, RustFS and one earlier run on real AWS S3 from a Mac; other providers and a public-CA
+  HTTPS endpoint are untested.
+- 🪟 **Windows:** only compile-checked in CI. The code has never been run there.
+- ⚡ **Performance:** see above. git is still ahead on `status` CPU (about 1.1x), checkout and re-add in some measurements, on
+  store request counts, warm store traffic, client store size and server memory in the walgit comparison, and on
+  first-add wall time and peak memory against git-lfs for one 1 GiB file.
+- 🧱 **Format:** object ids changed between early format versions with no migration tool; expect more change before a
+  stable release.
+
+Known gaps are listed in [docs/architecture.md](docs/architecture.md#known-limitations-honest-list).
 
 ## 📄 License
 
-Licensed under either of [Apache License 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT) at your option (`MIT OR Apache-2.0`). Copyright (c) 2026 Jerry Zhu.
+Licensed under either of [Apache License 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT) at your option
+(`MIT OR Apache-2.0`). Copyright (c) 2026 Jerry Zhu.

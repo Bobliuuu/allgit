@@ -22,6 +22,15 @@ pub fn refresh_target(cmd: &crate::Cmd) -> Option<PathBuf> {
     use crate::Cmd::*;
     match cmd {
         Clone { dir, .. } => Some(dir.clone()),
+        // read-only listings change no file, so there is nothing to refresh (and no second repo open)
+        Stash(crate::StashCmd::List)
+        | Worktree(crate::worktree_cmd::WorktreeCmd::List)
+        | Zone(crate::ZoneCmd::List | crate::ZoneCmd::Show { .. } | crate::ZoneCmd::Branches { .. })
+        | Snapshot(crate::SnapCmd::List | crate::SnapCmd::Show { .. })
+        | Sparse(crate::SparseCmd::List)
+        | Op(crate::OpCmd::Log { .. } | crate::OpCmd::Show { .. }) => None,
+        // a new branch starts at the checked-out commit: no file changes, no mode to refresh
+        Switch { create: true, .. } => None,
         Commit { .. }
         | Restore { .. }
         | Switch { .. }
@@ -37,7 +46,7 @@ pub fn refresh_target(cmd: &crate::Cmd) -> Option<PathBuf> {
         | Snapshot(_)
         | Sparse(_)
         | Stash(_)
-        | Sync
+        | Sync(_)
         | Op(_) => Some(PathBuf::from(".")),
         _ => None,
     }

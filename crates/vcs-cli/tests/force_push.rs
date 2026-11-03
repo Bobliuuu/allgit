@@ -243,3 +243,44 @@ fn force_lease_delete_and_race_through_vcs_server_with_audit() {
         "stale forces must not reach the audit log: {text}"
     );
 }
+
+/// `publish --auto-merge`: a moved branch is fetched, merged when the merge is clean, and published
+/// again; a conflicting merge is aborted and the plain refusal is returned.
+#[test]
+fn publish_auto_merge_merges_clean_and_leaves_conflicts_alone() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let remote = root.join("remote");
+    std::fs::create_dir_all(&remote).unwrap();
+    let url = remote.to_str().unwrap();
+    let (a, b) = (root.join("a"), root.join("b"));
+    ok(root, "alice", &["init", "a"]);
+    write(&a, "f.txt", "one\n");
+    commit_all(&a, "alice", "init");
+    ok(&a, "alice", &["remote", "set", url]);
+    ok(&a, "alice", &["publish"]);
+    ok(root, "bob", &["clone", url, "b"]);
+
+    write(&a, "from_alice.txt", "a\n");
+    commit_all(&a, "alice", "alice");
+    ok(&a, "alice", &["publish"]);
+    write(&b, "from_bob.txt", "b\n");
+    commit_all(&b, "bob", "bob");
+    fail(&b, "bob", &["publish"]); // refused without the flag
+    ok(&b, "bob", &["publish", "--auto-merge"]);
+    ok(&a, "alice", &["sync"]);
+    assert!(a.join("from_bob.txt").exists(), "bob's file reached the remote");
+    assert!(b.join("from_alice.txt").exists(), "alice's file was merged into bob's tree");
+
+    // conflicting edits: refused, and bob's repo is not left mid-merge
+    write(&a, "f.txt", "one\nalice\n");
+    commit_all(&a, "alice", "alice2");
+    ok(&a, "alice", &["publish"]);
+    write(&b, "f.txt", "one\nbob\n");
+    commit_all(&b, "bob", "bob2");
+    let e = fail(&b, "bob", &["publish", "--auto-merge=3"]);
+    assert!(e.contains("Remote branch"), "{e}");
+    assert_eq!(std::fs::read_to_string(b.join("f.txt")).unwrap(), "one\nbob\n");
+    ok(&b, "bob", &["status"]);
+    assert!(!ok(&b, "bob", &["status"]).contains("merging"));
+}

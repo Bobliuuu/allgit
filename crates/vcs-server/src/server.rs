@@ -6,6 +6,9 @@
 //! * `GET|HEAD /v1/o/<key>[?offset=N&len=M]` read (ETag header = version tag)
 //! * `PUT /v1/o/<key>` with `If-None-Match: *` (create-only) or `If-Match: "<tag>"` (CAS)
 //! * `DELETE /v1/o/<key>` admin only, never the manifest (garbage collection)
+//! * `GET /v1/clock` (any role): the backend's clock in unix ms; 501 if the backend cannot be garbage collected
+//! * `GET /v1/mtime/<key>` (admin): last write or touch time in unix ms on the backend's clock; 404 if absent
+//! * `POST /v1/touch/<key>` (write): refresh the object's time (204; 404 if absent); never the manifest or a shelf key
 //! * `GET /v1/list?prefix=`
 //!
 //! Writes to the manifest key are validated by [`crate::validate`] before the CAS.
@@ -46,6 +49,11 @@ pub struct Config {
     pub body_timeout: Duration,
     /// Simultaneous connections served; further ones are refused with 503 (plain) or dropped (TLS).
     pub max_connections: usize,
+    /// Most bytes of request bodies buffered at once across all connections (announced Content-Length is
+    /// reserved before the body is read); a request that does not fit gets 503 + Retry-After. 0 = unlimited.
+    pub max_inflight_body: usize,
+    /// Reconcile stale manifest writes in the server instead of answering 412 (see [`crate::groupcommit`]).
+    pub group_commit: bool,
     /// How long an idle persistent (keep-alive) connection waits for its next request before it is closed.
     pub keepalive_idle: Duration,
     /// Requests served on one connection before the server asks the client to reconnect.
@@ -89,6 +97,8 @@ impl Config {
             header_timeout: Duration::from_secs(10),
             body_timeout: Duration::from_secs(600),
             max_connections: 256,
+            max_inflight_body: 2 << 30,
+            group_commit: true,
             keepalive_idle: Duration::from_secs(5),
             max_requests_per_conn: 1000,
             rate_limit: None,
@@ -128,10 +138,22 @@ struct Shared {
     #[cfg(feature = "tls")]
     tls: RwLock<Option<Arc<rustls::ServerConfig>>>,
     read_index: Mutex<crate::readguard::ReadIndex>,
+    /// The manifest version this process last read or wrote: (version tag, bytes). A manifest write
+    /// that names exactly this tag in `If-Match` is validated against these bytes instead of reading
+    /// the store again; the store's own compare-and-swap on that tag still decides whether it
+    /// commits, so a stale entry (another replica wrote meanwhile) costs a 412, never a wrong accept.
+    manifest_cache: Mutex<Option<(String, Arc<Vec<u8>>)>>,
+    /// Serializes manifest writes in this process (so they stop racing each other) and remembers recent
+    /// head changes so stale writes can be reconciled (see [`crate::groupcommit`]).
+    manifest_write: Mutex<crate::groupcommit::Chain>,
+    /// The decoded form of the manifest version in `manifest_cache` when this process wrote it.
+    manifest_parsed: Mutex<Option<(String, Arc<Manifest>)>>,
+    merged_writes: AtomicU64,
     limiter: Option<Limiter>,
     fail_throttle: Option<crate::ratelimit::FailThrottle>,
     per_ip: Mutex<std::collections::HashMap<std::net::IpAddr, usize>>,
     active: AtomicUsize,
+    inflight_body: AtomicUsize,
     stop: AtomicBool,
 }
 
@@ -189,6 +211,11 @@ impl Server {
         let addr = listener.local_addr()?;
         let tokens = std::mem::take(&mut cfg.tokens);
         let metrics = Arc::new(Metrics::new());
+        // Immutable reads (indexes, pack ranges, objects) and this server's own recent pack writes
+        // are remembered, so validating a publish does not re-read from the object store what the
+        // same client uploaded a moment ago.
+        let backend: Arc<dyn Backend> =
+            Arc::new(vcs_remote::MemoBackend::new(Box::new(backend.clone()), false).with_write_through(128 << 20));
         let resilient = Arc::new(ResilientBackend::new(backend, cfg.resilience.clone(), metrics.clone()));
         let nonce = {
             let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
@@ -211,8 +238,13 @@ impl Server {
             #[cfg(feature = "tls")]
             tls: RwLock::new(cfg.tls.clone()),
             read_index: Mutex::new(Default::default()),
+            manifest_cache: Mutex::new(None),
+            manifest_write: Mutex::new(Default::default()),
+            manifest_parsed: Mutex::new(None),
+            merged_writes: AtomicU64::new(0),
             cfg,
             active: AtomicUsize::new(0),
+            inflight_body: AtomicUsize::new(0),
             stop: AtomicBool::new(false),
         });
         let s2 = shared.clone();
@@ -221,7 +253,21 @@ impl Server {
                 if s2.stop.load(Ordering::SeqCst) {
                     break;
                 }
-                let Ok(conn) = conn else { continue };
+                let conn = match conn {
+                    Ok(c) => c,
+                    Err(e) => {
+                        // EMFILE/ENFILE/ENOBUFS/ENOMEM leave the pending connection in the queue, so retrying
+                        // at once spins a core at 100 percent; back off until descriptors are freed.
+                        if !matches!(
+                            e.kind(),
+                            std::io::ErrorKind::ConnectionAborted | std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::Interrupted
+                        ) {
+                            s2.log.warn("accept failed, backing off", &[("error", V::S(&e.to_string()))]);
+                            std::thread::sleep(Duration::from_millis(50));
+                        }
+                        continue;
+                    }
+                };
                 if s2.active.fetch_add(1, Ordering::SeqCst) >= s2.cfg.max_connections {
                     s2.active.fetch_sub(1, Ordering::SeqCst);
                     refuse(&s2, conn);
@@ -317,6 +363,10 @@ impl Server {
     /// [`join`](Self::join) has taken the server.
     pub fn handle(&self) -> Handle {
         Handle(self.shared.clone())
+    }
+    /// Manifest writes whose `If-Match` was stale and that the server reconciled instead of answering 412.
+    pub fn merged_writes(&self) -> u64 {
+        self.shared.merged_writes.load(Ordering::Relaxed)
     }
     /// Connections currently being served.
     pub fn active_connections(&self) -> usize {
@@ -414,8 +464,29 @@ impl Write for DeadlineTcp {
         self.tcp.set_write_timeout(Some(t))?;
         self.tcp.write(buf)
     }
+    fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
+        let t = self.budget()?;
+        self.tcp.set_write_timeout(Some(t))?;
+        self.tcp.write_vectored(bufs)
+    }
     fn flush(&mut self) -> std::io::Result<()> {
         self.tcp.flush()
+    }
+}
+
+/// Bytes reserved from the in-flight body budget by the current request; released on every exit path.
+struct BodyReservation<'a>(&'a Shared, std::cell::Cell<usize>);
+impl BodyReservation<'_> {
+    fn release(&self) {
+        let r = self.1.take();
+        if r > 0 {
+            self.0.inflight_body.fetch_sub(r, Ordering::SeqCst);
+        }
+    }
+}
+impl Drop for BodyReservation<'_> {
+    fn drop(&mut self) {
+        self.release();
     }
 }
 
@@ -463,6 +534,20 @@ fn handle_conn(sh: &Shared, conn: TcpStream) {
             sh.cfg.max_body
         }
     };
+    let reserved = BodyReservation(sh, std::cell::Cell::new(0usize));
+    let mut reserve = |n: usize| -> bool {
+        let cap = sh.cfg.max_inflight_body;
+        if cap == 0 || n == 0 {
+            return true;
+        }
+        let prev = sh.inflight_body.fetch_add(n, Ordering::SeqCst);
+        if prev + n > cap && prev > 0 {
+            sh.inflight_body.fetch_sub(n, Ordering::SeqCst);
+            return false;
+        }
+        reserved.1.set(n);
+        true
+    };
     let body_dl = sh.cfg.body_timeout;
     let dl2 = deadline.clone();
     let mut on_headers = move || *dl2.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now() + body_dl;
@@ -477,7 +562,7 @@ fn handle_conn(sh: &Shared, conn: TcpStream) {
             request_id: String::new(),
         };
         let (mut method, mut path, mut bytes_in) = (String::from("-"), String::from("-"), 0u64);
-        let (mut resp, head, mut want_ka) = match read_request(&mut rd, &limits, &body_limit, &mut on_headers) {
+        let (mut resp, head, mut want_ka) = match read_request(&mut rd, &limits, &body_limit, &mut on_headers, &mut reserve) {
             Ok(req) => {
                 let head = req.method == "HEAD";
                 ctx.request_id = request_id(sh, &req);
@@ -505,6 +590,15 @@ fn handle_conn(sh: &Shared, conn: TcpStream) {
                 error_reply = true;
                 (text(413, "body too large"), false, false)
             }
+            Err(ParseError::Overloaded) => {
+                error_reply = true;
+                sh.metrics.rate_limited.fetch_add(1, Ordering::Relaxed);
+                (
+                    text(503, "server busy: too many request bytes in flight").with("Retry-After", "1"),
+                    false,
+                    false,
+                )
+            }
             Err(ParseError::HeadersTooLarge) => {
                 error_reply = true;
                 (text(431, "request headers too large"), false, false)
@@ -514,6 +608,7 @@ fn handle_conn(sh: &Shared, conn: TcpStream) {
                 (text(501, m), false, false)
             }
         };
+        reserved.release();
         // A client that sent garbage or stalled gets a short, best-effort error reply (on TLS this may
         // be cut short if the handshake never completed); real responses get the full write budget.
         let reply_budget = if error_reply {
@@ -530,7 +625,7 @@ fn handle_conn(sh: &Shared, conn: TcpStream) {
         want_ka = want_ka && !error_reply && served < sh.cfg.max_requests_per_conn && !sh.stop.load(Ordering::SeqCst);
         let written = write_response_ka(rd.get_mut(), &resp, head, want_ka).is_ok();
         let dur = t0.elapsed();
-        let bytes_out = if head { 0 } else { resp.body.len() as u64 };
+        let bytes_out = if head { 0 } else { resp.body_len() as u64 };
         sh.metrics.observe(&method, resp.status, ctx.role, dur, bytes_in, bytes_out);
         let lvl = if resp.status >= 500 { Level::Warn } else { Level::Info };
         sh.log.log(
@@ -777,6 +872,52 @@ fn dispatch(sh: &Shared, req: &Request, who: &Principal, extra: &mut Extra) -> R
                 Err(e) => backend_err(e),
             }
         }
+        ("GET", "/v1/clock") => {
+            if !sh.backend.supports_gc() {
+                return text(501, "garbage collection is not supported by this server's backend");
+            }
+            match sh.backend.now_ms() {
+                Ok(t) => text(200, &t.to_string()),
+                Err(e) => backend_err(e),
+            }
+        }
+        (m, p) if (m == "GET" && p.starts_with("/v1/mtime/")) || (m == "POST" && p.starts_with("/v1/touch/")) => {
+            let touch = m == "POST";
+            let rest = &p[if touch { "/v1/touch/".len() } else { "/v1/mtime/".len() }..];
+            let Some(key) = pct_decode(rest) else {
+                return text(400, "bad key encoding");
+            };
+            if let Err(e) = validate_key(&key) {
+                return backend_err(e);
+            }
+            if !sh.backend.supports_gc() {
+                return text(501, "garbage collection is not supported by this server's backend");
+            }
+            if touch {
+                if who.role < Role::Write {
+                    return text(403, "Forbidden: touch needs a write token");
+                }
+                if (key == manifest::KEY || shadows_manifest(&key) || key.starts_with(vcs_remote::shelf::SHELF_PREFIX))
+                    && who.role < Role::Admin
+                {
+                    return text(403, "Forbidden: only an admin may touch the manifest or shelf keys");
+                }
+                match sh.backend.touch(&key) {
+                    Ok(true) => Response::new(204, ""),
+                    Ok(false) => text(404, "no such key"),
+                    Err(e) => backend_err(e),
+                }
+            } else {
+                if who.role < Role::Admin {
+                    return text(403, "Forbidden: object ages need an admin token");
+                }
+                match sh.backend.modified_ms(&key) {
+                    Ok(Some(t)) => text(200, &t.to_string()),
+                    Ok(None) => text(404, "no such key"),
+                    Err(e) => backend_err(e),
+                }
+            }
+        }
         (m, p) if p.starts_with("/v1/o/") => {
             let Some(key) = pct_decode(&p["/v1/o/".len()..]) else {
                 return text(400, "bad key encoding");
@@ -910,6 +1051,27 @@ fn read_allowed(sh: &Shared, who: &Principal, key: &str) -> Result<bool, Backend
     Ok(!idx.denied_only(&id, &|z| policy.read_zone_allowed(&who.name, z)))
 }
 
+/// Largest manifest the server keeps a copy of.
+const MANIFEST_CACHE_MAX: usize = 8 << 20;
+
+impl Shared {
+    fn manifest_cached(&self, tag: &str) -> Option<Arc<Vec<u8>>> {
+        let g = self.manifest_cache.lock().unwrap_or_else(|e| e.into_inner());
+        g.as_ref().filter(|(t, _)| t == tag).map(|(_, b)| b.clone())
+    }
+    fn manifest_parsed(&self, tag: &str) -> Option<Arc<Manifest>> {
+        let g = self.manifest_parsed.lock().unwrap_or_else(|e| e.into_inner());
+        g.as_ref().filter(|(t, _)| t == tag).map(|(_, m)| m.clone())
+    }
+    fn manifest_remember(&self, tag: &str, data: Option<&[u8]>) {
+        *self.manifest_parsed.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        let mut g = self.manifest_cache.lock().unwrap_or_else(|e| e.into_inner());
+        *g = data
+            .filter(|d| d.len() <= MANIFEST_CACHE_MAX)
+            .map(|d| (tag.to_owned(), Arc::new(d.to_vec())));
+    }
+}
+
 fn object_read(sh: &Shared, req: &Request, who: &Principal, key: &str, head: bool) -> Response {
     let is_shelf = key.starts_with(vcs_remote::shelf::SHELF_PREFIX);
     if is_shelf && !shelf_read_ok(sh, who, key) {
@@ -933,13 +1095,19 @@ fn object_read(sh: &Shared, req: &Request, who: &Principal, key: &str, head: boo
         let (Ok(o), Ok(l)) = (o.parse::<u64>(), l.parse::<u64>()) else {
             return text(400, "bad offset/len");
         };
-        return match sh.backend.get_range(key, o, l) {
-            Ok(Some(d)) => Response::new(200, d),
+        return match sh.backend.get_range_shared(key, o, l) {
+            Ok(Some(d)) => Response::shared(200, d),
             Ok(None) => text(404, "not found"),
             Err(e) => backend_err(e),
         };
     }
-    match sh.backend.get(key) {
+    let got = sh.backend.get(key);
+    if key == manifest::KEY {
+        if let Ok(Some(v)) = &got {
+            sh.manifest_remember(&v.tag, Some(&v.data));
+        }
+    }
+    match got {
         // Conditional GET: the caller already holds this version, send no body.
         Ok(Some(v)) if req.header("if-none-match").is_some_and(|t| unquote(t.trim()) == v.tag) => {
             Response::new(304, "").with("ETag", etag(&v.tag))
@@ -1024,34 +1192,77 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str, extra: &mu
         }
     }
     let is_manifest = key == manifest::KEY;
+    let mut if_match = if_match;
+    // One manifest write at a time per process: concurrent clients queue here instead of losing the swap.
+    let mut chain_guard = if is_manifest && !if_none {
+        Some(sh.manifest_write.lock().unwrap_or_else(|e| e.into_inner()))
+    } else {
+        None
+    };
+    let mut merged = false; // reconciled against a newer version
     let mut body = std::borrow::Cow::Borrowed(req.body.as_slice());
     // Read the manifest we are about to replace; validate against exactly that version.
-    let mut cur = Manifest::default();
+    let mut cur: Arc<Manifest> = Arc::new(Manifest::default());
+    let mut new_parsed: Option<Arc<Manifest>> = None;
     let mut rewrites: Vec<Rewrite> = Vec::new();
     if is_manifest {
-        let v = match sh.backend.get(key) {
-            Ok(v) => v,
-            Err(e) => return backend_err(e),
-        };
-        match (&v, &if_match) {
-            (Some(v), Some(t)) => {
-                if &v.tag != t {
-                    return Response::new(412, "");
+        let mut cached = if_match.as_deref().and_then(|t| sh.manifest_cached(t));
+        let mut stale_merge: Option<Manifest> = None;
+        if cached.is_none() && chain_guard.is_some() && sh.cfg.group_commit {
+            // Stale If-Match: try to reconcile with the version this process last wrote.
+            if let (Some(base), Some((ctag, cbytes))) = (
+                if_match.clone(),
+                sh.manifest_cache.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+            ) {
+                let c = sh
+                    .manifest_parsed(&ctag)
+                    .or_else(|| Manifest::decode(&cbytes).ok().map(Arc::new));
+                if let (Some(c), Ok(n)) = (c, Manifest::decode(&req.body)) {
+                    if let Some(m) = chain_guard.as_ref().and_then(|g| g.merge(&base, &ctag, &c, &n)) {
+                        stale_merge = Some(m);
+                        merged = true;
+                        if_match = Some(ctag);
+                        cached = Some(cbytes);
+                    }
                 }
             }
-            (Some(_), None) => return Response::new(412, ""),
-            (None, Some(_)) => return Response::new(412, ""),
-            (None, None) => {}
         }
-        if let Some(v) = v {
-            cur = match Manifest::decode(&v.data) {
-                Ok(m) => m,
-                Err(e) => return text(500, &format!("stored manifest invalid: {e}")),
+        if let Some(bytes) = &cached {
+            cur = match if_match.as_deref().and_then(|t| sh.manifest_parsed(t)) {
+                Some(m) => m,
+                None => match Manifest::decode(bytes) {
+                    Ok(m) => Arc::new(m),
+                    Err(e) => return text(500, &format!("stored manifest invalid: {e}")),
+                },
             };
+        } else {
+            let v = match sh.backend.get(key) {
+                Ok(v) => v,
+                Err(e) => return backend_err(e),
+            };
+            match (&v, &if_match) {
+                (Some(v), Some(t)) => {
+                    if &v.tag != t {
+                        return Response::new(412, "");
+                    }
+                }
+                (Some(_), None) => return Response::new(412, ""),
+                (None, Some(_)) => return Response::new(412, ""),
+                (None, None) => {}
+            }
+            if let Some(v) = v {
+                cur = match Manifest::decode(&v.data) {
+                    Ok(m) => Arc::new(m),
+                    Err(e) => return text(500, &format!("stored manifest invalid: {e}")),
+                };
+            }
         }
-        let mut new = match Manifest::decode(&req.body) {
-            Ok(m) => m,
-            Err(e) => return text(422, &format!("Invalid: {e}")),
+        let mut new = match stale_merge {
+            Some(m) => m,
+            None => match Manifest::decode(&req.body) {
+                Ok(m) => m,
+                Err(e) => return text(422, &format!("Invalid: {e}")),
+            },
         };
         let vcfg = sh.validator.read().unwrap_or_else(|e| e.into_inner()).clone();
         if sh.cfg.audit.is_some() {
@@ -1081,21 +1292,48 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str, extra: &mu
         extra.vtime = Some(new.time_hw);
         // the server may have rewritten lock times: store its version, not the client's bytes
         body = std::borrow::Cow::Owned(new.encode());
+        new_parsed = Some(Arc::new(new));
     }
     if if_none {
+        if is_manifest {
+            sh.manifest_remember("", None); // created without a known tag
+        }
         match sh.backend.put_if_absent(key, &body) {
             Ok(true) => Response::new(201, ""),
             Ok(false) => Response::new(412, ""),
             Err(e) => backend_err(e),
         }
     } else {
+        let used_tag = if_match.clone();
         match sh.backend.put_if_match(key, &body, &if_match.unwrap_or_default()) {
             Ok(Some(t)) => {
+                if is_manifest {
+                    if merged {
+                        sh.merged_writes.fetch_add(1, Ordering::Relaxed);
+                    }
+                    if let (Some(g), Some(tag), Some(newm)) = (chain_guard.as_mut(), used_tag.as_deref(), new_parsed.as_ref()) {
+                        g.record(tag, &cur, &t, newm);
+                    }
+                    sh.manifest_remember(&t, Some(&body));
+                    if let Some(newm) = new_parsed.take() {
+                        *sh.manifest_parsed.lock().unwrap_or_else(|e| e.into_inner()) = Some((t.clone(), newm));
+                    }
+                }
                 audit_rewrites(sh, who, &rewrites);
                 Response::new(200, "").with("ETag", etag(&t))
             }
-            Ok(None) => Response::new(412, ""),
-            Err(e) => backend_err(e),
+            Ok(None) => {
+                if is_manifest {
+                    sh.manifest_remember("", None);
+                }
+                Response::new(412, "")
+            }
+            Err(e) => {
+                if is_manifest {
+                    sh.manifest_remember("", None);
+                }
+                backend_err(e)
+            }
         }
     }
 }

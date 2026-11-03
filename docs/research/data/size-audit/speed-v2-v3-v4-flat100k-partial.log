@@ -1,0 +1,7 @@
+store bytes (du -sb .vcs): {'v2': 78747149, 'v3': 56327858, 'v4': 55836047}
+status: v2=113ms/905cpu v3=112ms/901cpu v4=114ms/921cpu
+add-1: v2=52ms/55cpu v3=52ms/56cpu v4=52ms/56cpu
+commit-1: v2=61ms/60cpu v3=63ms/62cpu v4=62ms/60cpu
+log-50: v2=2ms/2cpu v3=3ms/3cpu v4=2ms/2cpu
+switch-old: v2=143ms/950cpu v3=360ms/1213cpu v4=137ms/900cpu
+restore-10pct: v2=273ms/1051cpu v3=23969ms/30539cpu v4=493ms/1085cpu

@@ -18,8 +18,24 @@ use vcs_objects::{ChangeId, Commit, EntryMode, Object, ObjectId, RefUpdate, Sign
 use vcs_store::{LocalStore, ObjectStore};
 
 pub(crate) const FORMAT_FILE: &str = "format";
+/// Optional file `<common>/features`: one name per line, each a capability a reader must have to read this repository.
+/// Absent in repositories that never used one; written the first time a large-file manifest is stored.
+pub(crate) const FEATURES_FILE: &str = "features";
+pub(crate) const FEATURE_LARGE_CHUNKED: &str = "large-chunked";
+/// Operations may omit the tag view when it equals the nearest earlier one that has it (see ops.rs).
+pub(crate) const FEATURE_OP_TAGS_DELTA: &str = "op-tags-delta";
+pub(crate) const FEATURE_REF_JOURNAL: &str = "ref-journal";
+const KNOWN_FEATURES: &[&str] = &[FEATURE_LARGE_CHUNKED, FEATURE_OP_TAGS_DELTA, FEATURE_REF_JOURNAL];
 pub(crate) const FORMAT_TEXT: &str = "all-git repository format 1\n";
+/// Checkout streams files of at least this many bytes chunk by chunk instead of reassembling them in memory.
+const STREAM_CHECKOUT_MIN: u64 = 8 << 20;
 const RACY_NS: u64 = 2_000_000_000;
+
+/// See [`Repo::content_or_stream`].
+pub(crate) enum FileContent {
+    Bytes(Vec<u8>),
+    Streamed(IndexEntry),
+}
 
 #[derive(Default)]
 struct WalkOut {
@@ -241,7 +257,7 @@ fn is_not_a_directory(e: &std::io::Error) -> bool {
     cfg!(unix) && e.raw_os_error() == Some(20)
 }
 
-fn zones_fp(zones: &Zones) -> ObjectId {
+pub(crate) fn zones_fp(zones: &Zones) -> ObjectId {
     vcs_objects::blob_id(&zones.encode())
 }
 
@@ -275,6 +291,7 @@ impl Repo {
         }
         io(&vcs, fs::create_dir_all(vcs.join("objects")))?;
         let store = LocalStore::open(vcs.join("objects"))?;
+        store.set_large_feature_mark(vcs.join(FEATURES_FILE), FEATURE_LARGE_CHUNKED);
         let r = Repo {
             wfs: Arc::new(RealFs::new(worktree.clone())),
             worktree,
@@ -309,8 +326,16 @@ impl Repo {
                     return msg(format!("unsupported repository format: {:?}", f.trim()));
                 }
                 let common = crate::worktree::resolve_common(&vcs)?;
+                if let Ok(feat) = fs::read_to_string(common.join(FEATURES_FILE)) {
+                    if let Some(f) = feat.lines().map(str::trim).find(|l| !l.is_empty() && !KNOWN_FEATURES.contains(l)) {
+                        return msg(format!(
+                            "this repository needs the {f:?} feature, which this version does not support; upgrade vcs"
+                        ));
+                    }
+                }
                 let store = LocalStore::open(common.join("objects"))?;
-                return Ok(Repo {
+                store.set_large_feature_mark(common.join(FEATURES_FILE), FEATURE_LARGE_CHUNKED);
+                let repo = Repo {
                     wfs: Arc::new(RealFs::new(cur.clone())),
                     worktree: cur,
                     vcs,
@@ -321,7 +346,10 @@ impl Repo {
                     use_commit_graph: true,
                     index_racy_ns: RACY_NS,
                     counters: Counters::default(),
-                });
+                };
+                repo.recover_torn_index();
+                repo.journal_open_check();
+                return Ok(repo);
             }
             if !cur.pop() {
                 return Err(Error::NotARepo);
@@ -384,7 +412,9 @@ impl Repo {
     // ---------- state ----------
 
     pub(crate) fn lock(&self) -> Result<LockGuard> {
-        LockGuard::acquire(self.common.join("lock"))
+        let guard = LockGuard::acquire(self.common.join("lock"))?;
+        self.journal_verify()?; // finish an interrupted journalled operation before anyone reads refs
+        Ok(guard)
     }
     /// Path of a state file: shared files live in the common directory, the rest per worktree.
     pub(crate) fn state_path(&self, name: &str) -> PathBuf {
@@ -440,8 +470,38 @@ impl Repo {
         // Durability barrier (no-op if nothing pending): blobs the index names must be durable.
         self.store.sync()?;
         ix.written_ns = ix.settled_written_ns(now_ns(), self.index_racy_ns, verified);
-        write_atomic(&self.vcs.join("index"), &ix.encode())
+        // No fsync of the temp file (like git): the rename is atomic, and the blobs the index
+        // names were made durable just above.
+        let clean = self.index_holds_no_attrs();
+        let bytes = ix.encode();
+        crate::meta::write_atomic_nosync(&self.vcs.join("index"), &bytes)?;
+        self.carry_attrs_marker(clean, &bytes);
+        Ok(())
     }
+    /// Fingerprint of the index file as it is on disk, when a monitor state is saved (else `None`: nothing
+    /// would use it).
+    pub(crate) fn fsmon_fp_of_disk_index(&self) -> Option<[u8; 32]> {
+        if !fsmonitor::state_exists(&self.vcs) {
+            return None;
+        }
+        Some(fsmonitor::fingerprint(
+            &self.rd("index").ok()?,
+            &self.rd("zones").ok()?,
+            &self.rd("workspace").ok()?,
+        ))
+    }
+
+    /// Record that the index went from fingerprint `old` to `new_bytes` changing only entries in `touched`.
+    pub(crate) fn fsmon_log_rewrite(&self, old: Option<[u8; 32]>, new_bytes: &[u8], touched: &[String]) {
+        let (Some(old), Ok(z), Ok(w)) = (old, self.rd("zones"), self.rd("workspace")) else {
+            return;
+        };
+        let new = fsmonitor::fingerprint(new_bytes, &z, &w);
+        if new != old {
+            fsmonitor::log_rebind(&self.vcs, &old, &new, touched);
+        }
+    }
+
     pub(crate) fn save_ws(&self, ws: &Workspace) -> Result<()> {
         // Backstop for every path that changes a subscription: a branch of a zone is checked out
         // in at most one worktree. (Callers that move files check earlier, before touching any.)
@@ -467,6 +527,36 @@ impl Repo {
         refs.head(zone, b)
     }
 
+    /// Root tree of the commit `zone`'s checked-out branch points at (`None`: no commits yet).
+    pub(crate) fn head_root(&self, zone: &str, ws: &Workspace, refs: &Refs) -> Result<Option<ObjectId>> {
+        match self.current_head(zone, ws, refs) {
+            Some(h) => Ok(Some(self.commit_obj(&h)?.root)),
+            None => Ok(None),
+        }
+    }
+
+    /// What HEAD of `zone` (tree `root`) holds at the file `path`: the same answer as
+    /// `head_flat(..).get(path)` without reading every tree.
+    pub(crate) fn head_entry(
+        &self,
+        root: Option<ObjectId>,
+        zones: &Zones,
+        zone: &str,
+        path: &str,
+    ) -> Result<Option<(EntryMode, ObjectId)>> {
+        let Some(root) = root else { return Ok(None) };
+        let zp = zones.path_of(zone).unwrap_or("");
+        let rel = if zp.is_empty() {
+            path
+        } else {
+            match path.strip_prefix(zp).and_then(|r| r.strip_prefix('/')) {
+                Some(r) => r,
+                None => return Ok(None),
+            }
+        };
+        Ok(treeops::entry_at(&self.store, root, rel)?.filter(|e| e.0 != EntryMode::Directory))
+    }
+
     pub(crate) fn head_flat(&self, zone: &str, zones: &Zones, ws: &Workspace, refs: &Refs) -> Result<Flat> {
         let root = match self.current_head(zone, ws, refs) {
             Some(h) => Some(self.commit_obj(&h)?.root),
@@ -481,6 +571,9 @@ impl Repo {
         let _l = self.lock()?;
         let zones = self.zones()?;
         let ws = self.workspace()?;
+        if let Some(rep) = self.add_tracked_files_patched(rel_paths, &zones, &ws)? {
+            return Ok(rep);
+        }
         let mut ix = self.index()?;
         let mut rep = AddReport::default();
         let mut todo = Vec::new();
@@ -488,7 +581,11 @@ impl Repo {
         for p in rel_paths {
             self.add_one(p, &zones, &ws, &mut ix, &mut rep, &mut todo)?;
         }
-        crate::portable::require_no_collision(ix.entries.keys().map(String::as_str).chain(todo.iter().map(String::as_str)), "add")?;
+        // A collision needs a path the index does not hold yet; re-folding 100k tracked names for a
+        // plain re-add of modified files costs more than the rest of the command.
+        if todo.iter().any(|t| !ix.entries.contains_key(t.as_str())) {
+            crate::portable::require_no_collision(ix.entries.keys().map(String::as_str).chain(todo.iter().map(String::as_str)), "add")?;
+        }
         // Read + hash + write the blobs on several threads; the index is updated afterwards.
         let verified = self.stage_files(&todo, &mut ix)?;
         self.note_resolved(rel_paths, &ix)?;
@@ -500,6 +597,77 @@ impl Repo {
         }
         self.save_index_verified(&mut ix, |p| verified.contains(p))?;
         Ok(rep)
+    }
+
+    /// `add` of a few named files, tracked already (re-staging edits) or new: stage them against just
+    /// their own index entries and patch the index file, instead of decoding and re-encoding all of it.
+    /// `None` (nothing done) for anything else: a directory, an empty spec, a missing file,
+    /// an old index layout, or when no entry changes (the full path may still move `written_ns`).
+    fn add_tracked_files_patched(&self, rel_paths: &[String], zones: &Zones, ws: &Workspace) -> Result<Option<AddReport>> {
+        const MAX: usize = 256;
+        if rel_paths.is_empty() || rel_paths.len() > MAX || rel_paths.iter().any(|p| p.is_empty()) {
+            return Ok(None);
+        }
+        let Ok(raw) = self.rd("index") else { return Ok(None) };
+        let Some(f) = crate::index_file::IndexFile::parse(raw)? else {
+            return Ok(None);
+        };
+        if f.is_empty() {
+            return Ok(None);
+        }
+        let mut part = Index {
+            written_ns: f.written_ns,
+            ..Index::default()
+        };
+        for p in rel_paths {
+            match fs::symlink_metadata(self.worktree.join(p)) {
+                Ok(m) if m.is_file() || m.file_type().is_symlink() => {}
+                _ => return Ok(None),
+            }
+            match f.get(p)? {
+                Some(e) => {
+                    part.entries.insert(p.clone(), e);
+                }
+                None => {
+                    // A new file: it may not clash by case or normalization with a tracked name (checked
+                    // against its own neighbours only), nor with a file/directory (checked by the patch).
+                    if let Some((a, _)) = f.find_new_path_collision(p)? {
+                        return crate::portable::require_no_collision([a.as_str(), p.as_str()], "add").map(|()| None);
+                    }
+                }
+            }
+        }
+        let news: Vec<&str> = rel_paths
+            .iter()
+            .filter(|p| !part.entries.contains_key(p.as_str()))
+            .map(String::as_str)
+            .collect();
+        if news.len() > 1 {
+            crate::portable::require_no_collision(news, "add")?;
+        }
+        let before: BTreeMap<String, IndexEntry> = part.entries.iter().map(|(k, e)| (k.clone(), e.clone())).collect();
+        let mut rep = AddReport::default();
+        let mut todo = Vec::new();
+        for p in rel_paths {
+            self.add_one(p, zones, ws, &mut part, &mut rep, &mut todo)?;
+        }
+        let verified = self.stage_files(&todo, &mut part)?;
+        self.note_resolved(rel_paths, &part)?;
+        self.store.sync()?;
+        let mut edits = crate::index_file::Edits::new();
+        for (p, e) in part.entries.iter() {
+            if before.get(p) != Some(e) {
+                edits.insert(p.clone(), Some(e.clone()));
+            }
+        }
+        let _ = verified; // a patch keeps `written_ns`, so the entries it changes are re-read once by status
+        if edits.is_empty() {
+            return Ok(None);
+        }
+        if let (Some(bytes), _) = self.prepare_index_patch(&f, &edits)? {
+            self.write_index_bytes(&bytes)?;
+        }
+        Ok(Some(rep))
     }
 
     fn add_one(&self, p: &str, zones: &Zones, ws: &Workspace, ix: &mut Index, rep: &mut AddReport, todo: &mut Vec<String>) -> Result<()> {
@@ -540,21 +708,32 @@ impl Repo {
             }
             Err(source) => Err(Error::Io { path: full, source }),
             Ok(m) if m.is_dir() => {
-                let mut seen = BTreeSet::new();
+                let mut tracked_seen = 0usize;
+                let start = todo.len();
                 let stack = self.ignore_stack_above(p)?;
                 if !p.is_empty() && stack.is_ignored(p, true) {
                     if !ix.has_under(p) {
                         rep.skipped.push(format!("{p} (ignored)"));
                         return Ok(());
                     }
-                    self.add_dir(p, zones, ws, ix, rep, &mut seen, todo, &stack.inherit())?;
+                    self.add_dir(p, zones, ws, ix, rep, &mut tracked_seen, todo, &stack.inherit())?;
                 } else {
-                    self.add_dir(p, zones, ws, ix, rep, &mut seen, todo, &stack)?;
+                    self.add_dir(p, zones, ws, ix, rep, &mut tracked_seen, todo, &stack)?;
                 }
-                for g in ix.under(p) {
-                    if !seen.contains(&g) && !ws.skips(zones.owner(&g), &g) {
-                        ix.entries.remove(&g);
-                        rep.removed += 1;
+                // Every tracked path was seen on disk (the common case): nothing was deleted, and no
+                // set of 100k seen paths has to be built to find that out.
+                let under = if p.is_empty() {
+                    ix.entries.len()
+                } else {
+                    usize::from(ix.entries.contains_key(p)) + ix.entries.range(format!("{p}/")..format!("{p}0")).count()
+                };
+                if tracked_seen != under {
+                    let seen: std::collections::HashSet<&str> = todo[start..].iter().map(String::as_str).collect();
+                    for g in ix.under(p) {
+                        if !seen.contains(g.as_str()) && !ws.skips(zones.owner(&g), &g) {
+                            ix.entries.remove(&g);
+                            rep.removed += 1;
+                        }
                     }
                 }
                 Ok(())
@@ -628,7 +807,7 @@ impl Repo {
         ws: &Workspace,
         ix: &Index,
         rep: &mut AddReport,
-        seen: &mut BTreeSet<String>,
+        tracked_seen: &mut usize,
         todo: &mut Vec<String>,
         parent_stack: &IgnoreStack,
     ) -> Result<()> {
@@ -648,11 +827,23 @@ impl Repo {
                 continue;
             }
             let rel = if dir.is_empty() { name.clone() } else { format!("{dir}/{name}") };
+            let ft = io(&abs, e.file_type())?;
+            // Fast path for the bulk of a re-add: a regular file the index already tracks has a valid
+            // name, is never ignored, and only needs its zone and sparse checks.
+            if ft.is_file() && e.file_name().to_str().is_some() && ix.entries.contains_key(&rel) {
+                let owner = zones.owner(&rel);
+                if !ws.subs.contains_key(owner) || ws.skips(owner, &rel) {
+                    continue;
+                }
+                todo.push(rel);
+                *tracked_seen += 1;
+                rep.staged += 1;
+                continue;
+            }
             if validate_component(&name).is_err() || e.file_name().to_str().is_none() {
                 rep.skipped.push(format!("{rel} (invalid name)"));
                 continue;
             }
-            let ft = io(&abs, e.file_type())?;
             if !(ft.is_symlink() || ft.is_dir() || ft.is_file()) {
                 rep.skipped.push(format!("{rel} (special file: unsupported)"));
                 continue;
@@ -678,20 +869,24 @@ impl Repo {
                     continue;
                 }
                 validate_path(&rel)?;
-                todo.push(rel.clone());
-                seen.insert(rel);
+                if ix.entries.contains_key(&rel) {
+                    *tracked_seen += 1;
+                }
+                todo.push(rel);
                 rep.staged += 1;
             } else if ft.is_dir() {
                 // a directory kept only for tracked files below it ignores everything else
                 if stack.is_ignored(&rel, true) {
-                    self.add_dir(&rel, zones, ws, ix, rep, seen, todo, &stack.inherit())?;
+                    self.add_dir(&rel, zones, ws, ix, rep, tracked_seen, todo, &stack.inherit())?;
                 } else {
-                    self.add_dir(&rel, zones, ws, ix, rep, seen, todo, &stack)?;
+                    self.add_dir(&rel, zones, ws, ix, rep, tracked_seen, todo, &stack)?;
                 }
             } else {
                 validate_path(&rel)?;
-                todo.push(rel.clone());
-                seen.insert(rel);
+                if ix.entries.contains_key(&rel) {
+                    *tracked_seen += 1;
+                }
+                todo.push(rel);
                 rep.staged += 1;
             }
         }
@@ -718,10 +913,20 @@ impl Repo {
         let prev = &ix.entries;
         // (entry to record if it changed, verified)
         let one = |rel: &String| -> Result<(Option<IndexEntry>, bool)> {
-            let abs = self.worktree.join(rel);
             let t_stat = now_ns();
-            let m = io(&abs, fs::symlink_metadata(&abs))?; // stat BEFORE read: later edits change mtime/size
-            if m.file_type().is_symlink() {
+            // Relative to the worktree root fd and without allocating: 16 workers hitting malloc for
+            // a joined PathBuf and a CString per file spend more time on its lock than on the stat.
+            let m = match self.wfs.stat(rel) {
+                Ok(m) => m, // stat BEFORE read: later edits change mtime/size
+                Err(source) => {
+                    return Err(Error::Io {
+                        path: self.worktree.join(rel),
+                        source,
+                    })
+                }
+            };
+            if m.kind == FileKind::Symlink {
+                let abs = self.worktree.join(rel);
                 let target = io(&abs, read_link_bytes(&abs))?;
                 let id = self.store.put_blob(&target)?;
                 return Ok((
@@ -729,17 +934,17 @@ impl Repo {
                         id,
                         mode: EntryMode::Symlink,
                         size: target.len() as u64,
-                        mtime_ns: mtime_ns(&m),
-                        ctime_ns: ctime_ns(&m),
+                        mtime_ns: m.mtime_ns,
+                        ctime_ns: m.ctime_ns,
                     }),
                     true,
                 ));
             }
-            let (mt, ct, mode) = (mtime_ns(&m), ctime_ns(&m), mode_of(&m));
+            let (mt, ct, mode) = (m.mtime_ns, m.ctime_ns, m.mode);
             let old = prev.get(rel.as_str());
             if let Some(e) = old {
                 if e.mode == mode
-                    && e.size == m.len()
+                    && e.size == m.len
                     && e.mtime_ns == mt
                     && e.ctime_ns == ct
                     && ct != 0
@@ -748,18 +953,34 @@ impl Repo {
                     return Ok((None, true)); // stat cache hit
                 }
             }
+            let abs = self.worktree.join(rel);
+            if m.len >= vcs_objects::LARGE_THRESHOLD as u64 {
+                // large file: streamed in constant memory, chunk-wise compared with the old manifest first
+                let f = io(&abs, fs::File::open(&abs))?;
+                self.counters.content_reads.fetch_add(1, Ordering::Relaxed);
+                let verified = mt.max(ct).saturating_add(racy) <= t_stat;
+                let id = self.stage_large(&abs, &f, m.len, old.filter(|e| e.size == m.len).map(|e| e.id))?;
+                let ne = IndexEntry {
+                    id,
+                    mode,
+                    size: m.len,
+                    mtime_ns: mt,
+                    ctime_ns: ct,
+                };
+                return Ok((if old == Some(&ne) { None } else { Some(ne) }, verified));
+            }
             let data = io(&abs, fs::read(&abs))?;
             self.counters.content_reads.fetch_add(1, Ordering::Relaxed);
             let verified = mt.max(ct).saturating_add(racy) <= t_stat;
             let id = match old {
                 // same size: likely the same content, and then the object is known stored
-                Some(e) if e.size == m.len() && vcs_objects::content_id(&data) == e.id => e.id,
+                Some(e) if e.size == m.len && vcs_objects::content_id(&data) == e.id => e.id,
                 _ => self.store.put_content(&data)?,
             };
             let ne = IndexEntry {
                 id,
                 mode,
-                size: m.len(),
+                size: m.len,
                 mtime_ns: mt,
                 ctime_ns: ct,
             };
@@ -810,6 +1031,144 @@ impl Repo {
         Ok(verified)
     }
 
+    /// Content id of the large file `f` (`len` bytes at `abs`), storing what is not stored yet. When the
+    /// old index entry names a manifest the file still matches chunk by chunk, that id is kept (so an
+    /// unchanged file keeps whatever layout it was first stored in, and nothing is written).
+    fn stage_large(&self, abs: &Path, f: &fs::File, len: u64, old: Option<ObjectId>) -> Result<ObjectId> {
+        let v3_layout = std::env::var("VCS_CHUNK_LAYOUT").is_ok_and(|v| v == "v3");
+        if let Some(oid) = old {
+            if let Ok(Object::Chunked(om)) = self.store.get(&oid) {
+                if om.total_len == len {
+                    if om.large && !v3_layout {
+                        // chunk-wise compare; only the changed stretches are re-chunked
+                        if let Some(id) = vcs_store::bigfile::put_file_incremental(&self.store, f, len, &oid, &om)? {
+                            return Ok(id);
+                        }
+                    } else if io(abs, vcs_store::bigfile::file_matches(&om, f))? {
+                        return Ok(oid);
+                    }
+                }
+            }
+        }
+        // `VCS_CHUNK_LAYOUT=v3` keeps writing the small-chunk manifests older releases can read (whole file in memory).
+        if v3_layout {
+            let data = io(abs, fs::read(abs))?;
+            return Ok(vcs_store::bigfile::put_legacy_content(&self.store, &data)?);
+        }
+        let id = vcs_store::bigfile::put_file(&self.store, f, len)?;
+        self.note_feature(FEATURE_LARGE_CHUNKED)?;
+        Ok(id)
+    }
+
+    /// Record in `<common>/features` that this repository holds objects older releases cannot read.
+    pub(crate) fn note_feature(&self, name: &str) -> Result<()> {
+        let p = self.common.join(FEATURES_FILE);
+        let cur = fs::read_to_string(&p).unwrap_or_default();
+        if cur.lines().any(|l| l == name) {
+            return Ok(());
+        }
+        write_atomic(&p, format!("{cur}{name}\n").as_bytes())
+    }
+
+    /// Content of file `id` for writing at `p`: bytes, or (a regular file of `STREAM_CHECKOUT_MIN` bytes and up
+    /// on a filesystem with file handles) already written and published at `p` chunk by chunk in parallel,
+    /// never assembled in memory. The caller replaces `p` in the index with the returned entry.
+    pub(crate) fn content_or_stream(&self, p: &str, id: &ObjectId, mode: EntryMode) -> Result<FileContent> {
+        let data = match self.store.get(id)? {
+            Object::Blob(b) => b,
+            Object::Chunked(cm) => {
+                if mode != EntryMode::Symlink && cm.total_len >= STREAM_CHECKOUT_MIN {
+                    let stash: std::sync::Mutex<Option<vcs_store::StoreError>> = std::sync::Mutex::new(None);
+                    let r = self.wfs.write_with(p, cm.total_len, mode, &|f| {
+                        vcs_store::bigfile::write_manifest_to(&self.store, id, &cm, f).map_err(|e| {
+                            *stash.lock().unwrap() = Some(e);
+                            std::io::Error::other("chunk write failed")
+                        })
+                    });
+                    if let Some(e) = stash.into_inner().unwrap() {
+                        return Err(e.into());
+                    }
+                    if let Some(m) = io(&self.worktree.join(p), r)? {
+                        return Ok(FileContent::Streamed(IndexEntry {
+                            id: *id,
+                            mode,
+                            size: m.len,
+                            mtime_ns: m.mtime_ns,
+                            ctime_ns: m.ctime_ns,
+                        }));
+                    }
+                }
+                vcs_store::bigfile::read_manifest_range(&self.store, id, &cm, 0, cm.total_len)?
+            }
+            _ => return msg(format!("object {id} is not file content")),
+        };
+        Ok(FileContent::Bytes(data))
+    }
+
+    /// True when the regular file at `abs` (`file_len` bytes) is byte-identical to the chunked content `id`, found by
+    /// comparing chunk hashes in parallel instead of reading the file into memory. `idx_size` is the size the
+    /// index recorded for it; only files of `CHUNK_THRESHOLD` bytes and up can be manifests, anything else is `false`.
+    pub(crate) fn large_unchanged(&self, abs: &Path, idx_size: u64, file_len: u64, id: &ObjectId) -> Result<bool> {
+        if idx_size < vcs_objects::CHUNK_THRESHOLD as u64 || idx_size != file_len {
+            return Ok(false);
+        }
+        let Ok(Object::Chunked(m)) = self.store.get(id) else {
+            return Ok(false);
+        };
+        let f = io(abs, fs::File::open(abs))?;
+        self.counters.content_reads.fetch_add(1, Ordering::Relaxed);
+        io(abs, vcs_store::bigfile::file_matches(&m, &f))
+    }
+
+    /// True when ids `a` and `b` of a file of `size` bytes are different layouts of the same bytes.
+    pub(crate) fn same_bytes_other_layout(&self, size: u64, a: &ObjectId, b: &ObjectId) -> Result<bool> {
+        if size < vcs_objects::CHUNK_THRESHOLD as u64 {
+            return Ok(false);
+        }
+        crate::largeeq::same_content(&self.store, a, b)
+    }
+
+    /// Remove from staged `Modified` entries those whose HEAD and index ids are the same bytes in two layouts.
+    fn drop_layout_only(
+        &self,
+        staged: Vec<Change>,
+        head_root: Option<ObjectId>,
+        zones: &Zones,
+        zone: &str,
+        ix: &Index,
+    ) -> Result<Vec<Change>> {
+        let Some(root) = head_root else { return Ok(staged) };
+        let prefix = zones.path_of(zone).unwrap_or("");
+        let mut out = Vec::with_capacity(staged.len());
+        for c in staged {
+            if c.kind == ChangeKind::Modified {
+                if let Some(e) = ix.entries.get(&c.path).filter(|e| e.size >= vcs_objects::CHUNK_THRESHOLD as u64) {
+                    let rel = if prefix.is_empty() {
+                        c.path.as_str()
+                    } else {
+                        c.path.strip_prefix(prefix).map_or(c.path.as_str(), |r| r.trim_start_matches('/'))
+                    };
+                    if let Some((m, hid)) = treeops::entry_at(&self.store, root, rel)? {
+                        if m == e.mode && self.same_bytes_other_layout(e.size, &hid, &e.id)? {
+                            continue;
+                        }
+                    }
+                }
+            }
+            out.push(c);
+        }
+        Ok(out)
+    }
+
+    /// Length of the content `id` names, without reassembling a chunked file.
+    pub(crate) fn content_len(&self, id: &ObjectId) -> Result<u64> {
+        match self.store.get(id)? {
+            Object::Blob(b) => Ok(b.len() as u64),
+            Object::Chunked(cm) => Ok(cm.total_len),
+            _ => msg(format!("object {id} is not file content")),
+        }
+    }
+
     // ---------- status ----------
 
     pub(crate) fn wt_state(&self, path: &str, e: &IndexEntry, written_ns: u64) -> Result<Wt> {
@@ -818,8 +1177,29 @@ impl Repo {
 
     /// [`Self::wt_state`] plus whether the verdict came from reading the file's content.
     pub(crate) fn wt_state_read(&self, path: &str, e: &IndexEntry, written_ns: u64) -> Result<(Wt, bool)> {
+        self.wt_state_from(path, e, written_ns, self.wfs.stat(path))
+    }
+
+    /// [`Self::wt_state_read`] for a scan over sorted paths (`cur` keeps the current directory open).
+    pub(crate) fn wt_state_seq(
+        &self,
+        cur: &mut crate::worktree_fs::StatCursor,
+        path: &str,
+        e: &IndexEntry,
+        written_ns: u64,
+    ) -> Result<(Wt, bool)> {
+        self.wt_state_from(path, e, written_ns, self.wfs.stat_seq(cur, path))
+    }
+
+    fn wt_state_from(
+        &self,
+        path: &str,
+        e: &IndexEntry,
+        written_ns: u64,
+        stat: std::io::Result<crate::worktree_fs::FsStat>,
+    ) -> Result<(Wt, bool)> {
         let abs = || self.worktree.join(path);
-        let m = match self.wfs.stat(path) {
+        let m = match stat {
             Ok(m) => m,
             // A path whose parent became a file (`a/b` tracked, `a` replaced by a file) is ENOTDIR.
             Err(x) if x.kind() == std::io::ErrorKind::NotFound || is_not_a_directory(&x) => return Ok((Wt::Deleted, false)),
@@ -845,6 +1225,20 @@ impl Repo {
         let ct_ok = e.ctime_ns == 0 || e.ctime_ns == m.ctime_ns;
         if m.len == e.size && m.mtime_ns == e.mtime_ns && ct_ok && m.mode == e.mode && e.stat_edge(self.index_racy_ns) <= written_ns {
             return Ok((Wt::Clean, false));
+        }
+        if e.size >= vcs_objects::CHUNK_THRESHOLD as u64 {
+            // The id of a large file names its length, so a different length is a different content.
+            if m.len != e.size || m.mode != e.mode {
+                return Ok((Wt::Modified, false));
+            }
+            // Same length: compare chunk by chunk against the stored manifest (parallel, no chunking).
+            if let Ok(Object::Chunked(om)) = self.store.get(&e.id) {
+                if let Some(f) = io(&abs(), self.wfs.open_read(path))? {
+                    self.counters.content_reads.fetch_add(1, Ordering::Relaxed);
+                    let same = io(&abs(), vcs_store::bigfile::file_matches(&om, &f))?;
+                    return Ok((if same { Wt::Clean } else { Wt::Modified }, true));
+                }
+            }
         }
         let data = io(&abs(), self.wfs.read(path))?;
         self.counters.content_reads.fetch_add(1, Ordering::Relaxed);
@@ -878,8 +1272,23 @@ impl Repo {
             if let Some(m) = crate::fsmonitor::JournalMonitor::open(&self.vcs) {
                 return self.status_monitored(opts, &m);
             }
+            // No journal (no watcher, or it stopped cleanly): a saved state can never be used again,
+            // and keeping it would make index writers keep logging for it.
+            fsmonitor::State::remove(&self.vcs);
         }
         self.status_with(opts)
+    }
+
+    /// [`Self::status_auto`] without the untracked-file walk: `untracked`/`unsupported` stay empty,
+    /// staged/unstaged/merge state is identical. For callers that only look at tracked changes.
+    pub fn status_tracked_auto(&self, opts: StatusOpts) -> Result<Status> {
+        if std::env::var_os("VCS_NO_FSMONITOR").is_none() {
+            if let Some(m) = crate::fsmonitor::JournalMonitor::open(&self.vcs) {
+                return self.status_monitored(opts, &m);
+            }
+        }
+        let ix = self.index()?;
+        self.status_inner(opts, &ix, false, None)
     }
 
     /// `status` using `mon` to skip the stat of unchanged files and the untracked walk. The
@@ -890,10 +1299,13 @@ impl Repo {
         let ix_bytes = self.rd("index")?;
         let ix = Index::decode(&ix_bytes)?;
         let fp = fsmonitor::fingerprint(&ix_bytes, &self.rd("zones")?, &self.rd("workspace")?);
-        let prev = fsmonitor::State::load(&self.vcs).filter(|s| s.fp == fp);
+        let (prev, extra) = self.saved_state_for(fp);
         let ans = mon.changed_since(prev.as_ref().map(|s| s.token.as_str()));
         let (token, inc) = match (prev.as_ref(), ans) {
-            (Some(p), Changed::Paths { paths, new_token }) => (Some(new_token), self.incremental(&ix, p, &paths)?),
+            (Some(p), Changed::Paths { mut paths, new_token }) => {
+                paths.extend(extra);
+                (Some(new_token), self.incremental(&ix, p, &paths)?)
+            }
             (_, Changed::Paths { new_token, .. }) => (Some(new_token), None),
             (_, Changed::FullScan { new_token }) => (new_token, None),
         };
@@ -925,6 +1337,45 @@ impl Repo {
             new.store(&self.vcs);
         }
         Ok(st)
+    }
+
+    /// The saved monitor state usable for an index with fingerprint `fp`, and extra paths to treat as
+    /// changed: the state itself when bound to `fp`, or one bound to an earlier index that a logged
+    /// chain of rewrites (see `fsmonitor::log_rebind`) connects to `fp`, with the paths those rewrites touched.
+    fn saved_state_for(&self, fp: [u8; 32]) -> (Option<fsmonitor::State>, Vec<String>) {
+        let Some(st) = fsmonitor::State::load(&self.vcs) else {
+            return (None, Vec::new());
+        };
+        if st.fp == fp {
+            return (Some(st), Vec::new());
+        }
+        match fsmonitor::follow_rebinds(&self.vcs, &st.fp, &fp) {
+            Some(touched) => (Some(st), touched),
+            None => (None, Vec::new()),
+        }
+    }
+
+    /// Tracked paths that may differ from the index, from the monitor: the unstaged set saved with the
+    /// state plus whatever changed since its token. `None` (do a full scan) without a running watcher, a
+    /// state for this index, or a usable answer. Untracked files are not covered.
+    pub(crate) fn monitored_candidates(&self, ix_bytes: &[u8]) -> Option<Vec<String>> {
+        if std::env::var_os("VCS_NO_FSMONITOR").is_some() {
+            return None;
+        }
+        let mon = fsmonitor::JournalMonitor::open(&self.vcs)?;
+        let fp = fsmonitor::fingerprint(ix_bytes, &self.rd("zones").ok()?, &self.rd("workspace").ok()?);
+        let (prev, extra) = self.saved_state_for(fp);
+        let prev = prev?;
+        let Changed::Paths { paths, .. } = mon.changed_since(Some(&prev.token)) else {
+            return None;
+        };
+        let mut all: Vec<String> = prev.dirty.keys().cloned().chain(paths).chain(extra).collect();
+        if all.len() > 20_000 || !all.iter().all(|p| fsmonitor::plain_path(p)) {
+            return None;
+        }
+        all.sort_unstable();
+        all.dedup();
+        Some(all)
     }
 
     /// Apply the monitor's changed paths to the saved state: re-check only tracked files at or
@@ -981,6 +1432,13 @@ impl Repo {
         Ok(Some(inc))
     }
 
+    /// Staged/unstaged/merge state only: no walk for untracked files. For callers that just need
+    /// to know whether the tracked files are clean (merge, rebase, cherry-pick, zone split).
+    pub(crate) fn status_tracked(&self) -> Result<Status> {
+        let ix = self.index()?;
+        self.status_inner(StatusOpts::default(), &ix, false, None)
+    }
+
     pub fn status_with(&self, opts: StatusOpts) -> Result<Status> {
         let ix = self.index()?;
         self.status_inner(opts, &ix, true, None)
@@ -990,6 +1448,52 @@ impl Repo {
     /// for untracked files (`Status::untracked` / `unsupported` are then left empty), which is
     /// all a caller that only needs staged/unstaged/merge state has to pay for.
     pub(crate) fn status_inner(&self, opts: StatusOpts, ix: &Index, untracked: bool, inc: Option<&Incremental>) -> Result<Status> {
+        let (st, racy_clean) = self.status_inner_verified(opts, ix, untracked, inc)?;
+        if !racy_clean.is_empty() {
+            self.refresh_racy(ix, &racy_clean);
+        }
+        Ok(st)
+    }
+
+    /// [`Self::status_inner`] that leaves the racy-entry refresh to the caller and returns the
+    /// paths whose content was read and found clean. For a caller that holds the repository lock
+    /// (where the best-effort refresh is skipped) and rewrites the index itself: it passes them to
+    /// `save_index_verified` so the next command does not hash those files again.
+    pub(crate) fn status_inner_verified(
+        &self,
+        opts: StatusOpts,
+        ix: &Index,
+        untracked: bool,
+        inc: Option<&Incremental>,
+    ) -> Result<(Status, BTreeSet<String>)> {
+        self.status_inner_paths(opts, ix, untracked, inc, None)
+    }
+
+    /// Staged, merge and unstaged state of only the tracked `paths` (the staged diff is always
+    /// complete; it is cheap). No walk for untracked files. For callers that ask "does this
+    /// change touch a path that has local changes".
+    pub(crate) fn status_paths(&self, paths: &BTreeSet<&str>) -> Result<Status> {
+        let ix = self.index()?;
+        let (st, racy_clean) = self.status_inner_paths(StatusOpts::default(), &ix, false, None, Some(paths))?;
+        if !racy_clean.is_empty() {
+            self.refresh_racy(&ix, &racy_clean);
+        }
+        Ok(st)
+    }
+
+    /// Staged changes only (index against HEAD): no stat of the working tree at all.
+    pub(crate) fn status_staged_only(&self) -> Result<Status> {
+        self.status_paths(&BTreeSet::new())
+    }
+
+    fn status_inner_paths(
+        &self,
+        opts: StatusOpts,
+        ix: &Index,
+        untracked: bool,
+        inc: Option<&Incremental>,
+        only: Option<&BTreeSet<&str>>,
+    ) -> Result<(Status, BTreeSet<String>)> {
         let zones = self.zones()?;
         let ws = self.workspace()?;
         let refs = self.refs()?;
@@ -1001,6 +1505,7 @@ impl Repo {
             let mine: Vec<(&String, &IndexEntry)> = ix
                 .entries
                 .iter()
+                .filter(|(p, _)| only.map_or(true, |o| o.contains(p.as_str())))
                 .filter(|(p, _)| (single_zone || zones.owner(p) == zone) && !ws.skips(zone, p))
                 .collect();
             // Subtree-skipping diff: directories whose cached or computed tree id equals HEAD's
@@ -1015,6 +1520,7 @@ impl Repo {
                 .into_iter()
                 .map(|(path, kind)| Change { path, kind })
                 .collect();
+            let staged = self.drop_layout_only(staged, head_root, &zones, zone, &ix)?;
             let (unstaged, clean) = match inc {
                 Some(i) => (
                     i.dirty
@@ -1043,15 +1549,25 @@ impl Repo {
         }
         if !untracked {
             st.merging = self.merge_state()?;
-            return Ok(st);
+            return Ok((st, racy_clean));
         }
         if let Some(i) = inc.filter(|i| !i.rewalk) {
             // The monitor vouches that no untracked name appeared or went away.
             st.untracked = i.untracked.clone();
             st.unsupported = i.unsupported.clone();
             st.merging = self.merge_state()?;
-            return Ok(st);
+            return Ok((st, racy_clean));
         }
+        let (untracked_found, unsupported_found) = self.scan_untracked(opts, ix, &zones, &ws)?;
+        st.untracked = untracked_found;
+        st.unsupported = unsupported_found;
+        st.merging = self.merge_state()?;
+        Ok((st, racy_clean))
+    }
+
+    /// The directory walk for untracked and unsupported entries (with the directory cache when
+    /// `opts` asks for it). Shared by `status` and by callers that need only this part.
+    fn scan_untracked(&self, opts: StatusOpts, ix: &Index, zones: &Zones, ws: &Workspace) -> Result<(Vec<String>, Vec<String>)> {
         let budget = AtomicUsize::new(std::thread::available_parallelism().map_or(1, |n| n.get()).min(8) - 1);
         let ctx = WalkCtx {
             cache: if opts.dir_cache {
@@ -1063,9 +1579,8 @@ impl Repo {
             scan_start_ns: now_ns(),
             racy_ns: opts.racy_ns,
         };
-        let mut w = self.walk_untracked("", &zones, &ws, ix, &budget, &IgnoreStack::default(), &ctx)?;
-        st.untracked = std::mem::take(&mut w.untracked);
-        st.unsupported = std::mem::take(&mut w.unsupported);
+        let mut w = self.walk_untracked("", zones, ws, ix, &budget, &IgnoreStack::default(), &ctx)?;
+        let (untracked, unsupported) = (std::mem::take(&mut w.untracked), std::mem::take(&mut w.unsupported));
         if opts.dir_cache && (w.scanned > 0 || w.hits.len() != ctx.cache.dirs.len()) {
             // Rewrite only when something changed: a fully warm walk costs no write.
             let mut next = DirCache::default();
@@ -1078,11 +1593,19 @@ impl Repo {
             next.dirs.extend(w.fresh);
             next.store(&self.vcs);
         }
-        st.merging = self.merge_state()?;
-        if !racy_clean.is_empty() {
-            self.refresh_racy(ix, &racy_clean);
+        Ok((untracked, unsupported))
+    }
+
+    /// Untracked and unsupported paths only: no comparison of tracked files with the index, so
+    /// no stat of every tracked file. Equals `status()`'s `untracked` / `unsupported`.
+    pub fn untracked_only(&self, opts: StatusOpts) -> Result<(Vec<String>, Vec<String>)> {
+        if std::env::var_os("VCS_NO_FSMONITOR").is_none() && crate::fsmonitor::JournalMonitor::open(&self.vcs).is_some() {
+            let st = self.status_auto(opts)?;
+            return Ok((st.untracked, st.unsupported));
         }
-        Ok(st)
+        let ix = self.index()?;
+        let (zones, ws) = (self.zones()?, self.workspace()?);
+        self.scan_untracked(opts, &ix, &zones, &ws)
     }
 
     /// Working-tree changes of the tracked `entries`, in entry order, plus the paths whose
@@ -1092,8 +1615,9 @@ impl Repo {
     pub(crate) fn unstaged_changes(&self, list: &[(&String, &IndexEntry)], written_ns: u64) -> Result<(Vec<Change>, Vec<String>)> {
         let check = |part: &[(&String, &IndexEntry)]| -> Result<(Vec<Change>, Vec<String>)> {
             let (mut out, mut clean) = (Vec::new(), Vec::new());
+            let mut cur = crate::worktree_fs::StatCursor::default();
             for (p, e) in part {
-                let (state, read) = self.wt_state_read(p, e, written_ns)?;
+                let (state, read) = self.wt_state_seq(&mut cur, p, e, written_ns)?;
                 match state {
                     Wt::Clean => {
                         if read {
@@ -1342,6 +1866,15 @@ impl Repo {
 
     /// Unified diff: working tree vs index, or (staged) index vs branch heads.
     pub fn diff(&self, staged: bool) -> Result<String> {
+        let mut out = String::new();
+        for p in self.diff_pairs(staged)? {
+            out.push_str(&diff::unified(&p.path, p.old.as_deref(), p.new.as_deref()));
+        }
+        Ok(out)
+    }
+
+    /// [`Repo::diff`] by reading every tracked file (the reference for the fast path).
+    pub fn diff_full(&self, staged: bool) -> Result<String> {
         let zones = self.zones()?;
         let ws = self.workspace()?;
         let refs = self.refs()?;
@@ -1360,6 +1893,11 @@ impl Repo {
                 if old == new && heads.get(p).map(|h| h.0) == ix.entries.get(p).map(|e| e.mode) {
                     continue;
                 }
+                if let (Some(o), Some(n), Some(e)) = (old, new, ix.entries.get(p)) {
+                    if heads.get(p).map(|h| h.0) == Some(e.mode) && self.same_bytes_other_layout(e.size, &o, &n)? {
+                        continue;
+                    }
+                }
                 let o = old.map(|i| self.store.get_content(&i)).transpose()?;
                 let n = new.map(|i| self.store.get_content(&i)).transpose()?;
                 out.push_str(&diff::unified(p, o.as_deref(), n.as_deref()));
@@ -1371,6 +1909,11 @@ impl Repo {
                     continue;
                 }
                 let abs = self.worktree.join(p);
+                if let Ok(m) = fs::symlink_metadata(&abs) {
+                    if m.is_file() && e.mode != EntryMode::Symlink && self.large_unchanged(&abs, e.size, m.len(), &e.id)? {
+                        continue; // large file equal to its manifest: nothing to diff, nothing read into memory
+                    }
+                }
                 let cur = match fs::symlink_metadata(&abs) {
                     Ok(m) if m.file_type().is_symlink() && e.mode == EntryMode::Symlink => Some(io(&abs, read_link_bytes(&abs))?),
                     Ok(m) if m.is_file() && e.mode != EntryMode::Symlink => Some(io(&abs, fs::read(&abs))?),
@@ -1473,19 +2016,22 @@ impl Repo {
         refs.apply(&updates)?;
         // Durability barrier: trees, commits and the transaction are durable before refs name them.
         self.store.sync()?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?; // linearization point
-                                                                  // Remember the tree ids just computed so the next commit/status can skip unchanged
-                                                                  // directories. `written_ns` is deliberately untouched: no entry was re-verified. Best
-                                                                  // effort: a lost cache write only costs time.
+        let first = message.lines().next().unwrap_or("");
+        // linearization point: the ref move and its operation record are one journalled step
+        self.commit_refs_op(&refs, &format!("commit: {first}"), Some(op_author))?;
+        // Remember the tree ids just computed so the next commit/status can skip unchanged
+        // directories. `written_ns` is deliberately untouched: no entry was re-verified. Best
+        // effort: a lost cache write only costs time.
         if !fresh_trees.is_empty() {
             ix.entries.store_trees(fp, fresh_trees);
-            let _ = crate::meta::write_cache_atomic(&self.vcs.join("index"), &ix.encode());
+            let new_bytes = ix.encode();
+            let old_fp = self.fsmon_fp_of_disk_index();
+            let _ = crate::meta::write_cache_atomic(&self.vcs.join("index"), &new_bytes);
+            self.fsmon_log_rewrite(old_fp, &new_bytes, &[]); // entries are unchanged: only cache trees are new
         }
         if merging.is_some() {
             self.clear_merge_state()?;
         }
-        let first = message.lines().next().unwrap_or("");
-        self.record_op(&format!("commit: {first}"), Some(op_author))?;
         Ok(CommitReport { transaction: tx, commits })
     }
 
@@ -1534,8 +2080,7 @@ impl Repo {
             old: None,
             new: head,
         }])?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
-        self.record_op(&format!("create branch {zone}/{branch}"), None)?;
+        self.commit_refs_op(&refs, &format!("create branch {zone}/{branch}"), None)?;
         Ok(head)
     }
 
@@ -1570,8 +2115,7 @@ impl Repo {
             old: None,
             new: id,
         }])?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
-        self.record_op(&format!("create branch {zone}/{branch} at {}", id.short()), None)?;
+        self.commit_refs_op(&refs, &format!("create branch {zone}/{branch} at {}", id.short()), None)?;
         Ok(id)
     }
 
@@ -1612,10 +2156,37 @@ impl Repo {
         let Some(target) = refs.head(zone, branch) else {
             return msg(format!("no such branch {zone}/{branch}"));
         };
+        // Same commit on both branches: nothing in the index or the working tree changes. Only
+        // the staged rule needs checking, and the index's cached tree id for the zone proves it
+        // (it equals HEAD's tree exactly when nothing is staged) without decoding any entry.
+        let same = self.current_head(zone, &ws, &refs) == Some(target);
+        if same && self.merge_state()?.is_none() {
+            let root = self.commit_obj(&target)?.root;
+            let prefix = zones.path_of(zone).unwrap();
+            if self.index_file()?.cached_tree(&zones_fp(&zones), prefix)? == Some(root) {
+                ws.subs.insert(zone.into(), branch.into());
+                self.save_ws(&ws)?;
+                if cur == vcs_objects::names::DETACHED_BRANCH {
+                    self.drop_detached_ref(zone)?;
+                }
+                self.record_op(&format!("checkout {zone}/{branch}"), None)?;
+                return Ok(());
+            }
+        }
         let mut ix = self.index()?;
-        // Only staged/unstaged/merge state matters here, so skip the untracked-file walk.
-        let st = self.status_inner(StatusOpts::default(), &ix, false, None)?;
-        self.require_clean(zone, &st)?;
+        // Only staged/unstaged/merge state matters here, so skip the untracked-file walk (a running
+        // watcher also skips the stat of every unchanged tracked file).
+        let st = self.status_tracked_auto(StatusOpts::default())?;
+        if same {
+            // the cached tree was missing or stale: an unstaged edit still cannot be lost here
+            let mut st = st;
+            for a in st.zones.iter_mut() {
+                a.unstaged.clear();
+            }
+            self.require_clean(zone, &st)?;
+        } else {
+            self.require_clean(zone, &st)?;
+        }
         let prefix = zones.path_of(zone).unwrap();
         let old_root = match self.current_head(zone, &ws, &refs) {
             Some(h) => Some(self.commit_obj(&h)?.root),
@@ -1628,9 +2199,23 @@ impl Repo {
         // The index now equals the new tree (it equalled the old one: no staged or unstaged
         // change), so the directories read on the way give the next status/commit their tree ids.
         ix.entries.store_trees(zones_fp(&zones), diff.new_trees.iter().cloned().collect());
+        if same && matches!(self.store.get(&new_root)?, Object::Tree(t) if !t.entries().is_empty()) {
+            // staged-clean was just established, so the index's tree for the zone is HEAD's: keep
+            // it, and the next same-commit switch is answered from the cache alone
+            ix.entries
+                .store_trees(zones_fp(&zones), std::iter::once((prefix.to_owned(), new_root)).collect());
+        }
         ws.subs.insert(zone.into(), branch.into());
+        // The index differs from the one on disk only at the paths the two trees differ in: tell the
+        // filesystem monitor, so the next status does not have to scan everything again.
+        let old_fp = self.fsmon_fp_of_disk_index();
         self.save_index(&mut ix)?;
         self.save_ws(&ws)?;
+        if old_fp.is_some() {
+            // after `save_ws`: the state's fingerprint covers the subscribed branches too
+            let touched: Vec<String> = diff.old.keys().chain(diff.new.keys()).cloned().collect();
+            self.fsmon_log_rewrite(old_fp, &self.rd("index")?, &touched);
+        }
         if cur == vcs_objects::names::DETACHED_BRANCH {
             self.drop_detached_ref(zone)?;
         }
@@ -1865,6 +2450,16 @@ impl Repo {
         let skip = |p: &str| ws.skips(zone, p);
         let all_changed: Vec<&String> = new.iter().filter(|(p, v)| old.get(*p) != Some(v)).map(|(p, _)| p).collect();
         let (virt, changed): (Vec<&String>, Vec<&String>) = all_changed.into_iter().partition(|p| skip(p));
+        // Every blob must be present before the first file is touched. A blob that is absent (a
+        // partial clone, a merge that brings in unfetched content) surfaces as `NotFound`, and
+        // `vcs` fetches it and re-runs the whole command; if some files were already written by
+        // then, the re-run refuses with "untracked path would be overwritten".
+        for p in &changed {
+            let id = &new[*p].1;
+            if !self.store.contains(id)? {
+                return Err(vcs_store::StoreError::NotFound(*id).into());
+            }
+        }
         // deletions
         let mut dirs: BTreeSet<String> = BTreeSet::new();
         for p in old.keys().filter(|p| !new.contains_key(*p)) {
@@ -1889,8 +2484,11 @@ impl Repo {
         // writes: independent per path, so a big batch runs on a bounded pool (8 threads)
         let write_one = |p: &String| -> Result<IndexEntry> {
             let (mode, id) = new[p];
-            let data = self.store.get_content(&id)?;
             let abs = || self.worktree.join(p);
+            let data = match self.content_or_stream(p, &id, mode)? {
+                FileContent::Streamed(e) => return Ok(e),
+                FileContent::Bytes(b) => b,
+            };
             let m = if mode == EntryMode::Symlink {
                 io(&abs(), self.wfs.symlink(&data, p))?
             } else if old.contains_key(p) {
@@ -1912,7 +2510,7 @@ impl Repo {
                 ctime_ns: m.ctime_ns,
             })
         };
-        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
+        let threads = crate::writer_threads::for_dir(&self.worktree, changed.iter().map(|p| p.as_str()));
         let written: Vec<Result<IndexEntry>> = if threads <= 1 || changed.len() < 64 {
             changed.iter().map(|p| write_one(p)).collect()
         } else {
@@ -1987,8 +2585,7 @@ impl Repo {
         }))?;
         refs.snapshots.insert(name.to_owned(), id);
         self.store.sync()?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
-        self.record_op(&format!("snapshot create {name}"), None)?;
+        self.commit_refs_op(&refs, &format!("snapshot create {name}"), None)?;
         Ok(id)
     }
 

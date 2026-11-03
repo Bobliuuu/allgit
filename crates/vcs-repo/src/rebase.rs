@@ -30,12 +30,12 @@ use crate::error::{msg, Error, Result};
 use crate::merge::{ConflictRec, MergeState};
 use crate::meta::{frame, unframe, write_atomic};
 use crate::repo::Repo;
-use crate::treeops::{self, Flat};
+use crate::treeops;
 use std::collections::{BTreeSet, VecDeque};
 use std::fs;
 use vcs_merge::{ConflictKind, MarkerLabels};
 use vcs_objects::codec::{Reader, Writer};
-use vcs_objects::{Commit, EntryMode, Object, ObjectId, RefUpdate, Signature, Transaction};
+use vcs_objects::{Commit, Object, ObjectId, RefUpdate, Signature, Transaction};
 use vcs_store::ObjectStore;
 
 const FILE: &str = "rebase";
@@ -272,6 +272,16 @@ pub struct RebasePlan {
     pub commits: Vec<PlanCommit>,
 }
 
+/// Where the replayed range starts.
+enum Upstream {
+    /// Everything after the merge base with the target (plain `rebase <branch>`).
+    MergeBase,
+    /// `--onto NEW UPSTREAM`: commits not reachable from UPSTREAM (via the merge base).
+    Rev(String),
+    /// `--root`: every commit of the branch, root commit included.
+    Root,
+}
+
 struct Prepared {
     branch: String,
     head: ObjectId,
@@ -338,6 +348,10 @@ impl Repo {
 
     /// Checks shared by every way of starting a rebase; resolves the commits to replay.
     fn rebase_prepare(&self, zone: &str, onto: &str, interactive: bool) -> Result<Prepared> {
+        self.rebase_prepare_ex(zone, onto, interactive, Upstream::MergeBase)
+    }
+
+    fn rebase_prepare_ex(&self, zone: &str, onto: &str, interactive: bool, up: Upstream) -> Result<Prepared> {
         let ws = self.workspace()?;
         let refs = self.refs()?;
         let Some(branch) = ws.subs.get(zone).cloned() else {
@@ -363,26 +377,49 @@ impl Repo {
         if self.commit_obj(&onto_id)?.zone != zone {
             return msg(format!("{onto} belongs to another zone"));
         }
-        let status = self.status()?;
+        let status = self.status_tracked()?;
         self.require_clean(zone, &status)?;
         let Some(head) = refs.head(zone, &branch) else {
             return msg(format!("{zone}/{branch} has no commits to rebase"));
         };
-        let base = match self.merge_bases(&head, &onto_id)?.as_slice() {
-            [] => {
-                return msg(format!(
-                    "refusing to rebase unrelated histories ({onto} shares no commit with {branch})"
-                ))
+        let explicit = !matches!(up, Upstream::MergeBase);
+        let base: Option<ObjectId> = match &up {
+            Upstream::Root => None,
+            Upstream::Rev(u) => {
+                let uid = self
+                    .resolve_rev(zone, u)
+                    .map_err(|_| Error::Msg(format!("no such branch or revision {zone}/{u}")))?;
+                match self.merge_bases(&head, &uid)?.as_slice() {
+                    [b] => Some(*b),
+                    [] => return msg(format!("{u} shares no commit with {branch}")),
+                    many => return msg(format!("criss-cross history: {} merge bases with {u}; not supported", many.len())),
+                }
             }
-            [b] => *b,
-            many => {
-                return msg(format!(
-                    "criss-cross history: {branch} and {onto} have {} merge bases; not supported",
-                    many.len()
-                ))
-            }
+            Upstream::MergeBase => match self.merge_bases(&head, &onto_id)?.as_slice() {
+                [] => {
+                    return msg(format!(
+                        "refusing to rebase unrelated histories ({onto} shares no commit with {branch})"
+                    ))
+                }
+                [b] => Some(*b),
+                many => {
+                    return msg(format!(
+                        "criss-cross history: {branch} and {onto} have {} merge bases; not supported",
+                        many.len()
+                    ))
+                }
+            },
         };
-        if base == onto_id && !interactive {
+        if base == Some(onto_id) && !interactive && !explicit {
+            return Ok(Prepared {
+                branch,
+                head,
+                onto_id,
+                todo: Vec::new(),
+                up_to_date: true,
+            });
+        }
+        if explicit && base == Some(head) && head == onto_id {
             return Ok(Prepared {
                 branch,
                 head,
@@ -394,9 +431,9 @@ impl Repo {
         // Commits to replay, newest first while walking, then reversed. Linear only.
         let mut todo = Vec::new();
         let mut c = head;
-        while c != base {
+        while Some(c) != base {
             let cm = self.commit_obj(&c)?;
-            if cm.parents.len() != 1 {
+            if cm.parents.len() > 1 || (cm.parents.is_empty() && base.is_some()) {
                 return msg(format!(
                     "cannot rebase: commit {} has {} parents; only linear history can be replayed (nothing was changed)",
                     c.short(),
@@ -404,7 +441,10 @@ impl Repo {
                 ));
             }
             todo.push(c);
-            c = cm.parents[0];
+            match cm.parents.first() {
+                Some(p) => c = *p,
+                None => break,
+            }
         }
         todo.reverse();
         Ok(Prepared {
@@ -425,6 +465,24 @@ impl Repo {
         }
         let steps = p.todo.iter().map(|id| Step::Pick(Act::Pick, *id)).collect();
         self.rebase_launch(zone, onto, p, steps, false, author, &mut |m: &str| Ok(m.to_owned()))
+    }
+
+    /// `git rebase --onto <new_base> <upstream>`: replay the commits of the checked-out branch that
+    /// `upstream` lacks onto `new_base` (any revision). With `upstream == None` this is `--root`:
+    /// the whole branch, root commit included. Same engine, conflict workflow and one-op undo as
+    /// [`Repo::rebase`].
+    pub fn rebase_onto(&self, zone: &str, new_base: &str, upstream: Option<&str>, author: Signature) -> Result<RebaseOutcome> {
+        let _l = self.lock()?;
+        let up = match upstream {
+            Some(u) => Upstream::Rev(u.to_owned()),
+            None => Upstream::Root,
+        };
+        let p = self.rebase_prepare_ex(zone, new_base, true, up)?;
+        if p.up_to_date {
+            return Ok(RebaseOutcome::UpToDate);
+        }
+        let steps = p.todo.iter().map(|id| Step::Pick(Act::Pick, *id)).collect();
+        self.rebase_launch(zone, new_base, p, steps, false, author, &mut |m: &str| Ok(m.to_owned()))
     }
 
     /// The commits `rebase -i <onto>` would replay (`onto` is a branch or any revision).
@@ -532,7 +590,7 @@ impl Repo {
             ));
         }
         let zones = self.zones()?;
-        let status = self.status()?;
+        let status = self.status_tracked()?;
         if let Some(a) = status.zones.iter().find(|a| a.zone == rs.zone) {
             if !a.unstaged.is_empty() {
                 return msg(format!(
@@ -542,15 +600,15 @@ impl Repo {
             }
         }
         let ix = self.index()?;
-        let flat: Flat = ix
-            .entries
-            .iter()
-            .filter(|(p, _)| zones.owner(p) == rs.zone)
-            .map(|(p, e)| (p.clone(), (e.mode, e.id)))
-            .collect();
         let pc = self.commit_obj(&rs.current)?;
-        let entries: Vec<(&str, EntryMode, ObjectId)> = flat.iter().map(|(p, (m, i))| (zones.relative(&rs.zone, p), *m, *i)).collect();
-        let root = treeops::build(&self.store, entries)?;
+        // Tree of the resolved index: directories whose ids are cached or equal to HEAD's tree
+        // are not re-read or rewritten (same walk `commit` uses).
+        let root = {
+            let fp = crate::repo::zones_fp(&zones);
+            let head_root = self.commit_obj(&rs.cursor)?.root;
+            let mut it = treeops::IndexTrees::new(&self.store, &ix.entries, &zones, &rs.zone, ix.entries.cached_trees(&fp));
+            it.build_root(zones.path_of(&rs.zone).unwrap_or(""), Some(head_root))?
+        };
         let mut run = Run {
             zone: rs.zone.clone(),
             branch: rs.branch.clone(),
@@ -656,7 +714,7 @@ impl Repo {
             old: Some(rs.cursor),
             new: rs.orig,
         }])?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
+        self.write_refs(&refs)?;
         self.clear_rebase_state()?;
         Ok(())
     }
@@ -689,7 +747,7 @@ impl Repo {
                 new: *target,
             }])?;
             self.store.sync()?;
-            write_atomic(&self.common.join("refs"), &refs.encode())?;
+            self.write_refs(&refs)?;
         }
         Ok(())
     }
@@ -718,7 +776,7 @@ impl Repo {
                 new: cursor,
             }])?;
             self.store.sync()?;
-            write_atomic(&self.common.join("refs"), &refs.encode())?;
+            self.write_refs(&refs)?;
         }
         run.ref_head = cursor;
         run.worktree = cursor_root;
@@ -831,18 +889,17 @@ impl Repo {
                 Step::Pick(a, id) => (a, id),
             };
             let pc = self.commit_obj(&pick)?;
-            let parent = pc
-                .parents
-                .first()
-                .copied()
-                .ok_or_else(|| Error::Corrupt("rebase: root commit in range".into()))?;
-            let base_root = self.commit_obj(&parent)?.root;
+            // a root commit (`--root`) is applied against the empty tree
+            let base_root = match pc.parents.first() {
+                Some(parent) => Some(self.commit_obj(parent)?.root),
+                None => None,
+            };
             let next_folds = matches!(q.front(), Some(Step::Pick(a, _)) if a.folds());
-            let root = if cursor_root == base_root {
+            let root = if base_root == Some(cursor_root) {
                 // the new tip has the picked commit's parent tree: the result IS the picked tree
                 pc.root
             } else {
-                let tm = self.merge3_trees(&prefix, Some(base_root), Some(cursor_root), Some(pc.root))?;
+                let tm = self.merge3_trees(&prefix, base_root, Some(cursor_root), Some(pc.root))?;
                 if let Some(c) = tm.conflicts.iter().find(|c| c.kind == ConflictKind::FileDirectory) {
                     return msg(format!(
                         "{:?} is a file on one side and a directory on the other while replaying {}; file/directory conflicts are not supported yet (the working tree was not changed)",
@@ -995,7 +1052,7 @@ impl Repo {
                 new: cursor,
             }])?;
             self.store.sync()?;
-            write_atomic(&self.common.join("refs"), &refs.encode())?;
+            self.write_refs(&refs)?;
         }
         Ok(RebaseOutcome::Conflicted {
             commit: pick,
@@ -1043,7 +1100,7 @@ impl Repo {
         self.save_index(&mut ix)?;
         refs.apply(&[update])?;
         self.store.sync()?; // rebuilt commits + transaction durable before refs name them
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
+        self.write_refs(&refs)?;
         self.clear_merge_state()?;
         self.clear_rebase_state()?;
         self.record_op(&message, Some(run.author))?;

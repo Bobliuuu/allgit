@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 486" width="900" height="486" role="img" aria-labelledby="t d">
+<title id="t">Sparse zone subscription</title><desc id="d">Animation: a client subscribed to the engine zone receives its commits and trees, then only the blobs of a sparse path; other zones are never downloaded.</desc>
+<style>
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px}
+.m{font-size:11px}.t{font-size:18px;font-weight:700}.h{font-weight:700}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+.mid{text-anchor:middle}.end{text-anchor:end}
+.panel{stroke-width:1.2}.A,.B,.C,.kD{stroke-width:1.5}.kH{stroke-width:1.8}.kX{stroke-width:1.5}
+.ln{stroke-width:1.5;fill:none}.dash{stroke-dasharray:5 4}
+.ar{stroke-width:1.8;fill:none;marker-end:url(#ah)}
+text{fill:#1f2328}.m{fill:#59636e}
+.bg{fill:#ffffff}.sH{stroke:#bf8700}.sL{stroke:#8c959f}
+.panel{fill:#f6f8fa;stroke:#d0d7de}
+.kA{fill:#ddf4ff;stroke:#0969da}.kB{fill:#dafbe1;stroke:#1a7f37}.kC{fill:#fff1e5;stroke:#bc4c00}.kD{fill:#fbefff;stroke:#8250df}
+.kH{fill:#fff8c5;stroke:#bf8700}.kX{fill:#ffebe9;stroke:#cf222e}
+.ln,.ar{stroke:#8c959f}.fl{fill:#8c959f}
+.dotA{fill:#0969da}.dotB{fill:#1a7f37}.dotC{fill:#bc4c00}.dotD{fill:#8250df}.dotH{fill:#bf8700}.dotX{fill:#cf222e}
+.tA{fill:#0969da}.tB{fill:#1a7f37}.tC{fill:#bc4c00}.tX{fill:#cf222e}
+@media (prefers-color-scheme:dark){text{fill:#e6edf3}.m{fill:#9198a1}
+.bg{fill:#0d1117}.sH{stroke:#d29922}.sL{stroke:#6e7681}
+.panel{fill:#161b22;stroke:#30363d}
+.kA{fill:#0c2d6b;stroke:#58a6ff}.kB{fill:#0f2d1a;stroke:#3fb950}.kC{fill:#3d1f0a;stroke:#f0883e}.kD{fill:#2d1a52;stroke:#bc8cff}
+.kH{fill:#3a2d00;stroke:#d29922}.kX{fill:#4c1417;stroke:#ff7b72}
+.ln,.ar{stroke:#6e7681}.fl{fill:#6e7681}
+.dotA{fill:#58a6ff}.dotB{fill:#3fb950}.dotC{fill:#f0883e}.dotD{fill:#bc8cff}.dotH{fill:#d29922}.dotX{fill:#ff7b72}
+.tA{fill:#58a6ff}.tB{fill:#3fb950}.tC{fill:#f0883e}.tX{fill:#ff7b72}}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="fl"/></marker></defs>
+<rect width="900" height="486" rx="10" class="bg"/>
+<text x="24" y="32" class="t">Sparse subscription: clone a slice</text>
+<text x="24" y="50" class="m">Subscribe to zones, then optionally to paths inside a zone; what you skip is never downloaded</text>
+<rect x="24" y="70" width="250" height="300" rx="10" class="panel"/>
+<text x="40" y="92" class="h">Remote manifest</text>
+<rect x="40" y="112" width="218" height="48" rx="8" class="kC"/>
+<text x="54" y="132" class="h">root</text>
+<circle cx="170" cy="136" r="7" class="kC"/>
+<circle cx="194" cy="136" r="7" class="kC"/>
+<circle cx="218" cy="136" r="7" class="kC"/>
+<circle cx="242" cy="136" r="7" class="kC"/>
+<text x="54" y="150" class="m">own heads + history</text>
+<rect x="40" y="172" width="218" height="48" rx="8" class="kA"/>
+<text x="54" y="192" class="h">engine/</text>
+<circle cx="170" cy="196" r="7" class="kA"/>
+<circle cx="194" cy="196" r="7" class="kA"/>
+<circle cx="218" cy="196" r="7" class="kA"/>
+<circle cx="242" cy="196" r="7" class="kA"/>
+<text x="54" y="210" class="m">own heads + history</text>
+<rect x="40" y="232" width="218" height="48" rx="8" class="kB"/>
+<text x="54" y="252" class="h">assets/</text>
+<circle cx="170" cy="256" r="7" class="kB"/>
+<circle cx="194" cy="256" r="7" class="kB"/>
+<circle cx="218" cy="256" r="7" class="kB"/>
+<circle cx="242" cy="256" r="7" class="kB"/>
+<text x="54" y="270" class="m">own heads + history</text>
+<rect x="40" y="292" width="218" height="48" rx="8" class="kD"/>
+<text x="54" y="312" class="h">docs/</text>
+<circle cx="170" cy="316" r="7" class="kD"/>
+<circle cx="194" cy="316" r="7" class="kD"/>
+<circle cx="218" cy="316" r="7" class="kD"/>
+<circle cx="242" cy="316" r="7" class="kD"/>
+<text x="54" y="330" class="m">own heads + history</text>
+<rect x="560" y="70" width="316" height="300" rx="10" class="panel"/>
+<text x="576" y="92" class="h">Your workspace</text>
+<text x="576" y="112" class="mono">vcs clone URL work --zone engine</text>
+<rect x="576" y="126" width="284" height="70" rx="8" class="kA"/>
+<text x="590" y="146" class="h">engine/  (subscribed)</text>
+<rect x="590" y="156" width="80" height="30" rx="6" class="kH"/>
+<text x="630" y="176" class="mono mid">render/</text>
+<rect x="678" y="156" width="80" height="30" rx="6" class="panel"/>
+<text x="718" y="176" class="mono mid">physics/</text>
+<rect x="766" y="156" width="80" height="30" rx="6" class="panel"/>
+<text x="806" y="176" class="mono mid">tools/</text>
+<rect x="576" y="208" width="284" height="50" rx="8" class="panel"/>
+<text x="590" y="228" class="h">assets/  not subscribed</text>
+<text x="590" y="246" class="m">never downloaded (not deleted, just absent)</text>
+<rect x="576" y="268" width="284" height="50" rx="8" class="panel"/>
+<text x="590" y="288" class="h">docs/  not subscribed</text>
+<text x="590" y="306" class="m">root  not subscribed</text>
+<text x="576" y="340" class="mono">vcs sparse set engine render/</text>
+<text x="576" y="358" class="m">physics/ and tools/ stay tracked, not on disk</text>
+<path d="M262,190 L556,150" class="ar"/>
+<path d="M262,200 L572,184" class="ar dash"/>
+<path d="M262,256 L556,232" class="ar dash" opacity="0.5"/>
+<circle cx="408" cy="244" r="11" class="kX"/><path d="M403,239 L413,249 M413,239 L403,249" class="ln" stroke="#cf222e" stroke-width="2.2"/>
+<circle r="6" class="dotC" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0.0000;0.0500;0.0510;0.1990;0.2000;1.0000" values="0;0;1;1;0;0"/><animateMotion dur="12s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.0500;0.2000;1" calcMode="linear" path="M262,190 L556,150"/></circle>
+<circle r="6" class="dotA" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0.0000;0.1200;0.1210;0.2690;0.2700;1.0000" values="0;0;1;1;0;0"/><animateMotion dur="12s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.1200;0.2700;1" calcMode="linear" path="M262,190 L556,150"/></circle>
+<circle r="6" class="dotA" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0.0000;0.1900;0.1910;0.3390;0.3400;1.0000" values="0;0;1;1;0;0"/><animateMotion dur="12s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.1900;0.3400;1" calcMode="linear" path="M262,190 L556,150"/></circle>
+<text x="408" y="138" class="h mid">1  commits + trees (eager)</text>
+<text x="408" y="300" class="m mid">2  file blobs and chunks stay on the</text>
+<text x="408" y="314" class="m mid">remote until something reads them</text>
+<circle r="6" class="dotH" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0.0000;0.4500;0.4510;0.5990;0.6000;1.0000" values="0;0;1;1;0;0"/><animateMotion dur="12s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.4500;0.6000;1" calcMode="linear" path="M262,200 L572,184"/></circle>
+<circle r="6" class="dotH" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0.0000;0.5500;0.5510;0.6990;0.7000;1.0000" values="0;0;1;1;0;0"/><animateMotion dur="12s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.5500;0.7000;1" calcMode="linear" path="M262,200 L572,184"/></circle>
+<g opacity="0"><text x="408" y="338" class="h mid">3  blobs of the wanted paths: one batch</text><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0.0000;0.4200;0.4400;0.9700;1.0000" values="0;0;1;1;0"/></g>
+<rect x="590" y="156" width="80" height="30" rx="6" fill="none" class="sH" stroke-width="3" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0;0.7;0.75;0.9;1" values="0;0;1;1;0"/></rect>
+<rect x="24" y="386" width="852" height="84" rx="10" class="panel"/>
+<text x="40" y="408" class="m">Order of effects: fetch commits and trees, prefetch the head's blobs (restricted to the sparse set), only then rewrite worktree and index, move the ref last.</text>
+<text x="40" y="428" class="m">A command that finds an object absent fetches exactly that object, verifies hash(bytes) == id, stores it, and reruns (lazy fetch).</text>
+<text x="40" y="448" class="m">Path-level sparse sets keep every tracked path in the index, so paths outside the set are never recorded as deletions.</text>
+<text x="40" y="464" class="m">vcs-server read policy can also restrict which zones a token may read (zone-level, not a confidentiality boundary).</text>
+</svg>
+

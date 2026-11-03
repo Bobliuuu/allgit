@@ -2,10 +2,16 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
+/// Automatic compaction after publish is off here so the tests below control the pack count;
+/// `publish_compacts_the_remote_automatically` turns it on.
 fn vcs(dir: &Path, args: &[&str]) -> Output {
+    vcs_auto(dir, args, "0")
+}
+fn vcs_auto(dir: &Path, args: &[&str], auto: &str) -> Output {
     Command::new(env!("CARGO_BIN_EXE_vcs"))
         .args(args)
         .current_dir(dir)
+        .env("VCS_AUTO_COMPACT", auto)
         .env("VCS_AUTHOR_NAME", "Dev")
         .env("VCS_AUTHOR_EMAIL", "dev@example.com")
         .output()
@@ -107,4 +113,27 @@ fn repack_merges_small_local_packs() {
     assert!(count() < before / 2, "{} -> {}", before, count());
     assert!(ok(&a, &["fsck"]).contains("ok"));
     assert_eq!(std::fs::read_to_string(a.join("f3.txt")).unwrap(), "content 3\n");
+}
+
+#[test]
+fn publish_compacts_the_remote_automatically() {
+    let t = tempfile::tempdir().unwrap();
+    let (a, remote) = (t.path().join("a"), t.path().join("remote"));
+    ok(t.path(), &["init", "a"]);
+    ok(&a, &["remote", "set", remote.to_str().unwrap()]);
+    let mut said = false;
+    for i in 0..34 {
+        std::fs::write(a.join(format!("g{i}.txt")), format!("file {i}\n")).unwrap();
+        ok(&a, &["add", "."]);
+        ok(&a, &["commit", "-m", &format!("c{i}")]);
+        let o = vcs_auto(&a, &["publish"], "1");
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        said |= String::from_utf8_lossy(&o.stdout).contains("compacted the remote's packs");
+    }
+    assert!(said, "publish reports the automatic compaction");
+    assert!(packs(&remote) < 24, "automatic compaction keeps the pack count down: {}", packs(&remote));
+    let b = t.path().join("b");
+    ok(t.path(), &["clone", remote.to_str().unwrap(), "b"]);
+    assert!(ok(&b, &["fsck"]).contains("ok"));
+    assert_eq!(std::fs::read_to_string(b.join("g33.txt")).unwrap(), "file 33\n");
 }

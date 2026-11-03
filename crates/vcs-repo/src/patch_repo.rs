@@ -30,6 +30,9 @@ pub struct ApplyOpts {
     pub reverse: bool,
     /// Leading path components to strip (git `-p`); `None` = 1.
     pub strip: Option<usize>,
+    /// A hunk that does not fit is merged three ways (see `patch3`); overlapping edits leave
+    /// conflict markers in the file (reported in [`ApplyReport::conflicts`], never staged).
+    pub three_way: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,6 +45,8 @@ pub enum ApplyKind {
 #[derive(Debug, Default)]
 pub struct ApplyReport {
     pub files: Vec<(String, ApplyKind)>,
+    /// Files written with conflict markers (three-way only).
+    pub conflicts: Vec<String>,
 }
 
 fn mode_of(m: EntryMode) -> u32 {
@@ -116,10 +121,12 @@ impl Repo {
             patches = patches.iter().map(FilePatch::reversed).collect();
             patches.reverse();
         }
-        self.apply_parsed(&patches, opts)
+        self.apply_parsed(&patches, opts, false)
     }
 
-    fn apply_parsed(&self, patches: &[FilePatch], opts: &ApplyOpts) -> Result<ApplyReport> {
+    /// `tree_clean`: the caller has just checked that the whole tracked tree is clean, so the
+    /// per-path index check of `opts.index` has nothing to find and is skipped.
+    fn apply_parsed(&self, patches: &[FilePatch], opts: &ApplyOpts, tree_clean: bool) -> Result<ApplyReport> {
         // paths and binary check first: nothing is touched when any patch is unusable
         for p in patches {
             if p.binary {
@@ -132,13 +139,13 @@ impl Repo {
                 safe_rel(q)?;
             }
         }
-        if opts.index {
+        if opts.index && !tree_clean {
             let touched: BTreeSet<&str> = patches
                 .iter()
                 .flat_map(|p| [p.old_path.as_deref(), p.new_path.as_deref()])
                 .flatten()
                 .collect();
-            let st = self.status()?;
+            let st = self.status_paths(&touched)?;
             for z in &st.zones {
                 for c in z.staged.iter().chain(z.unstaged.iter()) {
                     if touched.contains(c.path.as_str()) {
@@ -153,6 +160,7 @@ impl Repo {
         // plan in memory: path -> new (content, mode) or None = removed
         let mut plan: BTreeMap<String, Option<(Vec<u8>, u32)>> = BTreeMap::new();
         let mut kinds: BTreeMap<String, ApplyKind> = BTreeMap::new();
+        let mut conflicts: Vec<String> = Vec::new();
         for p in patches {
             let cur = |plan: &BTreeMap<String, Option<(Vec<u8>, u32)>>, path: &str| -> Result<Option<(Vec<u8>, u32)>> {
                 match plan.get(path) {
@@ -177,7 +185,19 @@ impl Repo {
                     return msg(format!("{dst}: already exists in the working tree (rename target)"));
                 }
             }
-            let new = patch::apply_hunks(&old, &p.hunks).map_err(|e| Error::Msg(format!("{}: {e}", p.display_path())))?;
+            let new = match patch::apply_hunks(&old, &p.hunks) {
+                Ok(n) => n,
+                Err(e) if opts.three_way => match crate::patch3::apply_hunks_3way(&old, &p.hunks) {
+                    Ok((b, c)) => {
+                        if c {
+                            conflicts.push(p.display_path().to_owned());
+                        }
+                        b
+                    }
+                    Err(e3) => return msg(format!("{}: {e}; three-way: {e3}", p.display_path())),
+                },
+                Err(e) => return msg(format!("{}: {e}", p.display_path())),
+            };
             match &p.new_path {
                 None => {
                     if !new.is_empty() {
@@ -211,6 +231,7 @@ impl Repo {
         }
         let report = ApplyReport {
             files: kinds.into_iter().collect(),
+            conflicts,
         };
         if opts.check {
             return Ok(report);
@@ -251,7 +272,7 @@ impl Repo {
         }
         self.prune_dirs(dirs);
         if opts.index {
-            let paths: Vec<String> = plan.keys().cloned().collect();
+            let paths: Vec<String> = plan.keys().filter(|k| !report.conflicts.contains(k)).cloned().collect();
             self.add(&paths)?;
         }
         Ok(report)
@@ -379,7 +400,7 @@ impl Repo {
     }
 
     fn require_all_clean(&self, what: &str) -> Result<()> {
-        let st = self.status()?;
+        let st = self.status_tracked()?;
         for z in &st.zones {
             if !z.staged.is_empty() || !z.unstaged.is_empty() {
                 return msg(format!(
@@ -395,6 +416,12 @@ impl Repo {
 
     /// Apply the mails in `inputs` (mbox contents) as commits on the checked-out branches.
     pub fn am_start(&self, inputs: &[Vec<u8>]) -> Result<AmOutcome> {
+        self.am_start_with(inputs, false)
+    }
+
+    /// [`Repo::am_start`]; with `three_way` a hunk that does not fit is merged three ways and the
+    /// run stops on overlapping edits with conflict markers in the files (see `patch3`).
+    pub fn am_start_with(&self, inputs: &[Vec<u8>], three_way: bool) -> Result<AmOutcome> {
         if self.am_in_progress() {
             return msg("an am session is already in progress\n\nOptions:\n  vcs am --continue\n  vcs am --skip\n  vcs am --abort");
         }
@@ -438,24 +465,32 @@ impl Repo {
             }
         }
         let total = msgs.len();
-        self.am_run(msgs, 1, total, &orig)
+        self.am_run(msgs, 1, total, &orig, three_way)
     }
 
-    fn am_apply_one(&self, raw: &[u8]) -> Result<(String, ObjectId)> {
+    fn am_apply_one(&self, raw: &[u8], three_way: bool) -> Result<(String, ObjectId)> {
         let mail = mbox::parse_mail(raw)?;
         let ps = patch::parse(&mail.diff, 1)?;
-        self.apply_parsed(
+        let rep = self.apply_parsed(
             &ps,
             &ApplyOpts {
                 index: true,
+                three_way,
                 ..Default::default()
             },
+            true,
         )?;
+        if !rep.conflicts.is_empty() {
+            return msg(format!(
+                "applied with conflicts in: {} (markers are in the files)",
+                rep.conflicts.join(", ")
+            ));
+        }
         self.am_commit(&mail)
     }
 
     fn am_commit(&self, mail: &mbox::Mail) -> Result<(String, ObjectId)> {
-        let st = self.status()?;
+        let st = self.status_staged_only()?;
         if st.zones.iter().all(|z| z.staged.is_empty()) {
             return msg("the patch applies no changes (already applied?); use `vcs am --skip`");
         }
@@ -463,14 +498,14 @@ impl Repo {
         Ok((subject_of(&mail.message), rep.commits.first().map(|c| c.2).expect("committed")))
     }
 
-    fn am_run(&self, msgs: Vec<Vec<u8>>, first_no: usize, total: usize, orig: &str) -> Result<AmOutcome> {
+    fn am_run(&self, msgs: Vec<Vec<u8>>, first_no: usize, total: usize, orig: &str, three_way: bool) -> Result<AmOutcome> {
         let mut applied = Vec::new();
         for (k, raw) in msgs.iter().enumerate() {
-            match self.am_apply_one(raw) {
+            match self.am_apply_one(raw, three_way) {
                 Ok((subj, id)) => applied.push((subj, id)),
                 Err(e) => {
                     let subject = mbox::parse_mail(raw).map(|m| subject_of(&m.message)).unwrap_or_default();
-                    self.am_save(orig, &msgs[k..], first_no + k, total)?;
+                    self.am_save(orig, &msgs[k..], first_no + k, total, three_way)?;
                     return Ok(AmOutcome::Stopped {
                         applied,
                         number: first_no + k,
@@ -485,7 +520,7 @@ impl Repo {
         Ok(AmOutcome::Done { applied })
     }
 
-    fn am_save(&self, orig: &str, rest: &[Vec<u8>], number: usize, total: usize) -> Result<()> {
+    fn am_save(&self, orig: &str, rest: &[Vec<u8>], number: usize, total: usize, three_way: bool) -> Result<()> {
         let d = self.am_dir();
         let _ = fs::remove_dir_all(&d);
         io(&d, fs::create_dir_all(&d))?;
@@ -495,8 +530,16 @@ impl Repo {
         }
         let p = d.join("meta");
         io(&p, fs::write(&p, format!("{number} {total}\n")))?;
+        if three_way {
+            let p = d.join("threeway");
+            io(&p, fs::write(&p, "1\n"))?;
+        }
         let p = d.join("orig");
         io(&p, fs::write(&p, orig))
+    }
+
+    fn am_three_way(&self) -> bool {
+        self.am_dir().join("threeway").exists()
     }
 
     fn am_clear(&self) {
@@ -527,6 +570,7 @@ impl Repo {
     /// Commit what was staged for the stopped patch (author, date and message from the mail) and go on.
     pub fn am_continue(&self) -> Result<AmOutcome> {
         let (mut msgs, number, total, orig) = self.am_load()?;
+        let three_way = self.am_three_way();
         if msgs.is_empty() {
             self.am_clear();
             return msg("no patch left");
@@ -538,7 +582,7 @@ impl Repo {
         let first = msgs.remove(0);
         let mail = mbox::parse_mail(&first)?;
         let (subj, id) = self.am_commit(&mail)?;
-        match self.am_run(msgs, number + 1, total, &orig)? {
+        match self.am_run(msgs, number + 1, total, &orig, three_way)? {
             AmOutcome::Done { mut applied } => {
                 applied.insert(0, (subj, id));
                 Ok(AmOutcome::Done { applied })
@@ -565,13 +609,14 @@ impl Repo {
     /// Drop the stopped patch (the working tree goes back to the branch heads) and go on.
     pub fn am_skip(&self) -> Result<AmOutcome> {
         let (mut msgs, number, total, orig) = self.am_load()?;
+        let three_way = self.am_three_way();
         if msgs.is_empty() {
             self.am_clear();
             return msg("no patch left");
         }
         msgs.remove(0);
         self.am_reset_to_heads()?;
-        self.am_run(msgs, number + 1, total, &orig)
+        self.am_run(msgs, number + 1, total, &orig, three_way)
     }
 
     fn am_reset_to_heads(&self) -> Result<()> {

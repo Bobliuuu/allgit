@@ -196,6 +196,8 @@ fn force(branch: &str, spec: ForceSpec) -> PublishOpts {
         branches: vec![branch.into()],
         force: Some(spec),
         delete: vec![],
+        tags_only: false,
+        prune: false,
     }
 }
 

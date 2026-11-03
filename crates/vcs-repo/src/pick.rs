@@ -119,10 +119,20 @@ impl Repo {
         self.pick(zone, rev, PickKind::Revert, author)
     }
 
+    /// [`Repo::cherry_pick`] for a commit id that is already resolved.
+    pub fn cherry_pick_id(&self, zone: &str, target: ObjectId, author: Signature) -> Result<MergeOutcome> {
+        self.pick_id(zone, target, PickKind::CherryPick, author)
+    }
+
     fn pick(&self, zone: &str, rev: &str, kind: PickKind, author: Signature) -> Result<MergeOutcome> {
         let zone = self.resolve_zone(zone)?;
+        let target = self.resolve_commit(&zone, rev)?;
+        self.pick_id(&zone, target, kind, author)
+    }
+
+    fn pick_id(&self, zone: &str, target: ObjectId, kind: PickKind, author: Signature) -> Result<MergeOutcome> {
+        let zone = self.resolve_zone(zone)?;
         let zone = zone.as_str();
-        let target = self.resolve_commit(zone, rev)?;
         let _l = self.lock()?;
         let verb = if kind == PickKind::Revert { "revert" } else { "cherry-pick" };
         self.rebase_guard(verb)?;
@@ -138,7 +148,7 @@ impl Repo {
                 st.theirs_label, st.zone, st.branch
             ));
         }
-        let status = self.status()?;
+        let status = self.status_tracked()?;
         self.require_clean(zone, &status)?;
         let c = self.commit_obj(&target)?;
         if c.zone != zone {
@@ -247,8 +257,7 @@ impl Repo {
             self.save_index(&mut ix)?;
             refs.apply(&[update])?;
             self.store.sync()?;
-            write_atomic(&self.common.join("refs"), &refs.encode())?;
-            self.record_op(&format!("{verb} {} onto {zone}/{branch}", target.short()), None)?;
+            self.commit_refs_op(&refs, &format!("{verb} {} onto {zone}/{branch}", target.short()), None)?;
             return Ok(MergeOutcome::Merged { commit: cid });
         }
         let touched: BTreeSet<String> = diff

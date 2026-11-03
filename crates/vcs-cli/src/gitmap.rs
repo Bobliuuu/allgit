@@ -486,7 +486,7 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             let x = p.take(&["-x"]);
             let noedit = p.take(&["--no-edit", "-e", "--edit", "-s", "--signoff"]);
             let _ = noedit;
-            p.finish(&format!("`vcs {cmd} <rev>`; no -n/--no-commit, -m, ranges, --skip, --quit"))?;
+            p.finish(&format!("`vcs {cmd} <rev>`{}; no -n/--no-commit, -m, --skip, --quit", if cmd == "cherry-pick" { " or `A..B`" } else { ", no ranges" }))?;
             if cont {
                 return Ok(vec![note("a stopped pick/revert is finished with `vcs commit`"), Step::Vcs(v(&["commit"]))]);
             }
@@ -500,11 +500,14 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
                 return Err(Error::Msg(format!("usage: git {cmd} <commit>...")));
             }
             let mut out = vec![];
+            if cmd == "cherry-pick" && p.pos.iter().any(|r| r.contains("..")) {
+                out.push(note("a range is picked oldest first in one run; a pick that changes nothing is skipped, a conflict stops the run and names the commits left"));
+            }
             if x {
                 out.push(note("-x ignored: vcs does not append '(cherry picked from commit ...)'; the change id is kept instead"));
             }
             for r in &p.pos {
-                if r.contains("..") {
+                if r.contains("..") && cmd == "revert" {
                     return Err(missing(cmd, "commit ranges", &format!("`vcs {cmd} <rev>` once per commit (see `vcs log`)")));
                 }
                 out.push(Step::Vcs(v(&[cmd, r])));
@@ -562,14 +565,34 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             let autosquash = p.take(&["--autosquash"]);
             p.take(&["--no-autosquash", "--keep-empty", "--no-keep-empty"]);
             let execs = p.vals(&["-x", "--exec"]);
+            if p.take(&["--rebase-merges", "-r"]) {
+                return Err(missing(cmd, "recreating merge commits; replay is linear", "`vcs rebase` refuses a range with merges; `vcs merge` the branches instead, or rebase each linear side"));
+            }
+            let onto = p.val(&["--onto"]);
+            let root = p.take(&["--root"]);
             p.take(&["-q", "--quiet", "--no-verify", "-v", "--verbose", "--no-stat", "--stat"]);
-            p.finish("`vcs rebase [-i] [--autosquash] [-x CMD] <branch|rev>` replays the checked-out branch; no --onto/--autostash/--root/--rebase-merges")?;
+            p.finish("`vcs rebase [-i] [--autosquash] [-x CMD] <branch|rev>` replays the checked-out branch; `--onto <newbase> <upstream>` and `--onto <newbase> --root` work (not with -i/-x); no --autostash/--rebase-merges")?;
             if cont {
                 vec![Step::Vcs(v(&["rebase", "--continue"]))]
             } else if abort {
                 vec![Step::Vcs(v(&["rebase", "--abort"]))]
             } else if skip {
                 vec![Step::Vcs(v(&["rebase", "--skip"]))]
+            } else if onto.is_some() || root {
+                if interactive || !execs.is_empty() {
+                    return Err(missing(cmd, "--onto/--root together with -i or -x", "`vcs rebase --onto` first, then `vcs rebase -i`"));
+                }
+                let Some(nb) = onto else {
+                    return Err(missing(cmd, "--root without --onto", "`vcs rebase --onto <newbase> --root`"));
+                };
+                let mut a = v(&["rebase", "--onto", &nb]);
+                match (root, p.pos.as_slice()) {
+                    (true, []) => a.push("--root".into()),
+                    (false, [up]) => a.push(up.clone()),
+                    (false, [_, _]) => return Err(missing(cmd, "naming the branch to rebase", "`vcs switch <branch>` then `vcs rebase --onto <newbase> <upstream>`")),
+                    _ => return Err(Error::Msg("usage: git rebase --onto <newbase> <upstream> | git rebase --onto <newbase> --root".into())),
+                }
+                vec![Step::Vcs(a)]
             } else {
                 match p.pos.as_slice() {
                     [b] if b.starts_with("origin/") => {
@@ -668,11 +691,16 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             let force = p.take(&["-f", "--force"]);
             let leases = p.vals(&["--force-with-lease"]);
             let delete = p.take(&["-d", "--delete"]);
-            if p.take(&["--tags", "--mirror", "--prune"]) {
-                return Err(missing(cmd, "tag/mirror/prune pushes", "tags travel with `vcs publish`; delete a remote branch with `vcs publish --delete <branch>`"));
-            }
-            p.finish("`vcs publish [--zone Z] [--force | --force-with-lease[=BRANCH[:ID]]] [--delete BRANCH] [BRANCH...]`")?;
+            let tags = p.take(&["--tags"]);
+            let mirror = p.take(&["--mirror"]);
+            let prune = p.take(&["--prune"]);
+            p.finish("`vcs publish [--zone Z] [--force | --force-with-lease[=BRANCH[:ID]]] [--delete BRANCH] [--tags | --prune | --mirror] [BRANCH...]`")?;
             let mut a = v(&["publish"]);
+            for (on, f) in [(tags, "--tags"), (mirror, "--mirror"), (prune, "--prune")] {
+                if on {
+                    a.push(f.into());
+                }
+            }
             for z in zones {
                 a.extend(["--zone".to_owned(), z]);
             }
@@ -734,8 +762,25 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             if !deletes.is_empty() {
                 out.push(note("--delete only removes the remote branch if it is still the head you last fetched; the old head is kept in the op log"));
             }
+            if mirror || prune {
+                out.push(note("--mirror/--prune delete remote branches (and --mirror forces) only against the heads you last fetched; every deletion and forced move is in the op log and the server audit log"));
+            }
             out.push(Step::Vcs(a));
             out
+        }
+        "cherry" => {
+            let mut p = parse(cmd, rest, &[]);
+            let verbose = p.take(&["-v", "--verbose"]);
+            p.finish("`vcs cherry [-v] <upstream> [<head>]`")?;
+            if p.pos.is_empty() || p.pos.len() > 2 {
+                return Err(missing(cmd, "no configured upstream", "`vcs cherry <upstream> [<head>]`"));
+            }
+            let mut a = v(&["cherry"]);
+            if verbose {
+                a.push("-v".into());
+            }
+            a.extend(p.pos.iter().cloned());
+            vec![Step::Vcs(a)]
         }
         "blame" | "annotate" => {
             let mut p = parse(cmd, rest, &["-L", "--rev"]);
@@ -928,7 +973,8 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
         }
         "ls-tree" => {
             let mut p = parse(cmd, rest, &[]);
-            p.take(&["-r", "-t"]);
+            let recursive = p.take(&["-r"]);
+            p.take(&["-t"]);
             let names = p.take(&["--name-only", "--name-status"]);
             p.finish("`vcs ls-files --rev <rev> [-s] [paths]`")?;
             let pos = p.all_pos();
@@ -938,6 +984,10 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             let mut a = v(&["ls-files", "--rev", rev]);
             if !names {
                 a.insert(1, "-s".into());
+            }
+            // without -r git lists one level: read only the top tree (a path argument keeps the recursive listing)
+            if !recursive && paths.is_empty() {
+                a.extend(["--depth".into(), "1".into()]);
             }
             a.extend(paths.iter().cloned());
             vec![Step::Vcs(a)]
@@ -1114,7 +1164,7 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             ))
         }
         "lfs" => return Err(missing(cmd, "large files are native", "files are chunked automatically; see docs/guide/06-large-files.md")),
-        "filter-branch" | "filter-repo" | "replace" | "notes" | "rerere" | "range-diff" | "show-branch" | "stripspace" | "cherry" => {
+        "filter-branch" | "filter-repo" | "replace" | "notes" | "rerere" | "range-diff" | "show-branch" | "stripspace" => {
             return Err(missing(cmd, "history rewriting and annotation tools are not implemented", "`vcs rebase`, `vcs op undo`, `vcs zone apply` (splits history by path)"))
         }
         "ls-remote" | "for-each-ref" | "show-ref" | "name-rev" | "update-ref" | "update-index" | "hash-object" | "write-tree" | "read-tree" | "commit-tree" | "count-objects" | "prune" | "pack-objects" | "index-pack" | "unpack-objects" | "check-ignore" | "check-attr" | "var" | "mktag" => {
@@ -1278,16 +1328,13 @@ fn translate_am(rest: &[String]) -> Result<Vec<Step>, Error> {
     let cont = p.take(&["--continue", "-r", "--resolved"]);
     let skip = p.take(&["--skip"]);
     let abort = p.take(&["--abort"]);
-    if p.take(&["-3", "--3way"]) {
-        return Err(missing(
-            "am",
-            "three-way application",
-            "`vcs am` applies exactly; for a patch that drifted, edit it, or `vcs fetch` the commits and `vcs cherry-pick`",
-        ));
-    }
+    let three = p.take(&["--3way"]) | p.val(&["-N"]).is_some_and(|n| n == "3");
     p.take(&["-q", "--quiet", "--no-3way"]);
-    p.finish("`vcs am [--continue|--skip|--abort] <mbox>...`; no -3/-s/-k/--whitespace/--directory")?;
+    p.finish("`vcs am [-3] [--continue|--skip|--abort] <mbox>...`; no -s/-k/--whitespace/--directory")?;
     let mut a = v(&["am"]);
+    if three {
+        a.push("-3".into());
+    }
     if cont {
         a.push("--continue".into());
     } else if skip {
@@ -1306,13 +1353,7 @@ fn translate_apply(rest: &[String]) -> Result<Vec<Step>, Error> {
     let rev = p.take(&["-R", "--reverse"]);
     let verbose = p.take(&["-v", "--verbose"]);
     let strip = p.val(&["-p"]);
-    if p.take(&["-3", "--3way"]) {
-        return Err(missing(
-            "apply",
-            "three-way application",
-            "`vcs apply` applies exactly (offsets are found); otherwise edit the patch",
-        ));
-    }
+    let three = p.take(&["--3way"]) | p.val(&["-N"]).is_some_and(|n| n == "3");
     if p.take(&["--cached"]) {
         return Err(missing(
             "apply",
@@ -1334,6 +1375,9 @@ fn translate_apply(rest: &[String]) -> Result<Vec<Step>, Error> {
         "`vcs apply [--check] [--index] [-R] [-p N] <patch>...`; no --stat/--numstat/--summary/--reject/--directory/-C/--unidiff-zero",
     )?;
     let mut a = v(&["apply"]);
+    if three {
+        a.push("-3".into());
+    }
     if check {
         a.push("--check".into());
     }
@@ -2193,32 +2237,7 @@ fn status_short(branch: bool) -> Result<(), Error> {
     Ok(())
 }
 
-fn flat_pairs(
-    repo: &vcs_repo::Repo,
-    old: &vcs_repo::treeops::Flat,
-    new: &vcs_repo::treeops::Flat,
-) -> Result<Vec<vcs_repo::FilePair>, Error> {
-    let mut keys: std::collections::BTreeSet<&String> = old.keys().collect();
-    keys.extend(new.keys());
-    let mut out = vec![];
-    for k in keys {
-        let (o, n) = (old.get(k), new.get(k));
-        if o == n {
-            continue;
-        }
-        out.push(vcs_repo::FilePair {
-            path: k.clone(),
-            old: o.map(|(_, id)| repo.content(id)).transpose()?,
-            new: n.map(|(_, id)| repo.content(id)).transpose()?,
-            old_mode: o.map(|(m, _)| *m),
-            new_mode: n.map(|(m, _)| *m),
-        });
-    }
-    Ok(out)
-}
-
 fn diff_specs(staged: bool, specs: &[String], flags: &[String]) -> Result<(), Error> {
-    use vcs_repo::treeops::Flat;
     let (repo, cwd) = open()?;
     let mut full = vec!["vcs".to_owned(), "diff".to_owned()];
     full.extend(flags.iter().cloned());
@@ -2258,60 +2277,23 @@ fn diff_specs(staged: bool, specs: &[String], flags: &[String]) -> Result<(), Er
     let mut revs: Vec<String> = vec![];
     let mut paths: Vec<String> = path_part.to_vec();
     for (i, s) in revs_part.iter().enumerate() {
-        if revs.len() < 2
-            && i == revs.len()
-            && repo.rev_files(s).is_ok()
-            && !(cwd.join(s).exists() && path_part.is_empty() && revs_part.len() == 1 && repo.rev_files(s).is_err())
-        {
+        if revs.len() < 2 && i == revs.len() && repo.rev_resolves(s) {
             revs.push(s.clone());
         } else {
             paths.push(s.clone());
         }
     }
     let rels: Vec<String> = paths.iter().map(|p| repo.rel_path(&cwd, p)).collect::<Result<_, _>>()?;
-    let keep = |p: &str| rels.is_empty() || rels.iter().any(|f| f.is_empty() || p == f || p.starts_with(&format!("{f}/")));
-    let mut pairs = match (revs.len(), staged) {
-        (0, _) => repo.diff_pairs(staged)?,
-        (1, false) => {
-            // revision against the working tree, for tracked files
-            let old = repo.rev_files(&revs[0])?;
-            let mut keys: std::collections::BTreeSet<String> = old.keys().cloned().collect();
-            keys.extend(repo.tracked_files()?.into_iter().map(|(p, _, _)| p));
-            let mut out = vec![];
-            for k in keys {
-                let new = std::fs::read(repo.worktree().join(&k)).ok();
-                let o = old.get(&k);
-                let same = match (&o, &new) {
-                    (Some((_, id)), Some(n)) => &repo.content(id)? == n,
-                    (None, None) => true,
-                    _ => false,
-                };
-                if same {
-                    continue;
-                }
-                out.push(vcs_repo::FilePair {
-                    path: k.clone(),
-                    old: o.map(|(_, id)| repo.content(id)).transpose()?,
-                    old_mode: o.map(|(m, _)| *m),
-                    new_mode: new.as_ref().map(|_| o.map_or(vcs_objects::EntryMode::File, |(m, _)| *m)),
-                    new: new,
-                });
-            }
-            out
-        }
-        (1, true) => {
-            let old = repo.rev_files(&revs[0])?;
-            let new: Flat = repo.tracked_files()?.into_iter().map(|(p, m, id)| (p, (m, id))).collect();
-            flat_pairs(&repo, &old, &new)?
-        }
+    let pairs = match (revs.len(), staged) {
+        (0, _) => repo.diff_pairs_limited(staged, &rels)?,
+        (1, _) => repo.rev_diff_pairs(&revs[0], staged, &rels)?,
         (_, _) => {
             if staged {
                 return Err(missing("diff --staged A B", "--staged with two revisions", "`vcs git diff A B`"));
             }
-            flat_pairs(&repo, &repo.rev_files(&revs[0])?, &repo.rev_files(&revs[1])?)?
+            repo.rev_rev_pairs(&revs[0], &revs[1], &rels)?
         }
     };
-    pairs.retain(|p| keep(&p.path));
     print!("{}", crate::difftool::render_pairs(pairs, &opts));
     Ok(())
 }
@@ -2346,12 +2328,17 @@ fn log_patch(log_argv: &[String], stat: bool) -> Result<(), Error> {
         trust: None,
     };
     let (shown, _) = crate::logfmt::select(&repo, &cwd, &zone, branch.as_deref(), limit, &opts)?;
+    // the options of `vcs show <id> [--stat]`, parsed once; each commit is shown in this process
+    let mut a = vec!["vcs".to_owned(), "show".to_owned(), "HEAD".to_owned()];
+    if stat {
+        a.push("--stat".into());
+    }
+    let crate::Cmd::Show { opts: show_opts, .. } = crate::Cli::try_parse_from(a).map_err(|e| Error::Msg(e.to_string()))?.cmd else {
+        unreachable!()
+    };
+    let show_zone = zone_of_cwd(&repo, &cwd, None)?;
     for (id, _) in shown {
-        let mut a = vec!["show".to_owned(), id.to_string()];
-        if stat {
-            a.push("--stat".into());
-        }
-        native(&a, false)?;
+        crate::difftool::print_show(&repo, &show_zone, &id.to_string(), &show_opts)?;
         println!();
     }
     Ok(())

@@ -201,7 +201,7 @@ handshake), `body_timeout` (600 s overall for the body and again for the respons
 The overall deadlines are what stop slowloris-style trickling; per-read timeouts alone would not. Bodies are read
 incrementally, so announcing a huge `Content-Length` and stalling costs no memory. Malformed request lines, header
 names, duplicate or non-numeric `Content-Length`, NUL bytes and non-UTF-8 headers are 400. Defaults are unmeasured
-guesses, not tuned values; the binary exposes `--max-connections`, `--max-body`, `--max-conns-per-ip` and
+guesses, not tuned values; the binary exposes `--max-connections`, `--max-body`, `--max-inflight-body` (server-wide bytes of request bodies in flight, default 2 GiB, 503 + Retry-After beyond), `--max-conns-per-ip` and
 `--auth-fail-limit`.
 
 **Abuse limits (opt-in, security review finding 14).** `--auth-fail-limit <burst>,<per-sec>` keeps a leaky counter
@@ -220,3 +220,7 @@ server bounds only `time_hw`); one request per connection and one thread per con
 OIDC; Windows signal reload.
 
 Deployment (systemd, Docker, S3 backend, path policy, require-lock, replicas): see [deploy.md](deploy.md).
+
+## Disk cache of immutable reads
+
+`--cache-dir <dir> [--cache-size <bytes>]` (default 8 GiB, also `cache-dir`/`cache-size` in the config file) keeps pack indexes, pack blocks and objects on local disk. These keys are content-addressed, so a restarted server answers a warm clone from disk and asks the object store only for the manifest and the pack listing. Every entry carries a blake3 over key, range and bytes that is checked on each read; a damaged entry is dropped and refetched. The manifest, listings, writes, deletes and existence checks never use the cache. Oldest entries are evicted past the cap.

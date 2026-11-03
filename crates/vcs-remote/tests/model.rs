@@ -449,6 +449,8 @@ fn compact_manifest_survives_faults_at_every_step() {
         let mut stats = Stats { leaves: 0 };
         explore(&sc, packed, &mut vec![], &mut stats);
         println!("{} (packed={packed}): {} complete schedules checked", sc.name, stats.leaves);
-        assert!(stats.leaves >= 9);
+        // a sanity floor on the search size: the packed publisher has fewer steps since the index
+        // and the tx record go up together (8 schedules, was 9+)
+        assert!(stats.leaves >= 8);
     }
 }

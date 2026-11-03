@@ -2,7 +2,7 @@
 //! `describe`) and the checkout used by `bisect`.
 
 use crate::error::{msg, Error, Result};
-use crate::meta::{write_atomic, ROOT_ZONE};
+use crate::meta::ROOT_ZONE;
 use crate::repo::{Repo, StatusOpts};
 use crate::treeops::{self, Flat};
 use vcs_objects::names::validate_branch_name;
@@ -13,8 +13,22 @@ impl Repo {
     /// Tracked files of the working tree (the index), as `(path, mode, content id)` sorted by path.
     /// Paths are repository-relative; only subscribed zones are tracked.
     pub fn tracked_files(&self) -> Result<Vec<(String, vcs_objects::EntryMode, ObjectId)>> {
-        let ix = self.index()?;
-        Ok(ix.entries.iter().map(|(p, e)| (p.clone(), e.mode, e.id)).collect())
+        let raw = self.rd("index")?;
+        Ok(crate::index::Index::decode_list(&raw)?
+            .into_iter()
+            .map(|(p, e)| (p, e.mode, e.id))
+            .collect())
+    }
+
+    /// Stream the staged entries (same validation as [`Repo::tracked_files`]) through `visit` on
+    /// parallel workers, one `T` per index block, in path order. See [`crate::index::Index::scan`].
+    pub fn scan_tracked<T: Send>(
+        &self,
+        init: impl Fn() -> T + Sync,
+        visit: impl Fn(&mut T, &str, &crate::index::IndexEntry) + Sync,
+    ) -> Result<Vec<T>> {
+        let raw = self.rd("index")?;
+        crate::index::Index::scan(&raw, init, visit)
     }
 
     /// Files of revision `rev` across the subscribed zones in which `rev` resolves (so `HEAD`
@@ -34,6 +48,87 @@ impl Repo {
             return msg(format!("unknown revision {rev:?} in any subscribed zone"));
         }
         Ok(out)
+    }
+
+    /// `rev_files(rev)` as a path-ordered list. With one zone resolving `rev` (the usual case) the
+    /// trees are walked straight into a vector, with no map in between.
+    pub fn rev_file_list(&self, rev: &str) -> Result<Vec<(String, vcs_objects::EntryMode, ObjectId)>> {
+        let zones = self.zones()?;
+        let ws = self.workspace()?;
+        let mut hits = Vec::new();
+        for z in ws.subs.keys() {
+            if let Ok(id) = self.resolve_rev(z, rev) {
+                hits.push((z, id));
+            }
+        }
+        if hits.len() != 1 {
+            return Ok(self.rev_files(rev)?.into_iter().map(|(p, (m, i))| (p, m, i)).collect());
+        }
+        let (z, id) = hits[0];
+        let root = self.commit_obj(&id)?.root;
+        let mut out = Vec::new();
+        treeops::flatten_into(&self.store, root, zones.path_of(z).unwrap_or(""), &mut out)?;
+        if !out.windows(2).all(|w| w[0].0 < w[1].0) {
+            out.sort_by(|a, b| a.0.cmp(&b.0));
+        }
+        Ok(out)
+    }
+
+    /// The entries directly inside the root of revision `rev` (files and directories, as
+    /// `ls-tree` lists them), read from the one top tree. Directories carry `EntryMode::Directory`
+    /// and their tree id. `None` when the answer is not one tree: `rev` resolves in several
+    /// zones, or in a zone that lives below the repository root.
+    pub fn rev_top_level(&self, rev: &str) -> Result<Option<Vec<(String, vcs_objects::EntryMode, ObjectId)>>> {
+        let zones = self.zones()?;
+        let ws = self.workspace()?;
+        let mut hits = Vec::new();
+        for z in ws.subs.keys() {
+            if let Ok(id) = self.resolve_rev(z, rev) {
+                hits.push((z, id));
+            }
+        }
+        match hits.as_slice() {
+            [] => msg(format!("unknown revision {rev:?} in any subscribed zone")),
+            [(z, id)] if zones.path_of(z).unwrap_or("").is_empty() => {
+                let root = self.commit_obj(id)?.root;
+                let Object::Tree(t) = self.store.get(&root)? else {
+                    return Err(Error::Corrupt(format!("object {root} is not a tree")));
+                };
+                Ok(Some(t.entries().iter().map(|e| (e.name.clone(), e.mode, e.id)).collect()))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// The file entry for repository-relative `rel` in revision `rev`, with the same answer as
+    /// `rev_files(rev).get(rel)` but reading only one tree per path component per zone. A
+    /// directory, or no file at all, is `None`.
+    pub fn rev_file_entry(&self, rev: &str, rel: &str) -> Result<Option<(vcs_objects::EntryMode, vcs_objects::ObjectId)>> {
+        let zones = self.zones()?;
+        let ws = self.workspace()?;
+        let mut found = None;
+        let mut any = false;
+        for z in ws.subs.keys() {
+            let Ok(id) = self.resolve_rev(z, rev) else { continue };
+            any = true;
+            let prefix = zones.path_of(z).unwrap_or("");
+            let zrel = if prefix.is_empty() {
+                Some(rel)
+            } else {
+                rel.strip_prefix(prefix).and_then(|r| r.strip_prefix('/'))
+            };
+            let Some(zrel) = zrel.filter(|r| !r.is_empty()) else { continue };
+            let root = self.commit_obj(&id)?.root;
+            if let Some((m, i)) = treeops::entry_at(&self.store, root, zrel)? {
+                if m != vcs_objects::EntryMode::Directory {
+                    found = Some((m, i));
+                }
+            }
+        }
+        if !any {
+            return msg(format!("unknown revision {rev:?} in any subscribed zone"));
+        }
+        Ok(found)
     }
 
     /// Commit `id` (any zone).
@@ -103,7 +198,7 @@ impl Repo {
         }
         ws.subs.insert(zone.into(), branch.into());
         self.save_index(&mut ix)?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
+        self.write_refs(&refs)?;
         self.save_ws(&ws)?;
         self.record_op(&format!("checkout {zone}/{branch} at {}", target.short()), None)?;
         Ok(())

@@ -96,14 +96,13 @@ pub fn run(a: &GrepArgs) -> Result<(), Error> {
     let mut files: Vec<(String, Src)> = Vec::new();
     match &a.rev {
         None => {
-            for (p, mode, id) in repo.tracked_files()? {
-                if mode == EntryMode::Symlink || !wanted(&p, &filters) {
-                    continue;
+            let root = repo.worktree();
+            let parts = repo.scan_tracked(Vec::new, |t: &mut Vec<(String, Src)>, p, e| {
+                if e.mode != EntryMode::Symlink && wanted(p, &filters) {
+                    t.push((p.to_owned(), Src::Disk(root.join(p))));
                 }
-                let _ = id;
-                let abs = repo.worktree().join(&p);
-                files.push((p, Src::Disk(abs)));
-            }
+            })?;
+            files = parts.into_iter().flatten().collect();
         }
         Some(rev) => {
             for (p, (mode, id)) in repo.rev_files(rev)? {

@@ -33,7 +33,7 @@ pub struct LocalCompaction {
 impl LocalStore {
     /// Number of packs currently open.
     pub fn pack_count(&self) -> usize {
-        self.packs.read().unwrap().len()
+        self.packs_r().map_or(0, |g| g.len())
     }
 
     /// Merge packs of similar size (tiered, see module docs) into packs of `fmt`, ordering
@@ -53,7 +53,7 @@ impl LocalStore {
         ordered: bool,
     ) -> Result<LocalCompaction, StoreError> {
         self.sync()?;
-        let mut guard = self.packs.write().unwrap();
+        let mut guard = self.packs_w()?;
         let mut report = LocalCompaction::default();
         let sizes: Vec<(String, u64)> = guard
             .iter()

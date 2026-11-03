@@ -28,9 +28,19 @@ pub struct LogExtra {
     /// Only commits at or before this date (a date without time includes that whole day)
     #[arg(long, value_name = "DATE")]
     pub until: Option<String>,
-    /// Only commits whose message matches this regular expression
+    /// Only commits whose message matches this pattern: a POSIX basic regular expression like `git log --grep`
+    /// (so `+ ? | ( ) { }` are literal; `\+ \? \| \( \)` are the operators), or see -E / -F
     #[arg(long, value_name = "REGEX")]
     pub grep: Option<String>,
+    /// Treat `--grep` / `-G` patterns as plain strings (`+`, `(`, `.` are literal)
+    #[arg(short = 'F', long)]
+    pub fixed_strings: bool,
+    /// Treat `--grep` / `-G` patterns as extended regular expressions (`+ ? | ( )` are operators)
+    #[arg(short = 'E', long)]
+    pub extended_regexp: bool,
+    /// Match `--grep` / `-G` patterns case-insensitively
+    #[arg(short = 'i', long)]
+    pub regexp_ignore_case: bool,
     /// Only merge commits (two or more parents)
     #[arg(long, conflicts_with = "no_merges")]
     pub merges: bool,
@@ -43,6 +53,9 @@ pub struct LogExtra {
     /// Only commits that change the number of occurrences of this string in some file (pickaxe)
     #[arg(short = 'S', value_name = "STRING")]
     pub pickaxe: Option<String>,
+    /// Only commits that add or remove a line matching this regular expression in some file (like `git log -G`)
+    #[arg(short = 'G', value_name = "REGEX")]
+    pub pickaxe_regex: Option<String>,
     /// Template per commit. Placeholders: %H %h %P %p %an %ae %at %ad %s %b %B %C %z %n %%
     #[arg(long, value_name = "TEMPLATE")]
     pub format: Option<String>,
@@ -91,7 +104,20 @@ impl LogExtra {
             || self.no_merges
             || self.first_parent
             || self.pickaxe.is_some()
+            || self.pickaxe_regex.is_some()
             || self.follow
+    }
+    /// Compile a `--grep` / `-G` pattern with git's rules: basic regex by default, `-E` extended,
+    /// `-F` fixed string, `-i` ignore case; `^` and `$` match at line boundaries of a message.
+    fn compile(&self, pat: &str) -> Result<Regex, regex::Error> {
+        let body = if self.fixed_strings {
+            regex::escape(pat)
+        } else if self.extended_regexp {
+            pat.to_owned()
+        } else {
+            bre_to_regex(pat)
+        };
+        Regex::new(&format!("(?m){}{body}", if self.regexp_ignore_case { "(?i)" } else { "" }))
     }
     pub fn lists_files(&self) -> bool {
         self.name_status || self.name_only
@@ -134,7 +160,7 @@ impl LogExtra {
         let re = self
             .grep
             .as_deref()
-            .map(Regex::new)
+            .map(|g| self.compile(g))
             .transpose()
             .map_err(|e| Error::Msg(format!("--grep: {e}")))?;
         shown.retain(|(_, c)| {
@@ -181,24 +207,61 @@ impl LogExtra {
             let mut it = flags.into_iter();
             shown.retain(|_| it.next().unwrap_or(false));
         }
+        if let Some(pat) = &self.pickaxe_regex {
+            let re = self.compile(pat).map_err(|e| Error::Msg(format!("-G: {e}")))?;
+            let by_id: BTreeMap<ObjectId, &Commit> = all.iter().map(|(i, c)| (*i, c)).collect();
+            let mut keep = Vec::with_capacity(shown.len());
+            for (_, c) in shown.iter() {
+                keep.push(pickaxe_regex_hit(repo, prefix, &by_id, c, &re)?);
+            }
+            let mut it = keep.into_iter();
+            shown.retain(|_| it.next().unwrap_or(false));
+        }
         Ok(())
     }
 
     /// File list lines per commit for `--name-status` / `--name-only`.
-    pub fn notes(&self, repo: &Repo, zone: &str, shown: &[(ObjectId, Commit)]) -> Result<BTreeMap<ObjectId, Vec<String>>, Error> {
+    ///
+    /// `only` (repo-relative paths from `-- <paths>`) limits each list to those paths, like git: a
+    /// path-limited log lists the changes inside the pathspec, not the whole commit.
+    pub fn notes(
+        &self,
+        repo: &Repo,
+        zone: &str,
+        shown: &[(ObjectId, Commit)],
+        only: &[String],
+    ) -> Result<BTreeMap<ObjectId, Vec<String>>, Error> {
+        let inside = |p: &str| {
+            only.is_empty()
+                || only
+                    .iter()
+                    .any(|s| s.is_empty() || p == s || p.strip_prefix(s.as_str()).is_some_and(|r| r.starts_with('/')))
+        };
         let mut out = BTreeMap::new();
         if !self.lists_files() {
             return Ok(out);
         }
         let a = self.diff_args();
         for (id, _) in shown {
+            if !a.detect() {
+                // no rename detection: the file list straight from the tree diff
+                let lines = repo
+                    .commit_changes_only(zone, id, only)?
+                    .into_iter()
+                    .map(|(p, l)| if self.name_status { format!("{}\t{p}", l as char) } else { p })
+                    .collect();
+                out.insert(*id, lines);
+                continue;
+            }
             // contents matter only for rename / copy detection
             let pairs = if a.detect() {
                 repo.commit_pairs(zone, id)?
             } else {
                 repo.commit_pairs_names(zone, id)?
             };
-            let es = difftool::entries(pairs, &a);
+            let mut es = difftool::entries(pairs, &a);
+            // a rename or copy is kept when either side is inside the spec
+            es.retain(|e| inside(&e.path) || e.old_path.as_deref().is_some_and(inside));
             let lines = if self.name_status {
                 difftool::name_status_lines(&es)
             } else {
@@ -358,6 +421,135 @@ fn pickaxe_hit(
             continue;
         }
         if occurrences(o)? != occurrences(n)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Translate a POSIX basic regular expression (GNU flavour, what `git log --grep` uses by default)
+/// to the `regex` crate's syntax: bare `+ ? | ( ) { }` are literals, `\+ \? \| \( \) \{ \}` are
+/// operators, `*` at the start is literal, `^` / `$` anchor only at the ends, `\< \>` are word boundaries.
+pub fn bre_to_regex(p: &str) -> String {
+    let cs: Vec<char> = p.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    let mut start = true; // at the start of the pattern or of a group / alternative
+    while i < cs.len() {
+        let c = cs[i];
+        let mut next_start = false;
+        match c {
+            '\\' if i + 1 < cs.len() => {
+                let d = cs[i + 1];
+                i += 1;
+                match d {
+                    '(' => {
+                        out.push('(');
+                        next_start = true;
+                    }
+                    '|' => {
+                        out.push('|');
+                        next_start = true;
+                    }
+                    ')' | '{' | '}' | '+' | '?' => out.push(d),
+                    '<' | '>' => out.push_str("\\b"),
+                    d if d.is_ascii_alphanumeric() => {
+                        out.push('\\');
+                        out.push(d);
+                    }
+                    d => out.push_str(&regex::escape(&d.to_string())),
+                }
+            }
+            '+' | '?' | '|' | '(' | ')' | '{' | '}' => {
+                out.push('\\');
+                out.push(c);
+            }
+            '*' if start => out.push_str("\\*"),
+            '^' if start => {
+                out.push('^');
+                next_start = true;
+            }
+            '^' => out.push_str("\\^"),
+            '$' => {
+                let end = i + 1 == cs.len() || (cs[i + 1] == '\\' && matches!(cs.get(i + 2), Some(')') | Some('|')));
+                out.push_str(if end { "$" } else { "\\$" });
+            }
+            '[' => {
+                // a bracket expression is copied through its closing `]` (a leading `]` is literal)
+                let mut j = i + 1;
+                if cs.get(j) == Some(&'^') {
+                    j += 1;
+                }
+                if cs.get(j) == Some(&']') {
+                    j += 1;
+                }
+                while j < cs.len() && cs[j] != ']' {
+                    if cs[j] == '[' && matches!(cs.get(j + 1), Some(':') | Some('.') | Some('=')) {
+                        let close = cs[j + 1];
+                        while j + 1 < cs.len() && !(cs[j] == close && cs[j + 1] == ']') {
+                            j += 1;
+                        }
+                        j += 1;
+                    }
+                    j += 1;
+                }
+                let end = j.min(cs.len() - 1);
+                // inside a POSIX bracket expression `\` and a lone `[` are literal; `[:class:]` stays
+                let mut body = String::new();
+                let mut k = i;
+                while k <= end {
+                    let ch = cs[k];
+                    if ch == '[' && k > i && !matches!(cs.get(k + 1), Some(':') | Some('.') | Some('=')) {
+                        body.push_str("\\[");
+                    } else if ch == '\\' {
+                        body.push_str("\\\\");
+                    } else {
+                        body.push(ch);
+                    }
+                    k += 1;
+                }
+                out.push_str(&body);
+                i = end;
+            }
+            c => out.push(c),
+        }
+        start = next_start;
+        i += 1;
+    }
+    out
+}
+
+/// `-G`: does the commit add or remove (net, per file) a line matching `re`? Lines are compared
+/// as a multiset per file, so a moved or unchanged line does not count. Non-UTF-8 bytes are
+/// decoded lossily.
+fn pickaxe_regex_hit(repo: &Repo, prefix: &str, by_id: &BTreeMap<ObjectId, &Commit>, c: &Commit, re: &Regex) -> Result<bool, Error> {
+    let old_root = match c.parents.first().and_then(|p| by_id.get(p)) {
+        Some(pc) => Some(pc.root),
+        None if c.parents.is_empty() => None,
+        None => return Ok(false),
+    };
+    let d = treeops::diff_trees_files(repo.store(), old_root, Some(c.root), prefix)?;
+    let paths: BTreeSet<&String> = d.new.keys().chain(d.old.keys()).collect();
+    for p in paths {
+        let (o, n) = (d.old.get(p), d.new.get(p));
+        if o == n {
+            continue;
+        }
+        let text = |e: Option<&(vcs_objects::EntryMode, ObjectId)>| -> Result<String, Error> {
+            Ok(match e {
+                Some((_, id)) => String::from_utf8_lossy(&repo.store().get_content(id)?).into_owned(),
+                None => String::new(),
+            })
+        };
+        let (old, new) = (text(o)?, text(n)?);
+        let mut bal: HashMap<&str, i64> = HashMap::new();
+        for l in old.lines() {
+            *bal.entry(l).or_default() -= 1;
+        }
+        for l in new.lines() {
+            *bal.entry(l).or_default() += 1;
+        }
+        if bal.iter().any(|(l, b)| *b != 0 && re.is_match(l)) {
             return Ok(true);
         }
     }

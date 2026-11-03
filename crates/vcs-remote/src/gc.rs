@@ -19,9 +19,18 @@
 //! transaction in the manifest's applied window (the retention window). `tx/` records, the
 //! manifest and `packs/` are never deleted by this module.
 //!
-//! Not covered (also in docs/gc.md): packs on the remote are never rewritten or deleted;
-//! a sweeper that outlives its lock TTL is not detected; readers slower than `G` can lose
-//! objects of a head that has since been replaced.
+//! **Pack rewriting.** A pack that holds both live and old unreachable objects is a `Unit::Rewrite`
+//! candidate. It is tombstoned like any other unit; if the remark leaves it untouched, a new pack
+//! holding only its objects in `keep` is uploaded (pack, then index, then read back), and only then
+//! the old index and the old pack are deleted. A crash at any step leaves duplicates, never a
+//! missing live object.
+//!
+//! **Lease.** The sweeper renews `gc/lock` (compare-and-set on the lock's own tag) at each phase
+//! and every few units while deleting. If the lock was taken over or removed meanwhile the sweep
+//! stops with [`GcError::LeaseLost`] before the next destructive step.
+//!
+//! Not covered (also in docs/gc.md): readers slower than `G` can lose objects of a head that has
+//! since been replaced.
 
 use crate::backend::{Backend, BackendError};
 use crate::packfetch::PACK_PREFIX;
@@ -29,7 +38,7 @@ use crate::protocol::{deps, load_manifest, object_key, pack_tomb_key, tomb_key, 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use vcs_objects::{id_of_encoded, Object, ObjectId};
-use vcs_store::pack::PackIndex;
+use vcs_store::pack::{build_pack_blocks, PackIndex};
 
 pub const LOCK_KEY: &str = "gc/lock";
 const TOMB_PREFIX: &str = "tomb/";
@@ -45,6 +54,8 @@ pub enum GcError {
     UnsafeGrace { grace_ms: u64, hold_ms: u64 },
     #[error("another gc holds {LOCK_KEY} until {0} (backend clock, unix ms)")]
     Locked(u64),
+    #[error("lost the {LOCK_KEY} lease (taken over or removed while sweeping); stopped before the next delete, re-run gc")]
+    LeaseLost,
     #[error("remote is damaged, refusing to collect: {0}")]
     Damaged(String),
     #[error(transparent)]
@@ -73,6 +84,9 @@ pub struct RemoteGcOptions {
     pub owner: String,
     /// Skip the `grace > 2 * hold` check. UNSAFE; tests only.
     pub allow_short_grace: bool,
+    /// Rewrite packs that hold both live and old unreachable objects (default); `false` keeps
+    /// them whole, as before.
+    pub rewrite_packs: bool,
 }
 
 impl Default for RemoteGcOptions {
@@ -84,6 +98,7 @@ impl Default for RemoteGcOptions {
             lock_ttl_ms: 6 * 3600 * 1000,
             owner: "gc".into(),
             allow_short_grace: false,
+            rewrite_packs: true,
         }
     }
 }
@@ -108,8 +123,11 @@ pub struct RemoteGcReport {
     /// Packs removed (stems). Dry run: upper bound.
     pub deleted_packs: Vec<String>,
     pub stale_tombs_cleared: usize,
-    /// Packs kept although they contain some unreachable objects (no remote pack rewriting).
+    /// Packs kept whole although they contain some unreachable objects (too young, touched, too
+    /// large to rewrite in memory, or in dry run: see `packs_to_rewrite`).
     pub packs_with_garbage_kept: usize,
+    /// Packs rewritten without their garbage: (old stem, new stem). Dry run: new stem is empty.
+    pub packs_rewritten: Vec<(String, String)>,
     /// Shelves (`principal/name`) past their expiry: removed (dry run: would be removed).
     pub expired_shelves: Vec<String>,
 }
@@ -123,6 +141,8 @@ pub enum GcPoint {
     Remarked,
     BeforeDelete,
     AfterDelete,
+    /// A rewritten pack and its index are durable; the old pack is still in place.
+    Rewritten,
 }
 
 /// A deletable unit.
@@ -130,6 +150,8 @@ pub enum GcPoint {
 enum Unit {
     Loose(ObjectId),
     Pack(String),
+    /// A pack with live and garbage objects: replaced by a pack of its kept objects.
+    Rewrite(String),
 }
 
 /// A consistent-enough view of what the remote holds, rebuilt for every phase.
@@ -259,7 +281,7 @@ impl<'a> View<'a> {
     fn age(&self, u: &Unit, at: u64) -> Result<Option<u64>, GcError> {
         let keys: Vec<String> = match u {
             Unit::Loose(id) => vec![object_key(id)],
-            Unit::Pack(stem) => vec![format!("{stem}.idx"), format!("{stem}.pack")],
+            Unit::Pack(stem) | Unit::Rewrite(stem) => vec![format!("{stem}.idx"), format!("{stem}.pack")],
         };
         let mut youngest: Option<u64> = None;
         for k in keys {
@@ -280,15 +302,59 @@ impl<'a> View<'a> {
     fn objects_of(&self, u: &Unit) -> Vec<ObjectId> {
         match u {
             Unit::Loose(id) => vec![*id],
-            Unit::Pack(s) => self.pack_ids(s),
+            Unit::Pack(s) | Unit::Rewrite(s) => self.pack_ids(s),
         }
     }
+}
+
+/// Write a pack of just `live` (read and verified from `stem`), index last, and read the index back.
+/// Returns the new stem. The old pack is untouched; the caller deletes it afterwards.
+fn rewrite_pack(b: &dyn Backend, stem: &str, live: &[ObjectId], hook: &mut dyn FnMut(GcPoint)) -> Result<String, GcError> {
+    let Some(got) = b.get(&format!("{stem}.idx"))? else {
+        return Err(GcError::Damaged(format!("{stem}.idx vanished while rewriting")));
+    };
+    let idx = PackIndex::parse(&got.data, Path::new(stem)).map_err(|e| GcError::Damaged(format!("{stem}.idx: {e}")))?;
+    let info = crate::compact::PackInfo {
+        stem: stem.to_owned(),
+        len: idx.pack_len,
+    };
+    let want: HashSet<ObjectId> = live.iter().copied().collect();
+    let objs: Vec<(ObjectId, Vec<u8>)> = crate::compact::read_pack(b, &info, &idx)?
+        .into_iter()
+        .filter(|(id, _)| want.contains(id))
+        .collect();
+    if objs.len() != want.len() {
+        return Err(GcError::Damaged(format!("{stem}: live objects missing from the pack")));
+    }
+    let objs = vcs_store::layout::locality_order(objs);
+    let built = build_pack_blocks(objs, vcs_store::pack::PackFormat::for_compaction(), vcs_store::pack::BLOCK_TARGET);
+    let new_stem = format!("{PACK_PREFIX}{}", built.name);
+    let (pk, ik) = (format!("{new_stem}.pack"), format!("{new_stem}.idx"));
+    b.put_if_absent(&pk, &built.pack)?;
+    b.put_if_absent(&ik, &built.idx)?;
+    let back = b
+        .get(&ik)?
+        .ok_or_else(|| GcError::Damaged(format!("{ik} missing right after upload")))?;
+    let nidx = PackIndex::parse(&back.data, Path::new(&new_stem)).map_err(|e| GcError::Damaged(format!("{ik}: {e}")))?;
+    if let Some(m) = live.iter().find(|id| nidx.find(id).is_none()) {
+        return Err(GcError::Damaged(format!(
+            "rewritten pack {new_stem} lacks {m}; old pack left in place"
+        )));
+    }
+    let tail = b.get_range(&pk, nidx.pack_len.saturating_sub(32), 33)?;
+    if tail.as_deref() != Some(&nidx.checksum()[..]) {
+        return Err(GcError::Damaged(format!(
+            "rewritten pack {pk} is incomplete; old pack left in place"
+        )));
+    }
+    hook(GcPoint::Rewritten);
+    Ok(new_stem)
 }
 
 fn tomb_of(u: &Unit) -> String {
     match u {
         Unit::Loose(id) => tomb_key(id),
-        Unit::Pack(s) => pack_tomb_key(s),
+        Unit::Pack(s) | Unit::Rewrite(s) => pack_tomb_key(s),
     }
 }
 
@@ -327,38 +393,75 @@ fn roots(b: &dyn Backend, quirks: &GcQuirks, now: u64) -> Result<Vec<ObjectId>, 
 
 pub(crate) struct LockGuard<'a> {
     b: &'a dyn Backend,
-    mine: Vec<u8>,
+    mine: std::cell::RefCell<Vec<u8>>,
+    owner: String,
+    ttl_ms: u64,
 }
 impl Drop for LockGuard<'_> {
     fn drop(&mut self) {
         // Only remove the lock if it is still ours (it may have been taken over after expiry).
         if let Ok(Some(v)) = self.b.get(LOCK_KEY) {
-            if v.data == self.mine {
+            if v.data == *self.mine.borrow() {
                 let _ = self.b.delete(LOCK_KEY);
             }
         }
     }
 }
 
+fn lock_expiry(data: &[u8]) -> u64 {
+    String::from_utf8_lossy(data)
+        .rsplit(' ')
+        .next()
+        .and_then(|x| x.parse::<u64>().ok())
+        .unwrap_or(u64::MAX)
+}
+
+impl LockGuard<'_> {
+    /// Extend the lease when less than half of it is left (always, if `force`). Compare-and-set on
+    /// the tag of the lock we hold, so a lock taken over (or removed) since fails with
+    /// [`GcError::LeaseLost`] instead of being overwritten.
+    pub(crate) fn renew(&self, force: bool) -> Result<(), GcError> {
+        let now = self.b.now_ms()?;
+        let exp = lock_expiry(&self.mine.borrow());
+        if !force && exp.saturating_sub(now) > self.ttl_ms / 2 {
+            return Ok(());
+        }
+        let cur = self.b.get(LOCK_KEY)?.ok_or(GcError::LeaseLost)?;
+        if cur.data != *self.mine.borrow() {
+            return Err(GcError::LeaseLost);
+        }
+        let next = format!("{} {}", self.owner, now + self.ttl_ms).into_bytes();
+        match self.b.put_if_match(LOCK_KEY, &next, &cur.tag)? {
+            Some(_) => {
+                *self.mine.borrow_mut() = next;
+                Ok(())
+            }
+            None => Err(GcError::LeaseLost),
+        }
+    }
+}
+
 pub(crate) fn acquire<'a>(b: &'a dyn Backend, owner: &str, ttl_ms: u64, now: u64) -> Result<LockGuard<'a>, GcError> {
     let mine = format!("{owner} {}", now + ttl_ms).into_bytes();
+    let guard = |mine: Vec<u8>| LockGuard {
+        b,
+        mine: std::cell::RefCell::new(mine),
+        owner: owner.to_owned(),
+        ttl_ms,
+    };
     if b.put_if_absent(LOCK_KEY, &mine)? {
-        return Ok(LockGuard { b, mine });
+        return Ok(guard(mine));
     }
     let Some(cur) = b.get(LOCK_KEY)? else {
         return Err(GcError::Locked(0)); // vanished between the two calls: let the caller retry
     };
-    let exp = String::from_utf8_lossy(&cur.data)
-        .rsplit(' ')
-        .next()
-        .and_then(|x| x.parse::<u64>().ok())
-        .unwrap_or(u64::MAX);
+    let exp = lock_expiry(&cur.data);
     if exp > now {
         return Err(GcError::Locked(exp));
     }
     // Expired: take over with a CAS so two takers cannot both win.
     match b.put_if_match(LOCK_KEY, &mine, &cur.tag)? {
-        Some(_) => Ok(LockGuard { b, mine }),
+        Some(_) => Ok(guard(mine)),
         None => Err(GcError::Locked(now)),
     }
 }
@@ -390,7 +493,7 @@ pub fn remote_gc_with(
         ..Default::default()
     };
     let now = b.now_ms()?;
-    let _lock = if opts.dry_run {
+    let lock = if opts.dry_run {
         None
     } else {
         let g = acquire(b, &opts.owner, opts.lock_ttl_ms, now)?;
@@ -411,6 +514,7 @@ pub fn remote_gc_with(
         }
     }
     let grace = opts.grace_ms;
+    let renew = |force: bool| -> Result<(), GcError> { lock.as_ref().map_or(Ok(()), |l| l.renew(force)) };
 
     // 1. Candidates: units that are old and contain nothing reachable.
     let view = View::load(b)?;
@@ -424,8 +528,18 @@ pub fn remote_gc_with(
         let reach = objs.iter().filter(|o| marked.contains(o)).count();
         rep.reachable += reach;
         if reach > 0 {
-            if matches!(u, Unit::Pack(_)) && reach < objs.len() {
-                rep.packs_with_garbage_kept += 1;
+            if let Unit::Pack(stem) = &u {
+                if reach < objs.len() {
+                    // Live and garbage together: rewrite once old enough and small enough to
+                    // hold in memory; otherwise it stays whole.
+                    let small = view.packs[stem]
+                        .as_ref()
+                        .is_some_and(|i| i.pack_len <= crate::compact::DEFAULT_MAX_MERGE_BYTES);
+                    match view.age(&u, now)? {
+                        Some(a) if a > grace && small && opts.rewrite_packs => candidates.push(Unit::Rewrite(stem.clone())),
+                        _ => rep.packs_with_garbage_kept += 1,
+                    }
+                }
             }
             continue;
         }
@@ -440,6 +554,10 @@ pub fn remote_gc_with(
     if opts.dry_run {
         for u in &candidates {
             match u {
+                Unit::Rewrite(s) => {
+                    rep.packs_rewritten.push((s.clone(), String::new()));
+                    rep.deleted.extend(view.pack_ids(s).into_iter().filter(|o| !marked.contains(o)));
+                }
                 Unit::Loose(id) => rep.deleted.push(*id),
                 Unit::Pack(s) => {
                     rep.deleted.extend(view.pack_ids(s));
@@ -471,6 +589,10 @@ pub fn remote_gc_with(
             let mut survivors = Vec::new();
             let at = b.now_ms()?;
             for u in v.all_units() {
+                let u = match &u {
+                    Unit::Pack(s) if cand_set.contains(&Unit::Rewrite(s.clone())) => Unit::Rewrite(s.clone()),
+                    _ => u,
+                };
                 let touched = cand_set.contains(&u) && matches!(v.age(&u, at)?, Some(a) if a <= grace);
                 if touched {
                     touched_units.insert(u.clone());
@@ -489,25 +611,42 @@ pub fn remote_gc_with(
     let decide = |v: &View, keep: &HashSet<ObjectId>, touched: &HashSet<Unit>| -> Vec<Unit> {
         candidates
             .iter()
-            .filter(|u| !touched.contains(*u) && !v.objects_of(u).iter().any(|o| keep.contains(o)))
+            .filter(|u| {
+                !touched.contains(*u)
+                    && match u {
+                        // something to drop
+                        Unit::Rewrite(_) => v.objects_of(u).iter().any(|o| !keep.contains(o)),
+                        _ => !v.objects_of(u).iter().any(|o| keep.contains(o)),
+                    }
+            })
             .cloned()
             .collect()
     };
-    let (delete, view2) = if quirks.sweeper_tombs_after_deciding {
+    let (delete, view2, keep) = if quirks.sweeper_tombs_after_deciding {
         let (keep, touched) = keep_set(&view)?;
         let delete = decide(&view, &keep, &touched);
         hook(GcPoint::Remarked);
         tomb_all()?;
         hook(GcPoint::Tombed);
-        (delete, view)
+        (delete, view, keep)
     } else {
         tomb_all()?;
         hook(GcPoint::Tombed);
+        renew(false)?;
         let v2 = View::load(b)?;
         let (keep, touched) = keep_set(&v2)?;
         let delete = decide(&v2, &keep, &touched);
         hook(GcPoint::Remarked);
-        (delete, v2)
+        (delete, v2, keep)
+    };
+    renew(false)?;
+    // What a unit loses: everything for a loose object or whole pack, the garbage for a rewrite.
+    let dropped = |u: &Unit| -> Vec<ObjectId> {
+        let mut v = view2.objects_of(u);
+        if matches!(u, Unit::Rewrite(_)) {
+            v.retain(|o| !keep.contains(o));
+        }
+        v
     };
     let doomed: HashSet<Unit> = delete.iter().cloned().collect();
     rep.saved_by_remark = candidates.len() - doomed.len();
@@ -519,14 +658,14 @@ pub fn remote_gc_with(
     // 4. Order: parents before children. Edge parent -> child between doomed units.
     let mut unit_of: HashMap<ObjectId, Vec<Unit>> = HashMap::new();
     for u in &doomed {
-        for o in view2.objects_of(u) {
+        for o in dropped(u) {
             unit_of.entry(o).or_default().push(u.clone());
         }
     }
     let mut children_of: HashMap<Unit, Vec<Unit>> = HashMap::new();
     let mut indeg: BTreeMap<Unit, usize> = doomed.iter().map(|d| (d.clone(), 0)).collect();
     for p in &doomed {
-        for o in view2.objects_of(p) {
+        for o in dropped(p) {
             let Some(obj) = view2.read(&o)? else { continue };
             for c in deps(&obj) {
                 for cu in unit_of.get(&c).into_iter().flatten() {
@@ -560,9 +699,30 @@ pub fn remote_gc_with(
             order.push(u.clone());
         }
     }
-    for u in order {
+    for (n, u) in order.into_iter().enumerate() {
+        // A rewrite is long: always check the lease first. Otherwise every 32nd unit.
+        if matches!(u, Unit::Rewrite(_)) || n % 32 == 31 {
+            renew(false)?;
+        }
         hook(GcPoint::BeforeDelete);
         match &u {
+            Unit::Rewrite(stem) => {
+                let live: Vec<ObjectId> = view2.objects_of(&u).into_iter().filter(|o| keep.contains(o)).collect();
+                let gone = dropped(&u);
+                let new_stem = if live.is_empty() {
+                    None
+                } else {
+                    Some(rewrite_pack(b, stem, &live, hook)?)
+                };
+                // Index first, as in compaction (C3), then the pack.
+                b.delete(&format!("{stem}.idx"))?;
+                b.delete(&format!("{stem}.pack"))?;
+                rep.deleted.extend(gone);
+                match new_stem {
+                    Some(n) => rep.packs_rewritten.push((stem.clone(), n)),
+                    None => rep.deleted_packs.push(stem.clone()),
+                }
+            }
             Unit::Loose(id) => {
                 b.delete(&object_key(id))?;
                 rep.deleted.push(*id);

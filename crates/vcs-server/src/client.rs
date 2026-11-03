@@ -26,7 +26,18 @@ pub struct HttpBackend {
     base: String,
     token: String,
     agent: ureq::Agent,
+    gc: std::sync::Mutex<GcClock>,
 }
+
+/// What this client knows about the server's clock endpoint.
+#[derive(Clone, Copy)]
+enum GcClock {
+    Unprobed,
+    Unsupported,
+    Anchored(u64, std::time::Instant),
+}
+
+const REANCHOR: Duration = Duration::from_secs(600);
 
 impl HttpBackend {
     /// `base` is `http://host:port` or (feature `tls`) `https://host:port`; an optional trailing slash is ignored.
@@ -89,6 +100,7 @@ impl HttpBackend {
             base: base.to_owned(),
             token: token.to_owned(),
             agent: b.build(),
+            gc: std::sync::Mutex::new(GcClock::Unprobed),
         })
     }
 
@@ -137,12 +149,22 @@ impl HttpBackend {
         }
     }
 
+    /// Like [`Self::send_bytes`] plus the body as lossy text, for the small text endpoints (whoami,
+    /// list, clock, mtime). Object and pack reads use `send_bytes`: decoding and copying a 4 MiB
+    /// pack range as a `String` on every read is pure waste.
     #[allow(clippy::type_complexity)]
     fn send_raw(
         &self,
         r: ureq::Request,
         body: Option<&[u8]>,
     ) -> Result<Result<(String, Vec<u8>, Option<String>), (u16, String)>, BackendError> {
+        Ok(self
+            .send_bytes(r, body)?
+            .map(|(data, etag)| (String::from_utf8_lossy(&data).into_owned(), data, etag)))
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn send_bytes(&self, r: ureq::Request, body: Option<&[u8]>) -> Result<Result<(Vec<u8>, Option<String>), (u16, String)>, BackendError> {
         let res = match body {
             Some(b) => r.send_bytes(b),
             None => r.call(),
@@ -152,9 +174,15 @@ impl HttpBackend {
                 let etag = resp
                     .header("ETag")
                     .map(|e| e.strip_prefix('"').and_then(|e| e.strip_suffix('"')).unwrap_or(e).to_owned());
-                let mut data = Vec::new();
+                // Presize from Content-Length (capped): no doubling copies of a large pack range.
+                let want = resp
+                    .header("content-length")
+                    .and_then(|v| v.trim().parse::<usize>().ok())
+                    .unwrap_or(0)
+                    .min(256 << 20);
+                let mut data = Vec::with_capacity(want);
                 std::io::Read::read_to_end(&mut resp.into_reader(), &mut data).map_err(|e| BackendError::Unavailable(e.to_string()))?;
-                Ok(Ok((String::from_utf8_lossy(&data).into_owned(), data, etag)))
+                Ok(Ok((data, etag)))
             }
             Err(ureq::Error::Status(code, resp)) => {
                 let msg = resp.into_string().unwrap_or_default();
@@ -170,6 +198,40 @@ impl HttpBackend {
         }
     }
 
+    fn mtime_path(key: &str) -> Result<String, BackendError> {
+        validate_key(key)?;
+        Ok(format!("/v1/mtime/{}", pct_encode(key, true)))
+    }
+
+    /// The anchor is the instant the request was SENT, so the estimate can only run ahead of the server by
+    /// about one round trip, never behind a time the server already stamped.
+    /// The server clock now (anchored read, see [`Backend::now_ms`]), or `None` if unsupported.
+    fn gc_anchor(&self) -> Option<u64> {
+        let cur = *self.gc.lock().unwrap_or_else(|e| e.into_inner());
+        match cur {
+            GcClock::Unsupported => return None,
+            GcClock::Anchored(ms, at) if at.elapsed() < REANCHOR => return Some(ms + at.elapsed().as_millis() as u64),
+            _ => {}
+        }
+        let before = std::time::Instant::now();
+        let read = self.send_raw(self.req("GET", "/v1/clock"), None);
+        let next = match read {
+            Ok(Ok((t, _, _))) => match t.trim().parse::<u64>() {
+                Ok(ms) => GcClock::Anchored(ms, before),
+                Err(_) => GcClock::Unsupported,
+            },
+            // old server (404), unsupported backend (501), or no permission: not a GC remote
+            Ok(Err(_)) => GcClock::Unsupported,
+            // a transient failure must not be cached as "unsupported"
+            Err(_) => return None,
+        };
+        *self.gc.lock().unwrap_or_else(|e| e.into_inner()) = next;
+        match next {
+            GcClock::Anchored(ms, at) => Some(ms + at.elapsed().as_millis() as u64),
+            _ => None,
+        }
+    }
+
     fn key_path(key: &str) -> Result<String, BackendError> {
         validate_key(key)?;
         Ok(format!("/v1/o/{}", pct_encode(key, true)))
@@ -178,8 +240,8 @@ impl HttpBackend {
 
 impl Backend for HttpBackend {
     fn get(&self, key: &str) -> Result<Option<Versioned>, BackendError> {
-        match self.send_raw(self.req("GET", &Self::key_path(key)?), None)? {
-            Ok((_, data, etag)) => Ok(Some(Versioned {
+        match self.send_bytes(self.req("GET", &Self::key_path(key)?), None)? {
+            Ok((data, etag)) => Ok(Some(Versioned {
                 data,
                 tag: etag.ok_or_else(|| BackendError::Other("server sent no ETag".into()))?,
             })),
@@ -224,8 +286,8 @@ impl Backend for HttpBackend {
 
     fn get_range(&self, key: &str, offset: u64, len: u64) -> Result<Option<Vec<u8>>, BackendError> {
         let p = format!("{}?offset={offset}&len={len}", Self::key_path(key)?);
-        match self.send_raw(self.req("GET", &p), None)? {
-            Ok((_, data, _)) => Ok(Some(data)),
+        match self.send_bytes(self.req("GET", &p), None)? {
+            Ok((data, _)) => Ok(Some(data)),
             Err((404, _)) => Ok(None),
             Err((c, m)) => Err(self.status_err(c, &m)),
         }
@@ -262,12 +324,45 @@ impl Backend for HttpBackend {
         Ok(r.0.lines().filter(|l| !l.is_empty()).map(str::to_owned).collect())
     }
 
-    /// `DELETE /v1/o/<key>`: needs an admin token. Idempotent. `supports_gc` stays false: the
-    /// server does not expose touch, object ages or its clock, so remote GC refuses HTTP.
+    /// `DELETE /v1/o/<key>`: needs an admin token. Idempotent.
     fn delete(&self, key: &str) -> Result<(), BackendError> {
         match self.send_raw(self.req("DELETE", &Self::key_path(key)?), None)? {
             Ok(_) | Err((404, _)) => Ok(()),
             Err((c, m)) => Err(BackendError::Other(format!("server returned {c}: {}", m.trim()))),
+        }
+    }
+
+    /// True iff the server exposes a clock (`GET /v1/clock` answered 200), probed once per client; an
+    /// older server (404) or a backend that cannot be collected (501) means false, as before.
+    fn supports_gc(&self) -> bool {
+        self.gc_anchor().is_some()
+    }
+    /// The server backend's clock: read once, then advanced with the local monotonic clock and re-read
+    /// every ten minutes (publishers only need elapsed time between two readings).
+    fn now_ms(&self) -> Result<u64, BackendError> {
+        match self.gc_anchor() {
+            Some(a) => Ok(a),
+            None => Err(BackendError::Other("this server has no trusted clock".into())),
+        }
+    }
+    fn modified_ms(&self, key: &str) -> Result<Option<u64>, BackendError> {
+        match self.send_raw(self.req("GET", &Self::mtime_path(key)?), None)? {
+            Ok((t, _, _)) => t
+                .trim()
+                .parse()
+                .map(Some)
+                .map_err(|_| BackendError::Other("bad mtime from server".into())),
+            Err((404, _)) => Ok(None),
+            Err((c, m)) => Err(self.status_err(c, &m)),
+        }
+    }
+    fn touch(&self, key: &str) -> Result<bool, BackendError> {
+        let p = format!("/v1/touch/{}", pct_encode(key, true));
+        validate_key(key)?;
+        match self.send_raw(self.req("POST", &p), None)? {
+            Ok(_) => Ok(true),
+            Err((404, _)) => Ok(false),
+            Err((c, m)) => Err(self.status_err(c, &m)),
         }
     }
 }

@@ -17,6 +17,40 @@ host (or container runtime) and, optionally, an S3-compatible bucket. Files: [`d
 
 With S3 you may run several server processes against one bucket; set `--skew-epsilon-ms` (below).
 
+### S3 with a sole manifest writer
+
+The manifest is the only mutable object and the commit point of every publish; its integrity rests on a compare-and-swap
+that only a validating writer should perform. With `vcs-server` in front of the bucket, give **clients no bucket access at
+all** (they speak HTTP to the server). If you also hand direct `s3://` credentials to some clients (read-mostly CI, say),
+they must not be able to write `<prefix>manifest` by any route: single PUT, multipart, or delete.
+
+Bucket policy (no secrets; replace `BUCKET`, `PREFIX` and the server role ARN):
+
+```json
+{"Version":"2012-10-17","Statement":[{
+  "Sid":"OnlyTheServerWritesTheManifest","Effect":"Deny",
+  "NotPrincipal":{"AWS":"arn:aws:iam::ACCOUNT:role/vcs-server"},
+  "Action":["s3:PutObject","s3:DeleteObject","s3:AbortMultipartUpload"],
+  "Resource":["arn:aws:s3:::BUCKET/PREFIX/manifest"]}]}
+```
+
+(`NotPrincipal` with `Deny` is AWS syntax; MinIO/RustFS-style stores that lack it can use `Principal:"*"` and a separate
+allow for the server's credential, or an IAM policy on the client user. Verify with the self-check below, not by reading the policy.)
+
+**Startup self-check.** Give the server the *client* credential in `VCS_CLIENT_ACCESS_KEY_ID` /
+`VCS_CLIENT_SECRET_ACCESS_KEY` (optional `VCS_CLIENT_SESSION_TOKEN`) and add `--check-client-cannot-write-manifest`.
+Before serving, the server uses that credential to attempt a PUT guarded by an `If-Match` ETag that cannot exist (an authorised
+writer gets 412/404 and nothing is written) and a CreateMultipartUpload on the manifest key (aborted at once if accepted).
+Anything but 401/403 on either route means the credential can write the manifest and the server exits with status 2. An
+unexpected status (missing bucket, 5xx) is inconclusive and also refuses to start. The probe never changes the manifest.
+
+Tested: `crates/vcs-store-s3/tests/manifest_denied.rs` (fake-server cases for denied / allowed / inconclusive, and
+`bucket_policy_denies_manifest_writes_on_a_real_s3_server` against a real S3-compatible server: allowed without the policy,
+denied with it, other keys still writable) and `crates/vcs-cli/tests/server_selfcheck.rs` (the binary exits 2 without the
+policy, starts with it). Run so far on RustFS 1.0.4 only (single node, root credential with the bucket policy as the deny);
+not on AWS S3, MinIO or R2, whose policy evaluation for the account owner differs. Re-run them with `VCS_TEST_S3_ENDPOINT`
+against your provider before relying on the policy.
+
 ## 2. Tokens
 
 ```sh
