@@ -28,6 +28,11 @@ fn env_signature() -> Signature {
     Signature { name, email, timestamp }
 }
 
+/// Fewest tags for which an unchanged tag view is left out of an operation.
+const OP_TAGS_DELTA_MIN: usize = 64;
+/// How far back an omitted tag view is looked up when recording (full copy again beyond it).
+const OP_TAGS_LOOKBACK: usize = 64;
+
 impl Repo {
     /// The current operation id, or `None` for a repository that predates the log.
     pub fn op_head(&self) -> Result<Option<ObjectId>> {
@@ -69,15 +74,52 @@ impl Repo {
     /// Caller holds the repository lock.
     pub(crate) fn record_op(&self, description: &str, author: Option<Signature>) -> Result<ObjectId> {
         let parents: Vec<ObjectId> = self.op_head()?.into_iter().collect();
+        let mut view = self.current_view()?;
+        // Every operation used to store the whole tag set: 100,000 tags cost 4.4 MB per commit. A large,
+        // unchanged set is now omitted (None) and read from the nearest earlier operation that has it.
+        // Bounded look-back, so the chain of None stays short; then one full copy is written again.
+        if let (Some(t), Some(p)) = (&view.tags, parents.first()) {
+            if t.len() >= OP_TAGS_DELTA_MIN && self.op_tags_before(p, OP_TAGS_LOOKBACK)?.as_ref() == Some(t) {
+                view.tags = None;
+                self.note_feature(crate::repo::FEATURE_OP_TAGS_DELTA)?;
+            }
+        }
         let op = Operation {
             parents,
-            view: self.current_view()?,
+            view,
             description: description.lines().next().unwrap_or("").to_owned(),
             author: author.unwrap_or_else(env_signature),
         };
         let id = self.store.put(&Object::Operation(op))?;
         self.write_op_head(&id)?;
         Ok(id)
+    }
+
+    /// The tag view in effect after operation `id`: its own, or that of the nearest earlier operation that
+    /// has one (first parents), looking back at most `limit` operations. `None`: a legacy chain with no tag
+    /// view, or more than `limit` omissions.
+    fn op_tags_before(&self, id: &ObjectId, limit: usize) -> Result<Option<std::collections::BTreeMap<(String, String), ObjectId>>> {
+        let mut cur = *id;
+        for _ in 0..=limit {
+            let op = self.op_get(&cur)?;
+            if op.view.tags.is_some() {
+                return Ok(op.view.tags);
+            }
+            match op.parents.first() {
+                Some(p) => cur = *p,
+                None => return Ok(None),
+            }
+        }
+        Ok(None)
+    }
+
+    /// The view recorded by operation `id`, with an omitted tag view filled in from the chain.
+    fn op_full_view(&self, id: &ObjectId) -> Result<OpView> {
+        let mut v = self.op_get(id)?.view;
+        if v.tags.is_none() {
+            v.tags = self.op_tags_before(id, usize::MAX - 1)?;
+        }
+        Ok(v)
     }
 
     pub(crate) fn write_op_head(&self, id: &ObjectId) -> Result<()> {
@@ -141,7 +183,7 @@ impl Repo {
         let Some(parent) = op.parents.first().copied() else {
             return msg("the current operation is the first one; nothing to undo");
         };
-        let target = self.op_get(&parent)?.view;
+        let target = self.op_full_view(&parent)?;
         self.restore_view(&target)?;
         self.record_op(&format!("undo operation {}", head.short()), None)
     }
@@ -149,7 +191,7 @@ impl Repo {
     /// Restore the local view as it was right after operation `id`; recorded as a new operation.
     pub fn op_restore(&self, id: &ObjectId) -> Result<ObjectId> {
         let _l = self.lock()?;
-        let target = self.op_get(id)?.view;
+        let target = self.op_full_view(id)?;
         self.restore_view(&target)?;
         self.record_op(&format!("restore to operation {}", id.short()), None)
     }

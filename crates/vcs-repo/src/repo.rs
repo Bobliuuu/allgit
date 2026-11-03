@@ -22,7 +22,9 @@ pub(crate) const FORMAT_FILE: &str = "format";
 /// Absent in repositories that never used one; written the first time a large-file manifest is stored.
 pub(crate) const FEATURES_FILE: &str = "features";
 pub(crate) const FEATURE_LARGE_CHUNKED: &str = "large-chunked";
-const KNOWN_FEATURES: &[&str] = &[FEATURE_LARGE_CHUNKED];
+/// Operations may omit the tag view when it equals the nearest earlier one that has it (see ops.rs).
+pub(crate) const FEATURE_OP_TAGS_DELTA: &str = "op-tags-delta";
+const KNOWN_FEATURES: &[&str] = &[FEATURE_LARGE_CHUNKED, FEATURE_OP_TAGS_DELTA];
 pub(crate) const FORMAT_TEXT: &str = "all-git repository format 1\n";
 /// Checkout streams files of at least this many bytes chunk by chunk instead of reassembling them in memory.
 const STREAM_CHECKOUT_MIN: u64 = 8 << 20;
