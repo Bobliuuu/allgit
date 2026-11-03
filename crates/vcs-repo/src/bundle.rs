@@ -747,7 +747,7 @@ impl Repo {
         // new store, which is the same check `verify_file` would do, so do not scan a third time
         let info = {
             let mut f = io(file, fs::File::open(file))?;
-            read_header(&mut f, file)?.info
+            read_header(&mut f, file, false)?.info
         };
         if !info.prerequisites.is_empty() {
             return msg(
