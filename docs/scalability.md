@@ -2,8 +2,8 @@
 
 Audit of what degrades as repositories, refs, writers and connections grow. Every number below was measured by the
 author of this chapter unless it says "not run". Tests: `crates/vcs-server/tests/scale_inflight.rs`, import unit test in
-`crates/vcs-repo/src/import.rs`. Probe scripts are in the PR description of the change that added this chapter (stream
-generator for `git fast-import`-style streams: `deep`, `bigdir`, `wide`, `tags`).
+`crates/vcs-repo/src/import.rs`. Probe scripts: `scripts/scalability/` (`gen.py` makes `git fast-import` streams: `deep`, `bigdir`, `wide`, `tags`; the
+`.sh` files expect the repo at `~/rt/scalability` and a scratch dir `~/rt/scalability-probe`, and import then time commands).
 
 ## Method and honesty notes
 
