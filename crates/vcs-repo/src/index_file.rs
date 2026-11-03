@@ -20,6 +20,11 @@ use vcs_objects::codec::Reader;
 use vcs_objects::ObjectId;
 use vcs_store::ObjectStore;
 
+thread_local! {
+    /// Set by `prepare_index_patch`, consumed by the `write_index_bytes` that follows it.
+    static PENDING: std::cell::RefCell<Option<([u8; 32], Vec<String>)>> = const { std::cell::RefCell::new(None) };
+}
+
 struct Blk {
     off: usize,
     len: usize,
@@ -362,6 +367,16 @@ impl crate::repo::Repo {
     /// do not have to wait for a freshly written index to reach the disk.
     pub(crate) fn prepare_index_patch(&self, f: &IndexFile, edits: &Edits) -> Result<(Option<Vec<u8>>, usize)> {
         let (bytes, changed) = f.patch(edits)?;
+        // For the filesystem monitor: remember which index this patch starts from and what it touches.
+        let pending = if changed > 0 && crate::fsmonitor::JournalMonitor::daemon_running(&self.vcs) {
+            match (self.rd("zones"), self.rd("workspace")) {
+                (Ok(z), Ok(w)) => Some((crate::fsmonitor::fingerprint(&f.bytes, &z, &w), edits.keys().cloned().collect())),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        PENDING.with(|p| *p.borrow_mut() = pending);
         Ok((if changed == 0 { None } else { Some(bytes) }, changed))
     }
 
@@ -372,6 +387,9 @@ impl crate::repo::Repo {
         let clean = self.index_holds_no_attrs();
         crate::meta::write_atomic_nosync(&self.vcs.join("index"), bytes)?;
         self.carry_attrs_marker(clean, bytes);
+        if let Some((old, touched)) = PENDING.with(|p| p.borrow_mut().take()) {
+            self.fsmon_log_rewrite(Some(old), bytes, &touched);
+        }
         Ok(())
     }
 }
