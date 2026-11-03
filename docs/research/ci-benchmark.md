@@ -52,7 +52,7 @@ remote, and from a bundle file). 6. Fan-out: K simultaneous cold clones from one
 | 4 `clean -fdx` + checkout of another commit | WIN vs blobless/file (85 vs 182-220), TIE vs depth-1 sparse (119 ms) | WIN (68 ms vs 278-629 ms) | |
 | 5 cache-warm re-clone, vcs from a local directory remote | WIN (1195 ms vs 2058-2605) | TIE (9.4 s vs 8.9-9.7 s) | slice from cache: 184 / 470 ms |
 | 5 cache-warm re-clone, vcs from a bundle file | measured under load: LOSS (5976 ms vs 2058); re-measured on a quiet box (see below): 2158 ms base, 1775 ms with PR 461, git local clone 2058-2605 ms: TIE | TIE vs `--reference`, LOSS vs hardlink clone (11.1 s vs 9.2 s, ranges overlap so read as TIE by the rule) | the bundle path cannot clone one zone (`--for` fails, see below) |
-| 6 fan-out K=8, slowest clone | WIN vs every unfiltered git cell (1.4 s vs 4.0-15.2 s); TIE vs blobless (0.7 s; ranges 0.55-2.7 s vs 0.65-0.84 s) | see deep fan-out section | server CPU 0.0 s for both servers |
+| 6 fan-out K=8, slowest clone | WIN vs every unfiltered git cell (1.4 s vs 4.0-15.2 s); TIE vs blobless (0.7 s; ranges 0.55-2.7 s vs 0.65-0.84 s) | not run (see scope) | server CPU 0.0 s for both servers |
 | 6 fan-out K=32 | WIN vs depth-1 sparse (1.9 s vs 15.7 s); TIE vs blobless (3.3-3.4 s) | | one git:// blobless round failed ("Connection reset by peer") |
 | 6 fan-out K=64 | TIE (7.1 s vs 7.3-7.5 s) | | two git:// blobless rounds failed; vcs had no failed round |
 
@@ -77,7 +77,7 @@ Wall-time LOSS count against the owner rule: none in cells that compare equal wo
 
 ## Scope that was not run (no claim made)
 
-Git over HTTP; walgit; S3 or any network latency; cold OS caches; `--task` and zones70 layouts (see held PR 354 for 10k zones70 + S3 data); more than 3 fan-out rounds; deep layout fan-out unless a section above says otherwise; `vcs` shallow-clone behaviour (it has none); `git clone --filter=tree:0`; bytes for scenarios 2 to 4.
+Git over HTTP; walgit; S3 or any network latency; cold OS caches; `--task` and zones70 layouts (see held PR 354 for 10k zones70 + S3 data); more than 3 fan-out rounds; deep layout fan-out (queued behind other jobs on the shared box lock for over an hour and cancelled; only the flat layout has scenario 6 data); `vcs` shallow-clone behaviour (it has none); `git clone --filter=tree:0`; bytes for scenarios 2 to 4.
 Git cells use git 2.43.0 on the box (not a newer git).
 
 ## Results: scenarios 1 to 5
