@@ -30,6 +30,10 @@ pub struct DescribeArgs {
     /// Report which zone owns this repo-relative path (repeatable)
     #[arg(long = "path", value_name = "PATH")]
     pub paths: Vec<String>,
+    /// Keep only these keys of each zone object (comma separated, e.g. `purpose,history`); `id` and `name`
+    /// are always kept. Smaller output for agents; the schema's per-zone `required` list then does not apply.
+    #[arg(long, value_delimiter = ',', value_name = "KEYS")]
+    pub fields: Vec<String>,
 }
 
 #[derive(Args, Clone)]
@@ -450,6 +454,29 @@ fn describe(a: &DescribeArgs, json: bool) -> Result<(), Error> {
             ("zone_path", s(m.zones.path_of(z).unwrap_or(""))),
             ("relative", s(m.zones.relative(z, p))),
         ]));
+    }
+    if !a.fields.is_empty() {
+        let known: Vec<&str> = vec![
+            "path",
+            "is_root",
+            "kind",
+            "purpose",
+            "owners",
+            "path_ownership",
+            "dependencies",
+            "subscription",
+            "branches",
+            "history",
+            "locks",
+        ];
+        if let Some(bad) = a.fields.iter().find(|f| !known.contains(&f.as_str())) {
+            return Err(Error::Msg(format!("unknown field {bad:?}; known: {}", known.join(", "))));
+        }
+        for z in zj.iter_mut() {
+            if let J::Obj(v) = z {
+                v.retain(|(k, _)| matches!(*k, "id" | "name") || a.fields.iter().any(|f| f == k));
+            }
+        }
     }
     let tx = transactions(&repo, &m.zones, a.transactions)?;
     let mut notes = m.notes.clone();
