@@ -71,5 +71,7 @@ fn small_tag_sets_keep_their_bytes() {
     r.tag_create("root", "v1", None, None).unwrap();
     commit(&r, "a", "2");
     assert!(r.op_log(1).unwrap()[0].1.view.tags.is_some());
-    assert!(!r.worktree().join(".vcs").join("features").exists());
+    // the repository must not be marked op-tags-delta (older binaries could not read it)
+    let features = fs::read_to_string(r.worktree().join(".vcs").join("features")).unwrap_or_default();
+    assert!(!features.contains("op-tags-delta"), "{features}");
 }
