@@ -905,8 +905,7 @@ impl Repo {
         }
         if tags_changed && updates.is_empty() {
             let message = format!("import git tags ({})", report.tags_imported);
-            write_atomic(&self.common.join("refs"), &refs.encode())?;
-            self.record_op(&message, None)?;
+            self.commit_refs_op(&refs, &message, None)?;
         }
         if !updates.is_empty() {
             let author = Signature {
@@ -932,12 +931,14 @@ impl Repo {
             if let Some(mut i) = ix {
                 self.save_index(&mut i)?;
             }
-            write_atomic(&self.common.join("refs"), &refs.encode())?;
-            self.record_op(&message, Some(author))?;
+            self.commit_refs_op(&refs, &message, Some(author))?;
             report.branches_updated = updates.iter().map(|u| (u.branch.clone(), u.new)).collect();
         }
         report.refs_ignored = ignored.into_iter().collect();
         report.refs_rejected = rejected;
+        if report.commits_imported > 0 {
+            self.warm_commit_graph();
+        }
         Ok(report)
     }
 }

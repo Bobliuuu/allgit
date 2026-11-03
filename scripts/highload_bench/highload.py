@@ -401,10 +401,14 @@ def main():
     ap.add_argument("--k", type=int, default=20)
     ap.add_argument("--m", type=int, default=1000)
     ap.add_argument("--auto-merge", action="store_true", help="vcs arms publish with --auto-merge=30")
+    ap.add_argument("--git-fsync", action="store_true", help="git arm with core.fsync=all (durability comparable to vcs)")
     ap.add_argument("--reps", type=int, default=1)
     a = ap.parse_args()
     global AUTO
     AUTO = a.auto_merge
+    if a.git_fsync:
+        ENV.update(GIT_CONFIG_COUNT="2", GIT_CONFIG_KEY_0="core.fsync", GIT_CONFIG_VALUE_0="all",
+                   GIT_CONFIG_KEY_1="core.fsyncMethod", GIT_CONFIG_VALUE_1="fsync")
     sh(f"mkdir -p {WB}")
     res = {"meta": {"load": open('/proc/loadavg').read().split()[:3], "ncpu": os.cpu_count(), "args": vars(a),
                     "vcs_rev": os.environ.get("WB_VCS_REV", "?")}, "runs": []}

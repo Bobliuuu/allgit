@@ -174,8 +174,33 @@ fn open_backend(a: &[String]) -> (Box<dyn Backend>, String) {
             }
             (Box::new(S3Backend::connect(cfg).expect("connect")), format!("s3 {ep}"))
         }
+        Some("http") | Some("httpnogc") => {
+            // In-process validating server over a MemBackend; clients speak HTTP (`httpnogc`: group commit off).
+            use vcs_server::{Config, HttpBackend, Principal, Role, Server, TokenTable};
+            let table = TokenTable::from_entries(vec![(
+                "t-a",
+                Principal {
+                    name: "a".into(),
+                    role: Role::Write,
+                    zones: None::<std::collections::BTreeSet<String>>,
+                },
+            )]);
+            let mut cfg = Config::new(table);
+            cfg.max_connections = 4096;
+            cfg.group_commit = a.get(2).map(String::as_str) == Some("http");
+            cfg.log = std::sync::Arc::new(vcs_server::log::Logger::new(
+                vcs_server::log::Format::Text,
+                vcs_server::log::Level::Error,
+            ));
+            let mem = std::sync::Arc::new(MemBackend::new());
+            let srv = Box::leak(Box::new(Server::start(mem.clone(), cfg, "127.0.0.1:0").expect("server")));
+            let url = format!("http://{}", srv.local_addr());
+            // seeding goes straight to the store; publishers go over HTTP
+            SEED_STORE.set(mem).ok();
+            (Box::new(HttpBackend::new(&url, "t-a").expect("client")), a[2].clone())
+        }
         _ => {
-            eprintln!("backend must be `mem` or `s3 ENDPOINT BUCKET`");
+            eprintln!("backend must be `mem`, `http`, `httpnogc` or `s3 ENDPOINT BUCKET`");
             std::process::exit(2)
         }
     }
@@ -212,7 +237,13 @@ fn commit(s: &MemoryStore, zone: &str, parent: Option<ObjectId>, i: usize) -> Ob
     .unwrap()
 }
 
+static SEED_STORE: std::sync::OnceLock<std::sync::Arc<MemBackend>> = std::sync::OnceLock::new();
+
 fn seed(b: &dyn Backend, m: &Manifest) {
+    let b: &dyn Backend = match SEED_STORE.get() {
+        Some(m) => &**m,
+        None => b,
+    };
     assert!(
         b.put_if_absent(vcs_remote::manifest::KEY, &m.encode()).unwrap(),
         "manifest already present"

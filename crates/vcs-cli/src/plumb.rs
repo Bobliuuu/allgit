@@ -78,6 +78,10 @@ pub struct LsFilesArgs {
     /// List the files of this revision instead of the working tree's tracked files
     #[arg(long)]
     pub rev: Option<String>,
+    /// With --rev: list only the entries directly inside the root of the revision (`1`), directories
+    /// as mode 040000 with their tree id, like `git ls-tree <rev>`; reads one tree
+    #[arg(long, value_name = "N", requires = "rev")]
+    pub depth: Option<u32>,
     /// Only these paths (files or directories)
     pub paths: Vec<String>,
 }
@@ -86,6 +90,7 @@ fn mode_str(m: vcs_objects::EntryMode) -> &'static str {
     match m {
         vcs_objects::EntryMode::Executable => "100755",
         vcs_objects::EntryMode::Symlink => "120000",
+        vcs_objects::EntryMode::Directory => "040000",
         _ => "100644",
     }
 }
@@ -131,9 +136,38 @@ pub fn ls_files(a: &LsFilesArgs, json: bool) -> Result<(), Error> {
         }
         return Ok(());
     }
-    let mut files: Vec<_> = match &a.rev {
-        Some(r) => repo.rev_file_list(r)?,
-        None => repo.tracked_files()?,
+    let mut files: Vec<_> = match (&a.rev, a.depth) {
+        (Some(r), Some(1)) => {
+            if !filters.is_empty() {
+                return Err(Error::Msg("--depth 1 lists the top level and takes no paths".into()));
+            }
+            match repo.rev_top_level(r)? {
+                Some(top) => top.into_iter().map(|(n, m, i)| (n, m, i)).collect(),
+                None if a.stage || json => {
+                    return Err(Error::Msg(
+                        "--depth 1 with -s or --json needs one zone at the repository root; without them the names are listed".into(),
+                    ))
+                }
+                None => {
+                    // several zones or a prefixed zone: the first path component of every file
+                    let mut names: Vec<(String, vcs_objects::EntryMode, vcs_objects::ObjectId)> = Vec::new();
+                    for (p, m, i) in repo.rev_file_list(r)? {
+                        match p.split_once('/') {
+                            Some((d, _)) => {
+                                if names.last().map(|l| l.0.as_str()) != Some(d) {
+                                    names.push((d.to_owned(), vcs_objects::EntryMode::Directory, i));
+                                }
+                            }
+                            None => names.push((p, m, i)),
+                        }
+                    }
+                    names
+                }
+            }
+        }
+        (Some(_), Some(d)) => return Err(Error::Msg(format!("--depth {d} is not supported; only --depth 1 is"))),
+        (Some(r), None) => repo.rev_file_list(r)?,
+        (None, _) => repo.tracked_files()?,
     };
     if !filters.is_empty() {
         files.retain(|(p, _, _)| keep(p));

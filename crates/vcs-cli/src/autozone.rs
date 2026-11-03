@@ -111,6 +111,7 @@ pub fn intercept(cmd: &Cmd, json: bool) -> Option<Result<(), Error>> {
             zones,
             stats,
             sel,
+            ..
         } if sel.active() => Some(clone_for(url, dir, zones, *stats, sel, json)),
         _ => None,
     }
@@ -1075,4 +1076,51 @@ fn clone_for(url: &str, dir: &Path, zones: &[String], stats: bool, a: &ForArgs, 
         );
     }
     Ok(())
+}
+
+// ------------------------------------------------------------------ inventory for `--auto`
+
+/// Dependency edges, file counts and stored bytes of every zone whose head tree is in `repo`
+/// (used by the profile predictor, docs/zone-profile.md). Fetches only the few manifest files
+/// (`Cargo.toml`, `package.json`, ...) it needs from `backend`; sizes come from the remote's
+/// pack indexes. Never downloads other file contents.
+pub(crate) struct Inventory {
+    pub deps: zd::Deps,
+    pub bytes: BTreeMap<String, u64>,
+    pub files: BTreeMap<String, u64>,
+    pub notes: Vec<String>,
+}
+
+pub(crate) fn inventory(
+    repo: &Repo,
+    backend: Option<&dyn Backend>,
+    only: Option<&BTreeSet<String>>,
+    sizes: bool,
+) -> Result<Inventory, Error> {
+    let mut v = View::local(repo)?;
+    v.backend = backend;
+    v.remote = backend.is_some(); // sizes of files not stored locally come from the remote's pack indexes
+    let man = ids_where(&v, |p| {
+        MANIFESTS.contains(&p.rsplit('/').next().unwrap_or("")) && only.is_none_or(|o| o.contains(v.zones.owner(p)))
+    });
+    match backend {
+        Some(b) => {
+            repo.profile_fetch_objects(b, &man)?;
+        }
+        None => {}
+    }
+    let deps = zd::dependencies(&v.files, &v.zones, &|id| v.read(id), false);
+    if sizes {
+        v.load_remote_sizes()?;
+    }
+    let stats = zd::zone_stats(&v.files, &v.zones, &|id| v.size(id));
+    let mut bytes = BTreeMap::new();
+    let mut files = BTreeMap::new();
+    for (z, (n, b)) in stats {
+        files.insert(z.clone(), n);
+        bytes.insert(z, b.unwrap_or(0));
+    }
+    let mut notes = deps.notes.clone();
+    notes.extend(v.notes.iter().cloned());
+    Ok(Inventory { deps, bytes, files, notes })
 }

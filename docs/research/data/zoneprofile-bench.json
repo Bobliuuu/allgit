@@ -1,0 +1,255 @@
+{
+ "zones": 50,
+ "files_per_zone": 2000,
+ "runs": 3,
+ "load1_start": 30.64599609375,
+ "git_version": "git version 2.43.0",
+ "vcs_version": "vcs 0.1.0",
+ "cores": 16,
+ "auto_clone_output": "  stage clone of the root zone: requests 8, downloaded 7963387 bytes\n  stage metadata (commits and trees of all zones): requests 5, downloaded 3509307 bytes\n  stage planning (manifests, sizes): requests 16, downloaded 806 bytes\n  stage contents of chosen zones: requests 42, downloaded 25567907 bytes\nCloned http://127.0.0.1:38323 into /home/ubuntu/rt/zpbench/w/runs/auto0 (zones chosen from your profile and hints)\nprofile: 20 event(s); 51 zone(s) known\nhot zones (7 added, contents downloaded first, in this order):\n  root                           8 B  always kept (root or already subscribed) (already subscribed)\n  z07                        3.5 MiB  score 1.148\n  z08                        3.5 MiB  score 0.650\n  z21                        3.5 MiB  score 0.630\n  z01                        3.5 MiB  score 0.087\n  z15                        3.5 MiB  score 0.067\n  z03                        3.5 MiB  score 0.067\n  z06                        3.5 MiB  score 0.067\nskipped zones (43): commits and trees only, file contents not downloaded\n  z02                        3.5 MiB     2001 file(s)  score 0.020  no evidence in the profile\n  z00                        3.4 MiB     2001 file(s)  score 0.020  no evidence in the profile\n  z04                        3.4 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z05                        3.5 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z09                        3.5 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z10                        3.5 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z11                        3.4 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z12                        3.5 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z13                        3.5 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z14                        3.5 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z16                        3.4 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z17                        3.4 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z18                        3.5 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z19                        3.5 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z20                        3.4 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z22                        3.4 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z23                        3.5 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z24                        3.5 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z25                        3.4 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z26                        3.5 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z27                        3.5 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z28                        3.4 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z29                        3.4 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z30                        3.5 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z31                        3.5 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z32                        3.4 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z33                        3.4 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z34                        3.5 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z35                        3.4 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z36                        3.4 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z37                        3.5 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z38                        3.4 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z39                        3.5 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z40                        3.5 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z41                        3.5 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z42                        3.5 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z43                        3.5 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z44                        3.4 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z45                        3.4 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z46                        3.5 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z47                        3.4 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z48                        3.4 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  z49                        3.5 MiB     2001 file(s)  score 0.000  no evidence in the profile\n  get one with `vcs profile fetch <zone>` (or all: `vcs profile fetch z02 z00 z04 z05 z09 z10 z11 z12 z13 z14 z16 z17 z18 z19 z20 z22 z23 z24 z25 z26 z27 z28 z29 z30 z31 z32 z33 z34 z35 z36 z37 z38 z39 z40 z41 z42 z43 z44 z45 z46 z47 z48 z49`)\nbytes of file contents: 24.3 MiB downloaded now, 148.4 MiB left on the remote (stored sizes, before download compression effects)\nnote: imported 20 event(s) from --auto-profile file(s)\nnote: 41 manifest(s) unreadable (not downloaded or unparsable): their dependencies are unknown\nclone total transfer (planning included): requests 71, downloaded 37041407 bytes\n",
+ "hot_zones": [
+  "root",
+  "z07",
+  "z08",
+  "z21",
+  "z01",
+  "z15",
+  "z03",
+  "z06"
+ ],
+ "clone_full_vcs": {
+  "wall_s": [
+   2.8993535229965346,
+   2.8450762330030557,
+   2.872983466993901
+  ],
+  "cpu_s": [
+   4.791901,
+   4.884895,
+   4.914199
+  ],
+  "requests": [
+   28,
+   28,
+   28
+  ],
+  "bytes_down": [
+   189483338,
+   189483338,
+   189483338
+  ],
+  "disk_bytes": [
+   622539128,
+   622539128,
+   622539128
+  ]
+ },
+ "clone_auto_vcs": {
+  "wall_s": [
+   1.144836926003336,
+   1.1752211639977759,
+   1.155829958996037
+  ],
+  "cpu_s": [
+   1.341551,
+   1.3763439999999996,
+   1.3425990000000034
+  ],
+  "requests": [
+   71,
+   71,
+   71
+  ],
+  "bytes_down": [
+   37041407,
+   37041407,
+   37041407
+  ],
+  "disk_bytes": [
+   95155597,
+   95155597,
+   95155596
+  ]
+ },
+ "clone_full_git": {
+  "wall_s": [
+   7.802298533002613,
+   7.828076568999677,
+   7.265600484010065
+  ],
+  "cpu_s": [
+   6.7170939999999995,
+   6.679894999999998,
+   6.696559999999998
+  ],
+  "requests": [
+   null,
+   null,
+   null
+  ],
+  "bytes_down": [
+   null,
+   null,
+   null
+  ],
+  "disk_bytes": [
+   197408794,
+   197408794,
+   197408794
+  ]
+ },
+ "clone_partial_sparse_git": {
+  "wall_s": [
+   3.7381597789935768,
+   3.6776979949936504,
+   3.5893439169885824
+  ],
+  "cpu_s": [
+   7.712919,
+   7.6966079999999994,
+   7.718818999999996
+  ],
+  "requests": [
+   null,
+   null,
+   null
+  ],
+  "bytes_down": [
+   null,
+   null,
+   null
+  ],
+  "disk_bytes": [
+   39558725,
+   39558725,
+   39558725
+  ]
+ },
+ "sync_full_vcs": {
+  "wall_s": [
+   17.484605577003094,
+   13.764176919008605,
+   13.45172157199704
+  ],
+  "cpu_s": [
+   14.649387,
+   13.270513999999991,
+   13.239631999999997
+  ],
+  "requests": [
+   55,
+   65,
+   75
+  ],
+  "bytes_down": [
+   48963838,
+   48758215,
+   49313098
+  ],
+  "disk_bytes": [
+   null,
+   null,
+   null
+  ]
+ },
+ "sync_auto_vcs": {
+  "wall_s": [
+   1.3866099089937052,
+   0.7236819410027238,
+   0.7821621019975282
+  ],
+  "cpu_s": [
+   0.8222039999999957,
+   0.6887129999999999,
+   0.7003799999999956
+  ],
+  "requests": [
+   21,
+   21,
+   21
+  ],
+  "bytes_down": [
+   3465849,
+   1997766,
+   1999524
+  ],
+  "disk_bytes": [
+   null,
+   null,
+   null
+  ]
+ },
+ "sync_full_git": {
+  "wall_s": [
+   1.0748410240048543,
+   0.38592448900453746,
+   0.38503625900193583
+  ],
+  "cpu_s": [
+   0.6508320000000047,
+   0.5260850000000126,
+   0.5332710000000027
+  ],
+  "requests": [
+   null,
+   null,
+   null
+  ],
+  "bytes_down": [
+   2415011,
+   2805758,
+   2412293
+  ],
+  "disk_bytes": [
+   null,
+   null,
+   null
+  ]
+ },
+ "sync_partial_sparse_git": {
+  "wall_s": [
+   1.9061370150011498,
+   0.25019824400078505,
+   0.28527984699758235
+  ],
+  "cpu_s": [
+   0.34248899999999693,
+   0.24222099999999358,
+   0.28832499999999683
+  ],
+  "requests": [
+   null,
+   null,
+   null
+  ],
+  "bytes_down": [
+   1132522,
+   1125283,
+   1120173
+  ],
+  "disk_bytes": [
+   null,
+   null,
+   null
+  ]
+ },
+ "on_demand_vcs": {
+  "zone": "z02",
+  "wall_s": 0.09608285801368766,
+  "cpu_s": 0.13081199999999882,
+  "requests": 11,
+  "bytes_down": 8305495
+ },
+ "on_demand_git": {
+  "zone": "z02",
+  "wall_s": 0.3045258579950314,
+  "cpu_s": 0.31656300000000925,
+  "bytes_down": 3904062
+ },
+ "status_wall_ms": {
+  "recording_on_median": 1317.6690225009224,
+  "recording_off_median": 1316.1909749978804,
+  "n": 40
+ },
+ "load1_end": 1.87060546875
+}

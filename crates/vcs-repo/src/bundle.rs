@@ -92,7 +92,23 @@ fn encode_header(info: &BundleInfo, pack_len: u64) -> String {
     for p in &info.prerequisites {
         s.push_str(&format!("prereq\t{}\n", p.to_hex()));
     }
+    // Last line: BLAKE3 of every header byte before it. Lets `verify` vouch for the header (heads,
+    // zones, lengths) without hashing the pack. Readers that predate it ignore `x-` lines.
+    let h = blake3::hash(s.as_bytes());
+    s.push_str(&format!("{HDR_HASH}\t{}\n", h.to_hex()));
     s
+}
+
+const HDR_HASH: &str = "x-hdr-blake3";
+
+/// The header text with its trailing `x-hdr-blake3` line checked and removed: `Some(true)` if the
+/// line is there and right, `Some(false)` if it is there and wrong, `None` if the header has none.
+fn header_hash_ok(text: &str) -> Option<bool> {
+    let body = text.strip_suffix('\n')?;
+    let at = body.rfind('\n').map_or(0, |i| i + 1);
+    let (head, last) = body.split_at(at);
+    let want = last.strip_prefix(HDR_HASH)?.strip_prefix('\t')?;
+    Some(blake3::hash(head.as_bytes()).to_hex().as_str() == want)
 }
 
 fn parse_header(text: &str) -> Result<(BundleInfo, u64)> {
@@ -200,7 +216,7 @@ fn check_trailer(f: &mut fs::File, len: u64, path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn read_header(f: &mut fs::File, path: &Path) -> Result<Header> {
+fn read_header(f: &mut fs::File, path: &Path, full: bool) -> Result<Header> {
     let len = io(path, f.metadata())?.len();
     io(path, f.seek(SeekFrom::Start(0)))?;
     let mut magic = [0u8; 8];
@@ -210,7 +226,9 @@ fn read_header(f: &mut fs::File, path: &Path) -> Result<Header> {
     if len < PREFACE + TRAILER {
         return bad("file too short");
     }
-    check_trailer(f, len, path)?;
+    if full {
+        check_trailer(f, len, path)?;
+    }
     io(path, f.seek(SeekFrom::Start(8)))?;
     let mut w = [0u8; 8];
     io(path, f.read_exact(&mut w))?;
@@ -225,10 +243,30 @@ fn read_header(f: &mut fs::File, path: &Path) -> Result<Header> {
     let mut hb = vec![0u8; hlen as usize];
     io(path, f.read_exact(&mut hb))?;
     let text = String::from_utf8(hb).or_else(|_| bad("header is not utf-8"))?;
+    if !full {
+        match header_hash_ok(&text) {
+            Some(true) => {}
+            Some(false) => return bad("header hash mismatch (file is corrupt)"),
+            // a bundle written before the header hash existed: only the whole-file hash vouches for it
+            None => check_trailer(f, len, path)?,
+        }
+    }
     let (mut info, pack_len) = parse_header(&text)?;
     let pack_start = PREFACE + hlen;
     if pack_start + pack_len + TRAILER != len {
         return bad("pack length does not match the file size");
+    }
+    if !full {
+        // the pack's own preface: format magic and the object count the header promises
+        let mut head = [0u8; 12];
+        io(path, f.seek(SeekFrom::Start(pack_start)))?;
+        let want = if info.pack_format == PACK_V2 { PACK_MAGIC_V2 } else { PACK_MAGIC };
+        if pack_len < 12 + 32 || f.read_exact(&mut head).is_err() || &head[..8] != want {
+            return bad("pack header");
+        }
+        if u32::from_le_bytes(head[8..].try_into().unwrap()) as usize != info.objects {
+            return bad("object count in the pack differs from the header");
+        }
     }
     info.bytes = len;
     Ok(Header {
@@ -388,11 +426,22 @@ fn check_graph(info: &BundleInfo, scan: &Scan, outside: &dyn Fn(&ObjectId) -> bo
 /// head's history is complete inside the bundle apart from what the prerequisites supply.
 pub fn verify_file(path: &Path) -> Result<BundleInfo> {
     let mut f = io(path, fs::File::open(path))?;
-    let h = read_header(&mut f, path)?;
+    let h = read_header(&mut f, path, true)?;
     let scan = scan_nodes(&mut f, path, &h)?;
     let has_prereqs = !h.info.prerequisites.is_empty();
     check_graph(&h.info, &scan, &|_| has_prereqs)?;
     Ok(h.info)
+}
+
+/// The default `bundle verify`: preface, header (checked against its own hash), the length
+/// equation `header + pack + trailer == file size` (catches truncation and appended bytes) and the
+/// pack's magic and object count. It reads a few hundred bytes and does not hash or decode the
+/// pack: a flipped byte inside the pack body or the trailer is only found by [`verify_file`]
+/// (`--full`), which `fetch` and `clone` always run. A bundle written before the header hash
+/// existed is hashed whole instead, so it is never vouched for on less evidence.
+pub fn verify_quick(path: &Path) -> Result<BundleInfo> {
+    let mut f = io(path, fs::File::open(path))?;
+    Ok(read_header(&mut f, path, false)?.info)
 }
 
 // ---------- create ----------
@@ -565,7 +614,7 @@ impl Repo {
     /// Writes nothing.
     fn bundle_prepare(&self, file: &Path) -> Result<Prepared> {
         let mut f = io(file, fs::File::open(file))?;
-        let h = read_header(&mut f, file)?;
+        let h = read_header(&mut f, file, true)?;
         let scan = scan_nodes(&mut f, file, &h)?;
         for p in &h.info.prerequisites {
             match self.store.get(p) {
@@ -639,8 +688,10 @@ impl Repo {
     /// head visible at once. Caller holds the repository lock.
     fn bundle_commit(&self, file: &Path, p: &Prepared, author: Signature) -> Result<()> {
         let mut f = io(file, fs::File::open(file))?;
-        scan_pack(&mut f, file, &p.header, |_, obj, _| {
-            self.store.put(&obj)?;
+        // scan_pack verified framing, canonical decoding and the id of every object: store the
+        // encoding as it is instead of encoding and hashing each object a second time
+        scan_pack(&mut f, file, &p.header, |id, _, enc| {
+            self.store.put_encoded_prehashed(&id, enc)?;
             Ok(())
         })?;
         self.store.sync()?;
@@ -692,7 +743,12 @@ impl Repo {
     /// each zone checked out on `main` (else its first branch). Bundles with prerequisites cannot
     /// be cloned (they need an existing repository: use `fetch`).
     pub fn clone_from_bundle(file: &Path, dest: &Path, author: Signature) -> Result<Repo> {
-        let info = verify_file(file)?;
+        // header only: `bundle_prepare` below scans the pack and checks the graph against the (empty)
+        // new store, which is the same check `verify_file` would do, so do not scan a third time
+        let info = {
+            let mut f = io(file, fs::File::open(file))?;
+            read_header(&mut f, file, false)?.info
+        };
         if !info.prerequisites.is_empty() {
             return msg(
                 "this is an incremental bundle (it has prerequisites); fetch it into a repository that has them instead of cloning",
@@ -710,7 +766,7 @@ impl Repo {
                 repo.bundle_commit(file, &p, author)?;
                 let mut local = Refs::default();
                 local.apply(&p.updates)?;
-                write_atomic(&repo.common.join("refs"), &local.encode())?;
+                repo.write_refs(&local)?;
                 repo.save_ws(&Workspace::default())?;
             }
             let mut pick: BTreeMap<&str, &str> = BTreeMap::new();

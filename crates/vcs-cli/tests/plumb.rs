@@ -121,3 +121,29 @@ fn shortlog() {
     assert_eq!(v["authors"][0]["count"], 2);
     assert_eq!(v["authors"][0]["subjects"], json!(["third", "first"]));
 }
+
+#[test]
+fn ls_files_depth_one_lists_the_top_tree_only() {
+    let (_t, d) = repo();
+    let flat = ok(&d, &["ls-files", "-s", "--rev", "HEAD"]);
+    let top = ok(&d, &["ls-files", "-s", "--rev", "HEAD", "--depth", "1"]);
+    let lines: Vec<&str> = top.lines().collect();
+    assert_eq!(lines.len(), 2, "{top}");
+    // the file entry is the same as in the recursive listing, the directory is a tree entry
+    let file = flat.lines().find(|l| l.ends_with(" a.txt")).unwrap();
+    assert!(lines.contains(&file));
+    let dir = lines.iter().find(|l| l.ends_with(" sub")).unwrap();
+    assert!(dir.starts_with("040000 "), "{dir}");
+    assert_eq!(ok(&d, &["ls-files", "--rev", "HEAD", "--depth", "1"]), "a.txt\nsub\n");
+    // the git spelling maps onto it; -r keeps the full listing
+    assert_eq!(ok(&d, &["git", "ls-tree", "--name-only", "HEAD"]), "a.txt\nsub\n");
+    assert_eq!(ok(&d, &["git", "ls-tree", "-r", "--name-only", "HEAD"]), "a.txt\nsub/b.txt\n");
+    let v = js(&d, &["ls-files", "--rev", "HEAD", "--depth", "1"]);
+    assert_eq!(v["files"].as_array().unwrap().len(), 2);
+    // depth needs --rev, takes no path and only knows depth 1
+    assert!(!vcs_as(&d, "Dev", &["ls-files", "--depth", "1"]).status.success());
+    assert!(!vcs_as(&d, "Dev", &["ls-files", "--rev", "HEAD", "--depth", "2"]).status.success());
+    assert!(!vcs_as(&d, "Dev", &["ls-files", "--rev", "HEAD", "--depth", "1", "sub"])
+        .status
+        .success());
+}

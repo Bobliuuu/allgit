@@ -89,6 +89,12 @@ impl Repo {
                 });
             }
         } else {
+            // With a running watcher and a saved state for this index, only the paths it names can differ.
+            let narrowed = if only.is_empty() { self.monitored_candidates(&bytes) } else { None };
+            if narrowed.as_ref().is_some_and(|c| c.is_empty()) {
+                return Ok(out);
+            }
+            let only = narrowed.as_deref().unwrap_or(only);
             for (p, e) in self.worktree_changed(&bytes, view.as_ref(), &zones, &ws, only, true, false)? {
                 if let Some(pair) = self.unstaged_pair(&p, &e)? {
                     out.push(pair);

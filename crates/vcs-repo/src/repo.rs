@@ -22,7 +22,10 @@ pub(crate) const FORMAT_FILE: &str = "format";
 /// Absent in repositories that never used one; written the first time a large-file manifest is stored.
 pub(crate) const FEATURES_FILE: &str = "features";
 pub(crate) const FEATURE_LARGE_CHUNKED: &str = "large-chunked";
-const KNOWN_FEATURES: &[&str] = &[FEATURE_LARGE_CHUNKED];
+/// Operations may omit the tag view when it equals the nearest earlier one that has it (see ops.rs).
+pub(crate) const FEATURE_OP_TAGS_DELTA: &str = "op-tags-delta";
+pub(crate) const FEATURE_REF_JOURNAL: &str = "ref-journal";
+const KNOWN_FEATURES: &[&str] = &[FEATURE_LARGE_CHUNKED, FEATURE_OP_TAGS_DELTA, FEATURE_REF_JOURNAL];
 pub(crate) const FORMAT_TEXT: &str = "all-git repository format 1\n";
 /// Checkout streams files of at least this many bytes chunk by chunk instead of reassembling them in memory.
 const STREAM_CHECKOUT_MIN: u64 = 8 << 20;
@@ -345,6 +348,7 @@ impl Repo {
                     counters: Counters::default(),
                 };
                 repo.recover_torn_index();
+                repo.journal_open_check();
                 return Ok(repo);
             }
             if !cur.pop() {
@@ -408,7 +412,9 @@ impl Repo {
     // ---------- state ----------
 
     pub(crate) fn lock(&self) -> Result<LockGuard> {
-        LockGuard::acquire(self.common.join("lock"))
+        let guard = LockGuard::acquire(self.common.join("lock"))?;
+        self.journal_verify()?; // finish an interrupted journalled operation before anyone reads refs
+        Ok(guard)
     }
     /// Path of a state file: shared files live in the common directory, the rest per worktree.
     pub(crate) fn state_path(&self, name: &str) -> PathBuf {
@@ -472,6 +478,30 @@ impl Repo {
         self.carry_attrs_marker(clean, &bytes);
         Ok(())
     }
+    /// Fingerprint of the index file as it is on disk, when a monitor state is saved (else `None`: nothing
+    /// would use it).
+    pub(crate) fn fsmon_fp_of_disk_index(&self) -> Option<[u8; 32]> {
+        if !fsmonitor::state_exists(&self.vcs) {
+            return None;
+        }
+        Some(fsmonitor::fingerprint(
+            &self.rd("index").ok()?,
+            &self.rd("zones").ok()?,
+            &self.rd("workspace").ok()?,
+        ))
+    }
+
+    /// Record that the index went from fingerprint `old` to `new_bytes` changing only entries in `touched`.
+    pub(crate) fn fsmon_log_rewrite(&self, old: Option<[u8; 32]>, new_bytes: &[u8], touched: &[String]) {
+        let (Some(old), Ok(z), Ok(w)) = (old, self.rd("zones"), self.rd("workspace")) else {
+            return;
+        };
+        let new = fsmonitor::fingerprint(new_bytes, &z, &w);
+        if new != old {
+            fsmonitor::log_rebind(&self.vcs, &old, &new, touched);
+        }
+    }
+
     pub(crate) fn save_ws(&self, ws: &Workspace) -> Result<()> {
         // Backstop for every path that changes a subscription: a branch of a zone is checked out
         // in at most one worktree. (Callers that move files check earlier, before touching any.)
@@ -569,9 +599,9 @@ impl Repo {
         Ok(rep)
     }
 
-    /// `add` of a few files that are all tracked already (re-staging edits): stage them against just
+    /// `add` of a few named files, tracked already (re-staging edits) or new: stage them against just
     /// their own index entries and patch the index file, instead of decoding and re-encoding all of it.
-    /// `None` (nothing done) for anything else: a directory, a new path, an empty spec, a missing file,
+    /// `None` (nothing done) for anything else: a directory, an empty spec, a missing file,
     /// an old index layout, or when no entry changes (the full path may still move `written_ns`).
     fn add_tracked_files_patched(&self, rel_paths: &[String], zones: &Zones, ws: &Workspace) -> Result<Option<AddReport>> {
         const MAX: usize = 256;
@@ -582,6 +612,9 @@ impl Repo {
         let Some(f) = crate::index_file::IndexFile::parse(raw)? else {
             return Ok(None);
         };
+        if f.is_empty() {
+            return Ok(None);
+        }
         let mut part = Index {
             written_ns: f.written_ns,
             ..Index::default()
@@ -591,8 +624,26 @@ impl Repo {
                 Ok(m) if m.is_file() || m.file_type().is_symlink() => {}
                 _ => return Ok(None),
             }
-            let Some(e) = f.get(p)? else { return Ok(None) };
-            part.entries.insert(p.clone(), e);
+            match f.get(p)? {
+                Some(e) => {
+                    part.entries.insert(p.clone(), e);
+                }
+                None => {
+                    // A new file: it may not clash by case or normalization with a tracked name (checked
+                    // against its own neighbours only), nor with a file/directory (checked by the patch).
+                    if let Some((a, _)) = f.find_new_path_collision(p)? {
+                        return crate::portable::require_no_collision([a.as_str(), p.as_str()], "add").map(|()| None);
+                    }
+                }
+            }
+        }
+        let news: Vec<&str> = rel_paths
+            .iter()
+            .filter(|p| !part.entries.contains_key(p.as_str()))
+            .map(String::as_str)
+            .collect();
+        if news.len() > 1 {
+            crate::portable::require_no_collision(news, "add")?;
         }
         let before: BTreeMap<String, IndexEntry> = part.entries.iter().map(|(k, e)| (k.clone(), e.clone())).collect();
         let mut rep = AddReport::default();
@@ -1221,6 +1272,9 @@ impl Repo {
             if let Some(m) = crate::fsmonitor::JournalMonitor::open(&self.vcs) {
                 return self.status_monitored(opts, &m);
             }
+            // No journal (no watcher, or it stopped cleanly): a saved state can never be used again,
+            // and keeping it would make index writers keep logging for it.
+            fsmonitor::State::remove(&self.vcs);
         }
         self.status_with(opts)
     }
@@ -1245,10 +1299,13 @@ impl Repo {
         let ix_bytes = self.rd("index")?;
         let ix = Index::decode(&ix_bytes)?;
         let fp = fsmonitor::fingerprint(&ix_bytes, &self.rd("zones")?, &self.rd("workspace")?);
-        let prev = fsmonitor::State::load(&self.vcs).filter(|s| s.fp == fp);
+        let (prev, extra) = self.saved_state_for(fp);
         let ans = mon.changed_since(prev.as_ref().map(|s| s.token.as_str()));
         let (token, inc) = match (prev.as_ref(), ans) {
-            (Some(p), Changed::Paths { paths, new_token }) => (Some(new_token), self.incremental(&ix, p, &paths)?),
+            (Some(p), Changed::Paths { mut paths, new_token }) => {
+                paths.extend(extra);
+                (Some(new_token), self.incremental(&ix, p, &paths)?)
+            }
             (_, Changed::Paths { new_token, .. }) => (Some(new_token), None),
             (_, Changed::FullScan { new_token }) => (new_token, None),
         };
@@ -1280,6 +1337,45 @@ impl Repo {
             new.store(&self.vcs);
         }
         Ok(st)
+    }
+
+    /// The saved monitor state usable for an index with fingerprint `fp`, and extra paths to treat as
+    /// changed: the state itself when bound to `fp`, or one bound to an earlier index that a logged
+    /// chain of rewrites (see `fsmonitor::log_rebind`) connects to `fp`, with the paths those rewrites touched.
+    fn saved_state_for(&self, fp: [u8; 32]) -> (Option<fsmonitor::State>, Vec<String>) {
+        let Some(st) = fsmonitor::State::load(&self.vcs) else {
+            return (None, Vec::new());
+        };
+        if st.fp == fp {
+            return (Some(st), Vec::new());
+        }
+        match fsmonitor::follow_rebinds(&self.vcs, &st.fp, &fp) {
+            Some(touched) => (Some(st), touched),
+            None => (None, Vec::new()),
+        }
+    }
+
+    /// Tracked paths that may differ from the index, from the monitor: the unstaged set saved with the
+    /// state plus whatever changed since its token. `None` (do a full scan) without a running watcher, a
+    /// state for this index, or a usable answer. Untracked files are not covered.
+    pub(crate) fn monitored_candidates(&self, ix_bytes: &[u8]) -> Option<Vec<String>> {
+        if std::env::var_os("VCS_NO_FSMONITOR").is_some() {
+            return None;
+        }
+        let mon = fsmonitor::JournalMonitor::open(&self.vcs)?;
+        let fp = fsmonitor::fingerprint(ix_bytes, &self.rd("zones").ok()?, &self.rd("workspace").ok()?);
+        let (prev, extra) = self.saved_state_for(fp);
+        let prev = prev?;
+        let Changed::Paths { paths, .. } = mon.changed_since(Some(&prev.token)) else {
+            return None;
+        };
+        let mut all: Vec<String> = prev.dirty.keys().cloned().chain(paths).chain(extra).collect();
+        if all.len() > 20_000 || !all.iter().all(|p| fsmonitor::plain_path(p)) {
+            return None;
+        }
+        all.sort_unstable();
+        all.dedup();
+        Some(all)
     }
 
     /// Apply the monitor's changed paths to the saved state: re-check only tracked files at or
@@ -1920,19 +2016,22 @@ impl Repo {
         refs.apply(&updates)?;
         // Durability barrier: trees, commits and the transaction are durable before refs name them.
         self.store.sync()?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?; // linearization point
-                                                                  // Remember the tree ids just computed so the next commit/status can skip unchanged
-                                                                  // directories. `written_ns` is deliberately untouched: no entry was re-verified. Best
-                                                                  // effort: a lost cache write only costs time.
+        let first = message.lines().next().unwrap_or("");
+        // linearization point: the ref move and its operation record are one journalled step
+        self.commit_refs_op(&refs, &format!("commit: {first}"), Some(op_author))?;
+        // Remember the tree ids just computed so the next commit/status can skip unchanged
+        // directories. `written_ns` is deliberately untouched: no entry was re-verified. Best
+        // effort: a lost cache write only costs time.
         if !fresh_trees.is_empty() {
             ix.entries.store_trees(fp, fresh_trees);
-            let _ = crate::meta::write_cache_atomic(&self.vcs.join("index"), &ix.encode());
+            let new_bytes = ix.encode();
+            let old_fp = self.fsmon_fp_of_disk_index();
+            let _ = crate::meta::write_cache_atomic(&self.vcs.join("index"), &new_bytes);
+            self.fsmon_log_rewrite(old_fp, &new_bytes, &[]); // entries are unchanged: only cache trees are new
         }
         if merging.is_some() {
             self.clear_merge_state()?;
         }
-        let first = message.lines().next().unwrap_or("");
-        self.record_op(&format!("commit: {first}"), Some(op_author))?;
         Ok(CommitReport { transaction: tx, commits })
     }
 
@@ -1981,8 +2080,7 @@ impl Repo {
             old: None,
             new: head,
         }])?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
-        self.record_op(&format!("create branch {zone}/{branch}"), None)?;
+        self.commit_refs_op(&refs, &format!("create branch {zone}/{branch}"), None)?;
         Ok(head)
     }
 
@@ -2017,8 +2115,7 @@ impl Repo {
             old: None,
             new: id,
         }])?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
-        self.record_op(&format!("create branch {zone}/{branch} at {}", id.short()), None)?;
+        self.commit_refs_op(&refs, &format!("create branch {zone}/{branch} at {}", id.short()), None)?;
         Ok(id)
     }
 
@@ -2077,8 +2174,9 @@ impl Repo {
             }
         }
         let mut ix = self.index()?;
-        // Only staged/unstaged/merge state matters here, so skip the untracked-file walk.
-        let st = self.status_inner(StatusOpts::default(), &ix, false, None)?;
+        // Only staged/unstaged/merge state matters here, so skip the untracked-file walk (a running
+        // watcher also skips the stat of every unchanged tracked file).
+        let st = self.status_tracked_auto(StatusOpts::default())?;
         if same {
             // the cached tree was missing or stale: an unstaged edit still cannot be lost here
             let mut st = st;
@@ -2108,8 +2206,16 @@ impl Repo {
                 .store_trees(zones_fp(&zones), std::iter::once((prefix.to_owned(), new_root)).collect());
         }
         ws.subs.insert(zone.into(), branch.into());
+        // The index differs from the one on disk only at the paths the two trees differ in: tell the
+        // filesystem monitor, so the next status does not have to scan everything again.
+        let old_fp = self.fsmon_fp_of_disk_index();
         self.save_index(&mut ix)?;
         self.save_ws(&ws)?;
+        if old_fp.is_some() {
+            // after `save_ws`: the state's fingerprint covers the subscribed branches too
+            let touched: Vec<String> = diff.old.keys().chain(diff.new.keys()).cloned().collect();
+            self.fsmon_log_rewrite(old_fp, &self.rd("index")?, &touched);
+        }
         if cur == vcs_objects::names::DETACHED_BRANCH {
             self.drop_detached_ref(zone)?;
         }
@@ -2479,8 +2585,7 @@ impl Repo {
         }))?;
         refs.snapshots.insert(name.to_owned(), id);
         self.store.sync()?;
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
-        self.record_op(&format!("snapshot create {name}"), None)?;
+        self.commit_refs_op(&refs, &format!("snapshot create {name}"), None)?;
         Ok(id)
     }
 

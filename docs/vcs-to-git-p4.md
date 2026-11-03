@@ -33,6 +33,7 @@ How to read it:
 | vcs | git | p4 | note |
 |---|---|---|---|
 | `vcs status` | `git status` | `p4 opened`, `p4 status`, `p4 reconcile -n` | vcs lists staged, unstaged and untracked per zone |
+| `vcs watch` | `git fsmonitor--daemon run` | (the p4 server) | journals changed paths so `status` and `diff` skip the full scan; started on its own for big repositories, see benchmarks.md |
 | `vcs add f` | `git add f` | `p4 add f` (new), `p4 edit f` then nothing | an edit is found by content; `p4 edit` is a no-op except for lockable files |
 | `vcs rm f` | `git rm f` | `p4 delete f` | |
 | `vcs mv a b` | `git mv a b` | `p4 move a b` | within one zone |
@@ -90,6 +91,8 @@ How to read it:
 |---|---|---|---|
 | `vcs fetch` | `git fetch` | `p4 sync -n` (nearest) | local branches stay untouched |
 | `vcs sync` | `git pull --ff-only` | `p4 sync` | fetch plus fast-forward; paths ignored |
+| `vcs pull` | `git pull --ff-only` | `p4 sync` | same as `vcs sync`; `--auto` picks zones from your usage profile ([zone-profile.md](zone-profile.md)) |
+| `vcs profile` | `git sparse-checkout` (manual) | client view (manual) | local usage profile that `--auto` predicts zones from; `fetch` gets a skipped zone |
 | `vcs publish` | `git push` | `p4 submit` (the publishing half) | all checked-out branches, one atomic transaction |
 | `vcs prefetch` | none | none | warm file contents for offline work |
 | `vcs lock` / `vcs unlock` / `vcs locks` | `git lfs lock` / `unlock` / `locks` | `p4 lock` / `p4 unlock` / `p4 locks`, `+l` filetype | leases, see [locks.md](locks.md) |

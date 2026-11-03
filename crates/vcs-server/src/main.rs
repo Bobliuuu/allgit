@@ -8,7 +8,7 @@
 //! Policy options: `--policy <file> [--allowed-signers <file>] [--revoked-signers <file>] [--max-lease-secs N] [--skew-epsilon-ms N]` (docs/deploy.md).
 //! Operations: `--config <server.toml>` (flags override it), `--log-format json|text`, `--log-level <level>`,
 //! `--shutdown-grace <secs>`, `--metrics-token <token|@file>`, `--backend-retries N`, `--backend-timeout <secs>`,
-//! `--breaker-threshold N`, `--breaker-cooldown <secs>`, `--cache-dir <dir> [--cache-size <bytes>]` (disk cache of immutable reads). SIGTERM/SIGINT drain and exit 0; SIGHUP reloads.
+//! `--breaker-threshold N`, `--breaker-cooldown <secs>`, `--cache-dir <dir> [--cache-size <bytes>]` (disk cache of immutable reads), `--upstream <url> --upstream-token <t>` (read-through peer, docs/peering.md). SIGTERM/SIGINT drain and exit 0; SIGHUP reloads.
 //! Without TLS the server speaks plain HTTP (docs/server.md).
 
 use std::path::Path;
@@ -18,9 +18,9 @@ use vcs_server::log::{Format, Level, Logger, V};
 use vcs_server::{auth, backend_url, AuditLog, Config, Policy, RateLimit, Server, TokenTable};
 
 const USAGE: &str = "usage: vcs-server (--root <dir> | --backend <s3://...|dir>) --tokens <file> [--listen host:port] [--audit-log <file> [--audit-key <file>]] \
-[--rate-limit <burst>,<per-sec>] [--max-connections <n>] [--max-conns-per-ip <n>] [--auth-fail-limit <burst>,<per-sec>] [--max-body <bytes>] [--max-inflight-body <bytes>] [--cache-dir <dir> [--cache-size <bytes>]] [--policy <file>] [--allowed-signers <file>] [--revoked-signers <file>] [--max-lease-secs N] [--skew-epsilon-ms N] [--tls-cert <pem> --tls-key <pem> [--tls-client-ca <pem>]] \
+[--rate-limit <burst>,<per-sec>] [--max-connections <n>] [--max-conns-per-ip <n>] [--auth-fail-limit <burst>,<per-sec>] [--max-body <bytes>] [--max-inflight-body <bytes>] [--cache-dir <dir> [--cache-size <bytes>]] [--upstream <url> --upstream-token <token|@file> [--upstream-ca <pem>] [--upstream-manifest-ttl <secs>] [--upstream-stale-if-error <secs>]] [--policy <file>] [--allowed-signers <file>] [--revoked-signers <file>] [--max-lease-secs N] [--skew-epsilon-ms N] [--tls-cert <pem> --tls-key <pem> [--tls-client-ca <pem>]] \
 [--config <file>] [--log-format json|text] [--log-level error|warn|info|debug] [--shutdown-grace <secs>] [--metrics-token <token|@file>] \
-[--backend-retries N] [--backend-timeout <secs>] [--breaker-threshold N] [--breaker-cooldown <secs>] [--check-client-cannot-write-manifest]\n       \
+[--backend-retries N] [--backend-timeout <secs>] [--breaker-threshold N] [--breaker-cooldown <secs>] [--check-client-cannot-write-manifest] [--no-group-commit]\n       \
 vcs-server hash-token <token>\n       vcs-server audit verify <file> [--key <file>]";
 
 fn die(m: &str) -> ! {
@@ -92,12 +92,21 @@ fn main() {
     let (mut retries, mut timeout, mut brk_n, mut brk_cool) = (None, None, None, None);
     let (mut allowed_signers, mut revoked_signers) = (None, None);
     let mut check_client = false;
+    let mut no_group = false;
     let (mut cache_dir, mut cache_size): (Option<String>, Option<String>) = (None, None);
+    let (mut upstream, mut up_token, mut up_ca, mut up_ttl, mut up_stale): (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = (None, None, None, None, None);
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         let mut val = |n: &str| it.next().unwrap_or_else(|| die(&format!("{n} needs a value")));
         match a.as_str() {
             "--check-client-cannot-write-manifest" => check_client = true,
+            "--no-group-commit" => no_group = true,
             "--root" => root = Some(val("--root")),
             "--tokens" => tokens = Some(val("--tokens")),
             "--listen" => listen = val("--listen"),
@@ -114,6 +123,11 @@ fn main() {
             "--tls-client-ca" => tls_client_ca = Some(val("--tls-client-ca")),
             "--cache-dir" => cache_dir = Some(val("--cache-dir")),
             "--cache-size" => cache_size = Some(val("--cache-size")),
+            "--upstream" => upstream = Some(val("--upstream")),
+            "--upstream-token" => up_token = Some(val("--upstream-token")),
+            "--upstream-ca" => up_ca = Some(val("--upstream-ca")),
+            "--upstream-manifest-ttl" => up_ttl = Some(val("--upstream-manifest-ttl")),
+            "--upstream-stale-if-error" => up_stale = Some(val("--upstream-stale-if-error")),
             "--backend" => backend_arg = Some(val("--backend")),
             "--policy" => policy_path = Some(val("--policy")),
             "--allowed-signers" => allowed_signers = Some(val("--allowed-signers")),
@@ -131,10 +145,12 @@ fn main() {
             _ => die(USAGE),
         }
     }
-    let backend_url = match (root, backend_arg) {
-        (Some(_), Some(_)) => die("give either --root or --backend, not both"),
-        (Some(r), None) | (None, Some(r)) => r,
-        (None, None) => die("--root or --backend is required"),
+    let backend_url = match (root, backend_arg, &upstream) {
+        (Some(_), Some(_), _) => die("give either --root or --backend, not both"),
+        (Some(_), _, Some(_)) | (_, Some(_), Some(_)) => die("--upstream replaces --root/--backend: a peer keeps only a cache"),
+        (Some(r), None, None) | (None, Some(r), None) => r,
+        (None, None, Some(_)) => String::new(),
+        (None, None, None) => die("--root, --backend or --upstream is required"),
     };
     let fmt = match log_format.as_deref() {
         None => Format::Text,
@@ -157,24 +173,67 @@ fn main() {
     if table.is_empty() {
         die("tokens file has no entries");
     }
-    if check_client {
+    if check_client && upstream.is_none() {
         backend_url::check_client_cannot_write_manifest(&backend_url, &|k| std::env::var(k).ok()).unwrap_or_else(|e| die(&e));
     }
-    let backend = backend_url::open(&backend_url).unwrap_or_else(|e| die(&e));
-    // Persistent cache of immutable reads (indexes, pack blocks, objects): a restarted server
-    // answers a warm clone from disk and asks the store only for the manifest and the listing.
-    let backend: std::sync::Arc<dyn vcs_remote::Backend> = match cache_dir {
-        None => backend,
-        Some(d) => {
-            let cap = cache_size.map_or(8u64 << 30, |n| {
-                n.parse().unwrap_or_else(|_| die("--cache-size expects a number of bytes"))
-            });
-            std::sync::Arc::new(
-                vcs_remote::DiskCacheBackend::new(backend, d, cap).unwrap_or_else(|e| die(&format!("cannot use --cache-dir: {e}"))),
-            )
+    let peer_mode = upstream.is_some();
+    let backend: std::sync::Arc<dyn vcs_remote::Backend> = if let Some(up) = upstream {
+        // Peer mode: the cache directory holds verified immutable reads; every write and every
+        // freshness decision goes to the upstream server (docs/peering.md).
+        let dir = cache_dir.unwrap_or_else(|| die("--upstream needs --cache-dir"));
+        let tok = up_token
+            .or_else(|| std::env::var("VCS_UPSTREAM_TOKEN").ok())
+            .unwrap_or_else(|| die("--upstream needs --upstream-token <token|@file> or VCS_UPSTREAM_TOKEN"));
+        let tok = match tok.strip_prefix('@') {
+            Some(f) => std::fs::read_to_string(f)
+                .unwrap_or_else(|e| die(&format!("cannot read {f}: {e}")))
+                .trim()
+                .to_owned(),
+            None => tok,
+        };
+        let ca = up_ca.map(|p| std::fs::read(&p).unwrap_or_else(|e| die(&format!("cannot read {p}: {e}"))));
+        let http = vcs_server::HttpBackend::with_ca(&up, &tok, ca.as_deref()).unwrap_or_else(|e| die(&format!("--upstream: {e}")));
+        let mut pc = vcs_server::peer::PeerConfig::new(dir);
+        if let Some(n) = cache_size {
+            pc.cache_size = n.parse().unwrap_or_else(|_| die("--cache-size expects a number of bytes"));
+        }
+        let d = |n: &str, v: Option<String>| {
+            v.map(|v| match v.parse::<f64>() {
+                Ok(x) if x.is_finite() && (0.0..=86_400.0).contains(&x) => std::time::Duration::from_secs_f64(x),
+                _ => die(&format!("{n} expects a number of seconds (0..86400)")),
+            })
+        };
+        if let Some(t) = d("--upstream-manifest-ttl", up_ttl) {
+            pc.manifest_ttl = t;
+        }
+        if let Some(t) = d("--upstream-stale-if-error", up_stale) {
+            pc.stale_if_error = t;
+        }
+        std::sync::Arc::new(
+            vcs_server::peer::PeerBackend::new(std::sync::Arc::new(http), pc)
+                .unwrap_or_else(|e| die(&format!("cannot use --cache-dir: {e}"))),
+        )
+    } else {
+        let backend = backend_url::open(&backend_url).unwrap_or_else(|e| die(&e));
+        // Persistent cache of immutable reads (indexes, pack blocks, objects): a restarted server
+        // answers a warm clone from disk and asks the store only for the manifest and the listing.
+        match cache_dir {
+            None => backend,
+            Some(d) => {
+                let cap = cache_size.map_or(8u64 << 30, |n| {
+                    n.parse().unwrap_or_else(|_| die("--cache-size expects a number of bytes"))
+                });
+                std::sync::Arc::new(
+                    vcs_remote::DiskCacheBackend::new(backend, d, cap).unwrap_or_else(|e| die(&format!("cannot use --cache-dir: {e}"))),
+                )
+            }
         }
     };
     let mut cfg = Config::new(table);
+    if peer_mode {
+        // the peer has its own fast-fail on upstream; a breaker above it would also block cache hits
+        cfg.resilience.breaker_threshold = 0;
+    }
     #[cfg(unix)]
     let (cfg_tokens, cfg_policy) = (tokens.clone(), policy_path.clone());
     if let Some(p) = policy_path {
@@ -254,6 +313,9 @@ fn main() {
     }
     if let Some(n) = maxb {
         cfg.max_body = n.parse().unwrap_or_else(|_| die("--max-body expects a number of bytes"));
+    }
+    if no_group {
+        cfg.group_commit = false;
     }
     if let Some(n) = maxib {
         cfg.max_inflight_body = n

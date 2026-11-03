@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 use vcs_objects::{ObjectId, Signature};
 use vcs_remote::Outcome;
-use vcs_repo::{AssistResult, ChangeKind, Error, MergeOutcome, RebaseOutcome, Repo, Resolution, SyncAction, ROOT_ZONE};
+use vcs_repo::{AssistResult, ChangeKind, Error, MergeOutcome, RebaseOutcome, Repo, Resolution, ROOT_ZONE};
 
 mod archive;
 mod auth;
@@ -36,6 +36,7 @@ mod remote;
 mod shelve_cmd;
 mod signing_cmd;
 mod worktree_cmd;
+mod zoneprofile_cmd;
 
 /// The assist command: `--assist`, else the opt-in `merge.assist` setting (announced, because file
 /// contents are then handed to that command), unless `--no-assist`.
@@ -168,7 +169,11 @@ enum Cmd {
     Status,
     /// Watch the working tree and journal changed paths so `status` can skip a full scan (runs until killed)
     #[cfg(feature = "watcher")]
-    Watch,
+    Watch {
+        /// Stop after this many seconds without a `status` asking for the journal (set when a command starts the watcher itself)
+        #[arg(long)]
+        idle_exit: Option<u64>,
+    },
     /// Show unstaged changes (or --staged)
     Diff {
         #[arg(long)]
@@ -210,7 +215,7 @@ enum Cmd {
         /// Zone (default: the zone containing the current directory)
         #[arg(long)]
         zone: Option<String>,
-        #[arg(short = 'n', long, default_value_t = 20)]
+        #[arg(short = 'n', long, default_value_t = 20, alias = "max-count")]
         limit: usize,
         /// One line per commit: short id and subject
         #[arg(long)]
@@ -535,6 +540,8 @@ enum Cmd {
         stats: bool,
         #[command(flatten)]
         sel: autozone::ForArgs,
+        #[command(flatten)]
+        auto: zoneprofile_cmd::CloneAuto,
     },
     /// Publish checked-out branches to the remote in one atomic transaction
     Publish {
@@ -610,8 +617,8 @@ enum Cmd {
         #[arg(long)]
         stats: bool,
     },
-    /// Fetch, then fast-forward local branches where safe
-    Sync,
+    /// Fetch, then fast-forward local branches where safe (`--auto`: choose zones from your usage profile)
+    Sync(zoneprofile_cmd::SyncAuto),
     /// Verify all objects and graph invariants
     Fsck,
     /// Move loose objects into a pack (one pack + index under .vcs/objects/pack).
@@ -752,6 +759,10 @@ enum ZoneCmd {
     Describe(ontology::DescribeArgs),
     /// Zone dependency graph with reasons, transitive closures and path index (docs/zone-ontology.md)
     Graph(ontology::GraphArgs),
+    /// One call: owner zone of a path, its owners, dependencies, dependents and impacted zones (docs/zone-ontology.md)
+    Explain(ontology::ExplainArgs),
+    /// Per zone, the files that changed between two commits or dates (`A..B`), in one call
+    Changes(ontology::ChangesArgs),
 }
 
 #[derive(Subcommand, Clone)]
@@ -891,7 +902,15 @@ fn principal() -> String {
 
 fn open() -> Result<(Repo, PathBuf), Error> {
     let cwd = std::env::current_dir().map_err(|source| Error::Io { path: ".".into(), source })?;
-    Ok((Repo::discover(&cwd)?, cwd))
+    let repo = Repo::discover(&cwd)?;
+    // Big repositories get a background watcher so `status`, `diff` and friends can skip the full scan.
+    #[cfg(feature = "watcher")]
+    if std::env::args_os().nth(1).is_none_or(|a| a != "watch") {
+        if let Ok(exe) = std::env::current_exe() {
+            repo.autostart_watcher(&exe);
+        }
+    }
+    Ok((repo, cwd))
 }
 
 pub(crate) fn zone_of_cwd(repo: &Repo, cwd: &Path, explicit: Option<String>) -> Result<String, Error> {
@@ -971,6 +990,9 @@ fn need_remote(repo: &Repo) -> Result<String, Error> {
 fn run(cli: Cli) -> Result<(), Error> {
     if let Cmd::More(m) = &cli.cmd {
         return cmds::dispatch(m, cli.json);
+    }
+    if let Some(r) = zoneprofile_cmd::intercept(&cli.cmd) {
+        return r;
     }
     if let Some(r) = autozone::intercept(&cli.cmd, cli.json) {
         return r;
@@ -1117,13 +1139,17 @@ fn run(cli: Cli) -> Result<(), Error> {
             maybe_auto_repack(&repo);
         }
         #[cfg(feature = "watcher")]
-        Cmd::Watch => {
+        Cmd::Watch { idle_exit } => {
             let (repo, _) = open()?;
             eprintln!(
                 "watching {} (Ctrl-C to stop); `vcs status` uses the journal while this runs",
                 repo.worktree().display()
             );
-            vcs_repo::watcher::run(&repo, &std::sync::atomic::AtomicBool::new(false))?;
+            vcs_repo::watcher::run_idle(
+                &repo,
+                &std::sync::atomic::AtomicBool::new(false),
+                idle_exit.map(std::time::Duration::from_secs),
+            )?;
         }
         Cmd::Status => {
             let (repo, _) = open()?;
@@ -1910,7 +1936,13 @@ fn run(cli: Cli) -> Result<(), Error> {
                     repo.zone_delete(&name, force)?;
                     println!("deleted zone {name}");
                 }
-                ZoneCmd::Suggest(_) | ZoneCmd::Apply(_) | ZoneCmd::Subscribe(_) | ZoneCmd::Describe(_) | ZoneCmd::Graph(_) => {
+                ZoneCmd::Suggest(_)
+                | ZoneCmd::Apply(_)
+                | ZoneCmd::Subscribe(_)
+                | ZoneCmd::Describe(_)
+                | ZoneCmd::Graph(_)
+                | ZoneCmd::Explain(_)
+                | ZoneCmd::Changes(_) => {
                     unreachable!("handled by autozone::intercept")
                 }
             }
@@ -2171,27 +2203,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             }
             println!("prefetched {n} object(s)");
         }
-        Cmd::Sync => {
-            let (repo, _) = open()?;
-            let backend = remote::open_memo(&need_remote(&repo)?, false)?;
-            let rep = repo.sync(&backend)?;
-            for (a, b, act) in &rep.actions {
-                let what = match act {
-                    SyncAction::UpToDate => "up to date".to_owned(),
-                    SyncAction::FastForwarded { from, to } => {
-                        format!("fast-forwarded {} -> {}", opt_short(*from), to.short())
-                    }
-                    SyncAction::Ahead => "ahead of remote (run `vcs publish`)".into(),
-                    SyncAction::Diverged => {
-                        let r = if a == ROOT_ZONE { String::new() } else { format!(" --zone {a}") };
-                        format!("diverged; merge with `vcs merge --remote {b}{r}`")
-                    }
-                    SyncAction::Dirty => "dirty (left untouched; commit or discard changes first)".into(),
-                    SyncAction::NoRemote => "not on the remote yet (run `vcs publish`)".into(),
-                };
-                println!("{a}/{b}: {what}");
-            }
-        }
+        Cmd::Sync(a) => zoneprofile_cmd::sync(&a)?,
         Cmd::Op(c) => {
             let (repo, _) = open()?;
             match c {
@@ -2453,7 +2465,7 @@ fn publish_auto_merge(
         attempt += 1;
         let rep = repo.sync(backend)?;
         for (zone, branch, act) in &rep.actions {
-            if matches!(act, SyncAction::Diverged) {
+            if matches!(act, vcs_repo::SyncAction::Diverged) {
                 match repo.merge_remote(zone, branch, author()?)? {
                     vcs_repo::MergeOutcome::Conflicted { .. } => {
                         repo.merge_abort()?;
@@ -2476,6 +2488,7 @@ fn publish_auto_merge(
 
 fn run_lazy(cli: Cli) -> Result<(), Error> {
     let mut fetched = std::collections::BTreeSet::new();
+    let pre = zoneprofile_cmd::before(&cli.cmd);
     loop {
         match run(cli.clone()) {
             Err(Error::Store(vcs_store::StoreError::NotFound(id))) if fetched.insert(id) => {
@@ -2487,7 +2500,12 @@ fn run_lazy(cli: Cli) -> Result<(), Error> {
                 repo.fetch_missing(backend.as_ref(), &id)?;
                 eprintln!("fetched missing object {}", id.short());
             }
-            r => return r,
+            r => {
+                if r.is_ok() {
+                    zoneprofile_cmd::observe(&cli.cmd, pre);
+                }
+                return r;
+            }
         }
     }
 }
