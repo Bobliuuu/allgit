@@ -565,6 +565,9 @@ impl Repo {
         let _l = self.lock()?;
         let zones = self.zones()?;
         let ws = self.workspace()?;
+        if let Some(rep) = self.add_tracked_files_patched(rel_paths, &zones, &ws)? {
+            return Ok(rep);
+        }
         let mut ix = self.index()?;
         let mut rep = AddReport::default();
         let mut todo = Vec::new();
@@ -588,6 +591,56 @@ impl Repo {
         }
         self.save_index_verified(&mut ix, |p| verified.contains(p))?;
         Ok(rep)
+    }
+
+    /// `add` of a few files that are all tracked already (re-staging edits): stage them against just
+    /// their own index entries and patch the index file, instead of decoding and re-encoding all of it.
+    /// `None` (nothing done) for anything else: a directory, a new path, an empty spec, a missing file,
+    /// an old index layout, or when no entry changes (the full path may still move `written_ns`).
+    fn add_tracked_files_patched(&self, rel_paths: &[String], zones: &Zones, ws: &Workspace) -> Result<Option<AddReport>> {
+        const MAX: usize = 256;
+        if rel_paths.is_empty() || rel_paths.len() > MAX || rel_paths.iter().any(|p| p.is_empty()) {
+            return Ok(None);
+        }
+        let Ok(raw) = self.rd("index") else { return Ok(None) };
+        let Some(f) = crate::index_file::IndexFile::parse(raw)? else {
+            return Ok(None);
+        };
+        let mut part = Index {
+            written_ns: f.written_ns,
+            ..Index::default()
+        };
+        for p in rel_paths {
+            match fs::symlink_metadata(self.worktree.join(p)) {
+                Ok(m) if m.is_file() || m.file_type().is_symlink() => {}
+                _ => return Ok(None),
+            }
+            let Some(e) = f.get(p)? else { return Ok(None) };
+            part.entries.insert(p.clone(), e);
+        }
+        let before: BTreeMap<String, IndexEntry> = part.entries.iter().map(|(k, e)| (k.clone(), e.clone())).collect();
+        let mut rep = AddReport::default();
+        let mut todo = Vec::new();
+        for p in rel_paths {
+            self.add_one(p, zones, ws, &mut part, &mut rep, &mut todo)?;
+        }
+        let verified = self.stage_files(&todo, &mut part)?;
+        self.note_resolved(rel_paths, &part)?;
+        self.store.sync()?;
+        let mut edits = crate::index_file::Edits::new();
+        for (p, e) in part.entries.iter() {
+            if before.get(p) != Some(e) {
+                edits.insert(p.clone(), Some(e.clone()));
+            }
+        }
+        let _ = verified; // a patch keeps `written_ns`, so the entries it changes are re-read once by status
+        if edits.is_empty() {
+            return Ok(None);
+        }
+        if let (Some(bytes), _) = self.prepare_index_patch(&f, &edits)? {
+            self.write_index_bytes(&bytes)?;
+        }
+        Ok(Some(rep))
     }
 
     fn add_one(&self, p: &str, zones: &Zones, ws: &Workspace, ix: &mut Index, rep: &mut AddReport, todo: &mut Vec<String>) -> Result<()> {
