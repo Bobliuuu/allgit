@@ -482,6 +482,7 @@ Options:
       --no-merges                   Skip merge commits
       --first-parent                Follow only the first parent of each commit
   -S <STRING>                       Only commits that change the number of occurrences of this string in some file (pickaxe)
+  -G <REGEX>                        Only commits that add or remove a line matching this regular expression in some file (like `git log -G`)
       --format <TEMPLATE>           Template per commit. Placeholders: %H %h %P %p %an %ae %at %ad %s %b %B %C %z %n %%
       --follow                      With one path: the history of that file across renames (first-parent walk)
       --name-status                 List changed files with a status letter under each commit
@@ -1845,6 +1846,8 @@ Commands:
   subscribe  Subscribe to the minimal zone set for a path, symbol, task or person, plus their dependencies
   describe   Machine-readable description of zones: purpose, owners, dependencies, subscriptions, locks, history (docs/zone-ontology.md)
   graph      Zone dependency graph with reasons, transitive closures and path index (docs/zone-ontology.md)
+  explain    One call: owner zone of a path, its owners, dependencies, dependents and impacted zones (docs/zone-ontology.md)
+  changes    Per zone, the files that changed between two commits or dates (`A..B`), in one call
   help       Print this message or the help of the given subcommand(s)
 
 Options:
@@ -2118,13 +2121,15 @@ Arguments:
 
 Options:
   -C <DIR>                           Run as if vcs was started in <DIR> (applied before repository discovery)
-      --history <HISTORY>            Recent commits listed per zone (each with its changed files) [default: 5]
+      --history <HISTORY>            Recent commits listed per zone (each with its changed files) [default: 3]
       --json                         Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
-      --transactions <TRANSACTIONS>  Recent operations (local transaction log) listed [default: 10]
+      --since <DATE>                 Only commits at or after this date (`YYYY-MM-DD`, Unix seconds, `N days ago`, ...)
       --ca-pem <FILE>                PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --format <FORMAT>              Output size: compact (default), brief, or full (the documented schema) [default: compact] [possible values: compact, full, brief]
+      --no-hooks                     Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+      --transactions <TRANSACTIONS>  Recent operations (local transaction log) listed [default: 3]
       --path <PATH>                  Report which zone owns this repo-relative path (repeatable)
       --fields <KEYS>                Keep only these keys of each zone object (comma separated, e.g. `purpose,history`); `id` and `name` are always kept. Smaller output for agents; the schema's per-zone `required` list then does not apply
-      --no-hooks                     Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help                         Print help
 ```
 
@@ -2136,12 +2141,51 @@ Zone dependency graph with reasons, transitive closures and path index (docs/zon
 Usage: vcs zone graph [OPTIONS]
 
 Options:
-  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
-      --deep           Also scan Go, Python and JS/TS imports (reads source files; slower)
-      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
-      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
-      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
-  -h, --help           Print help
+  -C <DIR>               Run as if vcs was started in <DIR> (applied before repository discovery)
+      --format <FORMAT>  Output size: compact (default, no `edges`), or full (with edges and reasons) [default: compact] [possible values: compact, full, brief]
+      --deep             Also scan Go, Python and JS/TS imports (reads source files; slower)
+      --json             Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>    PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks         Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help             Print help
+```
+
+################## `vcs zone explain`
+
+```text
+One call: owner zone of a path, its owners, dependencies, dependents and impacted zones (docs/zone-ontology.md)
+
+Usage: vcs zone explain [OPTIONS] <PATH>
+
+Arguments:
+  <PATH>  Repo-relative path (file or directory; need not exist)
+
+Options:
+  -C <DIR>               Run as if vcs was started in <DIR> (applied before repository discovery)
+      --format <FORMAT>  [default: compact] [possible values: compact, full, brief]
+      --json             Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>    PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks         Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help             Print help
+```
+
+################### `vcs zone changes`
+
+```text
+Per zone, the files that changed between two commits or dates (`A..B`), in one call
+
+Usage: vcs zone changes [OPTIONS] <RANGE>
+
+Arguments:
+  <RANGE>  `A..B`: what changed in every zone after A up to and including B. A and B are commit ids (any zone), operation ids, dates, or `HEAD` (B only). `..B` starts from the beginning
+
+Options:
+  -C <DIR>               Run as if vcs was started in <DIR> (applied before repository discovery)
+      --format <FORMAT>  [default: compact] [possible values: compact, full, brief]
+      --json             Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>    PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks         Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help             Print help
 ```
 
 ## `vcs worktree`
