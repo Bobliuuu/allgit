@@ -20,6 +20,17 @@ impl Repo {
             .collect())
     }
 
+    /// Stream the staged entries (same validation as [`Repo::tracked_files`]) through `visit` on
+    /// parallel workers, one `T` per index block, in path order. See [`crate::index::Index::scan`].
+    pub fn scan_tracked<T: Send>(
+        &self,
+        init: impl Fn() -> T + Sync,
+        visit: impl Fn(&mut T, &str, &crate::index::IndexEntry) + Sync,
+    ) -> Result<Vec<T>> {
+        let raw = self.rd("index")?;
+        crate::index::Index::scan(&raw, init, visit)
+    }
+
     /// Files of revision `rev` across the subscribed zones in which `rev` resolves (so `HEAD`
     /// covers every zone, a commit-id prefix just its own). Keys are repository-relative.
     pub fn rev_files(&self, rev: &str) -> Result<Flat> {
