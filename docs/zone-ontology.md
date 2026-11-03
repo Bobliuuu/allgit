@@ -15,6 +15,21 @@ Two read-only commands:
 
 `--fields purpose,history` keeps only those keys per zone (plus `id`, `name`) to cut output for agents; the schema's per-zone `required` list applies to unfiltered output.
 
+### Output formats (`--format`)
+
+`compact` is the default for every ontology command; `full` is the documented schema in `zone-ontology.schema.json`; `brief` is `compact` with commit entries
+reduced to id, author, time and subject. Compact drops: null, empty-list and false-by-default keys (absent means null/empty/false), the redundant `id` when it equals `name`/`zone`,
+`change_id`, `parents`, author e-mails, dependency `reasons`, operation `branch_moves` and (for `zone graph`) `edges`, and it shortens 64-hex ids to 12 (a unique prefix every command accepts).
+Measured on the benchmark fixture (9 zones): `zone describe` 26.9 KB full, 13.4 KB compact (before the history/transaction defaults went from 5/10 to 3/3); `zone graph` 3.4 KB full, 1.6 KB compact.
+
+### More commands
+
+* `vcs zone explain PATH [--json]`: one call for a path: owner zone and zone-relative path, whether it exists in the head tree, purpose, CODEOWNERS of the path, direct and transitive dependencies and dependents of the zone, `impacted` (owner plus every transitive dependent) and the last commit touching the path.
+* `vcs zone changes A..B [--json]` (also `COMMIT` alone = what that commit's operation changed, i.e. `COMMIT^..COMMIT`; `^` and `~N` suffixes step back that many operations): per zone, the files that changed between two repository states, in one call. A and B are commit ids of any zone, operation ids, dates, or `HEAD` (B); `..B` starts at the beginning. A commit names the state of the whole repository right after the first operation (transaction) that made it a branch head, so the comparison does not depend on commit timestamps; a date selects the newest operation not newer than it. Each zone is compared at its checked-out branch; files are the net difference (`added`/`modified`/`deleted`, repo-relative paths) with a commit count.
+* `vcs log --grep` follows `git log --grep`: a POSIX basic regular expression by default (so `net+api` matches the text `net+api`; `\\+ \\| \\( \\)` are the operators), `-E` extended, `-F` fixed string, `-i` ignore case; `^`/`$` match at line boundaries of the message. `-n` has the alias `--max-count`.
+* `vcs log --all-zones` (existing) now also takes `-G REGEX` (a commit that adds or removes a line matching the regex, like `git log -G`) next to `-S`, `--grep`, `--author`, `--since` and `-- paths`: one call searches every zone.
+* `zone describe --since DATE` and `--limit N` (alias of `--history`).
+
 Without `--json` both print a short human summary. Schema: [`zone-ontology.schema.json`](zone-ontology.schema.json)
 (`$defs.describe`, `$defs.graph`; id `vcs.zone-ontology/1`). Rules are those of [cli.md](cli.md): one JSON object on
 one line, `version` is bumped only when a field disappears or changes meaning, parsers ignore unknown keys,
@@ -36,7 +51,7 @@ The ontology stores nothing. Every field is computed when you ask, from state vc
 | `dependencies` | the same analysis as `vcs zone subscribe --for`: Cargo path/workspace deps, package.json deps, go.mod `require`/`replace`, pyproject deps; `graph --deep` also scans Go/Python/JS/TS imports. Each edge carries human-readable `reasons`. Unreadable manifests are listed in `notes`, never guessed |
 | `subscription` | the workspace file: subscribed or not, checked-out branch, sparse paths (`vcs sparse`) |
 | `branches` | refs |
-| `history` | the zone's branch head, a commit count (capped at 1000, `capped: true` then), and the newest `--history N` commits (default 5) each with its changed files (zone-relative paths, `added`/`modified`/`deleted`, first parent diff, capped at 100 files per commit) |
+| `history` | the zone's branch head, a commit count (capped at 1000, `capped: true` then), and the newest `--history N` (alias `--limit`, default 3) commits, optionally only `--since DATE` each with its changed files (repo-relative paths, `added`/`modified`/`deleted`, first parent diff, capped at 100 files per commit) |
 | `locks.held_locally` | the locks this checkout believes it holds (`lockable-held`). Remote lock state needs a network call, so it is not included: use `vcs locks` |
 | `transactions` | the operation log: each entry lists the zones whose branch heads it moved (`branch_moves` with from/to), `zones_touched`, and subscription changes. A multi-zone `vcs commit` is one entry touching several zones, which is how "which zones does this change touch" is answered |
 
