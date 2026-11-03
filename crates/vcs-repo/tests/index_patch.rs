@@ -167,3 +167,61 @@ fn attrs_marker_follows_index_writes() {
     r.add(&s("d01/.vcsattributes")).unwrap();
     assert!(lockable(&r, "d01/x.psd"));
 }
+
+#[test]
+fn add_and_restore_of_named_files_patch_the_index_and_match_the_full_path() {
+    let d = tempfile::tempdir().unwrap();
+    let r = Repo::init(&d.path().join("r")).unwrap();
+    let mut all = vec![];
+    for k in 0..5000u32 {
+        let p = format!("d{:02}/f{k:05}.txt", k % 25);
+        let abs = r.worktree().join(&p);
+        fs::create_dir_all(abs.parent().unwrap()).unwrap();
+        fs::write(abs, format!("file {k}\n")).unwrap();
+        all.push(p);
+    }
+    all.sort();
+    r.add(&s("")).unwrap();
+    r.commit("base", sig()).unwrap();
+    let clean = |r: &Repo| {
+        let st = r.status().unwrap();
+        st.zones.iter().all(|z| z.staged.is_empty() && z.unstaged.is_empty())
+    };
+    assert!(clean(&r));
+
+    // restore of one edited file and of one deleted file (patched), others untouched
+    let (a, b, c) = (&all[10], &all[2500], &all[4990]);
+    fs::write(r.worktree().join(a), "edited a\n").unwrap();
+    fs::write(r.worktree().join(c), "edited c\n").unwrap();
+    fs::remove_file(r.worktree().join(b)).unwrap();
+    assert_eq!(r.restore(&s(a), false).unwrap().restored, 1);
+    let k: u32 = a[a.find('f').unwrap() + 1..a.len() - 4].parse().unwrap();
+    assert_eq!(fs::read_to_string(r.worktree().join(a)).unwrap(), format!("file {k}\n"));
+    assert_eq!(
+        fs::read_to_string(r.worktree().join(c)).unwrap(),
+        "edited c\n",
+        "restore of a touches only a"
+    );
+    assert_eq!(r.restore(&s(b), false).unwrap().restored, 1);
+    assert!(r.worktree().join(b).exists());
+    // a clean file restores nothing
+    assert_eq!(r.restore(&s(&all[7]), false).unwrap().restored, 0);
+
+    // add of tracked, edited files stages exactly them
+    fs::write(r.worktree().join(a), "second a\n").unwrap();
+    let rep = r.add(&[a.clone(), c.clone()]).unwrap();
+    assert_eq!(rep.staged, 2);
+    let st = r.status().unwrap();
+    let staged: BTreeSet<String> = st.zones.iter().flat_map(|z| z.staged.iter().map(|x| x.path.clone())).collect();
+    assert_eq!(staged, names(&[a.clone(), c.clone()]));
+    assert!(st.zones.iter().all(|z| z.unstaged.is_empty()), "{st:?}");
+    // add of a file that was deleted records the removal (full path), still correct
+    fs::remove_file(r.worktree().join(b)).unwrap();
+    r.add(&s(b)).unwrap();
+    assert!(!tracked(&r).contains(b.as_str()));
+    r.commit("edits", sig()).unwrap();
+    assert!(clean(&r));
+    assert_eq!(tracked(&r).len(), 4999);
+    let rep = r.fsck().unwrap();
+    assert!(rep.problems.is_empty(), "{:?}", rep.problems);
+}
