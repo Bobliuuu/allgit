@@ -1,3 +1,5 @@
+# Usage: packfmt_bench.py <path-to-vcs> <repo-with-imported-history>. Copies the repo, repacks to each format (3 runs),
+# then times fsck and log -p/--stat (5 runs, medians). Local, warm page cache. See docs/research/storage/delta-gate.md.
 import subprocess,sys,time,statistics,shutil,os
 V=sys.argv[1]; src=sys.argv[2]
 def run(c,cwd):
