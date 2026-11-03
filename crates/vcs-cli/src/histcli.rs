@@ -54,6 +54,12 @@ pub fn switch(branch: &str, zone: Option<String>, create: bool, detach: bool) ->
     let zone = zone_of_cwd(&repo, &cwd, zone)?;
     let old = crate::hooks::head_arg(&repo, &zone);
     if detach {
+        // a commit that was only fetched: pull the blobs it needs in one batch instead of one lazy round trip each
+        if let Ok(Some(url)) = repo.remote_url() {
+            if let Ok(backend) = crate::remote::open_backend(&url) {
+                let _ = repo.prefetch_rev(backend.as_ref(), &zone, branch);
+            }
+        }
         let id = repo.checkout_detached(&zone, branch)?;
         let subject = subject_of(&repo, &id);
         println!("zone {zone}: HEAD is now at {} {subject} (detached)", id.short());
