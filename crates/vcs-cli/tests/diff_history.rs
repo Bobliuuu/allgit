@@ -303,8 +303,8 @@ fn log_filters() {
     assert_eq!(subjects(&["--since", "1 day ago"]).len(), 0);
     assert!(fails(&d, &["log", "--since", "yesteryear"]).contains("cannot parse date"));
     assert_eq!(subjects(&["--grep", "^feat"]), ["feat: gamma", "feat: alpha"]);
-    assert_eq!(subjects(&["--grep", "beta|gamma"]).len(), 2);
-    assert!(fails(&d, &["log", "--grep", "("]).contains("--grep"));
+    assert_eq!(subjects(&["--grep", "beta|gamma", "-E"]).len(), 2);
+    assert!(fails(&d, &["log", "-E", "--grep", "("]).contains("--grep"));
     assert_eq!(subjects(&["-Sneedle"]), ["fix: beta"]);
     assert_eq!(subjects(&["-S", "alpha"]), ["feat: alpha"]);
     assert_eq!(subjects(&["-Snothing-here"]).len(), 0);
