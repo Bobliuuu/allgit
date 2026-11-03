@@ -5,7 +5,8 @@ filesystem (USB stick, email, air-gapped network).
 
 ```
 vcs bundle create <file> [zone | zone/branch | root-branch ...] [--since <rev>]
-vcs bundle verify <file>            # needs no repository; inside one it also checks prerequisites
+vcs bundle verify <file>            # full: hash the whole file, decode every object; inside a repository also prerequisites
+vcs bundle verify --quick <file>    # opt-in: header, refs, lengths, prerequisites only
 vcs clone <bundle> <dir>            # new repository from a complete bundle
 vcs fetch <bundle>                  # import objects, set remote-tracking heads (local branches untouched)
 ```
@@ -31,9 +32,20 @@ All integers are little endian.
 
 Header records: `pack-format vcspack2` (or `vcspack1`), `pack-bytes P`, `objects N` (each exactly once), then any number of
 `zone <id> <path> <label>` (label may be empty; the root zone has an empty path), `head <zone> <branch> <commit-hex>`
-and `prereq <commit-hex>`. Lines starting `x-` are reserved for extensions and ignored; any other unknown line is an
+`prereq <commit-hex>`, and a last line `x-hdr-blake3 <hex>`: BLAKE3 of every header byte before it (bundles written before it existed lack it). Lines starting `x-` are reserved for extensions and ignored; any other unknown line is an
 error, so a future incompatible change bumps the version instead of being half understood. The header is therefore
 readable with `head -c 400 file | strings`. The `pack-format` record selects the pack version; v2 entries carry a codec byte and a decoded size is capped at 64 MiB before any decompression.
+
+## Quick and full verify
+
+`vcs bundle verify` is full by default: every check in the next section, and it is what `fetch` and `clone` always run.
+`vcs bundle verify --quick` is an explicit opt-in that reads a few hundred bytes however big the bundle is (git's own
+`bundle verify` does not hash the pack either). It checks the magic, version and header length, the header against its
+`x-hdr-blake3` line (so a changed head, zone or length is caught), the length equation `16 + H + P + 32 == file size`
+(truncation or appended bytes), the pack's magic and that its object count equals the header's, and, when the bundle
+lists prerequisites, that a repository here has them. It does **not** hash the pack or the trailer: a flipped byte inside
+the pack body or the trailer passes `--quick`. A bundle written before the header hash existed has nothing cheap to check
+the header against, so `--quick` hashes the whole file for it instead.
 
 ## Reading untrusted files
 

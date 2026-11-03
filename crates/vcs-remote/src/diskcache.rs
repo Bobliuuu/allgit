@@ -34,7 +34,7 @@ pub struct DiskCacheBackend {
 const WHOLE: u64 = u64::MAX;
 
 fn cacheable_whole(key: &str) -> bool {
-    (key.starts_with("packs/") && key.ends_with(".idx")) || key.starts_with("objects/")
+    (key.starts_with("packs/") && (key.ends_with(".idx") || key.ends_with(".pack"))) || key.starts_with("objects/")
 }
 fn cacheable_range(key: &str) -> bool {
     key.starts_with("packs/") && key.ends_with(".pack")

@@ -253,3 +253,84 @@ fn crash_during_multi_zone_apply_leaves_all_or_nothing() {
         assert!(t.fsck().unwrap().problems.is_empty());
     }
 }
+
+#[test]
+fn quick_verify_checks_the_header_and_lengths_but_not_the_pack_body() {
+    let d = tempfile::tempdir().unwrap();
+    let a = source(d.path());
+    let f = d.path().join("x.bundle");
+    let made = a.bundle_create(&f, &[], None).unwrap();
+    let good = fs::read(&f).unwrap();
+    let q = bundle::verify_quick(&f).unwrap();
+    assert_eq!(
+        (q.objects, q.heads.len(), q.bytes),
+        (made.objects, made.heads.len(), good.len() as u64)
+    );
+    assert_eq!(q.heads, bundle::verify_file(&f).unwrap().heads);
+    let t = d.path().join("t.bundle");
+    // truncation and appended bytes are always found
+    for n in (0..good.len())
+        .step_by(1.max(good.len() / 200))
+        .chain([good.len() - 1, good.len() - 32, 8, 15, 16])
+    {
+        fs::write(&t, &good[..n]).unwrap();
+        assert!(bundle::verify_quick(&t).is_err(), "truncated to {n} accepted");
+    }
+    let mut longer = good.clone();
+    longer.push(0);
+    fs::write(&t, &longer).unwrap();
+    assert!(bundle::verify_quick(&t).is_err());
+    // every flipped bit in the preface, header and pack preface is found, with the trailer left stale
+    let hlen = u32::from_le_bytes(good[12..16].try_into().unwrap()) as usize;
+    for i in (0..16 + hlen + 12).step_by(1) {
+        for bit in [0x01u8, 0x80] {
+            let mut m = good.clone();
+            m[i] ^= bit;
+            fs::write(&t, &m).unwrap();
+            assert!(bundle::verify_quick(&t).is_err(), "flip at {i} accepted by quick verify");
+        }
+    }
+    // and with the trailer recomputed too (a consistent edit of a head id is still not the same header)
+    let at = good.windows(5).position(|w| w == b"head\t").unwrap() + 5 + 10;
+    let mut m = good.clone();
+    m[at] = if m[at] == b'a' { b'b' } else { b'a' };
+    rehash(&mut m);
+    fs::write(&t, &m).unwrap();
+    assert!(bundle::verify_quick(&t).is_err(), "edited head with a fresh trailer accepted");
+    // a flipped byte deep in the pack body is the documented gap: quick passes, full fails
+    let mut m = good.clone();
+    let mid = 16 + hlen + (good.len() - 16 - hlen - 32) / 2;
+    m[mid] ^= 0x10;
+    fs::write(&t, &m).unwrap();
+    assert!(bundle::verify_quick(&t).is_ok());
+    assert!(bundle::verify_file(&t).is_err());
+}
+
+#[test]
+fn quick_verify_hashes_whole_bundles_written_before_the_header_hash() {
+    let d = tempfile::tempdir().unwrap();
+    let a = source(d.path());
+    let f = d.path().join("x.bundle");
+    a.bundle_create(&f, &[], None).unwrap();
+    let good = fs::read(&f).unwrap();
+    let hlen = u32::from_le_bytes(good[12..16].try_into().unwrap()) as usize;
+    let text = std::str::from_utf8(&good[16..16 + hlen]).unwrap();
+    let cut = text.rfind("x-hdr-blake3").unwrap();
+    // an old-style bundle: no header hash line, new header length, fresh trailer
+    let mut old = good[..12].to_vec();
+    old.extend_from_slice(&(cut as u32).to_le_bytes());
+    old.extend_from_slice(&good[16..16 + cut]);
+    old.extend_from_slice(&good[16 + hlen..]);
+    rehash(&mut old);
+    let t = d.path().join("old.bundle");
+    fs::write(&t, &old).unwrap();
+    assert!(bundle::verify_quick(&t).is_ok());
+    assert!(bundle::verify_file(&t).is_ok());
+    // such a file is only vouched for by its whole-file hash, so any flipped bit is found
+    for i in (0..old.len()).step_by(1.max(old.len() / 300)) {
+        let mut m = old.clone();
+        m[i] ^= 0x10;
+        fs::write(&t, &m).unwrap();
+        assert!(bundle::verify_quick(&t).is_err(), "flip at {i} accepted");
+    }
+}

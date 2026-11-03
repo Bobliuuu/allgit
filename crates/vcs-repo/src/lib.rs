@@ -23,6 +23,7 @@ pub mod import_p4;
 pub mod index;
 mod index_file;
 mod indexview;
+mod journal;
 mod largeeq;
 pub mod lockable;
 pub mod manage;

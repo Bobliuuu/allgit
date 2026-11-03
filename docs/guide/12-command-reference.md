@@ -28,6 +28,7 @@ Commands:
   verify-tag     Check the Ed25519 signature of an annotated tag (exit 1 unless good)
   config         Get, set, list or unset settings (repo .vcs/config, user config, environment)
   status         Show staged, unstaged and untracked changes per zone
+  watch          Watch the working tree and journal changed paths so `status` can skip a full scan (runs until killed)
   diff           Show unstaged changes (or --staged)
   import-git     Import a `git fast-export` stream (file, or `-` for stdin) into the root zone
   import-p4      Import recorded Perforce output (fixture directory, see docs/import-p4.md) into the root zone. Checked once against real p4d output on a small history; see that document
@@ -364,6 +365,22 @@ Options:
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
+```
+
+## `vcs watch`
+
+```text
+Watch the working tree and journal changed paths so `status` can skip a full scan (runs until killed)
+
+Usage: vcs watch [OPTIONS]
+
+Options:
+  -C <DIR>                     Run as if vcs was started in <DIR> (applied before repository discovery)
+      --idle-exit <IDLE_EXIT>  Stop after this many seconds without a `status` asking for the journal (set when a command starts the watcher itself)
+      --json                   Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>          PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks               Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help                   Print help
 ```
 
 ## `vcs diff`
@@ -2707,7 +2724,7 @@ Usage: vcs bundle [OPTIONS] <COMMAND>
 
 Commands:
   create  Write a bundle of branches or zones (default: every branch) to a file
-  verify  Check a bundle's hashes, structure and completeness (needs no repository)
+  verify  Check a bundle's hashes, structure and completeness (needs no repository). --quick checks only the header, refs, lengths and prerequisites, in about a millisecond
   help    Print this message or the help of the given subcommand(s)
 
 Options:
@@ -2741,7 +2758,7 @@ Options:
 #### `vcs bundle verify`
 
 ```text
-Check a bundle's hashes, structure and completeness (needs no repository)
+Check a bundle's hashes, structure and completeness (needs no repository). --quick checks only the header, refs, lengths and prerequisites, in about a millisecond
 
 Usage: vcs bundle verify [OPTIONS] <FILE>
 
@@ -2750,6 +2767,7 @@ Arguments:
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --quick          Skip hashing the pack and decoding objects (misses corruption inside the pack body)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
@@ -2829,6 +2847,8 @@ Options:
           Also delete every remote branch of a subscribed zone that has no local branch (`git push --prune`); each deletion needs the head you last fetched (or your lease) and is audited
       --mirror
           Make the remote match this repo: force every checked-out branch (leased, like --force-with-lease), prune remote branches with no local one, and publish tags (`git push --mirror`)
+      --auto-merge[=<N>]
+          When the remote branch moved, fetch, merge it in (only if the merge is clean) and publish again, up to N times with a short randomized wait (default 20; env VCS_PUBLISH_AUTOMERGE=N also turns it on)
   -h, --help
           Print help
 ```
