@@ -22,7 +22,17 @@ use vcs_store::ObjectStore;
 
 thread_local! {
     /// Set by `prepare_index_patch`, consumed by the `write_index_bytes` that follows it.
-    static PENDING: std::cell::RefCell<Option<([u8; 32], Vec<String>)>> = const { std::cell::RefCell::new(None) };
+    static PENDING: std::cell::RefCell<Option<Pending>> = const { std::cell::RefCell::new(None) };
+}
+
+/// What `prepare_index_patch` leaves for the `write_index_bytes` after it: the paths the patch touches,
+/// and (when a filesystem-monitor state exists) the fingerprint of the index it starts from, hashed on a
+/// thread so the 7 MB hash overlaps the rest of the command instead of adding to it.
+struct Pending {
+    touched: Vec<String>,
+    old_fp: Option<std::thread::JoinHandle<[u8; 32]>>,
+    zones: Vec<u8>,
+    workspace: Vec<u8>,
 }
 
 struct Blk {
@@ -353,20 +363,38 @@ impl IndexFile {
             } else {
                 (format!("{parent}/"), format!("{parent}0"))
             };
-            let first = if parent.is_empty() { 0 } else { self.block_for(&lo) };
+            // Walk the children of `parent` in order. A directory child is stepped over as a whole
+            // (seek to the key after its last descendant) so a root with 1,000 directories decodes
+            // about 1,000 entries, not all 100,000.
+            let mut cur = lo.clone();
             let mut last_child = String::new();
-            for i in first..self.blocks.len() {
-                if !parent.is_empty() && self.blocks[i].first.as_str() >= hi.as_str() {
+            let mut cached: Option<(usize, Vec<(String, IndexEntry)>)> = None;
+            loop {
+                let bi = self.block_for(&cur);
+                if cached.as_ref().is_none_or(|c| c.0 != bi) {
+                    cached = Some((bi, self.decode_block(bi)?));
+                }
+                let v = &cached.as_ref().expect("block cached").1;
+                let at = v.partition_point(|(k, _)| k.as_str() < cur.as_str());
+                let Some((k, _)) = v.get(at) else {
+                    // `cur` sorts after everything in this block: the next block starts past it
+                    match self.blocks.get(bi + 1) {
+                        Some(nb) => {
+                            cur = nb.first.clone();
+                            continue;
+                        }
+                        None => break,
+                    }
+                };
+                if !k.starts_with(&lo) || (!parent.is_empty() && k.as_str() >= hi.as_str()) {
                     break;
                 }
-                for (k, _) in self.decode_block(i)? {
-                    if !k.starts_with(&lo) || (!parent.is_empty() && k.as_str() >= hi.as_str()) {
-                        continue;
-                    }
-                    let child = k[lo.len()..].split('/').next().unwrap_or("");
-                    if child == last_child || child == name {
-                        continue;
-                    }
+                let rest = &k[lo.len()..];
+                let (child, is_dir) = match rest.find('/') {
+                    Some(i) => (&rest[..i], true),
+                    None => (rest, false),
+                };
+                if child != last_child && child != name {
                     last_child.clear();
                     last_child.push_str(child);
                     if crate::portable::fold_component(child) == want {
@@ -378,6 +406,11 @@ impl IndexFile {
                         return Ok(Some((a, upto.to_owned())));
                     }
                 }
+                cur = if is_dir {
+                    format!("{lo}{child}0") // '0' == '/' + 1: first key after the directory
+                } else {
+                    format!("{k}\0")
+                };
             }
             return Ok(None);
         }
@@ -434,15 +467,29 @@ impl crate::repo::Repo {
     /// do not have to wait for a freshly written index to reach the disk.
     pub(crate) fn prepare_index_patch(&self, f: &IndexFile, edits: &Edits) -> Result<(Option<Vec<u8>>, usize)> {
         let (bytes, changed) = f.patch(edits)?;
-        // For the filesystem monitor: remember which index this patch starts from and what it touches.
-        let pending = if changed > 0 && crate::fsmonitor::state_exists(&self.vcs) {
-            match (self.rd("zones"), self.rd("workspace")) {
-                (Ok(z), Ok(w)) => Some((crate::fsmonitor::fingerprint(&f.bytes, &z, &w), edits.keys().cloned().collect())),
-                _ => None,
+        // Remember what this patch touches (narrows the attribute-file scan, tells the filesystem
+        // monitor what moved) and, for the monitor, which index it starts from.
+        let pending = (changed > 0).then(|| {
+            let mon = if crate::fsmonitor::state_exists(&self.vcs) {
+                match (self.rd("zones"), self.rd("workspace")) {
+                    (Ok(z), Ok(w)) => Some((z, w)),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            let (zones, workspace) = mon.clone().unwrap_or_default();
+            let old_fp = mon.map(|(z, w)| {
+                let old = f.bytes.clone();
+                std::thread::spawn(move || crate::fsmonitor::fingerprint(&old, &z, &w))
+            });
+            Pending {
+                touched: edits.keys().cloned().collect(),
+                old_fp,
+                zones,
+                workspace,
             }
-        } else {
-            None
-        };
+        });
         PENDING.with(|p| *p.borrow_mut() = pending);
         Ok((if changed == 0 { None } else { Some(bytes) }, changed))
     }
@@ -452,10 +499,29 @@ impl crate::repo::Repo {
     pub(crate) fn write_index_bytes(&self, bytes: &[u8]) -> Result<()> {
         self.store.sync()?;
         let clean = self.index_holds_no_attrs();
-        crate::meta::write_atomic_nosync(&self.vcs.join("index"), bytes)?;
-        self.carry_attrs_marker(clean, bytes);
-        if let Some((old, touched)) = PENDING.with(|p| p.borrow_mut().take()) {
-            self.fsmon_log_rewrite(Some(old), bytes, &touched);
+        let pending = PENDING.with(|p| p.borrow_mut().take());
+        let path = self.vcs.join("index");
+        // The new index's fingerprint is hashed while the file is written, not after it.
+        let (written, new_fp) = std::thread::scope(|sc| {
+            let fp = pending
+                .as_ref()
+                .filter(|p| p.old_fp.is_some())
+                .map(|p| sc.spawn(|| crate::fsmonitor::fingerprint(bytes, &p.zones, &p.workspace)));
+            let w = crate::meta::write_atomic_nosync(&path, bytes);
+            (w, fp.map(|h| h.join().expect("fingerprint thread panicked")))
+        });
+        written?;
+        match &pending {
+            // The patch knows every path it changed: only those can have introduced an attribute file.
+            Some(p) => self.carry_attrs_marker_touched(clean, &p.touched),
+            None => self.carry_attrs_marker(clean, bytes),
+        }
+        if let (Some(p), Some(new)) = (pending, new_fp) {
+            if let Some(old) = p.old_fp.and_then(|h| h.join().ok()) {
+                if new != old {
+                    crate::fsmonitor::log_rebind(&self.vcs, &old, &new, &p.touched);
+                }
+            }
         }
         Ok(())
     }
