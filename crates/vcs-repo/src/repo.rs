@@ -484,11 +484,14 @@ impl Repo {
         if !fsmonitor::state_exists(&self.vcs) {
             return None;
         }
-        Some(fsmonitor::fingerprint(
-            &self.rd("index").ok()?,
-            &self.rd("zones").ok()?,
-            &self.rd("workspace").ok()?,
-        ))
+        let ix = self.rd("index").ok()?;
+        Some(self.fingerprint_disk(&ix, &self.rd("zones").ok()?, &self.rd("workspace").ok()?))
+    }
+
+    /// [`fsmonitor::fingerprint`] of `ix_bytes`, which were just read from this worktree's index file.
+    pub(crate) fn fingerprint_disk(&self, ix_bytes: &[u8], zones: &[u8], workspace: &[u8]) -> [u8; 32] {
+        let d = fsmonitor::index_digest_cached(&self.vcs, ix_bytes);
+        fsmonitor::fingerprint_with(&d, ix_bytes.len(), zones, workspace)
     }
 
     /// Record that the index went from fingerprint `old` to `new_bytes` changing only entries in `touched`.
@@ -1298,7 +1301,7 @@ impl Repo {
     pub fn status_monitored(&self, opts: StatusOpts, mon: &dyn FsMonitor) -> Result<Status> {
         let ix_bytes = self.rd("index")?;
         let ix = Index::decode(&ix_bytes)?;
-        let fp = fsmonitor::fingerprint(&ix_bytes, &self.rd("zones")?, &self.rd("workspace")?);
+        let fp = self.fingerprint_disk(&ix_bytes, &self.rd("zones")?, &self.rd("workspace")?);
         let (prev, extra) = self.saved_state_for(fp);
         let ans = mon.changed_since(prev.as_ref().map(|s| s.token.as_str()));
         let (token, inc) = match (prev.as_ref(), ans) {
@@ -1322,7 +1325,7 @@ impl Repo {
         let fp_now = match self.rd("index") {
             Ok(b) if b == ix_bytes => fp,
             Ok(b) if Index::decode(&b).is_ok_and(|n| n.entries == ix.entries) => {
-                fsmonitor::fingerprint(&b, &self.rd("zones")?, &self.rd("workspace")?)
+                self.fingerprint_disk(&b, &self.rd("zones")?, &self.rd("workspace")?)
             }
             _ => return Ok(st),
         };
@@ -1363,7 +1366,7 @@ impl Repo {
             return None;
         }
         let mon = fsmonitor::JournalMonitor::open(&self.vcs)?;
-        let fp = fsmonitor::fingerprint(ix_bytes, &self.rd("zones").ok()?, &self.rd("workspace").ok()?);
+        let fp = self.fingerprint_disk(ix_bytes, &self.rd("zones").ok()?, &self.rd("workspace").ok()?);
         let (prev, extra) = self.saved_state_for(fp);
         let prev = prev?;
         let Changed::Paths { paths, .. } = mon.changed_since(Some(&prev.token)) else {
@@ -1502,12 +1505,15 @@ impl Repo {
         let mut st = Status::default();
         let single_zone = zones.names().count() <= 1;
         for (zone, branch) in &ws.subs {
-            let mine: Vec<(&String, &IndexEntry)> = ix
-                .entries
-                .iter()
-                .filter(|(p, _)| only.map_or(true, |o| o.contains(p.as_str())))
-                .filter(|(p, _)| (single_zone || zones.owner(p) == zone) && !ws.skips(zone, p))
-                .collect();
+            // Only a scan of the working tree needs the entry list; with the monitor's answer in hand
+            // building 100k references per command is pure overhead.
+            let mine = || -> Vec<(&String, &IndexEntry)> {
+                ix.entries
+                    .iter()
+                    .filter(|(p, _)| only.map_or(true, |o| o.contains(p.as_str())))
+                    .filter(|(p, _)| (single_zone || zones.owner(p) == zone) && !ws.skips(zone, p))
+                    .collect()
+            };
             // Subtree-skipping diff: directories whose cached or computed tree id equals HEAD's
             // are skipped; HEAD's trees are read only on paths that actually differ.
             let head_root = match self.current_head(zone, &ws, &refs) {
@@ -1530,7 +1536,7 @@ impl Repo {
                         .collect(),
                     Vec::new(),
                 ),
-                None => self.unstaged_changes(&mine, ix.written_ns)?,
+                None => self.unstaged_changes(&mine(), ix.written_ns)?,
             };
             racy_clean.extend(clean);
             st.zones.push(ZoneStatus {
