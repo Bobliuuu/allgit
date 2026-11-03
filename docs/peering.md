@@ -101,7 +101,49 @@ trusted from the authenticated upstream (use TLS between tiers: `--upstream http
 
 ## Load test
 
-`scripts/bench_peering.py` (results: see the section added below once measured).
+`scripts/bench_peering.py <bin-dir> <workdir> 400 25 64,128,256 2` on box C (c6i.4xlarge, 16 vCPU,
+loopback, load1 about 8 at the start, run under the shared `bench.lock` queue). Repository: 400
+random files x 25 KiB (9.8 MiB). Each cell is N concurrent `vcs clone`s into fresh directories; 2
+repetitions, shown as rep1 / rep2. "Origin reqs" is the delta of the origin's
+`vcs_server_requests_total`. The origin and the peer are both on the same box, so this measures
+request load and coalescing, **not** wide-area latency or bandwidth savings.
+
+| N | setup | wall s | p50 s | p99 s | origin reqs |
+|---|---|---|---|---|---|
+| 64 | direct to origin | 11.9 / 6.5 | 8.9 / 5.5 | 9.0 / 5.5 | 146 / 129 |
+| 64 | cold peer | 11.6 / 6.9 | 7.3 / 5.7 | 7.9 / 5.8 | 84 / 96 |
+| 64 | warm peer, ttl 0 | 7.1 / 7.1 | 6.2 / 5.7 | 6.2 / 5.8 | 98 / 103 |
+| 64 | warm peer, ttl 30 s | 6.6 / 6.6 | 5.9 / 5.6 | 5.9 / 5.7 | 3 / 3 |
+| 128 | direct | 13.0 / 13.6 | 11.6 / 11.5 | 11.7 / 11.6 | 257 / 257 |
+| 128 | cold peer | 12.0 / 13.8 | 10.9 / 11.6 | 11.0 / 11.8 | 165 / 170 |
+| 128 | warm peer, ttl 0 | 12.4 / 13.9 | 10.9 / 11.3 | 11.2 / 11.7 | 197 / 214 |
+| 128 | warm peer, ttl 30 s | 12.1 / 13.8 | 11.0 / 11.8 | 11.2 / 12.0 | 3 / 3 |
+| 256 | direct | 31.3 / 32.3 | 24.1 / 27.3 | 25.0 / 27.8 | 513 / 513 |
+| 256 | cold peer | 35.4 / 35.2 | 24.8 / 26.0 | 25.4 / 26.6 | 384 / 378 |
+| 256 | warm peer, ttl 0 | 36.3 / 34.8 | 25.3 / 24.8 | 26.3 / 25.9 | 407 / 418 |
+| 256 | warm peer, ttl 30 s | 36.9 / 34.4 | 24.5 / 24.9 | 25.4 / 25.9 | 3 / 3 |
+
+What it shows, honestly:
+
+* No clone failed in any of the 24 cells.
+* **Latency is a TIE** between direct and peer at every N (owner rule: within about 10 percent or
+  overlapping ranges). The clients' own CPU (16 vCPU shared by N `vcs clone` processes) dominates, not
+  the server, so a peer does not make a loopback clone faster. The one apparent gap (N=64 rep 1,
+  direct 8.9 s vs peer 6 s) is not repeated in rep 2 (5.5 vs 5.7 s) and is box noise.
+* **Origin load**: a clone costs the origin about 2 requests directly. A cold peer cut that by
+  about 25 to 35 percent (it coalesces the identical index and pack reads of concurrent clones). A
+  warm peer at ttl 0 still sends about 1.6 requests per clone to the origin, because every clone
+  revalidates the manifest and the listing (conditional GET, no body) and a few other
+  non-cacheable calls pass through; I did not break these down further. With
+  `--upstream-manifest-ttl 30` the origin saw **3 requests for the whole batch**, whatever N was.
+  That is the read-scaling result: bytes and per-object requests are absorbed by the peer, and
+  freshness is a knob.
+* The response-bytes counter was read from the same `/metrics` output but the batch rows after the
+  first show 0 MiB, which I could not explain in the time available (probably the counter's
+  accounting for responses over a size or on keep-alive connections), so no byte numbers are
+  claimed here. Savings in bytes across a real wide-area link were not measured.
+* Not measured: pushes through a peer under load (correctness is tested; throughput is the
+  highload benchmark's area), multi-host, real WAN latency, S3 origin.
 
 ## What this does not do (yet)
 
