@@ -126,7 +126,7 @@ def vcs_all_commits(t, n=20):
         for c in z["history"]["recent"]:
             e = merged.setdefault(c["subject"], [c["timestamp"], set(), c["id"]])
             for f in c["files"]:
-                e[1].add((z["path"] + "/" + f["path"]) if z["path"] else f["path"])
+                e[1].add(f["path"])
     return merged
 
 

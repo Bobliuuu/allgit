@@ -1,5 +1,7 @@
 # Agent benchmark: understanding a repository through vcs vs git
 
+> **Note (round 3, offline only):** the round-2 live numbers below were measured **before** the fixes described in the last section (git-style `--grep`, repo-relative paths in `zone describe`, `zone changes COMMIT`). They do not reflect the current vcs. A live re-run (new prompt v4) has **not** been done: it needs the owner's approval because total OpenAI spend (about US$1.4) already exceeds the original budget.
+
 Status: harness implemented; round 1 (two live runs) and round 2 (after the vcs fixes, on held-out tasks) below. Small sample, one model: read the caveats before quoting any number.
 
 Question: does a zone-aware tool, plus the [zone ontology](../zone-ontology.md), let an agent answer repository questions in fewer steps
@@ -264,3 +266,19 @@ Tuning set: vcs 1.04 calls and 2,697 bytes per task (was 1.42 / 5,648), git 2.25
 * The git baseline is told the zone layout; the vcs agent learns commands from the prompt. Both prompts are fixed text in `harness.py`.
 * Spend: about US$0.72 in round 2 (US$0.34 held-out, US$0.38 tuning-set vcs), about US$1.4 over both rounds including the smoke run; list prices not re-verified.
 * Not measured: `log -F`, any further prompt, models other than gpt-4.1-mini, real repositories.
+
+## Round 3 (offline only): fixes for the failures found in the round-2 transcripts
+
+I read the failing vcs transcripts of the held-out merge/changes tasks (`data/agent-bench/live-round2-holdout-prompt-v3.jsonl`) for causes other than the `+` regex problem. Real vcs-side problems found and fixed:
+
+| Observed in transcripts | Fix |
+|---|---|
+| `--grep 'api+core: ...'` matched nothing (regex `+`) in vcs but works in git | `vcs log --grep` now uses git's semantics: basic regex by default (`+ ? | ( ) { }` literal, `\+ \| \( \)` operators), `-E` extended, `-F` fixed, `-i` ignore case, `^`/`$` per message line. `crates/vcs-cli/tests/log_grep.rs` runs 35 patterns through real git and vcs on the same subjects and requires identical results. One known difference: git's `--grep '^$'` matches every commit (it searches the raw commit buffer); vcs does not |
+| `log --all-zones` with no match printed "zone root: no commits yet" (read by agents as "no such commit") | fixed in #448 |
+| `zone changes X` / `X^..X` / `X~1..X` (how agents asked "what did this commit change") errored | `zone changes COMMIT` and `^`/`~N` suffixes now work (state before the operation that introduced the commit) |
+| `zone describe` listed files relative to the zone while questions ask for repo paths; agents had to prefix the zone path | commit file lists are now repo-relative (schema updated) |
+| `vcs log --max-count N` rejected (git muscle memory) | alias of `-n` |
+
+Not changed: `vcs log -1` (git's numeric shorthand), `vcs diff --name-only A B`, and a commit id as the `log` argument (it takes a branch) were also tried by agents and fail; they are listed as follow-ups.
+
+Offline oracles after these fixes (`data/agent-bench/offline-oracle-round3-*.jsonl`, box E): all 24 + 19 episodes correct for both tools. vcs mean tool output is 2,814 bytes per task on the tuning set and 2,402 on the held-out set (was 2,697 and 2,297 in round 2: repo-relative paths cost about 4% more bytes); calls 1.04 and 1.05. Git: 834 and 782 bytes, 2.25 and 2.16 calls. `harness.py --prompt v4` describes the new behaviour; it has not been run live.

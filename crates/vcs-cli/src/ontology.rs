@@ -287,9 +287,9 @@ fn owners_for(rules: &[(String, Vec<String>)], path: &str) -> Vec<String> {
 
 // ------------------------------------------------------------------ per-zone documents
 
-fn changed_files(repo: &Repo, c: &vcs_objects::Commit) -> Vec<(String, &'static str)> {
+fn changed_files(repo: &Repo, c: &vcs_objects::Commit, prefix: &str) -> Vec<(String, &'static str)> {
     let parent_root = c.parents.first().and_then(|p| repo.commit_of(p).ok()).map(|p| p.root);
-    let Ok(d) = treeops::diff_trees_files(repo.store(), parent_root, Some(c.root), "") else {
+    let Ok(d) = treeops::diff_trees_files(repo.store(), parent_root, Some(c.root), prefix) else {
         return vec![];
     };
     let mut out: BTreeMap<String, &'static str> = BTreeMap::new();
@@ -306,14 +306,14 @@ const FILE_CAP: usize = 100;
 const COUNT_CAP: usize = 1000;
 const AUTHOR_WINDOW: usize = 200;
 
-fn history(repo: &Repo, zone: &str, branch: &str, n: usize, since: Option<u64>) -> Result<(J, J, J), Error> {
+fn history(repo: &Repo, zone: &str, prefix: &str, branch: &str, n: usize, since: Option<u64>) -> Result<(J, J, J), Error> {
     let log = repo.log(zone, Some(branch), COUNT_CAP.max(n))?;
     let recent: Vec<J> = log
         .iter()
         .filter(|(_, c)| since.is_none_or(|s| c.author.timestamp >= s))
         .take(n)
         .map(|(id, c)| {
-            let files = changed_files(repo, c);
+            let files = changed_files(repo, c, prefix);
             let truncated = files.len() > FILE_CAP;
             J::Obj(vec![
                 ("id", hex(id)),
@@ -416,7 +416,7 @@ fn describe(a: &DescribeArgs, json: bool) -> Result<(), Error> {
         let path = m.zones.path_of(z).unwrap_or("").to_owned();
         let purpose = purpose(&repo, &m.flat, &m.zones, z).map_or(J::Null, |(t, src)| J::Obj(vec![("text", s(t)), ("source", s(src))]));
         let (recent, authors, count) = match m.heads.get(z) {
-            Some((b, _)) => history(&repo, z, b, a.history, since)?,
+            Some((b, _)) => history(&repo, z, m.zones.path_of(z).unwrap_or(""), b, a.history, since)?,
             None => (J::Arr(vec![]), J::Arr(vec![]), J::Null),
         };
         let co_rules = owners.as_ref().map(|(_, r)| owners_for(r, &path)).unwrap_or_default();
@@ -942,6 +942,20 @@ fn explain(a: &ExplainArgs, json: bool) -> Result<(), Error> {
 /// oldest operation whose view has the commit as a branch head, an operation id prefix, or the
 /// newest operation not newer than a date. `None` is "before everything" (start) / "now" (end).
 fn range_end(repo: &Repo, ops: &[(ObjectId, vcs_objects::Operation)], tok: &str, start: bool) -> Result<Option<usize>, Error> {
+    // `X^` / `X~N`: the state N operations before the one that introduced X (git-style suffixes)
+    if let Some(i) = tok.rfind(['^', '~']).filter(|i| *i > 0) {
+        let (base, suffix) = (&tok[..i], &tok[i..]);
+        let n = match &suffix[1..] {
+            "" => Some(1),
+            d => d.parse::<usize>().ok(),
+        };
+        if let Some(n) = n {
+            return Ok(match range_end(repo, ops, base, start)? {
+                Some(k) if k + n < ops.len() => Some(k + n),
+                _ => None, // before the first operation: the empty repository
+            });
+        }
+    }
     if tok.is_empty() || (tok == "HEAD" && !start) {
         return Ok(if start { None } else { Some(0) });
     }
@@ -966,7 +980,13 @@ fn range_end(repo: &Repo, ops: &[(ObjectId, vcs_objects::Operation)], tok: &str,
 
 fn changes(a: &ChangesArgs, json: bool) -> Result<(), Error> {
     let (repo, _) = crate::open()?;
-    let Some((from, to)) = a.range.split_once("..") else {
+    // `X` alone means "what commit X changed": `X^..X`
+    let range = if a.range.contains("..") {
+        a.range.clone()
+    } else {
+        format!("{0}^..{0}", a.range)
+    };
+    let Some((from, to)) = range.split_once("..") else {
         return Err(Error::Msg("expected A..B".into()));
     };
     let zones = repo.zones()?;

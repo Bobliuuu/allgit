@@ -28,12 +28,19 @@ pub struct LogExtra {
     /// Only commits at or before this date (a date without time includes that whole day)
     #[arg(long, value_name = "DATE")]
     pub until: Option<String>,
-    /// Only commits whose message matches this regular expression
+    /// Only commits whose message matches this pattern: a POSIX basic regular expression like `git log --grep`
+    /// (so `+ ? | ( ) { }` are literal; `\+ \? \| \( \)` are the operators), or see -E / -F
     #[arg(long, value_name = "REGEX")]
     pub grep: Option<String>,
-    /// Treat the `--grep` text as a plain string, not a regular expression (`+`, `(`, `.` are literal)
+    /// Treat `--grep` / `-G` patterns as plain strings (`+`, `(`, `.` are literal)
     #[arg(short = 'F', long)]
     pub fixed_strings: bool,
+    /// Treat `--grep` / `-G` patterns as extended regular expressions (`+ ? | ( )` are operators)
+    #[arg(short = 'E', long)]
+    pub extended_regexp: bool,
+    /// Match `--grep` / `-G` patterns case-insensitively
+    #[arg(short = 'i', long)]
+    pub regexp_ignore_case: bool,
     /// Only merge commits (two or more parents)
     #[arg(long, conflicts_with = "no_merges")]
     pub merges: bool,
@@ -100,6 +107,18 @@ impl LogExtra {
             || self.pickaxe_regex.is_some()
             || self.follow
     }
+    /// Compile a `--grep` / `-G` pattern with git's rules: basic regex by default, `-E` extended,
+    /// `-F` fixed string, `-i` ignore case; `^` and `$` match at line boundaries of a message.
+    fn compile(&self, pat: &str) -> Result<Regex, regex::Error> {
+        let body = if self.fixed_strings {
+            regex::escape(pat)
+        } else if self.extended_regexp {
+            pat.to_owned()
+        } else {
+            bre_to_regex(pat)
+        };
+        Regex::new(&format!("(?m){}{body}", if self.regexp_ignore_case { "(?i)" } else { "" }))
+    }
     pub fn lists_files(&self) -> bool {
         self.name_status || self.name_only
     }
@@ -141,7 +160,7 @@ impl LogExtra {
         let re = self
             .grep
             .as_deref()
-            .map(|g| Regex::new(&if self.fixed_strings { regex::escape(g) } else { g.to_owned() }))
+            .map(|g| self.compile(g))
             .transpose()
             .map_err(|e| Error::Msg(format!("--grep: {e}")))?;
         shown.retain(|(_, c)| {
@@ -189,7 +208,7 @@ impl LogExtra {
             shown.retain(|_| it.next().unwrap_or(false));
         }
         if let Some(pat) = &self.pickaxe_regex {
-            let re = Regex::new(pat).map_err(|e| Error::Msg(format!("-G: {e}")))?;
+            let re = self.compile(pat).map_err(|e| Error::Msg(format!("-G: {e}")))?;
             let by_id: BTreeMap<ObjectId, &Commit> = all.iter().map(|(i, c)| (*i, c)).collect();
             let mut keep = Vec::with_capacity(shown.len());
             for (_, c) in shown.iter() {
@@ -406,6 +425,98 @@ fn pickaxe_hit(
         }
     }
     Ok(false)
+}
+
+/// Translate a POSIX basic regular expression (GNU flavour, what `git log --grep` uses by default)
+/// to the `regex` crate's syntax: bare `+ ? | ( ) { }` are literals, `\+ \? \| \( \) \{ \}` are
+/// operators, `*` at the start is literal, `^` / `$` anchor only at the ends, `\< \>` are word boundaries.
+pub fn bre_to_regex(p: &str) -> String {
+    let cs: Vec<char> = p.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    let mut start = true; // at the start of the pattern or of a group / alternative
+    while i < cs.len() {
+        let c = cs[i];
+        let mut next_start = false;
+        match c {
+            '\\' if i + 1 < cs.len() => {
+                let d = cs[i + 1];
+                i += 1;
+                match d {
+                    '(' => {
+                        out.push('(');
+                        next_start = true;
+                    }
+                    '|' => {
+                        out.push('|');
+                        next_start = true;
+                    }
+                    ')' | '{' | '}' | '+' | '?' => out.push(d),
+                    '<' | '>' => out.push_str("\\b"),
+                    d if d.is_ascii_alphanumeric() => {
+                        out.push('\\');
+                        out.push(d);
+                    }
+                    d => out.push_str(&regex::escape(&d.to_string())),
+                }
+            }
+            '+' | '?' | '|' | '(' | ')' | '{' | '}' => {
+                out.push('\\');
+                out.push(c);
+            }
+            '*' if start => out.push_str("\\*"),
+            '^' if start => {
+                out.push('^');
+                next_start = true;
+            }
+            '^' => out.push_str("\\^"),
+            '$' => {
+                let end = i + 1 == cs.len() || (cs[i + 1] == '\\' && matches!(cs.get(i + 2), Some(')') | Some('|')));
+                out.push_str(if end { "$" } else { "\\$" });
+            }
+            '[' => {
+                // a bracket expression is copied through its closing `]` (a leading `]` is literal)
+                let mut j = i + 1;
+                if cs.get(j) == Some(&'^') {
+                    j += 1;
+                }
+                if cs.get(j) == Some(&']') {
+                    j += 1;
+                }
+                while j < cs.len() && cs[j] != ']' {
+                    if cs[j] == '[' && matches!(cs.get(j + 1), Some(':') | Some('.') | Some('=')) {
+                        let close = cs[j + 1];
+                        while j + 1 < cs.len() && !(cs[j] == close && cs[j + 1] == ']') {
+                            j += 1;
+                        }
+                        j += 1;
+                    }
+                    j += 1;
+                }
+                let end = j.min(cs.len() - 1);
+                // inside a POSIX bracket expression `\` and a lone `[` are literal; `[:class:]` stays
+                let mut body = String::new();
+                let mut k = i;
+                while k <= end {
+                    let ch = cs[k];
+                    if ch == '[' && k > i && !matches!(cs.get(k + 1), Some(':') | Some('.') | Some('=')) {
+                        body.push_str("\\[");
+                    } else if ch == '\\' {
+                        body.push_str("\\\\");
+                    } else {
+                        body.push(ch);
+                    }
+                    k += 1;
+                }
+                out.push_str(&body);
+                i = end;
+            }
+            c => out.push(c),
+        }
+        start = next_start;
+        i += 1;
+    }
+    out
 }
 
 /// `-G`: does the commit add or remove (net, per file) a line matching `re`? Lines are compared
