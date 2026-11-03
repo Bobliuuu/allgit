@@ -251,6 +251,16 @@ impl Repo {
 
     /// Commit metadata and its diff against the first parent.
     pub fn show(&self, zone: &str, rev: &str) -> Result<ShowReport> {
+        self.show_inner(zone, rev, true)
+    }
+
+    /// [`Repo::show`] without the unified diff (`diff` is empty): for renderers that build their own
+    /// listing (`--stat`, `--name-only`, ...) and would only discard it.
+    pub fn show_meta(&self, zone: &str, rev: &str) -> Result<ShowReport> {
+        self.show_inner(zone, rev, false)
+    }
+
+    fn show_inner(&self, zone: &str, rev: &str, with_diff: bool) -> Result<ShowReport> {
         let zone = self.known_zone(zone)?;
         let id = self.resolve_rev(&zone, rev)?;
         let tag = {
@@ -261,6 +271,14 @@ impl Repo {
             }
         };
         let commit = self.commit_obj(&id)?;
+        if !with_diff {
+            return Ok(ShowReport {
+                id,
+                commit,
+                tag,
+                diff: String::new(),
+            });
+        }
         let prefix = self.zones()?.path_of(&zone).unwrap_or("").to_owned();
         let parent = match commit.parents.first() {
             Some(p) => Some(self.commit_obj(p)?),
