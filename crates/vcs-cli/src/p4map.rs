@@ -1968,10 +1968,12 @@ fn exec(st: &Step, quiet: bool) -> Result<(), Error> {
             let mut l = Ledger::load(repo.worktree());
             match l.pending.get(n) {
                 None => return msg(format!("p4 change -d: pending changelist {n} does not exist")),
-                Some(c) if !c.files.is_empty() => return msg(format!(
+                Some(c) if !c.files.is_empty() => {
+                    return msg(format!(
                     "p4 change -d: changelist {n} has {} open file(s): `vcs p4 revert -c {n}` or `vcs p4 reopen -c default <files>` first",
                     c.files.len()
-                )),
+                ))
+                }
                 Some(_) => {}
             }
             l.pending.remove(n);

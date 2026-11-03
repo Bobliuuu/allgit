@@ -64,7 +64,11 @@ fn warm_cache_serves_clone_without_remote_pack_reads_and_rejects_corruption() {
         std::fs::set_permissions(f, std::fs::Permissions::from_mode(0o000)).unwrap();
     }
     let o = vcs(root, &cache, &["clone", r, "c"]);
-    assert!(o.status.success(), "warm clone must not read remote bytes: {}", String::from_utf8_lossy(&o.stderr));
+    assert!(
+        o.status.success(),
+        "warm clone must not read remote bytes: {}",
+        String::from_utf8_lossy(&o.stderr)
+    );
     assert_eq!(
         std::fs::read_to_string(root.join("c/f3.txt")).unwrap(),
         std::fs::read_to_string(a.join("f3.txt")).unwrap()

@@ -10,7 +10,10 @@ fn server_bin() -> PathBuf {
     let p = vcs.with_file_name("vcs-server");
     if !p.exists() {
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-        let st = Command::new(cargo).args(["build", "-p", "vcs-server", "--bin", "vcs-server"]).status().unwrap();
+        let st = Command::new(cargo)
+            .args(["build", "-p", "vcs-server", "--bin", "vcs-server"])
+            .status()
+            .unwrap();
         assert!(st.success() && p.exists(), "could not build vcs-server");
     }
     p
@@ -23,14 +26,21 @@ fn server_refuses_to_start_while_the_client_credential_can_write_the_manifest() 
         return;
     };
     let var = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_owned());
-    let (ak, sk) = (var("VCS_TEST_S3_ACCESS_KEY", "minioadmin"), var("VCS_TEST_S3_SECRET_KEY", "minioadmin"));
+    let (ak, sk) = (
+        var("VCS_TEST_S3_ACCESS_KEY", "minioadmin"),
+        var("VCS_TEST_S3_SECRET_KEY", "minioadmin"),
+    );
     let bucket = format!("selfcheck-{}", std::process::id());
     let admin = vcs_store_s3::S3Backend::new_unchecked(vcs_store_s3::S3Config::new(&ep, &bucket, &ak, &sk)).unwrap();
     admin.ensure_bucket().unwrap();
     let t = tempfile::tempdir().unwrap();
     let hash = Command::new(server_bin()).args(["hash-token", "tok"]).output().unwrap();
     let tokens = t.path().join("tokens");
-    std::fs::write(&tokens, format!("alice write * {}\n", String::from_utf8(hash.stdout).unwrap().trim())).unwrap();
+    std::fs::write(
+        &tokens,
+        format!("alice write * {}\n", String::from_utf8(hash.stdout).unwrap().trim()),
+    )
+    .unwrap();
     let url = format!("s3://{bucket}/repo?endpoint={ep}");
     let run = |check: bool| {
         let mut c = Command::new(server_bin());

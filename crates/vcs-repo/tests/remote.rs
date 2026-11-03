@@ -383,7 +383,10 @@ fn fetched_commit_is_addressable_by_id_prefix_and_origin_name() {
     assert_eq!(b.resolve_rev("engine", &new_id.to_hex()[..12]).unwrap(), new_id);
     assert_eq!(b.resolve_rev("engine", &new_id.to_hex()).unwrap(), new_id);
     assert_eq!(b.resolve_rev("engine", "origin/main").unwrap(), new_id);
-    assert_eq!(b.resolve_rev("engine", "origin/main~1").unwrap(), b.resolve_rev("engine", "HEAD").unwrap());
+    assert_eq!(
+        b.resolve_rev("engine", "origin/main~1").unwrap(),
+        b.resolve_rev("engine", "HEAD").unwrap()
+    );
 }
 
 #[test]

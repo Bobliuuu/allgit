@@ -188,7 +188,10 @@ fn open_backend(a: &[String]) -> (Box<dyn Backend>, String) {
             let mut cfg = Config::new(table);
             cfg.max_connections = 4096;
             cfg.group_commit = a.get(2).map(String::as_str) == Some("http");
-            cfg.log = std::sync::Arc::new(vcs_server::log::Logger::new(vcs_server::log::Format::Text, vcs_server::log::Level::Error));
+            cfg.log = std::sync::Arc::new(vcs_server::log::Logger::new(
+                vcs_server::log::Format::Text,
+                vcs_server::log::Level::Error,
+            ));
             let mem = std::sync::Arc::new(MemBackend::new());
             let srv = Box::leak(Box::new(Server::start(mem.clone(), cfg, "127.0.0.1:0").expect("server")));
             let url = format!("http://{}", srv.local_addr());

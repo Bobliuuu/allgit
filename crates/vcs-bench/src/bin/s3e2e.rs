@@ -12,7 +12,11 @@ use vcs_repo::Repo;
 use vcs_store_s3::{S3Backend, S3Config};
 
 fn sig() -> Signature {
-    Signature { name: "b".into(), email: "b@x".into(), timestamp: 1 }
+    Signature {
+        name: "b".into(),
+        email: "b@x".into(),
+        timestamp: 1,
+    }
 }
 fn noise(seed: u64, n: usize) -> String {
     let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
@@ -41,17 +45,27 @@ fn main() {
         std::process::exit(2);
     }
     let (endpoint, bucket) = (&a[1], &a[2]);
-    let num = |name: &str, d: usize| a.iter().position(|x| x == name).and_then(|i| a.get(i + 1)).and_then(|v| v.parse().ok()).unwrap_or(d);
+    let num = |name: &str, d: usize| {
+        a.iter()
+            .position(|x| x == name)
+            .and_then(|i| a.get(i + 1))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(d)
+    };
     let (trials, files, commits) = (num("--trials", 5), num("--files", 300), num("--commits", 50));
     let base = S3Config::from_env(endpoint, bucket).expect("AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY not set");
     if a.iter().any(|x| x == "--create-bucket") {
         S3Backend::new_unchecked(base.clone()).unwrap().ensure_bucket().unwrap();
     }
-    let t0 = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let t0 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
     println!("endpoint {endpoint} trials {trials} files {files} commits {commits} (a local server, not a cloud)");
 
     // ---- repository workloads: publish, incremental publish, clone, fetch ----
-    let (mut p_ms, mut p_rq, mut i_ms, mut i_rq, mut c_ms, mut c_rq, mut f_ms, mut f_rq) = (vec![], vec![], vec![], vec![], vec![], vec![], vec![], vec![]);
+    let (mut p_ms, mut p_rq, mut i_ms, mut i_rq, mut c_ms, mut c_rq, mut f_ms, mut f_rq) =
+        (vec![], vec![], vec![], vec![], vec![], vec![], vec![], vec![]);
     for t in 0..trials {
         let dir = tempfile::tempdir().unwrap();
         let mut cfg = base.clone();
@@ -138,7 +152,10 @@ fn main() {
     report("GET 1 KiB, pooled connection", &mut g_pooled, "ms");
     report("GET 1 KiB, new connection each time", &mut g_fresh, "ms");
     let (mp, mf) = (stats(&mut g_pooled).0, stats(&mut g_fresh).0);
-    println!("connection setup share of a fresh-connection GET: {:.0}% (p50 {mf:.2} ms vs {mp:.2} ms pooled)", (mf - mp) / mf * 100.0);
+    println!(
+        "connection setup share of a fresh-connection GET: {:.0}% (p50 {mf:.2} ms vs {mp:.2} ms pooled)",
+        (mf - mp) / mf * 100.0
+    );
     report("PUT 1 KiB create-only, pooled", &mut p_put, "ms");
 
     // ---- 16-thread GET throughput ----
@@ -160,7 +177,13 @@ fn main() {
             h.join().unwrap();
         }
         let el = s.elapsed().as_secs_f64();
-        println!("GET 1 KiB x{} threads: {:.0} req/s ({} requests in {:.2} s)", threads, (threads * per) as f64 / el, threads * per, el);
+        println!(
+            "GET 1 KiB x{} threads: {:.0} req/s ({} requests in {:.2} s)",
+            threads,
+            (threads * per) as f64 / el,
+            threads * per,
+            el
+        );
     }
 
     // ---- what SigV4 costs on the client ----
@@ -174,7 +197,11 @@ fn main() {
             acc ^= Sha256::digest(&data)[0];
         }
         let per = s.elapsed().as_secs_f64() / reps as f64;
-        println!("sha256 of {label} body: {:.1} us ({:.0} MB/s) [{acc}]", per * 1e6, n as f64 / per / 1e6);
+        println!(
+            "sha256 of {label} body: {:.1} us ({:.0} MB/s) [{acc}]",
+            per * 1e6,
+            n as f64 / per / 1e6
+        );
     }
     let big = vec![9u8; 1 << 20];
     let mut put_big = time(&mut |i| {

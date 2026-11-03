@@ -1214,9 +1214,7 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str, extra: &mu
                 if_match.clone(),
                 sh.manifest_cache.lock().unwrap_or_else(|e| e.into_inner()).clone(),
             ) {
-                let c = sh
-                    .manifest_parsed(&ctag)
-                    .or_else(|| Manifest::decode(&cbytes).ok().map(Arc::new));
+                let c = sh.manifest_parsed(&ctag).or_else(|| Manifest::decode(&cbytes).ok().map(Arc::new));
                 if let (Some(c), Ok(n)) = (c, Manifest::decode(&req.body)) {
                     if let Some(m) = chain_guard.as_ref().and_then(|g| g.merge(&base, &ctag, &c, &n)) {
                         stale_merge = Some(m);

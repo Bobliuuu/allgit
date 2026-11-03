@@ -178,7 +178,7 @@ impl Backend for MemoBackend {
                     return Ok(Some(v));
                 }
             }
-                    let r = self.inner.get(key)?;
+            let r = self.inner.get(key)?;
             match &r {
                 Some(v) => {
                     if let Some(d) = &self.disk {

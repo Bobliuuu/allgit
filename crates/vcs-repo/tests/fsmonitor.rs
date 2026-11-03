@@ -453,8 +453,8 @@ fn state_for_another_index_is_not_trusted() {
     assert_same(&r, &m, "cold");
     w(&r, "a/x.txt", "staged edit");
     r.add(&["a/x.txt".to_string()]).unwrap(); // index changed, monitor saw nothing
-    // `add` logs its rewrite, so the state would follow it; drop the log to model an index changed by
-    // something that does not (another tool): the state is then bound to an index it cannot connect to
+                                              // `add` logs its rewrite, so the state would follow it; drop the log to model an index changed by
+                                              // something that does not (another tool): the state is then bound to an index it cannot connect to
     let _ = fs::remove_file(r.worktree().join(".vcs/fsmon/rebind"));
     w(&r, "top.txt", "unreported edit");
     assert_same(&r, &m, "index changed");
