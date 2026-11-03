@@ -90,6 +90,7 @@ impl Repo {
         let doomed: BTreeSet<ObjectId> = first.would_delete.iter().map(|x| x.0).filter(|i| confirmed.contains(i)).collect();
         let deleted: Vec<(ObjectId, Kind)> = second.would_delete.iter().filter(|x| doomed.contains(&x.0)).copied().collect();
         let sweep = self.store.sweep(&doomed)?;
+        self.warm_commit_graph();
         Ok(GcRun {
             rechecked_out: first.would_delete.len() - doomed.len(),
             plan: second,
@@ -119,20 +120,33 @@ impl Repo {
         let ids = self.store.list()?;
         let roots = self.gc_roots()?;
         let mut missing = 0usize;
-        let mut marked: BTreeSet<ObjectId> = BTreeSet::new();
-        let mut stack: Vec<ObjectId> = roots;
-        while let Some(id) = stack.pop() {
-            if !marked.insert(id) {
-                continue;
-            }
-            match self.store.get(&id) {
-                Ok(o) => children(&o, &mut stack),
-                Err(vcs_store::StoreError::NotFound(_)) => {
-                    marked.remove(&id);
-                    missing += 1;
+        let mut marked: std::collections::HashSet<ObjectId> = std::collections::HashSet::with_capacity(ids.len());
+        // Mark level by level; each level's objects are read (and hash-verified) on several threads.
+        let mut level: Vec<ObjectId> = roots;
+        while !level.is_empty() {
+            level.sort_unstable();
+            level.dedup();
+            level.retain(|id| !marked.contains(id));
+            let got = par_map(&level, |id| match self.store.get(id) {
+                Ok(o) => {
+                    let mut kids = Vec::new();
+                    children(&o, &mut kids);
+                    Ok(Some(kids))
                 }
-                Err(e) => return Err(e.into()),
+                Err(vcs_store::StoreError::NotFound(_)) => Ok(None),
+                Err(e) => Err(crate::Error::from(e)),
+            });
+            let mut next = Vec::new();
+            for (id, r) in level.iter().zip(got) {
+                match r? {
+                    Some(kids) => {
+                        marked.insert(*id);
+                        next.extend(kids);
+                    }
+                    None => missing += 1,
+                }
             }
+            level = next;
         }
         let mut rep = GcReport {
             total: ids.len(),
@@ -168,7 +182,7 @@ impl Repo {
         // Read the raw files even when `rebase_state` would call them stale: keeping is free.
         if let Some(rs) = self.rebase_state_raw()? {
             roots.extend([rs.orig, rs.cursor, rs.current]);
-            roots.extend(rs.todo.iter().copied());
+            roots.extend(rs.todo_ids());
         }
         if let Some((_, src)) = self.pick_marker()? {
             roots.push(src);
@@ -201,13 +215,32 @@ impl Repo {
         }
         // Transactions are not reachable from commits and there is no local transaction log yet,
         // so every stored Transaction is a root until the remote/tx-log design lands.
-        for id in self.store.list()? {
-            if matches!(self.store.get(&id), Ok(Object::Transaction(_))) {
-                roots.push(id);
-            }
-        }
+        let all = self.store.list()?;
+        let is_tx = par_map(&all, |id| matches!(self.store.get(id), Ok(Object::Transaction(_))));
+        roots.extend(all.iter().zip(is_tx).filter(|(_, t)| *t).map(|(id, _)| *id));
         Ok(roots)
     }
+}
+
+/// `f` over `items` on several threads (small inputs stay on the caller), results in order.
+fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let threads = if items.len() < 256 {
+        1
+    } else {
+        std::thread::available_parallelism().map_or(1, |n| n.get()).min(16)
+    };
+    if threads == 1 {
+        return items.iter().map(f).collect();
+    }
+    let per = items.len().div_ceil(threads);
+    std::thread::scope(|sc| {
+        let f = &f;
+        let hs: Vec<_> = items
+            .chunks(per)
+            .map(|ch| sc.spawn(move || ch.iter().map(f).collect::<Vec<_>>()))
+            .collect();
+        hs.into_iter().flat_map(|h| h.join().expect("gc worker panicked")).collect()
+    })
 }
 
 pub(crate) fn children(o: &Object, out: &mut Vec<ObjectId>) {

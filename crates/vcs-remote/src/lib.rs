@@ -4,14 +4,18 @@
 //! The publish protocol is an explicit step machine ([`Publisher::step`]) so that the
 //! model-checking test can interleave writers and inject crashes between any two steps.
 
+pub mod autocompact;
 pub mod backend;
 pub mod compact;
+pub mod clientcache;
+pub mod diskcache;
 pub mod fsbackend;
 pub mod gc;
 pub mod idxcache;
 pub mod locks;
 pub mod manifest;
 pub mod membackend;
+pub mod memo;
 pub mod packfetch;
 pub mod par;
 pub mod protocol;
@@ -19,16 +23,21 @@ pub mod retry;
 #[cfg(feature = "sharded")]
 pub mod shard;
 pub mod shelf;
+pub mod smallpack;
 pub mod stats;
+pub mod timeline;
 
-pub use backend::{Backend, BackendError, Conditional, Versioned};
+pub use backend::{Backend, BackendError, Conditional, SharedBytes, Versioned};
 pub use compact::{compact, CompactOptions, CompactReport};
+pub use clientcache::ClientCache;
+pub use diskcache::DiskCacheBackend;
 pub use fsbackend::FsBackend;
-pub use idxcache::IdxCacheBackend;
 pub use gc::{remote_gc, GcError, RemoteGcOptions, RemoteGcReport};
+pub use idxcache::IdxCacheBackend;
 pub use locks::LockFault;
 pub use manifest::{Lock, Manifest};
 pub use membackend::{CasFault, MemBackend};
+pub use memo::MemoBackend;
 pub use packfetch::fetch_many;
 pub use protocol::{
     changed_paths, fetch_heads, fetch_heads_lazy, fetch_heads_lazy_shared, fetch_heads_lazy_with, fetch_object, fetch_objects,

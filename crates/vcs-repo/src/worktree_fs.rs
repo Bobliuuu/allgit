@@ -45,7 +45,20 @@ pub struct DirEnt {
     pub kind: FileKind,
 }
 
+/// State for a run of [`WorktreeFs::stat_seq`] calls over paths in sorted order: the last directory,
+/// opened once so each file costs one name lookup instead of a walk from the worktree root.
+/// Create one per thread per scan; never keep it across operations that may replace directories.
+#[derive(Default)]
+pub struct StatCursor {
+    #[cfg(unix)]
+    dir: Option<(String, Option<fs::File>)>,
+}
+
 pub trait WorktreeFs: Send + Sync {
+    /// [`WorktreeFs::stat`] for a caller walking sorted paths; same result, possibly cheaper.
+    fn stat_seq(&self, _cur: &mut StatCursor, path: &str) -> io::Result<FsStat> {
+        self.stat(path)
+    }
     /// Entries of `dir` (no `.` / `..`), in no particular order. Non-UTF-8 names are lossily
     /// converted, as status always did.
     fn read_dir(&self, dir: &str) -> io::Result<Vec<DirEnt>>;
@@ -62,6 +75,23 @@ pub trait WorktreeFs: Send + Sync {
     /// the path. Callers fall back to [`WorktreeFs::write`] on `AlreadyExists`.
     fn create_new(&self, path: &str, data: &[u8], mode: EntryMode) -> io::Result<FsStat> {
         self.write(path, data, mode)
+    }
+    /// Atomically publish a regular file of `len` bytes at `path` (creating parent directories) whose
+    /// content `fill` writes into an already-created temporary file in the same directory, which is
+    /// renamed over `path` only when `fill` succeeded (a failure or crash never leaves a partial file at
+    /// `path`). `Ok(None)` means this filesystem has no file handles to stream into; use [`WorktreeFs::write`].
+    fn write_with(
+        &self,
+        _path: &str,
+        _len: u64,
+        _mode: EntryMode,
+        _fill: &(dyn Fn(&fs::File) -> io::Result<()> + Sync),
+    ) -> io::Result<Option<FsStat>> {
+        Ok(None)
+    }
+    /// An open handle on the regular file at `path` for streaming reads, if this filesystem has real files.
+    fn open_read(&self, _path: &str) -> io::Result<Option<fs::File>> {
+        Ok(None)
     }
     /// Atomically replace `path` with a symlink to `target`.
     fn symlink(&self, target: &[u8], path: &str) -> io::Result<FsStat>;
@@ -130,15 +160,44 @@ fn stat_of(m: &fs::Metadata) -> FsStat {
     }
 }
 
+/// Open directory `path` below `root` without following a link at its last component.
+#[cfg(unix)]
+fn open_dir_at(root: &fs::File, path: &str) -> Option<fs::File> {
+    use std::os::unix::io::{AsRawFd, FromRawFd};
+    let c = std::ffi::CString::new(path).ok()?;
+    // SAFETY: `c` is NUL-terminated and `root` is a valid fd; a returned fd is owned by the new File.
+    let fd = unsafe {
+        libc::openat(
+            root.as_raw_fd(),
+            c.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        None
+    } else {
+        Some(unsafe { fs::File::from_raw_fd(fd) })
+    }
+}
+
 /// `lstat` of `path` relative to the open directory `dir`; `None` if the path cannot be passed to
 /// the kernel (embedded NUL), in which case the caller uses the std path.
 #[cfg(unix)]
 fn stat_at(dir: &fs::File, path: &str) -> Option<io::Result<FsStat>> {
     use std::os::unix::io::AsRawFd;
-    let c = std::ffi::CString::new(path).ok()?;
-    // SAFETY: `st` is a plain-old-data out parameter, `c` is NUL-terminated, `dir` is a valid fd.
+    // NUL-terminated copy on the stack: no allocation (and no allocator lock) per stat.
+    let mut buf = [0u8; 512];
+    let heap;
+    let cp: *const libc::c_char = if path.len() < buf.len() && !path.as_bytes().contains(&0) {
+        buf[..path.len()].copy_from_slice(path.as_bytes());
+        buf.as_ptr().cast()
+    } else {
+        heap = std::ffi::CString::new(path).ok()?;
+        heap.as_ptr()
+    };
+    // SAFETY: `st` is a plain-old-data out parameter, `cp` is NUL-terminated, `dir` is a valid fd.
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    let rc = unsafe { libc::fstatat(dir.as_raw_fd(), c.as_ptr(), &mut st, libc::AT_SYMLINK_NOFOLLOW) };
+    let rc = unsafe { libc::fstatat(dir.as_raw_fd(), cp, &mut st, libc::AT_SYMLINK_NOFOLLOW) };
     if rc != 0 {
         return Some(Err(io::Error::last_os_error()));
     }
@@ -183,6 +242,28 @@ impl WorktreeFs for RealFs {
             });
         }
         Ok(v)
+    }
+    fn stat_seq(&self, cur: &mut StatCursor, path: &str) -> io::Result<FsStat> {
+        #[cfg(not(unix))]
+        let _ = &cur;
+        #[cfg(unix)]
+        if let Some(i) = path.rfind('/') {
+            let (d, name) = (&path[..i], &path[i + 1..]);
+            if cur.dir.as_ref().is_none_or(|(cd, _)| cd != d) {
+                let f = self
+                    .root_fd
+                    .get_or_init(|| fs::File::open(&self.root).ok())
+                    .as_ref()
+                    .and_then(|r| open_dir_at(r, d));
+                cur.dir = Some((d.to_owned(), f));
+            }
+            if let Some((_, Some(fd))) = &cur.dir {
+                if let Some(r) = stat_at(fd, name) {
+                    return r;
+                }
+            }
+        }
+        self.stat(path)
     }
     fn stat(&self, path: &str) -> io::Result<FsStat> {
         #[cfg(unix)]
@@ -230,6 +311,54 @@ impl WorktreeFs for RealFs {
         // rename replaces the path itself (including an existing link); it never writes through it
         fs::rename(&tmp, &abs)?;
         self.stat(path)
+    }
+    fn write_with(
+        &self,
+        path: &str,
+        len: u64,
+        mode: EntryMode,
+        fill: &(dyn Fn(&fs::File) -> io::Result<()> + Sync),
+    ) -> io::Result<Option<FsStat>> {
+        let abs = self.abs(path);
+        let parent = abs.parent().expect("worktree file has a parent");
+        let tmp = parent.join(tmp_name());
+        let f = match create_tmp(&tmp, mode) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                fs::create_dir_all(parent)?;
+                create_tmp(&tmp, mode)?
+            }
+            r => r?,
+        };
+        let res = (|| {
+            f.set_len(0)?;
+            fill(&f)?;
+            if f.metadata()?.len() != len {
+                return Err(io::Error::other("streamed file has the wrong length"));
+            }
+            #[cfg(unix)]
+            if umask_filters(mode) {
+                use std::os::unix::fs::PermissionsExt;
+                f.set_permissions(fs::Permissions::from_mode(want_bits(mode)))?;
+            }
+            Ok(())
+        })();
+        drop(f);
+        match res {
+            Ok(()) => {
+                if let Err(e) = fs::rename(&tmp, &abs) {
+                    let _ = fs::remove_file(&tmp);
+                    return Err(e);
+                }
+                self.stat(path).map(Some)
+            }
+            Err(e) => {
+                let _ = fs::remove_file(&tmp);
+                Err(e)
+            }
+        }
+    }
+    fn open_read(&self, path: &str) -> io::Result<Option<fs::File>> {
+        fs::File::open(self.abs(path)).map(Some)
     }
     fn create_new(&self, path: &str, data: &[u8], mode: EntryMode) -> io::Result<FsStat> {
         let abs = self.abs(path);

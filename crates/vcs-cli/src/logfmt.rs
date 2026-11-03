@@ -71,8 +71,8 @@ pub fn select(
         }
         merged.sort_by_key(|(id, c)| std::cmp::Reverse((c.author.timestamp, *id)));
         merged.truncate(limit);
-        let e = merged.is_empty();
-        (merged, e)
+        // never the "no commits yet" message: an empty result here means "nothing matched"
+        (merged, false)
     } else {
         select_zone(repo, cwd, zone, branch, limit, o, o.x.all)?
     };
@@ -165,7 +165,12 @@ pub fn run(repo: &Repo, cwd: &Path, zone: &str, branch: Option<&str>, limit: usi
         }
         return Ok("no matching commits\n".to_string());
     }
-    let notes = o.x.notes(repo, zone, &shown)?;
+    let only = if o.x.lists_files() {
+        o.paths.iter().map(|p| repo.rel_path(cwd, p)).collect::<Result<Vec<_>, _>>()?
+    } else {
+        Vec::new()
+    };
+    let notes = o.x.notes(repo, zone, &shown, &only)?;
     Ok(render_with(&shown, |z| defs.label(z).to_string(), o, &notes))
 }
 
@@ -207,21 +212,35 @@ pub fn render_with(
     let mut out = String::new();
     for (id, c) in commits {
         let mut body = body_lines(id, c, &label, o);
+        let mut list: Option<&Vec<String>> = None;
         if let Some(n) = notes.get(id).filter(|n| !n.is_empty()) {
             // keep the blank separator after the message, then the list, then another blank
             let blank = body.last().is_some_and(String::is_empty);
             if !blank && !o.graph && !o.oneline && o.x.format.is_none() {
                 body.push(String::new());
             }
-            body.extend(n.iter().cloned());
-            if !o.oneline && o.x.format.is_none() {
-                body.push(String::new());
+            if o.graph {
+                body.extend(n.iter().cloned());
+                if !o.oneline && o.x.format.is_none() {
+                    body.push(String::new());
+                }
+            } else {
+                list = Some(n); // printed straight from the notes: a big file list is not copied
             }
         }
         if !o.graph {
             for l in body {
                 out.push_str(&l);
                 out.push('\n');
+            }
+            if let Some(n) = list {
+                for l in n {
+                    out.push_str(l);
+                    out.push('\n');
+                }
+                if !o.oneline && o.x.format.is_none() {
+                    out.push('\n');
+                }
             }
             continue;
         }

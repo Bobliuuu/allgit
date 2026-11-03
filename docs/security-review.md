@@ -23,7 +23,7 @@ Every PR except two has a test that failed before the fix: #275 is configuration
 | 10 | Low | client | quote/backslash in credential host reaches `security -i` | PR #280 |
 | 11 | Low | supply chain | `cargo deny check licenses` fails on webpki-roots | PR #275 |
 | 12 | Info | working tree | folding of `ß`, `ſ`, `ς` missing from collision check | PR #273 |
-| 13 | Medium | client | `VCS_TOKEN` is sent to every `http://` remote | accepted, see below |
+| 13 | Medium | client | `VCS_TOKEN` is sent to every `http://` remote | opt-in `VCS_TOKEN_HOST` binding, see below |
 | 14 | Low | server | no throttling of failed authentication, no per-address connection cap | accepted |
 | 15 | Info | repo config | `merge.assist`, `core.editor`, bisect run commands from `.vcs/config` | accepted |
 
@@ -98,7 +98,7 @@ See the supply-chain section. PR #275 adds a per-crate exception rather than wid
 `VCS_TOKEN` takes precedence over the credential helper and is not tied to a host. A repository whose `.vcs/remote`
 points at an attacker's server (the file is local, so this needs the user to add or accept that remote) receives the
 token on the first request. Mitigations considered: bind the variable to a host (`VCS_TOKEN_HOST`), or prefer the
-helper whenever the remote is not the host named at login. Not done because it changes documented behaviour; recommend
+helper whenever the remote is not the host named at login. Set `VCS_TOKEN_HOST=host:port` (as shown by `vcs login`) and the variable is ignored for any other host, falling through to the credential helper. Unset keeps the old behaviour because making it mandatory changes documented behaviour; recommend
 using `vcs login` (host-scoped) instead of the environment variable, and tokens with the narrowest role and zones.
 Related: the client speaks plain `http://` unless built with the `tls` feature; bearer tokens then cross the network in
 clear text. The README already says to use loopback, a private network or a TLS proxy.
@@ -111,10 +111,11 @@ hashes and compares in constant time over all entries). Run behind a proxy that 
 
 ### 15. Commands from repo config (Info, accepted)
 
-`credential.helper = !command` is refused from repo config. `merge.assist`, `core.editor` and bisect commands are not
-(they run commands the user configured or typed). `.vcs/config` is not part of the object graph, so a clone cannot set
-it; finding 1 was the way to reach it from a repository, and is closed. Consider applying the credential-helper rule to
-`merge.assist` and `core.editor` for defence in depth.
+`credential.helper = !command` is refused from repo config, and so are `merge.assist` and `core.editor`: `vcs config set`
+at repository scope refuses them (except `off`/empty), and a hand-edited `.vcs/config` value is ignored with a warning.
+Only the user config and the environment (`VCS_EDITOR`, `$VISUAL`, `$EDITOR`) may name a program. Bisect commands are
+typed by the user. `.vcs/config` is not part of the object graph, so a clone cannot set it; finding 1 was the way to
+reach it from a repository, and is closed.
 
 ## Reviewed and found sound (no change)
 
@@ -152,8 +153,12 @@ tree-sitter) were not evaluated.
 
 * `feat/pack-v2` does not exist on the remote, so pack v2 / zstd decompression bombs were not reviewed. Require a bound
   on decompressed size (declared and actual) and a ratio cap when it lands, and fuzz it.
-* Windows: reserved device names (`CON`, `NUL`, `AUX`, `COM1`), 260-character path limits and ADS on non-`.vcs` names are
-  not handled by name validation. Windows is not a supported platform yet; do not claim it before this is done.
+* Windows: checkout refuses reserved device names (`CON`, `NUL`, `AUX`, `COM1`..., with or without an extension),
+  trailing dots/spaces, characters NTFS forbids (including `:stream` names) and paths that reach the 260-byte limit
+  with the worktree prefix. The check always runs on Windows builds and elsewhere when `VCS_PROTECT_WINDOWS=1`
+  (`portable::windows_path_problem`; tests `windows_names.rs`). It is not in name validation, because those names are
+  legal on Linux and macOS. Windows is still not a supported platform (symlinks, locking and file watching are untested
+  there); do not claim it.
 * `import-git`, `import-p4` and the git remote helper were only checked through the shared name validation (which
   now rejects the aliases in finding 1); their parsers were not fuzzed or re-read.
 * `stash`, `rebase` and `merge` write paths were assumed to share the checkout preflight; not individually tested for

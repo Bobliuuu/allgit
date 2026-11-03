@@ -18,6 +18,7 @@
 
 use crate::error::{Error, Result};
 use crate::ignore::Pattern;
+use crate::index::Index;
 use crate::repo::Repo;
 use crate::treeops::Flat;
 use std::collections::{BTreeMap, BTreeSet};
@@ -184,18 +185,93 @@ pub fn is_read_only(path: &Path) -> bool {
     fs::symlink_metadata(path).map(|m| m.permissions().readonly()).unwrap_or(false)
 }
 
+/// Does `hay` contain `needle` (libc `memmem`: vectorized, no allocation)?
+fn bytes_contain(hay: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if hay.len() < needle.len() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        // SAFETY: both pointers are valid for the given lengths.
+        let p = unsafe { libc::memmem(hay.as_ptr().cast(), hay.len(), needle.as_ptr().cast(), needle.len()) };
+        !p.is_null()
+    }
+    #[cfg(not(unix))]
+    {
+        hay.windows(needle.len()).any(|w| w == needle)
+    }
+}
+
+/// Identity of the index file: inode, length and mtime. `None` where the platform gives no inode.
+#[cfg(unix)]
+fn file_fp(m: &fs::Metadata) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    Some(format!("{}:{}:{}.{}", m.ino(), m.len(), m.mtime(), m.mtime_nsec()))
+}
+#[cfg(not(unix))]
+fn file_fp(_: &fs::Metadata) -> Option<String> {
+    None
+}
+
 impl Repo {
+    fn attrs_marker(&self) -> std::path::PathBuf {
+        self.vcs.join("attrs-none")
+    }
+
+    fn index_fp(&self) -> Option<String> {
+        file_fp(&fs::metadata(self.vcs.join("index")).ok()?)
+    }
+
+    /// True when the marker says the index file in place (same inode, length and mtime) was
+    /// scanned and names no attribute file. Any other index file, or no marker: false.
+    pub(crate) fn index_holds_no_attrs(&self) -> bool {
+        match (self.index_fp(), fs::read_to_string(self.attrs_marker())) {
+            (Some(fp), Ok(m)) => m == fp,
+            _ => false,
+        }
+    }
+
+    fn note_index_holds_no_attrs(&self) {
+        if let Some(fp) = self.index_fp() {
+            let _ = crate::meta::write_cache_nosync(&self.attrs_marker(), fp.as_bytes());
+        }
+    }
+
+    /// Called right after the index was replaced by `bytes`, with `was_clean` taken before: carry
+    /// the marker over to the new file when the old one was marked and the new one still names no
+    /// attribute file (a memory scan of bytes the caller already holds).
+    pub(crate) fn carry_attrs_marker(&self, was_clean: bool, bytes: &[u8]) {
+        if was_clean && !bytes_contain(bytes, ATTR_FILE.as_bytes()) {
+            self.note_index_holds_no_attrs();
+        }
+    }
+
     /// Attribute files of the tracked tree (those in the index plus a root one on disk).
     pub fn attrs(&self) -> Result<Attrs> {
         let mut bases: BTreeSet<String> = BTreeSet::new();
         bases.insert(String::new());
-        let ix = self.index()?;
-        for p in ix.entries.keys() {
-            if p == ATTR_FILE {
-                continue;
-            }
-            if let Some(dir) = p.strip_suffix(ATTR_FILE).and_then(|d| d.strip_suffix('/')) {
-                bases.insert(dir.to_owned());
+        // Paths are stored verbatim in the index file, so an index that never mentions the
+        // attribute file's name holds none: skip decoding it (a status or checkout has already
+        // paid for one decode of the same file).
+        // A marker bound to the index file's identity remembers "scanned, no attribute file in it",
+        // so the 7 MB read of a big index is paid once per index write, not once per command.
+        if !self.index_holds_no_attrs() {
+            let raw = self.rd("index")?;
+            if bytes_contain(&raw, ATTR_FILE.as_bytes()) {
+                let ix = Index::decode(&raw)?;
+                for p in ix.entries.keys() {
+                    if p == ATTR_FILE {
+                        continue;
+                    }
+                    if let Some(dir) = p.strip_suffix(ATTR_FILE).and_then(|d| d.strip_suffix('/')) {
+                        bases.insert(dir.to_owned());
+                    }
+                }
+            } else {
+                self.note_index_holds_no_attrs();
             }
         }
         let mut a = Attrs::default();

@@ -5,9 +5,9 @@ Status: **tested once against a real server** (Helix Core `p4d` 2026.1, `p4` 202
 `crates/vcs-repo/tests/fixtures/p4real` are real `p4 -G describe -s`, `p4 changes -l` and `p4 print -q` output, and
 the importer test compares the tree of every changelist with what `p4 sync //depot/...@N` wrote (paths, +x, symlinks,
 sha256 of contents). They agree for add, edit, delete, move, branch, integrate, `+x`, `symlink`, `binary`, `+k`,
-empty files, CRLF text, spaces and non-ASCII (UTF-8) in names. Two discrepancies were found: depot paths with
-`@ # % *` arrive percent-escaped (`%40` ...) and were kept escaped (fixed separately), and `utf16` files: `p4 print`
-returns UTF-8 text where `p4 sync` writes the UTF-16 bytes (still open, reported as a type warning). Everything
+empty files, CRLF text, spaces and non-ASCII (UTF-8) in names. Two discrepancies were found, both fixed: depot paths with
+`@ # % *` arrive percent-escaped (`%40` ...), and `utf16` files: `p4 print` returns UTF-8 text where `p4 sync` writes
+UTF-16LE with a BOM (the importer converts back; assumes a non-unicode server and the default little-endian client). Everything
 else listed under Limits is still untested against a real server.
 
 The core never runs `p4`. You record the output wherever Perforce exists and hand the importer a directory:
@@ -48,7 +48,7 @@ One rule per line, `<depot> <zone path>`; later rules win; `#` comments. `//depo
   file. `integrate`/`branch` are plain content changes (no second parent), a move is a delete plus an add (no rename
   tracking). Any other action is an error.
 * File types: `+x` and the legacy `xtext`/`xbinary`... map to Executable; `symlink` to a Symlink (content = target, one
-  trailing newline in the fixture is dropped). `apple`, `resource`, `utf16` and `+k` keyword-expanded files are
+  trailing newline in the fixture is dropped). `apple`, `resource` and `+k` keyword-expanded files are
   imported as the bytes `p4 print` gave and reported as type warnings.
 
 ## Limits

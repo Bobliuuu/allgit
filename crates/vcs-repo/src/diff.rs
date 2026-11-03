@@ -308,7 +308,11 @@ mod tests {
         let mut t = vec![0u32; (n + 1) * w];
         for i in (0..n).rev() {
             for j in (0..m).rev() {
-                t[i * w + j] = if am[i] == bm[j] { t[(i + 1) * w + j + 1] + 1 } else { t[(i + 1) * w + j].max(t[i * w + j + 1]) };
+                t[i * w + j] = if am[i] == bm[j] {
+                    t[(i + 1) * w + j + 1] + 1
+                } else {
+                    t[(i + 1) * w + j].max(t[i * w + j + 1])
+                };
             }
         }
         let (mut i, mut j) = (0, 0);

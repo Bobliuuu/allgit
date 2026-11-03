@@ -92,6 +92,30 @@ pub fn open(url: &str) -> Result<Arc<dyn Backend>, String> {
     Ok(Arc::new(b))
 }
 
+/// Startup self-check for the "sole manifest writer" deployment (docs/deploy.md): with the
+/// *client* credential (`VCS_CLIENT_ACCESS_KEY_ID` / `VCS_CLIENT_SECRET_ACCESS_KEY`, optional
+/// `VCS_CLIENT_SESSION_TOKEN`) try to write the manifest of the `--backend` bucket. `Ok` only if
+/// every write route is refused with 401/403; the manifest is never modified by the probe.
+pub fn check_client_cannot_write_manifest(url: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<(), String> {
+    if !url.starts_with("s3://") {
+        return Err("--check-client-cannot-write-manifest only applies to an s3:// backend".into());
+    }
+    let mapped = |k: &str| match k {
+        "AWS_ACCESS_KEY_ID" => env("VCS_CLIENT_ACCESS_KEY_ID"),
+        "AWS_SECRET_ACCESS_KEY" => env("VCS_CLIENT_SECRET_ACCESS_KEY"),
+        "AWS_SESSION_TOKEN" => env("VCS_CLIENT_SESSION_TOKEN"),
+        other => env(other),
+    };
+    let cfg = s3_config(url, &mapped).map_err(|e| format!("{e} (the self-check reads the CLIENT credential from VCS_CLIENT_ACCESS_KEY_ID / VCS_CLIENT_SECRET_ACCESS_KEY)"))?;
+    let c = S3Backend::new_unchecked(cfg).map_err(|e| e.to_string())?;
+    match c.probe_manifest_write().map_err(|e| e.to_string())? {
+        vcs_store_s3::ManifestWriteProbe::Denied => Ok(()),
+        vcs_store_s3::ManifestWriteProbe::Allowed(how) => Err(format!(
+            "the client credential can write the manifest ({how}); refusing to start. Attach a bucket policy that denies s3:PutObject on <prefix>manifest to every principal except the server's"
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

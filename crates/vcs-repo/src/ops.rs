@@ -18,7 +18,7 @@ use vcs_store::ObjectStore;
 const OP_HEAD: &str = "op_head";
 
 /// Author for operations recorded by methods that take no explicit author.
-fn env_signature() -> Signature {
+pub(crate) fn env_signature() -> Signature {
     let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
     let name = env("VCS_AUTHOR_NAME").or_else(|| env("USER")).unwrap_or_else(|| "unknown".into());
     let email = env("VCS_AUTHOR_EMAIL").unwrap_or_else(|| format!("{name}@localhost"));
@@ -27,6 +27,23 @@ fn env_signature() -> Signature {
         .unwrap_or_else(|| SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0));
     Signature { name, email, timestamp }
 }
+
+const OP_TAGS_CACHE: &str = "op-tags-hash";
+
+fn tags_digest(t: &std::collections::BTreeMap<(String, String), ObjectId>) -> ObjectId {
+    let mut h = blake3::Hasher::new();
+    for ((z, n), id) in t {
+        h.update(&(z.len() as u32).to_le_bytes()).update(z.as_bytes());
+        h.update(&(n.len() as u32).to_le_bytes()).update(n.as_bytes());
+        h.update(id.as_bytes());
+    }
+    ObjectId::from_bytes(*h.finalize().as_bytes())
+}
+
+/// Fewest tags for which an unchanged tag view is left out of an operation.
+const OP_TAGS_DELTA_MIN: usize = 64;
+/// How far back an omitted tag view is looked up when recording (full copy again beyond it).
+const OP_TAGS_LOOKBACK: usize = 64;
 
 impl Repo {
     /// The current operation id, or `None` for a repository that predates the log.
@@ -69,18 +86,78 @@ impl Repo {
     /// Caller holds the repository lock.
     pub(crate) fn record_op(&self, description: &str, author: Option<Signature>) -> Result<ObjectId> {
         let parents: Vec<ObjectId> = self.op_head()?.into_iter().collect();
+        let mut view = self.current_view()?;
+        // Every operation used to store the whole tag set: 100,000 tags cost 4.4 MB per commit. A large,
+        // unchanged set is now omitted (None) and read from the nearest earlier operation that has it.
+        // "Unchanged" is decided from a hash cached for the previous operation (no re-read of its 4.4 MB);
+        // without the cache, a bounded look-back, so the chain of None stays short.
+        let mut tags_hash = None;
+        if let Some(t) = view.tags.as_ref().filter(|t| t.len() >= OP_TAGS_DELTA_MIN) {
+            let h = tags_digest(t);
+            let same = match (self.op_tags_cache(), parents.first()) {
+                (Some((op, ch)), Some(p)) if &op == p => ch == h,
+                (_, Some(p)) => self.op_tags_before(p, OP_TAGS_LOOKBACK)?.as_ref().map(tags_digest) == Some(h),
+                _ => false,
+            };
+            if same {
+                view.tags = None;
+                self.note_feature(crate::repo::FEATURE_OP_TAGS_DELTA)?;
+            }
+            tags_hash = Some(h);
+        }
         let op = Operation {
             parents,
-            view: self.current_view()?,
+            view,
             description: description.lines().next().unwrap_or("").to_owned(),
             author: author.unwrap_or_else(env_signature),
         };
         let id = self.store.put(&Object::Operation(op))?;
         self.write_op_head(&id)?;
+        if let Some(h) = tags_hash {
+            let _ = crate::meta::write_cache_atomic(
+                &self.common.join(OP_TAGS_CACHE),
+                format!("{} {}\n", id.to_hex(), h.to_hex()).as_bytes(),
+            );
+        }
         Ok(id)
     }
 
+    /// (operation, hash of the tag view in effect after it) as cached by the last `record_op` that had a large set.
+    fn op_tags_cache(&self) -> Option<(ObjectId, ObjectId)> {
+        let t = fs::read_to_string(self.common.join(OP_TAGS_CACHE)).ok()?;
+        let (a, b) = t.trim().split_once(' ')?;
+        Some((ObjectId::from_hex(a).ok()?, ObjectId::from_hex(b).ok()?))
+    }
+
+    /// The tag view in effect after operation `id`: its own, or that of the nearest earlier operation that
+    /// has one (first parents), looking back at most `limit` operations. `None`: a legacy chain with no tag
+    /// view, or more than `limit` omissions.
+    fn op_tags_before(&self, id: &ObjectId, limit: usize) -> Result<Option<std::collections::BTreeMap<(String, String), ObjectId>>> {
+        let mut cur = *id;
+        for _ in 0..=limit {
+            let op = self.op_get(&cur)?;
+            if op.view.tags.is_some() {
+                return Ok(op.view.tags);
+            }
+            match op.parents.first() {
+                Some(p) => cur = *p,
+                None => return Ok(None),
+            }
+        }
+        Ok(None)
+    }
+
+    /// The view recorded by operation `id`, with an omitted tag view filled in from the chain.
+    fn op_full_view(&self, id: &ObjectId) -> Result<OpView> {
+        let mut v = self.op_get(id)?.view;
+        if v.tags.is_none() {
+            v.tags = self.op_tags_before(id, usize::MAX - 1)?;
+        }
+        Ok(v)
+    }
+
     pub(crate) fn write_op_head(&self, id: &ObjectId) -> Result<()> {
+        self.journal_checkpoint()?; // journalled state is made durable before this fully synced write
         self.store.sync()?; // the Operation object must be durable before op_head names it
         write_atomic(&self.common.join(OP_HEAD), &frame(b"AGOH", id.as_bytes().to_vec()))
     }
@@ -141,7 +218,7 @@ impl Repo {
         let Some(parent) = op.parents.first().copied() else {
             return msg("the current operation is the first one; nothing to undo");
         };
-        let target = self.op_get(&parent)?.view;
+        let target = self.op_full_view(&parent)?;
         self.restore_view(&target)?;
         self.record_op(&format!("undo operation {}", head.short()), None)
     }
@@ -149,7 +226,7 @@ impl Repo {
     /// Restore the local view as it was right after operation `id`; recorded as a new operation.
     pub fn op_restore(&self, id: &ObjectId) -> Result<ObjectId> {
         let _l = self.lock()?;
-        let target = self.op_get(id)?.view;
+        let target = self.op_full_view(id)?;
         self.restore_view(&target)?;
         self.record_op(&format!("restore to operation {}", id.short()), None)
     }
@@ -258,7 +335,7 @@ impl Repo {
         if let Some(tags) = &target.tags {
             refs.tags = tags.clone();
         }
-        write_atomic(&self.common.join("refs"), &refs.encode())?;
+        self.write_refs(&refs)?;
         // A zone that stays subscribed keeps its sparse set.
         let mut sparse = ws.sparse.clone();
         sparse.retain(|z, _| target.workspace.contains_key(z));

@@ -9,6 +9,7 @@ authentication, roles, a per-zone write policy and server-side validation of eve
 vcs-server hash-token <token>                      # prints the hash to put in the tokens file
 vcs-server --root <dir> --tokens <file> [--listen 127.0.0.1:8480] [--tls-cert <pem> --tls-key <pem> [--tls-client-ca <pem>]]
                   [--audit-log <file> [--audit-key <file>]] [--rate-limit <burst>,<per-sec>] [--max-connections <n>]
+                  [--max-conns-per-ip <n>] [--auth-fail-limit <burst>,<per-sec>]
 vcs-server audit verify <file> [--key <keyfile>]
 vcs-server --backend 's3://bucket/prefix?endpoint=URL' --tokens <file> [--policy <file>] [--max-lease-secs N] [--skew-epsilon-ms N]
 VCS_TOKEN=<token> VCS_PRINCIPAL=<name> vcs clone http://host:port ...
@@ -168,8 +169,16 @@ detectable from the file alone (store the printed head hash elsewhere); without 
 the file can recompute the whole chain; the key only helps if it is kept away from whoever can write the log. The
 server opens the file append-only but cannot make it immutable: use `chattr +a`, WORM storage or a second sink. One
 process per log file. If the append fails the client gets 503 even though the write may already have been applied
-(the request is not rolled back). This is a different shape from the create-only `audit/<id>` objects and
-`GET /v1/audit` sketched in #127: it covers PUTs only, has no txid, zone, path summary or policy hash.
+(the request is not rolled back).
+
+Records carry a `reason` (`accepted`, `policy`, `lock`, `lock-required`, `invalid`, `forbidden`, `conflict`, ...);
+manifest writes also carry `policy` (BLAKE3 of the path policy in force, so a decision ties to the exact rules) and,
+when accepted, `vtime` (the validator's server time, which is also the `time_hw` stored in the same compare-and-swap).
+Older records without these fields still verify. `GET /v1/audit?after=<seq>&limit=<n>` (admin token only; 403
+otherwise, 404 when `--audit-log` is off) returns up to `limit` (default 100, max 1000) raw JSON lines after `seq`
+`after`, with `X-Audit-Next` (last seq returned; pass it as `after`) and `X-Audit-Head` (head hash to anchor); the
+lines are exactly the file's, so they verify offline. The chosen design is this chained log, not create-only
+`audit/<id>` objects (#127); a second sink is the operator's job (ship the endpoint or the file).
 
 **Forced updates and deletions.** A publish that replaces a branch head with a commit that does not descend from
 it, or removes a branch, is allowed (it is always a compare-and-swap on the old head, so a stale writer fails) but the
@@ -192,14 +201,26 @@ handshake), `body_timeout` (600 s overall for the body and again for the respons
 The overall deadlines are what stop slowloris-style trickling; per-read timeouts alone would not. Bodies are read
 incrementally, so announcing a huge `Content-Length` and stalling costs no memory. Malformed request lines, header
 names, duplicate or non-numeric `Content-Length`, NUL bytes and non-UTF-8 headers are 400. Defaults are unmeasured
-guesses, not tuned values; the binary exposes only `--max-connections` and `--max-body`.
+guesses, not tuned values; the binary exposes `--max-connections`, `--max-body`, `--max-inflight-body` (server-wide bytes of request bodies in flight, default 2 GiB, 503 + Retry-After beyond), `--max-conns-per-ip` and
+`--auth-fail-limit`.
+
+**Abuse limits (opt-in, security review finding 14).** `--auth-fail-limit <burst>,<per-sec>` keeps a leaky counter
+per client address: every failed authentication (401) adds one, it drains at `per-sec`, and at `burst` the address
+gets 429 with `Retry-After` before its token is even looked at (so guessing cannot continue, and a valid token from a
+blocked address is also refused until the counter drains). `/healthz` and `/readyz` are exempt. `--max-conns-per-ip <n>`
+refuses (503, or a drop under TLS) connections beyond `n` from one address. Both are off by default because behind a
+reverse proxy every client shares the proxy's address: enable them only where the server sees real client addresses.
+Idle cost is one relaxed atomic load per request when no failure has been recorded.
 
 ## Not done (known gaps)
 
 Certificate revocation and subject-to-principal mapping for mTLS; path-level read rules (impossible on content-addressed
-objects, see Read policy); a filtered manifest per principal; a rate-limit class for lock ops; `GET /v1/audit`,
-create-only audit objects and policy hash in audit (#127); lease expiry times are still computed by the client (the
+objects, see Read policy); a filtered manifest per principal; a rate-limit class for lock ops; create-only audit objects (#127, the chained log is the chosen design); lease expiry times are still computed by the client (the
 server bounds only `time_hw`); one request per connection and one thread per connection (bounded by `max_connections`);
 OIDC; Windows signal reload.
 
 Deployment (systemd, Docker, S3 backend, path policy, require-lock, replicas): see [deploy.md](deploy.md).
+
+## Disk cache of immutable reads
+
+`--cache-dir <dir> [--cache-size <bytes>]` (default 8 GiB, also `cache-dir`/`cache-size` in the config file) keeps pack indexes, pack blocks and objects on local disk. These keys are content-addressed, so a restarted server answers a warm clone from disk and asks the object store only for the manifest and the pack listing. Every entry carries a blake3 over key, range and bytes that is checked on each read; a damaged entry is dropped and refetched. The manifest, listings, writes, deletes and existence checks never use the cache. Oldest entries are evicted past the cap.

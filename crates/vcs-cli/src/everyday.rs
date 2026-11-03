@@ -100,11 +100,12 @@ pub fn clean(a: &CleanArgs) -> Result<(), Error> {
         ));
     }
     let (repo, cwd) = open()?;
-    let st = repo.status_auto(Default::default())?;
+    // Only the untracked walk: a clean does not need every tracked file stat-ed.
+    let (untracked, _unsupported) = repo.untracked_only(Default::default())?;
     let filters: Vec<String> = a.paths.iter().map(|p| repo.rel_path(&cwd, p)).collect::<Result<_, _>>()?;
     let mut dirs = std::collections::BTreeSet::new();
     let mut n = 0;
-    for u in &st.untracked {
+    for u in &untracked {
         let rel = u.trim_end_matches('/');
         if !filters.is_empty()
             && !filters

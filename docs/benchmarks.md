@@ -708,6 +708,14 @@ What changed:
   file/directory conflict check runs by binary search over the sorted key list on the same threads. `index_cost`
   (100k entries, release, same box under load): 17.7 ms decode, against 61 ms recorded earlier for the single-threaded
   decoder.
+- **Index layout `AGI4`, patched in place.** `rm`, `rm --cached`, `restore --staged` and `reset <path>` no longer decode
+  and re-encode the whole index. They read the block table (the first path of each block is enough to binary-search),
+  decode only the blocks holding the paths they change, re-encode those and copy every other block's bytes. A patch
+  can leave blocks uneven, so patched files are `AGI4` (the table carries each block's own entry count); `Index::decode`
+  reads `AGI4` and the full writer still writes `AGI3`. A patch keeps `written_ns`, so the entries it adds are at
+  worst re-read once by the next `status`. The index file is replaced by rename without an fsync of the temp file (as
+  git does; the blobs it names are made durable first) and is written after the operation is recorded, so the
+  operation log's fsyncs do not wait for a freshly written index. **Compatibility:** an older binary cannot read an `AGI4` index. **Durability:** without the fsync, a power cut right after the rename can leave a short index on a file system that does not flush replaced-by-rename data; `Repo::discover` therefore checks the index header and tail (cheap, no full read) and, if the file is torn, rebuilds it from the branch heads with a warning (staged-only changes are lost, files are untouched) instead of failing or reading it as empty. Readers that only understand `AGI3` (`IndexView`) fall back to the full decode on an `AGI4` file until the next full write.
 - **Untracked walk**: instead of one `BTreeMap` lookup plus one `format!` per name, each directory's (sorted) listing is
   merged against the sorted list of tracked names directly in that directory (`Entries::children`). A tracked file
   allocates nothing.
@@ -735,6 +743,56 @@ What changed:
   watch-limit exhaustion (`vcs watch` fails to start, or writes `X` and exits, which clients treat as a full scan).
   Index-decode memory per entry is unchanged (`BTreeMap<String, IndexEntry>`); a path arena was not attempted.
 
+## Watcher on by default for big repositories (2026-11-03)
+
+`vcs` is now built with the `watcher` feature by default. When a repository's index is at least 1 MB (about 14,000
+files) and no watcher runs, a command that opens the repository starts a detached `vcs watch --idle-exit 1800` in the
+background (Unix; once per ten minutes at most, marker `.vcs/fsmon/autowatch`). The command that started it does its
+usual full scan; later ones use the journal. The watcher stops by itself after 30 minutes without a `status`/`diff`
+asking it anything. `VCS_NO_AUTOWATCH=1` stops the start, `VCS_NO_FSMONITOR=1` stops all use of the journal. If it cannot
+start (no inotify watches left, no permission) nothing changes: every query without a journal is the full scan.
+
+Two things keep the saved state useful across the repository's own writes, which used to throw it away every time:
+
+- **Rebind log** (`.vcs/fsmon/rebind`). A patched index write (`rm`, `restore --staged`, `reset <path>`, `mv`) and
+  the cache-tree write of `commit` append `old-fingerprint new-fingerprint <touched paths>`. `status` follows the chain
+  from the state's fingerprint to the current index and re-checks the touched paths together with what the watcher
+  reports. A gap in the chain, a missing log, an index written by something that does not log, or a damaged line means
+  no chain, and `status` does the full scan. The log is cut when it passes 256 KiB.
+- **`diff` (working tree against index)** with no pathspec asks the same state: only the paths that were dirty at the
+  state plus those changed since can differ, so only they are read. Without a state for this index it scans as before.
+
+100k files, `datagen flat`, box with a p4d running next to it (`scripts/command_scoreboard_p4.py`, median of 3, ms):
+
+| cell | p4 | vcs before | vcs now |
+|---|---|---|---|
+| status (p4: `reconcile -n //...`) clean | 956 | 928 | 43 |
+| status, 1% modified | 890 | 892 | 45 |
+| opened (`vcs status` after one edit) | 2 | 934 | 44 |
+| diff of one edited file | 2 | 883 | 39 |
+| submit of one edited file | 3 | 974 | 143 |
+
+The first `status` after the watcher starts, and the first after any index write that does not log (`switch`, `reset
+--hard`, a full `add .`, ...), still costs the full scan. Not measured: macOS FSEvents under the autostart, repositories
+with more files than the inotify watch limit allows (the watcher fails to start and the full scan stays).
+
 ## Remote workflows: walgit vs vcs-server vs plain git (local RustFS)
 
 See [research/walgit-benchmark.md](research/walgit-benchmark.md): push, clone, partial clone, fetch, cold variants, store request counts and server CPU, 10k and 100k files (JSON under `docs/research/data/walgit-bench/`). walgit has no client of its own, so its add/commit/status/log/checkout cost is the git column above.
+
+## S3Backend publish/clone and small requests against a local S3 server (#242, #243)
+
+`s3e2e` (crates/vcs-bench/src/bin/s3e2e.rs). Machine: AWS c6i.4xlarge "d" (16 vCPU, us-east-1), load1 about 3 before and after (shared with builds; not the quiet timing box, whose bench queue was hours long). Server: RustFS 1.0.4 on the same machine over loopback, so network RTT is about 0: this measures client and request-count costs, **not** cloud latency, and nothing here is a statement about AWS S3, R2 or GCS. Code: main after #368 (round-trip cuts) plus #376. Workload: 300 files of 3 KB in 10 dirs, 50 commits, 7 trials, fresh prefix and fresh clone client per trial. Medians (min-max):
+
+| Operation | Wall ms | S3 requests |
+| --- | --- | --- |
+| publish, whole history (50 commits) | 61.8 (42.2-74.4) | 8 |
+| publish, one changed file on top | 35.3 (22.8-52.4) | 6 |
+| clone (fresh client, fresh connection pool) | 89.0 (51.8-92.8) | 14 |
+| fetch, one new commit | 14.0 (8.3-14.7) | 5 |
+
+Small requests (200 each): GET 1 KiB pooled p50 0.16 ms; GET 1 KiB on a new connection each time p50 0.22 ms, so connection setup is 24% of a fresh-connection GET on loopback (TCP only; with TLS or a real RTT the share is larger, not measured). PUT 1 KiB create-only p50 6.9 ms (RustFS fsyncs; max 22 ms). Throughput of pooled 1 KiB GETs: 5.9k req/s on 1 thread, 45k req/s on 16 threads (6400 requests).
+
+SigV4 cost on the client: sha256 of the body runs at about 1.2-1.3 GB/s (0.8 us per KiB, 0.87 ms per MiB, 12.9 ms per 16 MiB); a 1 MiB create-only PUT takes 14.9 ms p50 here, so body hashing is about 6% of it (less on a real network). **UNSIGNED-PAYLOAD decision: not adopted.** S3 accepts it only over HTTPS, it drops end-to-end body integrity that the signed hash gives on plain-HTTP local and private-network endpoints, and the saving is at most the 0.87 ms per MiB above. Revisit only if a profile on a fast real network shows hashing above 10% of large PUTs.
+
+Not measured: before/after of #322 (p50 and 16-thread numbers before pooling), any TLS endpoint, any real network, MinIO (its binaries now return HTTP 410; only RustFS was run).

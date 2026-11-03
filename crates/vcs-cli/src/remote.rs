@@ -68,6 +68,42 @@ pub fn open_backend(url: &str) -> Result<Box<dyn Backend>, Error> {
     Ok(Box::new(vcs_remote::RetryBackend::new(Box::new(b))))
 }
 
+/// [`open_backend`] behind a per-process read memo (see [`vcs_remote::MemoBackend`]). `snapshot` also
+/// memoizes the manifest and the pack listing for the life of the command and reads them
+/// concurrently up front: use it for clone only, never for publishing.
+pub fn open_memo(url: &str, snapshot: bool) -> Result<vcs_remote::MemoBackend, Error> {
+    let mut b = vcs_remote::MemoBackend::new(open_backend(url)?, snapshot);
+    if let Some(d) = open_disk_cache(url) {
+        b = b.with_disk(std::sync::Arc::new(d));
+    }
+    b.prime();
+    Ok(b)
+}
+
+/// Persistent warm cache for remote reads (see [`vcs_remote::ClientCache`]). On for network remotes
+/// (`http(s)://`, `s3://`); local directory remotes are already as fast as the cache would be.
+/// `VCS_CACHE_DIR` overrides the location (default `$XDG_CACHE_HOME/vcs` or `~/.cache/vcs`),
+/// `VCS_CACHE_MAX_MB` the bound (default 2048), `VCS_NO_CACHE=1` turns it off, `VCS_CACHE_LOCAL=1`
+/// also caches local remotes. Any failure to set it up just means no cache.
+fn open_disk_cache(url: &str) -> Option<vcs_remote::ClientCache> {
+    if std::env::var_os("VCS_NO_CACHE").is_some_and(|v| v != "0" && !v.is_empty()) {
+        return None;
+    }
+    let network = matches!(url_scheme(url), Some("http" | "https" | "s3"));
+    if !network && std::env::var_os("VCS_CACHE_LOCAL").is_none() {
+        return None;
+    }
+    let root: PathBuf = match std::env::var_os("VCS_CACHE_DIR") {
+        Some(d) if !d.is_empty() => d.into(),
+        _ => match std::env::var_os("XDG_CACHE_HOME") {
+            Some(x) if !x.is_empty() => PathBuf::from(x).join("vcs"),
+            _ => PathBuf::from(std::env::var_os("HOME")?).join(".cache/vcs"),
+        },
+    };
+    let mb: u64 = std::env::var("VCS_CACHE_MAX_MB").ok().and_then(|v| v.parse().ok()).unwrap_or(2048);
+    vcs_remote::ClientCache::open(root, url, mb << 20).ok()
+}
+
 /// `http(s)://host:port` = a `vcs-server`. The bearer token comes from `VCS_TOKEN` or the credential helper (`vcs login`) only (never
 /// the URL, so it is never written to `.vcs/remote`). Set `VCS_PRINCIPAL` to the server-side
 /// principal name so lock holders match. `https://` needs the `tls` cargo feature; the server certificate is always

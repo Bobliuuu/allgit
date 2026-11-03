@@ -18,8 +18,14 @@ pub enum BundleCmd {
         #[arg(long)]
         since: Option<String>,
     },
-    /// Check a bundle's hashes, structure and completeness (needs no repository)
-    Verify { file: PathBuf },
+    /// Check a bundle's hashes, structure and completeness (needs no repository). --quick checks only
+    /// the header, refs, lengths and prerequisites, in about a millisecond
+    Verify {
+        file: PathBuf,
+        /// Skip hashing the pack and decoding objects (misses corruption inside the pack body)
+        #[arg(long)]
+        quick: bool,
+    },
 }
 
 fn describe(info: &BundleInfo) {
@@ -44,10 +50,16 @@ pub fn run(cmd: BundleCmd) -> Result<(), Error> {
             println!("wrote {}", file.display());
             describe(&info);
         }
-        BundleCmd::Verify { file } => {
-            let info = bundle::verify_file(&file)?;
+        BundleCmd::Verify { file, quick } => {
+            let info = if quick {
+                bundle::verify_quick(&file)?
+            } else {
+                bundle::verify_file(&file)?
+            };
             describe(&info);
-            if let Some(repo) = std::env::current_dir().ok().and_then(|c| Repo::discover(&c).ok()) {
+            // only a bundle with prerequisites needs a repository to be checked against
+            if quick && info.prerequisites.is_empty() {
+            } else if let Some(repo) = std::env::current_dir().ok().and_then(|c| Repo::discover(&c).ok()) {
                 let missing = repo.bundle_missing_prerequisites(&file, &info)?;
                 if missing.is_empty() {
                     println!("prerequisites: all present in this repository");
@@ -57,7 +69,11 @@ pub fn run(cmd: BundleCmd) -> Result<(), Error> {
                     }
                 }
             }
-            println!("ok");
+            if quick {
+                println!("ok (quick: header, refs and lengths; pack contents not hashed)");
+            } else {
+                println!("ok");
+            }
         }
     }
     Ok(())

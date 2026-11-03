@@ -1627,10 +1627,12 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "criterion",
+ "sha2",
  "tempfile",
  "vcs-objects",
  "vcs-remote",
  "vcs-repo",
+ "vcs-server",
  "vcs-store",
  "vcs-store-s3",
 ]
@@ -1724,6 +1726,7 @@ dependencies = [
  "rustls",
  "tempfile",
  "thiserror",
+ "unicode-normalization",
  "ureq",
  "vcs-objects",
  "vcs-remote",

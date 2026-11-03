@@ -23,6 +23,12 @@ impl Repo {
     /// Changed files of the same comparison as [`Repo::diff`] (`staged`: index vs branch heads,
     /// otherwise working tree vs index), as structured pairs, sorted by path.
     pub fn diff_pairs(&self, staged: bool) -> Result<Vec<FilePair>> {
+        self.diff_pairs_limited(staged, &[])
+    }
+
+    /// The reference implementation of [`Repo::diff_pairs`]: reads every tracked file. The fast
+    /// path in `diffscan` must return exactly this.
+    pub fn diff_pairs_full(&self, staged: bool) -> Result<Vec<FilePair>> {
         let zones = self.zones()?;
         let ws = self.workspace()?;
         let refs = self.refs()?;
@@ -42,6 +48,11 @@ impl Repo {
                 if old == new && om == nm {
                     continue;
                 }
+                if let (Some(o), Some(n), Some(e)) = (old, new, ix.entries.get(p)) {
+                    if om == nm && self.same_bytes_other_layout(e.size, &o, &n)? {
+                        continue;
+                    }
+                }
                 out.push(FilePair {
                     path: p.clone(),
                     old: old.map(|i| self.store.get_content(&i)).transpose()?,
@@ -56,6 +67,11 @@ impl Repo {
                     continue;
                 }
                 let abs = self.worktree.join(p);
+                if let Ok(m) = std::fs::symlink_metadata(&abs) {
+                    if m.is_file() && e.mode != EntryMode::Symlink && self.large_unchanged(&abs, e.size, m.len(), &e.id)? {
+                        continue;
+                    }
+                }
                 let cur = match std::fs::symlink_metadata(&abs) {
                     Ok(m) if m.file_type().is_symlink() && e.mode == EntryMode::Symlink => {
                         Some(crate::repo::read_link_bytes(&abs).map_err(|source| crate::Error::Io { path: abs.clone(), source })?)
@@ -95,6 +111,24 @@ impl Repo {
         self.commit_pairs_inner(zone, id, false)
     }
 
+    /// The file list of [`Repo::commit_pairs_names`] as `(path, b'A' | b'D' | b'M')`, sorted by path, without
+    /// building per-file pairs.
+    pub fn commit_changes(&self, zone: &str, id: &ObjectId) -> Result<Vec<(String, u8)>> {
+        self.commit_changes_only(zone, id, &[])
+    }
+
+    /// [`Self::commit_changes`] limited to the repo-relative paths in `only` (files equal to or beneath one).
+    pub fn commit_changes_only(&self, zone: &str, id: &ObjectId, only: &[String]) -> Result<Vec<(String, u8)>> {
+        let zone = self.resolve_zone(zone)?;
+        let prefix = self.zones()?.path_of(&zone).unwrap_or("").to_owned();
+        let commit = self.commit_obj(id)?;
+        let parent = match commit.parents.first() {
+            Some(p) => Some(self.commit_obj(p)?.root),
+            None => None,
+        };
+        treeops::diff_trees_status_only(&self.store, parent, Some(commit.root), &prefix, only)
+    }
+
     fn commit_pairs_inner(&self, zone: &str, id: &ObjectId, content: bool) -> Result<Vec<FilePair>> {
         let zone = self.resolve_zone(zone)?;
         let prefix = self.zones()?.path_of(&zone).unwrap_or("").to_owned();
@@ -116,8 +150,12 @@ impl Repo {
             }
             out.push(FilePair {
                 path: p.clone(),
-                old: o.map(|(_, i)| if content { self.store.get_content(i) } else { Ok(Vec::new()) }).transpose()?,
-                new: n.map(|(_, i)| if content { self.store.get_content(i) } else { Ok(Vec::new()) }).transpose()?,
+                old: o
+                    .map(|(_, i)| if content { self.store.get_content(i) } else { Ok(Vec::new()) })
+                    .transpose()?,
+                new: n
+                    .map(|(_, i)| if content { self.store.get_content(i) } else { Ok(Vec::new()) })
+                    .transpose()?,
                 old_mode: o.map(|x| x.0),
                 new_mode: n.map(|x| x.0),
             });

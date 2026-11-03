@@ -214,6 +214,16 @@ seed execute the same trials in the same order against byte-identical fixtures. 
 `cold_restart` (first `log -1` + `status` after a cache drop; cold only), `recovery` (SIGKILL `add && commit` after 2 to 26 ms,
 then time stale-lock cleanup + `fsck` + `status`).
 
+### 7.3 Recorded smoke run (#182)
+
+`data/storebench-smoke-lambda.json` is one real smoke run (not synthetic): workloads `small_source`, `large_monorepo`,
+`binary_heavy`, `ml_checkpoints`; tools git 2.56.0 and vcs; warm mode only; scale `smoke`, seed 1, 3 trials per cell
+(so the 95% intervals are marked `ci_reliable: false`). Machine: the shared 30-core AMD EPYC 7J13 Lambda box,
+load1 5.4 at start and 5.5 at the end, other jobs were running; read the CPU columns before wall. 528 trials, 6 failed
+(`vcs blame` on a binary tensor file, a refusal by design) and 40 cells skipped with reasons recorded in the file (zone-subscription ops on workloads with too few zones, and ops the vcs CLI
+has no command for: tree listing, merge-base; walgit was not given). It proves the harness and the schema end to end; it is not a comparison to quote.
+Command: see `meta.command_line` in the file.
+
 Tool mapping and semantic differences (read before comparing): `vcs publish` = `git push origin HEAD:main`;
 `vcs sync` = `git pull --ff-only`; `vcs gc` is `--dry-run` only (destructive GC is not implemented), so the `gc` row
 compares a plan against a real `git gc`; `vcs log` is per zone (`--zone`, history zone) while `git log` walks the whole repo;

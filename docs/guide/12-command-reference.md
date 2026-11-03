@@ -28,6 +28,7 @@ Commands:
   verify-tag     Check the Ed25519 signature of an annotated tag (exit 1 unless good)
   config         Get, set, list or unset settings (repo .vcs/config, user config, environment)
   status         Show staged, unstaged and untracked changes per zone
+  watch          Watch the working tree and journal changed paths so `status` can skip a full scan (runs until killed)
   diff           Show unstaged changes (or --staged)
   import-git     Import a `git fast-export` stream (file, or `-` for stdin) into the root zone
   import-p4      Import recorded Perforce output (fixture directory, see docs/import-p4.md) into the root zone. Checked once against real p4d output on a small history; see that document
@@ -42,6 +43,9 @@ Commands:
   p4             Run a Perforce command in its vcs form, one to one (`vcs p4 --list` shows the map, `--explain` the translation; docs/p4-to-vcs.md)
   sparse         Materialize only some paths of a zone (set, add, remove, list, disable); the rest stays tracked, not deleted
   tag            List tags of the current zone, create one (lightweight, or annotated with -m), or delete one with -d
+  format-patch   Write commits as mail-format patch files (one per commit: author, date, message, diff)
+  apply          Apply a unified diff (from `vcs diff`, `vcs show`, `vcs format-patch` or git) to the working tree
+  am             Apply mail-format patches as commits, keeping author, date and message
   show           Show a commit (default HEAD) with its diff against the first parent
   blame          Attribute each line of a file to a commit, following first parents
   hook           List, install or run client-side hooks (.vcs/hooks/, see docs/hooks.md)
@@ -58,10 +62,13 @@ Commands:
   diff-tree      List the files that differ between two revisions (A/D/M and path)
   reset          Move the checked-out branch of a zone to another commit (--soft, --mixed, --hard); acts on one zone
   clean          Delete untracked files (-n lists, -f deletes)
+  profile        Local usage profile that `sync --auto` / `pull --auto` / `clone --auto` predict zones from (docs/zone-profile.md)
+  pull           Same as `sync` (fetch, then fast-forward); `--auto` chooses zones from your usage profile
   git            Run a git command line as its vcs equivalent, e.g. `vcs git log --oneline` (table: docs/git-to-vcs.md; `--map` lists it)
   switch         Switch branch (in the zone containing cwd, or --zone); `--detach` checks out any revision without a branch
   merge          Merge a branch into the checked-out branch (fast-forward when possible)
   cherry-pick    Re-apply the change of one commit onto the checked-out branch
+  cherry         List the commits of a branch with `+` (no equivalent patch upstream) or `-` (an upstream commit has the same patch)
   revert         Create a commit that undoes one commit
   rebase         Replay the checked-out branch onto another branch, keeping each change id
   conflict       Inspect conflicts of an in-progress merge
@@ -81,7 +88,8 @@ Commands:
   unlock         Release locks you hold (`--break` removes anyone's lock; the server requires an admin token)
   locks          Show locks recorded on the remote (as of now; advisory until a validating writer exists)
   fetch          Download remote objects and update remote-tracking refs (local branches untouched)
-  sync           Fetch, then fast-forward local branches where safe
+  prefetch       Download the file contents of subscribed zones' heads now (to work offline later)
+  sync           Fetch, then fast-forward local branches where safe (`--auto`: choose zones from your usage profile)
   fsck           Verify all objects and graph invariants
   repack         Move loose objects into a pack (one pack + index under .vcs/objects/pack). With --format, existing packs are rewritten to that format too
   gc             Garbage collection. DESTRUCTIVE unless --dry-run: permanently deletes unreachable objects older than the grace period (local), or with --remote --yes on the remote
@@ -359,6 +367,22 @@ Options:
   -h, --help           Print help
 ```
 
+## `vcs watch`
+
+```text
+Watch the working tree and journal changed paths so `status` can skip a full scan (runs until killed)
+
+Usage: vcs watch [OPTIONS]
+
+Options:
+  -C <DIR>                     Run as if vcs was started in <DIR> (applied before repository discovery)
+      --idle-exit <IDLE_EXIT>  Stop after this many seconds without a `status` asking for the journal (set when a command starts the watcher itself)
+      --json                   Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>          PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks               Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help                   Print help
+```
+
 ## `vcs diff`
 
 ```text
@@ -472,11 +496,15 @@ Options:
       --color <COLOR>               When to colour output [default: auto] [possible values: auto, always, never]
       --since <DATE>                Only commits at or after this date (UTC; see `vcs log --help` placeholders in docs/guide)
       --until <DATE>                Only commits at or before this date (a date without time includes that whole day)
-      --grep <REGEX>                Only commits whose message matches this regular expression
+      --grep <REGEX>                Only commits whose message matches this pattern: a POSIX basic regular expression like `git log --grep` (so `+ ? | ( ) { }` are literal; `\+ \? \| \( \)` are the operators), or see -E / -F
+  -F, --fixed-strings               Treat `--grep` / `-G` patterns as plain strings (`+`, `(`, `.` are literal)
+  -E, --extended-regexp             Treat `--grep` / `-G` patterns as extended regular expressions (`+ ? | ( )` are operators)
+  -i, --regexp-ignore-case          Match `--grep` / `-G` patterns case-insensitively
       --merges                      Only merge commits (two or more parents)
       --no-merges                   Skip merge commits
       --first-parent                Follow only the first parent of each commit
   -S <STRING>                       Only commits that change the number of occurrences of this string in some file (pickaxe)
+  -G <REGEX>                        Only commits that add or remove a line matching this regular expression in some file (like `git log -G`)
       --format <TEMPLATE>           Template per commit. Placeholders: %H %h %P %p %an %ae %at %ad %s %b %B %C %z %n %%
       --follow                      With one path: the history of that file across renames (first-parent walk)
       --name-status                 List changed files with a status letter under each commit
@@ -729,6 +757,7 @@ Arguments:
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --drop           Delete the shelf from the remote after it applied cleanly (like `stash pop`); a conflicted apply keeps it
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
@@ -745,7 +774,7 @@ depots	zone list	renamed	depots
 sync	sync	different-semantics	sync
 sync -f	sync; restore .	different-semantics	sync_f
 sync -n	fetch	different-semantics	sync_n
-sync path@rev / sync @label	(none)	missing	sync_rev_missing
+sync path@rev / @label / @N	(computed) write the files of that commit into the workspace	different-semantics	sync_rev
 edit	lock (lockable files); nothing otherwise	different-semantics	edit_plain
 add	add	exact	add
 delete	rm	renamed	delete
@@ -768,7 +797,7 @@ fstat	log -n 1 --format ... -- file	different-semantics	fstat
 print	cat-file -p rev:path	renamed	print
 have	ls-files	renamed	have
 integrate / merge	merge	different-semantics	integrate
-copy	(none)	missing	copy_missing
+copy source-branch	(computed) make the tracked files equal to that branch, staged	different-semantics	copy
 resolve [-at -ay -af -n]	resolve --theirs/--ours/--mark; conflict list	renamed	resolve
 shelve [-c name] [-d]	shelve [name] [--delete]	different-semantics	shelve
 unshelve -s name	unshelve name	different-semantics	shelve
@@ -788,8 +817,13 @@ init / fetch / push / clone	init / fetch / publish / clone	renamed	push
 grep	grep	exact	grep
 clean	restore --staged .; restore .	different-semantics	clean
 change / changelist	status	different-semantics	change
+change -m desc / -i / -d N / -o N	(local ledger) numbered pending changelists	different-semantics	change_numbered
+add / edit / delete / revert / opened -c N	(local ledger) open files in changelist N	different-semantics	numbered_open
+reopen -c N	(local ledger) move files between changelists	different-semantics	reopen
+submit -c N	add (the changelist's files); commit; publish	different-semantics	submit_numbered
+describe N / @N	show <commit recorded for N>	different-semantics	changelist_numbers
 verify	fsck	renamed	verify
-reopen / obliterate / jobs / fix	(none)	missing	missing_cmds
+obliterate / jobs / fix	(none)	missing	missing_cmds
 protect / groups / group / user / passwd	(none: vcs-server tokens)	missing	protect_missing
 ```
 
@@ -928,6 +962,78 @@ Options:
   -s, --sign                   Sign the annotated tag with `user.signingkey` (Ed25519; needs -m)
   -d, --delete                 Delete the named tag
   -h, --help                   Print help
+```
+
+## `vcs format-patch`
+
+```text
+Write commits as mail-format patch files (one per commit: author, date, message, diff)
+
+Usage: vcs format-patch [OPTIONS] [REV]
+
+Arguments:
+  [REV]  Commits to turn into patches: `A..B` (commits of B not in A), or a revision (commits on the branch not in it)
+
+Options:
+  -C <DIR>                      Run as if vcs was started in <DIR> (applied before repository discovery)
+  -n, --count <N>               The last N commits of the branch instead
+      --json                    Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --root                    Include root commits (all history up to the branch tip)
+      --ca-pem <FILE>           PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+  -o, --output-directory <DIR>  Directory for the patch files (default: the current directory)
+      --no-hooks                Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+      --stdout                  Write all patches to standard output as one mailbox
+      --start-number <N>        Number the first patch from N (default 1) [default: 1]
+      --no-numbered             Never put `n/m` in the subject
+      --subject-prefix <TEXT>   Subject prefix inside the brackets (default PATCH) [default: PATCH]
+      --zone <ZONE>             Zone (default: the zone containing the current directory)
+  -h, --help                    Print help
+```
+
+## `vcs apply`
+
+```text
+Apply a unified diff (from `vcs diff`, `vcs show`, `vcs format-patch` or git) to the working tree
+
+Usage: vcs apply [OPTIONS] [FILES]...
+
+Arguments:
+  [FILES]...  Patch files (default: standard input; `-` is standard input)
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --check          Check that the patch applies; change nothing
+      --index          Also stage the changes (the files must match the index)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+  -R, --reverse        Apply the patch backwards
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -p <N>               Strip N leading path components (default 1)
+  -3, --3way           Three-way application: a hunk that does not fit is merged against its own pre-image; overlapping edits leave conflict markers in the file
+  -v, --verbose        Print the files that were (or would be) changed
+  -h, --help           Print help
+```
+
+## `vcs am`
+
+```text
+Apply mail-format patches as commits, keeping author, date and message
+
+Usage: vcs am [OPTIONS] [FILES]...
+
+Arguments:
+  [FILES]...  Mailbox files, such as those `format-patch` wrote (default: standard input)
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --continue       Commit the files you fixed and staged for the stopped patch, then go on
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --skip           Drop the stopped patch and go on
+      --abort          Go back to the branch heads from before `vcs am`
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+  -3, --3way           Three-way application: a hunk that does not fit is merged against its own pre-image; the run stops on overlapping edits with conflict markers (resolve, `vcs add`, `vcs am --continue`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
 ```
 
 ## `vcs show`
@@ -1292,6 +1398,7 @@ Options:
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --rev <REV>      List the files of this revision instead of the working tree's tracked files
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --depth <N>      With --rev: list only the entries directly inside the root of the revision (`1`), directories as mode 040000 with their tree id, like `git ls-tree <rev>`; reads one tree
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
@@ -1449,6 +1556,205 @@ Options:
   -h, --help           Print help
 ```
 
+## `vcs profile`
+
+```text
+Local usage profile that `sync --auto` / `pull --auto` / `clone --auto` predict zones from (docs/zone-profile.md)
+
+Usage: vcs profile [OPTIONS] <COMMAND>
+
+Commands:
+  show     Show what is recorded: counts per zone and where the file is
+  on       Start recording again after `off`
+  off      Stop recording and erase what was recorded (hints still work)
+  clear    Erase recorded events, keep recording
+  record   Run a command and record it as build activity in the current zone (and in any zone whose directory the command line names). The command's exit status is passed through
+  note     Record that you read these paths (a hint for editors and build tools)
+  rank     Rank the zones for this repository from the profile (offline) and print the plan
+  skipped  List zones that are not subscribed, with how to fetch them
+  fetch    Download the contents of zones now (commits and trees too if missing) and subscribe
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+### `vcs profile show`
+
+```text
+Show what is recorded: counts per zone and where the file is
+
+Usage: vcs profile show [OPTIONS]
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+#### `vcs profile on`
+
+```text
+Start recording again after `off`
+
+Usage: vcs profile on [OPTIONS]
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+##### `vcs profile off`
+
+```text
+Stop recording and erase what was recorded (hints still work)
+
+Usage: vcs profile off [OPTIONS]
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+###### `vcs profile clear`
+
+```text
+Erase recorded events, keep recording
+
+Usage: vcs profile clear [OPTIONS]
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+####### `vcs profile record`
+
+```text
+Run a command and record it as build activity in the current zone (and in any zone whose directory the command line names). The command's exit status is passed through
+
+Usage: vcs profile record [OPTIONS] <CMD>...
+
+Arguments:
+  <CMD>...  
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --path <PATHS>   Also record these paths as used (repeatable)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+######## `vcs profile note`
+
+```text
+Record that you read these paths (a hint for editors and build tools)
+
+Usage: vcs profile note [OPTIONS] [PATHS]...
+
+Arguments:
+  [PATHS]...  
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+######### `vcs profile rank`
+
+```text
+Rank the zones for this repository from the profile (offline) and print the plan
+
+Usage: vcs profile rank [OPTIONS]
+
+Options:
+      --budget-zones <N>     Add at most this many zones (default: the hints' max_zones, else 8). Zones already subscribed and the root zone are always kept and do not count
+  -C <DIR>                   Run as if vcs was started in <DIR> (applied before repository discovery)
+      --budget-bytes <SIZE>  Add at most this many stored bytes of file contents (e.g. 200M, 2G; default: no limit)
+      --json                 Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>        PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --explain              Show why each zone is ranked where it is
+      --no-hooks             Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help                 Print help
+```
+
+########## `vcs profile skipped`
+
+```text
+List zones that are not subscribed, with how to fetch them
+
+Usage: vcs profile skipped [OPTIONS]
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+########### `vcs profile fetch`
+
+```text
+Download the contents of zones now (commits and trees too if missing) and subscribe
+
+Usage: vcs profile fetch [OPTIONS] [ZONES]...
+
+Arguments:
+  [ZONES]...  
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --with-deps      Also the zones they depend on
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --stats          Print the number of remote requests and bytes transferred
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+## `vcs pull`
+
+```text
+Same as `sync` (fetch, then fast-forward); `--auto` chooses zones from your usage profile
+
+Usage: vcs pull [OPTIONS]
+
+Options:
+      --auto                 Choose which zones to download from your local usage profile (see `vcs profile`); the other zones get commits and trees only and are listed, fetchable with `vcs profile fetch`
+  -C <DIR>                   Run as if vcs was started in <DIR> (applied before repository discovery)
+      --budget-zones <N>     Add at most this many zones (default: the hints' max_zones, else 8). Zones already subscribed and the root zone are always kept and do not count
+      --json                 Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --budget-bytes <SIZE>  Add at most this many stored bytes of file contents (e.g. 200M, 2G; default: no limit)
+      --ca-pem <FILE>        PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --auto-profile <FILE>  Seed the prediction with a profile or hints file (repeatable; with --auto)
+      --no-hooks             Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+      --explain              With --auto: show why each zone was chosen or skipped
+      --dry-run              With --auto: print the plan, download no file contents, change nothing but zone metadata
+      --stats                Print the number of remote requests and bytes transferred
+  -h, --help                 Print help
+```
+
 ## `vcs git`
 
 ```text
@@ -1540,15 +1846,36 @@ Options:
 ```text
 Re-apply the change of one commit onto the checked-out branch
 
-Usage: vcs cherry-pick [OPTIONS] <REV>
+Usage: vcs cherry-pick [OPTIONS] <REVS>...
 
 Arguments:
-  <REV>  Commit id (or unique prefix), branch name or HEAD
+  <REVS>...  Commit id (or unique prefix), branch name, HEAD, or a range `A..B` (the commits of B that A lacks, oldest first); several allowed
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --zone <ZONE>    Zone (default: the zone containing the current directory)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+## `vcs cherry`
+
+```text
+List the commits of a branch with `+` (no equivalent patch upstream) or `-` (an upstream commit has the same patch)
+
+Usage: vcs cherry [OPTIONS] <UPSTREAM> [HEAD]
+
+Arguments:
+  <UPSTREAM>  Branch or revision to compare against
+  [HEAD]      Commits to list (default HEAD)
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+  -v, --verbose        Print the subject after each id
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --zone <ZONE>    Zone (default: the zone containing the current directory)
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
@@ -1598,6 +1925,18 @@ Options:
           PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks
           Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+      --skip
+          Drop the commit the rebase is stopped on (conflicts) and carry on
+  -i, --interactive
+          Edit the todo list (pick/reword/edit/squash/fixup/drop/exec, reorder) in $GIT_SEQUENCE_EDITOR / $VCS_SEQUENCE_EDITOR / core.editor / $EDITOR; `onto` may be any revision such as HEAD~3
+      --autosquash
+          With -i: move `fixup! X` / `squash! X` commits next to X and fold them
+  -x, --exec <COMMAND>
+          Run this shell command after each replayed commit (repeatable); a failure stops the rebase
+      --onto <NEWBASE>
+          Replay onto NEWBASE (any revision) the commits that the positional upstream lacks (`git rebase --onto`)
+      --root
+          With --onto: replay every commit of the branch, root commit included (no upstream)
       --no-structural
           Do not use the structural Rust merge (only matters when built with `--features structural`)
       --renames
@@ -1727,6 +2066,10 @@ Commands:
   suggest    Propose zone boundaries from manifests, ownership files, directories (read-only; see docs/zones-autodetect.md)
   apply      Turn one suggestion into a zone (plan only without --yes; history is not rewritten)
   subscribe  Subscribe to the minimal zone set for a path, symbol, task or person, plus their dependencies
+  describe   Machine-readable description of zones: purpose, owners, dependencies, subscriptions, locks, history (docs/zone-ontology.md)
+  graph      Zone dependency graph with reasons, transitive closures and path index (docs/zone-ontology.md)
+  explain    One call: owner zone of a path, its owners, dependencies, dependents and impacted zones (docs/zone-ontology.md)
+  changes    Per zone, the files that changed between two commits or dates (`A..B`), in one call
   help       Print this message or the help of the given subcommand(s)
 
 Options:
@@ -1947,14 +2290,14 @@ Options:
 ```text
 Turn one suggestion into a zone (plan only without --yes; history is not rewritten)
 
-Usage: vcs zone apply [OPTIONS] <TARGET>
+Usage: vcs zone apply [OPTIONS] <TARGET>...
 
 Arguments:
-  <TARGET>  Path or proposed name of a suggestion from `vcs zone suggest`
+  <TARGET>...  Path or proposed name of a suggestion from `vcs zone suggest`; several make all the zones in one step (one status check, one new root commit, one write of the repository state)
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
-      --name <NAME>    Zone name to use instead of the proposed one
+      --name <NAME>    Zone name to use instead of the proposed one (only with a single target)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --yes            Actually do it. Without this only the plan is printed
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
@@ -1986,6 +2329,85 @@ Options:
       --search-content     Search file contents for definitions of symbol-ish queries (remote: downloads source files)
       --partial            Continue when some `--for` queries match nothing (default: refuse)
   -h, --help               Print help
+```
+
+################ `vcs zone describe`
+
+```text
+Machine-readable description of zones: purpose, owners, dependencies, subscriptions, locks, history (docs/zone-ontology.md)
+
+Usage: vcs zone describe [OPTIONS] [ZONE]
+
+Arguments:
+  [ZONE]  Describe only this zone (display name or id); default: every zone
+
+Options:
+  -C <DIR>                           Run as if vcs was started in <DIR> (applied before repository discovery)
+      --history <HISTORY>            Recent commits listed per zone (each with its changed files) [default: 3]
+      --json                         Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --since <DATE>                 Only commits at or after this date (`YYYY-MM-DD`, Unix seconds, `N days ago`, ...)
+      --ca-pem <FILE>                PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --format <FORMAT>              Output size: compact (default), brief, or full (the documented schema) [default: compact] [possible values: compact, full, brief]
+      --no-hooks                     Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+      --transactions <TRANSACTIONS>  Recent operations (local transaction log) listed [default: 3]
+      --path <PATH>                  Report which zone owns this repo-relative path (repeatable)
+      --fields <KEYS>                Keep only these keys of each zone object (comma separated, e.g. `purpose,history`); `id` and `name` are always kept. Smaller output for agents; the schema's per-zone `required` list then does not apply
+  -h, --help                         Print help
+```
+
+################# `vcs zone graph`
+
+```text
+Zone dependency graph with reasons, transitive closures and path index (docs/zone-ontology.md)
+
+Usage: vcs zone graph [OPTIONS]
+
+Options:
+  -C <DIR>               Run as if vcs was started in <DIR> (applied before repository discovery)
+      --format <FORMAT>  Output size: compact (default, no `edges`), or full (with edges and reasons) [default: compact] [possible values: compact, full, brief]
+      --deep             Also scan Go, Python and JS/TS imports (reads source files; slower)
+      --json             Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>    PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks         Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help             Print help
+```
+
+################## `vcs zone explain`
+
+```text
+One call: owner zone of a path, its owners, dependencies, dependents and impacted zones (docs/zone-ontology.md)
+
+Usage: vcs zone explain [OPTIONS] <PATH>
+
+Arguments:
+  <PATH>  Repo-relative path (file or directory; need not exist)
+
+Options:
+  -C <DIR>               Run as if vcs was started in <DIR> (applied before repository discovery)
+      --format <FORMAT>  [default: compact] [possible values: compact, full, brief]
+      --json             Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>    PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks         Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help             Print help
+```
+
+################### `vcs zone changes`
+
+```text
+Per zone, the files that changed between two commits or dates (`A..B`), in one call
+
+Usage: vcs zone changes [OPTIONS] <RANGE>
+
+Arguments:
+  <RANGE>  `A..B`: what changed in every zone after A up to and including B. A and B are commit ids (any zone), operation ids, dates, or `HEAD` (B only). `..B` starts from the beginning
+
+Options:
+  -C <DIR>               Run as if vcs was started in <DIR> (applied before repository discovery)
+      --format <FORMAT>  [default: compact] [possible values: compact, full, brief]
+      --json             Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>    PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks         Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help             Print help
 ```
 
 ## `vcs worktree`
@@ -2350,7 +2772,7 @@ Usage: vcs bundle [OPTIONS] <COMMAND>
 
 Commands:
   create  Write a bundle of branches or zones (default: every branch) to a file
-  verify  Check a bundle's hashes, structure and completeness (needs no repository)
+  verify  Check a bundle's hashes, structure and completeness (needs no repository). --quick checks only the header, refs, lengths and prerequisites, in about a millisecond
   help    Print this message or the help of the given subcommand(s)
 
 Options:
@@ -2384,7 +2806,7 @@ Options:
 #### `vcs bundle verify`
 
 ```text
-Check a bundle's hashes, structure and completeness (needs no repository)
+Check a bundle's hashes, structure and completeness (needs no repository). --quick checks only the header, refs, lengths and prerequisites, in about a millisecond
 
 Usage: vcs bundle verify [OPTIONS] <FILE>
 
@@ -2393,6 +2815,7 @@ Arguments:
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --quick          Skip hashing the pack and decoding objects (misses corruption inside the pack body)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
@@ -2411,24 +2834,28 @@ Arguments:
   <DIR>  
 
 Options:
-  -C <DIR>                 Run as if vcs was started in <DIR> (applied before repository discovery)
-      --zone <ZONES>       Only download these zones (repeatable)
-      --json               Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
-      --stats              Print the number of remote requests and bytes transferred
-      --ca-pem <FILE>      PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
-      --for <PATH|SYMBOL>  Pull what is needed for this: a file, a directory, a zone name, or a symbol-ish name (`parse_config`, `net::Client`, `pkg.mod`). Repeatable. Plus the zones they depend on
-      --no-hooks           Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
-      --task <TEXT>        Describe a task in words; zones are chosen by offline keyword matching (a proposal)
-      --for-owner <USER>   Pull the zones a person relates to (CODEOWNERS entries, and commit authorship)
-      --task-assist <CMD>  Ask this command to propose zones for `--task` (JSON on stdin/stdout, see docs). Off unless given
-      --explain            Show why each zone is included
-      --dry-run            Only print the plan with files and bytes; download no file content and change nothing
-      --no-deps            Do not add the zones the selection depends on
-      --max-depth <N>      Follow dependencies at most this many hops
-      --deep               Also scan source imports (Go, Python, JS/TS), downloading the source of selected zones to do so
-      --search-content     Search file contents for definitions of symbol-ish queries (remote: downloads source files)
-      --partial            Continue when some `--for` queries match nothing (default: refuse)
-  -h, --help               Print help
+  -C <DIR>                   Run as if vcs was started in <DIR> (applied before repository discovery)
+      --zone <ZONES>         Only download these zones (repeatable)
+      --json                 Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --stats                Print the number of remote requests and bytes transferred
+      --ca-pem <FILE>        PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --for <PATH|SYMBOL>    Pull what is needed for this: a file, a directory, a zone name, or a symbol-ish name (`parse_config`, `net::Client`, `pkg.mod`). Repeatable. Plus the zones they depend on
+      --no-hooks             Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+      --task <TEXT>          Describe a task in words; zones are chosen by offline keyword matching (a proposal)
+      --for-owner <USER>     Pull the zones a person relates to (CODEOWNERS entries, and commit authorship)
+      --task-assist <CMD>    Ask this command to propose zones for `--task` (JSON on stdin/stdout, see docs). Off unless given
+      --explain              Show why each zone is included
+      --dry-run              Only print the plan with files and bytes; download no file content and change nothing
+      --no-deps              Do not add the zones the selection depends on
+      --max-depth <N>        Follow dependencies at most this many hops
+      --deep                 Also scan source imports (Go, Python, JS/TS), downloading the source of selected zones to do so
+      --search-content       Search file contents for definitions of symbol-ish queries (remote: downloads source files)
+      --partial              Continue when some `--for` queries match nothing (default: refuse)
+      --auto                 Choose the zones to download from hints (`.vcs-profile-hints.toml`) and `--auto-profile` files; `--explain` and `--dry-run` work as for `--for`
+      --auto-profile <FILE>  A profile (exported `.vcs/profile`) or hints file to predict from; implies --auto. Repeatable
+      --budget-zones <N>     Add at most this many zones (default: the hints' max_zones, else 8). Zones already subscribed and the root zone are always kept and do not count
+      --budget-bytes <SIZE>  Add at most this many stored bytes of file contents (e.g. 200M, 2G; default: no limit)
+  -h, --help                 Print help
 ```
 
 ## `vcs publish`
@@ -2462,6 +2889,14 @@ Options:
           Replace the remote head whatever it is when the publish reads it (still one atomic compare-and-swap, but not checked against what you last fetched)
       --delete <BRANCH>
           Delete this remote branch (only if it is the head you last fetched; repeatable)
+      --tags
+          Publish only the tags, move no branch (`git push --tags`)
+      --prune
+          Also delete every remote branch of a subscribed zone that has no local branch (`git push --prune`); each deletion needs the head you last fetched (or your lease) and is audited
+      --mirror
+          Make the remote match this repo: force every checked-out branch (leased, like --force-with-lease), prune remote branches with no local one, and publish tags (`git push --mirror`)
+      --auto-merge[=<N>]
+          When the remote branch moved, fetch, merge it in (only if the merge is clean) and publish again, up to N times with a short randomized wait (default 20; env VCS_PUBLISH_AUTOMERGE=N also turns it on)
   -h, --help
           Print help
 ```
@@ -2540,19 +2975,43 @@ Options:
   -h, --help           Print help
 ```
 
+## `vcs prefetch`
+
+```text
+Download the file contents of subscribed zones' heads now (to work offline later)
+
+Usage: vcs prefetch [OPTIONS]
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --zone <ZONES>   
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --stats          Print the number of remote requests and bytes transferred
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
 ## `vcs sync`
 
 ```text
-Fetch, then fast-forward local branches where safe
+Fetch, then fast-forward local branches where safe (`--auto`: choose zones from your usage profile)
 
 Usage: vcs sync [OPTIONS]
 
 Options:
-  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
-      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
-      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
-      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
-  -h, --help           Print help
+      --auto                 Choose which zones to download from your local usage profile (see `vcs profile`); the other zones get commits and trees only and are listed, fetchable with `vcs profile fetch`
+  -C <DIR>                   Run as if vcs was started in <DIR> (applied before repository discovery)
+      --budget-zones <N>     Add at most this many zones (default: the hints' max_zones, else 8). Zones already subscribed and the root zone are always kept and do not count
+      --json                 Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --budget-bytes <SIZE>  Add at most this many stored bytes of file contents (e.g. 200M, 2G; default: no limit)
+      --ca-pem <FILE>        PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --auto-profile <FILE>  Seed the prediction with a profile or hints file (repeatable; with --auto)
+      --no-hooks             Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+      --explain              With --auto: show why each zone was chosen or skipped
+      --dry-run              With --auto: print the plan, download no file contents, change nothing but zone metadata
+      --stats                Print the number of remote requests and bytes transferred
+  -h, --help                 Print help
 ```
 
 ## `vcs fsck`

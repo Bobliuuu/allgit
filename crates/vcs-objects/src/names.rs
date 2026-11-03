@@ -76,8 +76,12 @@ pub fn is_meta_alias(s: &str) -> bool {
     if s.eq_ignore_ascii_case(META_DIR) {
         return true;
     }
-    if s.is_ascii() && !s.contains([':', '~', '.', ' ']) {
-        return false;
+    let b = s.as_bytes();
+    if b.is_ascii() && !b.iter().any(|c| matches!(c, b':' | b'~' | b' ')) {
+        // Only trailing dots/spaces can still turn the name into `.vcs`; with none of ':', '~' or
+        // ' ' present, a name whose dot-trimmed length is not 4 cannot be an alias.
+        let n = s.trim_end_matches('.').len();
+        return n == META_DIR.len() && b[..n].eq_ignore_ascii_case(META_DIR.as_bytes());
     }
     let base = s.split(':').next().unwrap_or(s).trim_end_matches(['.', ' ']);
     if base.is_ascii() {
@@ -127,6 +131,26 @@ pub fn validate_path(s: &str) -> Result<(), NameError> {
     Ok(())
 }
 
+/// [`validate_path`] for a path that follows `prev` in sorted order, where `prev` is already
+/// known to be valid: the components both paths share (everything up to the last `/` inside
+/// their common prefix) were checked with `prev`, so only the rest is. Same verdict as
+/// `validate_path(s)` whenever `prev` is valid (or empty).
+pub fn validate_path_after(prev: &str, s: &str) -> Result<(), NameError> {
+    if s.is_empty() {
+        return Err(NameError::Path(s.to_owned(), "empty"));
+    }
+    if s.len() > MAX_PATH {
+        return Err(NameError::Path(s.to_owned(), "too long"));
+    }
+    let (a, b) = (prev.as_bytes(), s.as_bytes());
+    let lcp = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    let start = b[..lcp].iter().rposition(|&c| c == b'/').map_or(0, |i| i + 1);
+    for c in s[start..].split('/') {
+        validate_component(c).map_err(|_| NameError::Path(s.to_owned(), "bad component"))?;
+    }
+    Ok(())
+}
+
 /// True if `a` and `b` are equal or one is a component-wise prefix of the other.
 pub fn paths_overlap(a: &str, b: &str) -> bool {
     let pre = |x: &str, y: &str| x == y || (y.starts_with(x) && y.as_bytes()[x.len()] == b'/');
@@ -149,6 +173,26 @@ mod tests {
             .strip_prefix("vcs~")
             .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
         folded == META_DIR || short
+    }
+
+    #[test]
+    fn validate_path_after_agrees_with_validate_path() {
+        let comps = ["a", "b", ".vcs", "..", ".", "", "x.y", ".VCS.", "vcs~1", "é", "a\\b"];
+        let mut paths = vec![];
+        for x in comps {
+            paths.push(x.to_owned());
+            for y in comps {
+                paths.push(format!("{x}/{y}"));
+                for z in comps {
+                    paths.push(format!("{x}/{y}/{z}"));
+                }
+            }
+        }
+        for prev in paths.iter().filter(|p| validate_path(p).is_ok()).chain([&String::new()]) {
+            for s in &paths {
+                assert_eq!(validate_path_after(prev, s).is_ok(), validate_path(s).is_ok(), "{prev:?} -> {s:?}");
+            }
+        }
     }
 
     #[test]

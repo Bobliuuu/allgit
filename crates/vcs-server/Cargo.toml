@@ -23,6 +23,7 @@ vcs-remote.workspace = true
 vcs-objects.workspace = true
 vcs-store-s3.workspace = true
 blake3.workspace = true
+unicode-normalization.workspace = true
 thiserror.workspace = true
 ureq = { version = "2", default-features = false }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"], optional = true }

@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 use vcs_objects::{ObjectId, Signature};
 use vcs_remote::Outcome;
-use vcs_repo::{AssistResult, ChangeKind, Error, MergeOutcome, RebaseOutcome, Repo, Resolution, SyncAction, ROOT_ZONE};
+use vcs_repo::{AssistResult, ChangeKind, Error, MergeOutcome, RebaseOutcome, Repo, Resolution, ROOT_ZONE};
 
 mod archive;
 mod auth;
@@ -26,12 +26,17 @@ mod json;
 mod lockable_cmd;
 mod logfmt;
 mod logopts;
+mod ontology;
 mod p4map;
+mod patchcmd;
 mod plumb;
+mod quick;
+mod rebase_i;
 mod remote;
 mod shelve_cmd;
 mod signing_cmd;
 mod worktree_cmd;
+mod zoneprofile_cmd;
 
 /// The assist command: `--assist`, else the opt-in `merge.assist` setting (announced, because file
 /// contents are then handed to that command), unless `--no-assist`.
@@ -164,7 +169,11 @@ enum Cmd {
     Status,
     /// Watch the working tree and journal changed paths so `status` can skip a full scan (runs until killed)
     #[cfg(feature = "watcher")]
-    Watch,
+    Watch {
+        /// Stop after this many seconds without a `status` asking for the journal (set when a command starts the watcher itself)
+        #[arg(long)]
+        idle_exit: Option<u64>,
+    },
     /// Show unstaged changes (or --staged)
     Diff {
         #[arg(long)]
@@ -206,7 +215,7 @@ enum Cmd {
         /// Zone (default: the zone containing the current directory)
         #[arg(long)]
         zone: Option<String>,
-        #[arg(short = 'n', long, default_value_t = 20)]
+        #[arg(short = 'n', long, default_value_t = 20, alias = "max-count")]
         limit: usize,
         /// One line per commit: short id and subject
         #[arg(long)]
@@ -294,6 +303,12 @@ enum Cmd {
         #[arg(short = 'd', long)]
         delete: bool,
     },
+    /// Write commits as mail-format patch files (one per commit: author, date, message, diff)
+    FormatPatch(patchcmd::FormatPatchArgs),
+    /// Apply a unified diff (from `vcs diff`, `vcs show`, `vcs format-patch` or git) to the working tree
+    Apply(patchcmd::ApplyArgs),
+    /// Apply mail-format patches as commits, keeping author, date and message
+    Am(patchcmd::AmArgs),
     /// Show a commit (default HEAD) with its diff against the first parent
     Show {
         rev: Option<String>,
@@ -375,8 +390,22 @@ enum Cmd {
     /// Re-apply the change of one commit onto the checked-out branch
     #[command(name = "cherry-pick")]
     CherryPick {
-        /// Commit id (or unique prefix), branch name or HEAD
-        rev: String,
+        /// Commit id (or unique prefix), branch name, HEAD, or a range `A..B` (the commits of B that A lacks, oldest first); several allowed
+        #[arg(required = true)]
+        revs: Vec<String>,
+        /// Zone (default: the zone containing the current directory)
+        #[arg(long)]
+        zone: Option<String>,
+    },
+    /// List the commits of a branch with `+` (no equivalent patch upstream) or `-` (an upstream commit has the same patch)
+    Cherry {
+        /// Branch or revision to compare against
+        upstream: String,
+        /// Commits to list (default HEAD)
+        head: Option<String>,
+        /// Print the subject after each id
+        #[arg(short = 'v', long)]
+        verbose: bool,
         /// Zone (default: the zone containing the current directory)
         #[arg(long)]
         zone: Option<String>,
@@ -402,6 +431,25 @@ enum Cmd {
         /// Abandon the in-progress rebase and restore the original branch
         #[arg(long)]
         abort: bool,
+        /// Drop the commit the rebase is stopped on (conflicts) and carry on
+        #[arg(long)]
+        skip: bool,
+        /// Edit the todo list (pick/reword/edit/squash/fixup/drop/exec, reorder) in
+        /// $GIT_SEQUENCE_EDITOR / $VCS_SEQUENCE_EDITOR / core.editor / $EDITOR; `onto` may be any revision such as HEAD~3
+        #[arg(short = 'i', long)]
+        interactive: bool,
+        /// With -i: move `fixup! X` / `squash! X` commits next to X and fold them
+        #[arg(long)]
+        autosquash: bool,
+        /// Run this shell command after each replayed commit (repeatable); a failure stops the rebase
+        #[arg(short = 'x', long = "exec", value_name = "COMMAND")]
+        exec: Vec<String>,
+        /// Replay onto NEWBASE (any revision) the commits that the positional upstream lacks (`git rebase --onto`)
+        #[arg(long = "onto", value_name = "NEWBASE")]
+        new_base: Option<String>,
+        /// With --onto: replay every commit of the branch, root commit included (no upstream)
+        #[arg(long, requires = "new_base")]
+        root: bool,
         /// Do not use the structural Rust merge (only matters when built with `--features structural`)
         #[arg(long)]
         no_structural: bool,
@@ -492,6 +540,8 @@ enum Cmd {
         stats: bool,
         #[command(flatten)]
         sel: autozone::ForArgs,
+        #[command(flatten)]
+        auto: zoneprofile_cmd::CloneAuto,
     },
     /// Publish checked-out branches to the remote in one atomic transaction
     Publish {
@@ -516,6 +566,21 @@ enum Cmd {
         /// Delete this remote branch (only if it is the head you last fetched; repeatable)
         #[arg(long = "delete", value_name = "BRANCH")]
         delete: Vec<String>,
+        /// Publish only the tags, move no branch (`git push --tags`)
+        #[arg(long, conflicts_with_all = ["mirror", "delete"])]
+        tags: bool,
+        /// Also delete every remote branch of a subscribed zone that has no local branch (`git push --prune`);
+        /// each deletion needs the head you last fetched (or your lease) and is audited
+        #[arg(long)]
+        prune: bool,
+        /// Make the remote match this repo: force every checked-out branch (leased, like --force-with-lease),
+        /// prune remote branches with no local one, and publish tags (`git push --mirror`)
+        #[arg(long, conflicts_with_all = ["tags", "delete"])]
+        mirror: bool,
+        /// When the remote branch moved, fetch, merge it in (only if the merge is clean) and publish again,
+        /// up to N times with a short randomized wait (default 20; env VCS_PUBLISH_AUTOMERGE=N also turns it on)
+        #[arg(long, value_name = "N", num_args = 0..=1, require_equals = true, default_missing_value = "20")]
+        auto_merge: Option<u32>,
     },
     /// Lock files on the remote so others cannot publish changes to them
     Lock {
@@ -544,8 +609,16 @@ enum Cmd {
         #[arg(long)]
         stats: bool,
     },
-    /// Fetch, then fast-forward local branches where safe
-    Sync,
+    /// Download the file contents of subscribed zones' heads now (to work offline later)
+    Prefetch {
+        #[arg(long = "zone")]
+        zones: Vec<String>,
+        /// Print the number of remote requests and bytes transferred
+        #[arg(long)]
+        stats: bool,
+    },
+    /// Fetch, then fast-forward local branches where safe (`--auto`: choose zones from your usage profile)
+    Sync(zoneprofile_cmd::SyncAuto),
     /// Verify all objects and graph invariants
     Fsck,
     /// Move loose objects into a pack (one pack + index under .vcs/objects/pack).
@@ -682,6 +755,14 @@ enum ZoneCmd {
     Apply(autozone::ApplyArgs),
     /// Subscribe to the minimal zone set for a path, symbol, task or person, plus their dependencies
     Subscribe(autozone::ForArgs),
+    /// Machine-readable description of zones: purpose, owners, dependencies, subscriptions, locks, history (docs/zone-ontology.md)
+    Describe(ontology::DescribeArgs),
+    /// Zone dependency graph with reasons, transitive closures and path index (docs/zone-ontology.md)
+    Graph(ontology::GraphArgs),
+    /// One call: owner zone of a path, its owners, dependencies, dependents and impacted zones (docs/zone-ontology.md)
+    Explain(ontology::ExplainArgs),
+    /// Per zone, the files that changed between two commits or dates (`A..B`), in one call
+    Changes(ontology::ChangesArgs),
 }
 
 #[derive(Subcommand, Clone)]
@@ -821,10 +902,18 @@ fn principal() -> String {
 
 fn open() -> Result<(Repo, PathBuf), Error> {
     let cwd = std::env::current_dir().map_err(|source| Error::Io { path: ".".into(), source })?;
-    Ok((Repo::discover(&cwd)?, cwd))
+    let repo = Repo::discover(&cwd)?;
+    // Big repositories get a background watcher so `status`, `diff` and friends can skip the full scan.
+    #[cfg(feature = "watcher")]
+    if std::env::args_os().nth(1).is_none_or(|a| a != "watch") {
+        if let Ok(exe) = std::env::current_exe() {
+            repo.autostart_watcher(&exe);
+        }
+    }
+    Ok((repo, cwd))
 }
 
-fn zone_of_cwd(repo: &Repo, cwd: &Path, explicit: Option<String>) -> Result<String, Error> {
+pub(crate) fn zone_of_cwd(repo: &Repo, cwd: &Path, explicit: Option<String>) -> Result<String, Error> {
     if let Some(a) = explicit {
         return Ok(a);
     }
@@ -845,6 +934,29 @@ fn print_pick(zone: &str, out: MergeOutcome, verb: &str) -> Result<(), Error> {
             return Err(Error::Msg(format!("{verb} has conflicts")));
         }
         MergeOutcome::UpToDate | MergeOutcome::FastForward { .. } | MergeOutcome::Squashed { .. } => println!("nothing to do"),
+    }
+    Ok(())
+}
+
+fn print_pick_seq(zone: &str, seq: vcs_repo::PickSeq) -> Result<(), Error> {
+    for (src, new) in &seq.done {
+        println!("{zone}: cherry-picked {} as {}", src.short(), new.short());
+    }
+    for src in &seq.skipped {
+        println!("{zone}: skipped {} (its change is already here)", src.short());
+    }
+    if let Some((src, paths, rest)) = seq.stopped {
+        println!("cherry-pick stopped at {}: {} conflict(s)", src.short(), paths.len());
+        for p in &paths {
+            println!("  conflict: {p}");
+        }
+        println!("\nResolve the files, `vcs add` each one, then `vcs commit -m <message>`.");
+        if !rest.is_empty() {
+            let ids: Vec<String> = rest.iter().map(|i| i.to_hex()).collect();
+            println!("Then pick the rest: vcs cherry-pick {}", ids.join(" "));
+        }
+        println!("Inspect with `vcs conflict list|show <path>`; give up with `vcs merge --abort`.");
+        return Err(Error::Msg("cherry-pick has conflicts".into()));
     }
     Ok(())
 }
@@ -879,7 +991,13 @@ fn run(cli: Cli) -> Result<(), Error> {
     if let Cmd::More(m) = &cli.cmd {
         return cmds::dispatch(m, cli.json);
     }
+    if let Some(r) = zoneprofile_cmd::intercept(&cli.cmd) {
+        return r;
+    }
     if let Some(r) = autozone::intercept(&cli.cmd, cli.json) {
+        return r;
+    }
+    if let Some(r) = ontology::intercept(&cli.cmd, cli.json) {
         return r;
     }
     if cli.json {
@@ -1021,13 +1139,17 @@ fn run(cli: Cli) -> Result<(), Error> {
             maybe_auto_repack(&repo);
         }
         #[cfg(feature = "watcher")]
-        Cmd::Watch => {
+        Cmd::Watch { idle_exit } => {
             let (repo, _) = open()?;
             eprintln!(
                 "watching {} (Ctrl-C to stop); `vcs status` uses the journal while this runs",
                 repo.worktree().display()
             );
-            vcs_repo::watcher::run(&repo, &std::sync::atomic::AtomicBool::new(false))?;
+            vcs_repo::watcher::run_idle(
+                &repo,
+                &std::sync::atomic::AtomicBool::new(false),
+                idle_exit.map(std::time::Duration::from_secs),
+            )?;
         }
         Cmd::Status => {
             let (repo, _) = open()?;
@@ -1073,6 +1195,17 @@ fn run(cli: Cli) -> Result<(), Error> {
                     println!("  (rebase in progress: fix, `vcs add`, `vcs rebase --continue`; or `vcs rebase --abort`)");
                 } else {
                     println!("  (fix, `vcs add`, `vcs commit`; or `vcs merge --abort`)");
+                }
+            }
+            if let Some(rs) = repo.rebase_state()? {
+                if rs.stop != vcs_repo::Stop::Conflict {
+                    println!(
+                        "rebase of {}/{} onto {} stopped ({} step(s) left): amend or commit, then `vcs rebase --continue`; or `vcs rebase --abort`",
+                        rs.zone,
+                        rs.branch,
+                        rs.onto_label,
+                        rs.todo.len()
+                    );
                 }
             }
             lockable_cmd::status_section(&repo, &st)?;
@@ -1288,37 +1421,22 @@ fn run(cli: Cli) -> Result<(), Error> {
                 }
             }
         }
+        Cmd::FormatPatch(a) => {
+            let (repo, cwd) = open()?;
+            patchcmd::format_patch(&repo, &cwd, a)?;
+        }
+        Cmd::Apply(a) => {
+            let (repo, _) = open()?;
+            patchcmd::apply(&repo, a)?;
+        }
+        Cmd::Am(a) => {
+            let (repo, _) = open()?;
+            patchcmd::am(&repo, a)?;
+        }
         Cmd::Show { rev, zone, opts } => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
-            let rep = repo.show(&zone, rev.as_deref().unwrap_or("HEAD"))?;
-            let defs = repo.zones()?;
-            if let Some(t) = &rep.tag {
-                println!("tag {}", t.name);
-                println!("Tagger: {} <{}>", t.tagger.name, t.tagger.email);
-                println!("Date:   {}", t.tagger.timestamp);
-                if !t.signature.is_empty() {
-                    let trust = signing_cmd::load_trust(&config::Config::load()?)?;
-                    println!("Signature: {}", signing_cmd::describe(&vcs_objects::signing::verify_tag(t, &trust)));
-                }
-                for l in t.message.lines() {
-                    println!("    {l}");
-                }
-                println!();
-            }
-            let c = &rep.commit;
-            println!("commit {}", rep.id);
-            println!("change {}   zone {}", c.change_id, defs.label(&c.zone));
-            for p in &c.parents {
-                println!("parent {p}");
-            }
-            println!("Author: {} <{}>", c.author.name, c.author.email);
-            println!("Date:   {}", c.author.timestamp);
-            for l in vcs_objects::signing::strip_commit_signature(&c.message).lines() {
-                println!("    {l}");
-            }
-            println!();
-            print!("{}", difftool::show_diff(&repo, &rep, &opts)?);
+            difftool::print_show(&repo, &zone, rev.as_deref().unwrap_or("HEAD"), &opts)?;
         }
         Cmd::Blame {
             path,
@@ -1447,11 +1565,32 @@ fn run(cli: Cli) -> Result<(), Error> {
                 }
             }
         }
-        Cmd::CherryPick { rev, zone } => {
+        Cmd::CherryPick { revs, zone } => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
-            let out = repo.cherry_pick(&zone, &rev, author()?)?;
-            print_pick(&zone, out, "cherry-pick")?;
+            if revs.len() == 1 && !revs[0].contains("..") {
+                let out = repo.cherry_pick(&zone, &revs[0], author()?)?;
+                print_pick(&zone, out, "cherry-pick")?;
+            } else {
+                print_pick_seq(&zone, repo.cherry_pick_many(&zone, &revs, author()?)?)?;
+            }
+        }
+        Cmd::Cherry {
+            upstream,
+            head,
+            verbose,
+            zone,
+        } => {
+            let (repo, cwd) = open()?;
+            let zone = zone_of_cwd(&repo, &cwd, zone)?;
+            for (id, equivalent, subject) in repo.cherry(&zone, &upstream, head.as_deref().unwrap_or("HEAD"))? {
+                let sign = if equivalent { '-' } else { '+' };
+                if verbose {
+                    println!("{sign} {} {subject}", id.short());
+                } else {
+                    println!("{sign} {}", id.to_hex());
+                }
+            }
         }
         Cmd::Revert { rev, zone } => {
             let (repo, cwd) = open()?;
@@ -1464,6 +1603,12 @@ fn run(cli: Cli) -> Result<(), Error> {
             zone,
             cont,
             abort,
+            skip,
+            interactive,
+            autosquash,
+            exec,
+            new_base,
+            root,
             no_structural,
             renames,
             assist,
@@ -1478,8 +1623,34 @@ fn run(cli: Cli) -> Result<(), Error> {
                 println!("rebase aborted; original branch restored");
                 return Ok(());
             }
-            let out = if cont {
-                repo.rebase_continue(author()?)?
+            let out = if cont || skip {
+                rebase_i::resume(&repo, skip, author()?)?
+            } else if let Some(nb) = new_base {
+                if interactive || !exec.is_empty() {
+                    return Err(Error::Msg("--onto cannot be combined with -i or -x yet".into()));
+                }
+                if root == onto.is_some() {
+                    return Err(Error::Msg(
+                        "usage: vcs rebase --onto <newbase> <upstream> | vcs rebase --onto <newbase> --root".into(),
+                    ));
+                }
+                let zone = zone_of_cwd(&repo, &cwd, zone)?;
+                hooks::fire_simple(&repo, &zone, "pre-rebase", std::slice::from_ref(&nb))?;
+                repo.rebase_onto(&zone, &nb, onto.as_deref(), author()?)?
+            } else if interactive || !exec.is_empty() {
+                let Some(onto) = onto else {
+                    return Err(Error::Msg(
+                        "usage: vcs rebase -i <upstream> [--zone A] [--autosquash] [-x CMD]".into(),
+                    ));
+                };
+                let zone = zone_of_cwd(&repo, &cwd, zone)?;
+                hooks::fire_simple(&repo, &zone, "pre-rebase", std::slice::from_ref(&onto))?;
+                let a = rebase_i::Args {
+                    interactive,
+                    autosquash,
+                    exec,
+                };
+                rebase_i::start(&repo, &zone, &onto, &a, author()?)?
             } else {
                 let Some(onto) = onto else {
                     return Err(Error::Msg("usage: vcs rebase <branch> [--zone A] | --continue | --abort".into()));
@@ -1493,6 +1664,16 @@ fn run(cli: Cli) -> Result<(), Error> {
                 RebaseOutcome::Done { from, to, replayed } => {
                     println!("rebased {replayed} commit(s): {} -> {}", from.short(), to.short())
                 }
+                RebaseOutcome::Stopped { commit, detail, .. } if detail.is_empty() => {
+                    println!(
+                        "stopped at {}: amend it (or add commits), then `vcs rebase --continue`; `vcs rebase --abort` to give up",
+                        commit.short()
+                    );
+                }
+                RebaseOutcome::Stopped { commit, detail, .. } => {
+                    println!("rebase stopped at {}", commit.short());
+                    return Err(Error::Msg(detail));
+                }
                 RebaseOutcome::Conflicted { commit, paths } => {
                     println!("rebase stopped at {}: {} conflict(s)", commit.short(), paths.len());
                     for p in &paths {
@@ -1501,7 +1682,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                     if let Some(cmd) = effective_assist(assist.as_deref(), no_assist)? {
                         run_assist(&repo, &cmd, assist_timeout)?;
                     }
-                    println!("\nResolve the files, `vcs add` each one, then `vcs rebase --continue`.");
+                    println!("\nResolve the files, `vcs add` each one, then `vcs rebase --continue` (or `--skip` to drop this commit).");
                     println!("Inspect with `vcs conflict list|show <path>`; give up with `vcs rebase --abort`.");
                     return Err(Error::Msg("rebase has conflicts".into()));
                 }
@@ -1755,7 +1936,15 @@ fn run(cli: Cli) -> Result<(), Error> {
                     repo.zone_delete(&name, force)?;
                     println!("deleted zone {name}");
                 }
-                ZoneCmd::Suggest(_) | ZoneCmd::Apply(_) | ZoneCmd::Subscribe(_) => unreachable!("handled by autozone::intercept"),
+                ZoneCmd::Suggest(_)
+                | ZoneCmd::Apply(_)
+                | ZoneCmd::Subscribe(_)
+                | ZoneCmd::Describe(_)
+                | ZoneCmd::Graph(_)
+                | ZoneCmd::Explain(_)
+                | ZoneCmd::Changes(_) => {
+                    unreachable!("handled by autozone::intercept")
+                }
             }
         }
         Cmd::Snapshot(s) => {
@@ -1835,8 +2024,8 @@ fn run(cli: Cli) -> Result<(), Error> {
             }
             let cwd = std::env::current_dir().map_err(|source| Error::Io { path: ".".into(), source })?;
             let url = remote::normalize_url(&url, &cwd);
-            let backend = remote::open_backend(&url)?;
-            let counting = vcs_remote::CountingBackend::new(backend.as_ref());
+            let backend = remote::open_memo(&url, true)?;
+            let counting = vcs_remote::CountingBackend::new(&backend);
             let want = (!zones.is_empty()).then_some(zones.as_slice());
             let repo = Repo::clone_from(&counting, &url, &dir, want)?;
             if stats {
@@ -1860,9 +2049,16 @@ fn run(cli: Cli) -> Result<(), Error> {
             force_with_lease,
             force_without_lease,
             delete,
+            tags,
+            prune,
+            mirror,
+            auto_merge,
         } => {
             let (repo, _) = open()?;
             let backend = remote::open_backend(&need_remote(&repo)?)?;
+            let auto_merge = auto_merge
+                .or_else(|| std::env::var("VCS_PUBLISH_AUTOMERGE").ok().and_then(|v| v.parse().ok()))
+                .filter(|_| !(force || mirror || force_without_lease || !force_with_lease.is_empty() || tags || !delete.is_empty() || prune));
             if repair {
                 println!("repaired {} object(s) on the remote", repo.repair_remote(backend.as_ref())?);
             }
@@ -1873,8 +2069,10 @@ fn run(cli: Cli) -> Result<(), Error> {
                 branches,
                 force: None,
                 delete,
+                tags_only: tags,
+                prune: prune || mirror,
             };
-            if force || force_without_lease || !force_with_lease.is_empty() {
+            if force || mirror || force_without_lease || !force_with_lease.is_empty() {
                 let mut spec = vcs_repo::ForceSpec {
                     without_lease: force_without_lease,
                     expect: Default::default(),
@@ -1893,7 +2091,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                 }
                 opts.force = Some(spec);
             }
-            let rep = repo.publish_with(backend.as_ref(), want, author()?, &principal(), &opts)?;
+            let rep = publish_auto_merge(&repo, backend.as_ref(), want, &opts, auto_merge.unwrap_or(0))?;
             let done: String = rep.updated.iter().map(|(a, b, old, new)| hooks::line(a, b, *old, *new)).collect();
             if !done.is_empty() {
                 hooks::fire_with_stdin(&repo, "post-publish", &done)?;
@@ -1992,27 +2190,18 @@ fn run(cli: Cli) -> Result<(), Error> {
                 println!("fetched {a}/{b} @ {}", id.short());
             }
         }
-        Cmd::Sync => {
+        Cmd::Prefetch { zones, stats } => {
             let (repo, _) = open()?;
             let backend = remote::open_backend(&need_remote(&repo)?)?;
-            let rep = repo.sync(backend.as_ref())?;
-            for (a, b, act) in &rep.actions {
-                let what = match act {
-                    SyncAction::UpToDate => "up to date".to_owned(),
-                    SyncAction::FastForwarded { from, to } => {
-                        format!("fast-forwarded {} -> {}", opt_short(*from), to.short())
-                    }
-                    SyncAction::Ahead => "ahead of remote (run `vcs publish`)".into(),
-                    SyncAction::Diverged => {
-                        let r = if a == ROOT_ZONE { String::new() } else { format!(" --zone {a}") };
-                        format!("diverged; merge with `vcs merge --remote {b}{r}`")
-                    }
-                    SyncAction::Dirty => "dirty (left untouched; commit or discard changes first)".into(),
-                    SyncAction::NoRemote => "not on the remote yet (run `vcs publish`)".into(),
-                };
-                println!("{a}/{b}: {what}");
+            let counting = vcs_remote::CountingBackend::new(backend.as_ref());
+            let want = (!zones.is_empty()).then_some(zones.as_slice());
+            let n = repo.prefetch_subscribed(&counting, want)?;
+            if stats {
+                println!("{}", counting.stats());
             }
+            println!("prefetched {n} object(s)");
         }
+        Cmd::Sync(a) => zoneprofile_cmd::sync(&a)?,
         Cmd::Op(c) => {
             let (repo, _) = open()?;
             match c {
@@ -2180,13 +2369,16 @@ fn run(cli: Cli) -> Result<(), Error> {
                     r.deleted_packs.len(),
                     r.saved_by_remark
                 );
+                for (old, new) in &r.packs_rewritten {
+                    println!("  rewrote pack {old} -> {new}");
+                }
                 if r.stale_tombs_cleared > 0 {
                     println!("cleared {} stale tombstone(s) from a crashed collector", r.stale_tombs_cleared);
                 }
             }
             if r.packs_with_garbage_kept > 0 {
                 println!(
-                    "{} pack(s) hold some unreachable objects but were kept whole (remote pack rewriting is not implemented)",
+                    "{} pack(s) hold some unreachable objects but were kept whole (too young, recently used, or over 512 MiB)",
                     r.packs_with_garbage_kept
                 );
             }
@@ -2248,8 +2440,48 @@ fn print_branches(repo: &Repo, zone: &str) -> Result<(), Error> {
 
 /// Run the command; if it fails because a cached object was evicted, fetch that one object
 /// (hash-verified) from the remote and run it again. See docs/cache.md.
+/// `repo.publish_with`, and (when `retries > 0`) on "the remote branch moved" fetch, merge the new
+/// remote head in if that merge is clean, wait a short randomized time and publish again. A merge
+/// with conflicts is aborted and the original error returned, so the repo is left as it was.
+fn publish_auto_merge(
+    repo: &vcs_repo::Repo,
+    backend: &dyn vcs_remote::Backend,
+    want: Option<&[String]>,
+    opts: &vcs_repo::PublishOpts,
+    retries: u32,
+) -> Result<vcs_repo::PublishReport, Error> {
+    let mut attempt = 0u32;
+    loop {
+        let e = match repo.publish_with(backend, want, author()?, &principal(), opts) {
+            Ok(r) => return Ok(r),
+            Err(e) => e,
+        };
+        let text = e.to_string();
+        if attempt >= retries || !(text.contains("Remote branch advanced") || text.contains("moved from")) {
+            return Err(e.into());
+        }
+        attempt += 1;
+        let rep = repo.sync(backend)?;
+        for (zone, branch, act) in &rep.actions {
+            if matches!(act, vcs_repo::SyncAction::Diverged) {
+                match repo.merge_remote(zone, branch, author()?)? {
+                    vcs_repo::MergeOutcome::Conflicted { .. } => {
+                        repo.merge_abort()?;
+                        return Err(e.into());
+                    }
+                    _ => eprintln!("auto-merged remote {zone}/{branch} (attempt {attempt})"),
+                }
+            }
+        }
+        let window = (5u64 << attempt.min(5)).min(250);
+        let seed = std::process::id() as u64 ^ (std::time::SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.subsec_nanos() as u64));
+        std::thread::sleep(std::time::Duration::from_millis(1 + seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) % window));
+    }
+}
+
 fn run_lazy(cli: Cli) -> Result<(), Error> {
     let mut fetched = std::collections::BTreeSet::new();
+    let pre = zoneprofile_cmd::before(&cli.cmd);
     loop {
         match run(cli.clone()) {
             Err(Error::Store(vcs_store::StoreError::NotFound(id))) if fetched.insert(id) => {
@@ -2261,14 +2493,23 @@ fn run_lazy(cli: Cli) -> Result<(), Error> {
                 repo.fetch_missing(backend.as_ref(), &id)?;
                 eprintln!("fetched missing object {}", id.short());
             }
-            r => return r,
+            r => {
+                if r.is_ok() {
+                    zoneprofile_cmd::observe(&cli.cmd, pre);
+                }
+                return r;
+            }
         }
     }
 }
 
 fn main() -> ExitCode {
     let _ = ROOT_ZONE;
-    let cli = Cli::parse_from(gitmap::argv_for_shim());
+    let argv = gitmap::argv_for_shim();
+    let cli = match quick::parse(&argv) {
+        Some(c) => c,
+        None => Cli::parse_from(argv),
+    };
     hooks::set_disabled(cli.no_hooks);
     if let Some(ca) = &cli.ca_pem {
         // Resolved before `-C`; the config machinery reads it back as `remote.cainfo` (env VCS_CAINFO).
@@ -2381,6 +2622,16 @@ fn compact_remote(
 fn suggest_compaction(backend: &dyn vcs_remote::Backend, generation: u64) {
     if !generation.is_multiple_of(8) {
         return;
+    }
+    match vcs_remote::autocompact::maybe_compact(backend, &format!("vcs-auto-compact pid {}", std::process::id())) {
+        Ok(Some(r)) => {
+            println!(
+                "compacted the remote's packs: {} -> {} (VCS_AUTO_COMPACT=0 turns this off)",
+                r.packs_before, r.packs_after
+            );
+            return;
+        }
+        Ok(None) | Err(_) => {}
     }
     if let Ok(n) = vcs_remote::compact::count_packs(backend) {
         if n > vcs_remote::compact::SUGGEST_PACKS {
