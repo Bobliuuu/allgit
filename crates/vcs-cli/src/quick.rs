@@ -80,6 +80,7 @@ fn ls_files(stage: bool, rev: Option<String>) -> Cmd {
     Cmd::More(More::LsFiles(LsFilesArgs {
         stage,
         rev,
+        depth: None,
         paths: Vec::new(),
     }))
 }

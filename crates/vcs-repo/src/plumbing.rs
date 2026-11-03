@@ -74,6 +74,32 @@ impl Repo {
         Ok(out)
     }
 
+    /// The entries directly inside the root of revision `rev` (files and directories, as
+    /// `ls-tree` lists them), read from the one top tree. Directories carry `EntryMode::Directory`
+    /// and their tree id. `None` when the answer is not one tree: `rev` resolves in several
+    /// zones, or in a zone that lives below the repository root.
+    pub fn rev_top_level(&self, rev: &str) -> Result<Option<Vec<(String, vcs_objects::EntryMode, ObjectId)>>> {
+        let zones = self.zones()?;
+        let ws = self.workspace()?;
+        let mut hits = Vec::new();
+        for z in ws.subs.keys() {
+            if let Ok(id) = self.resolve_rev(z, rev) {
+                hits.push((z, id));
+            }
+        }
+        match hits.as_slice() {
+            [] => msg(format!("unknown revision {rev:?} in any subscribed zone")),
+            [(z, id)] if zones.path_of(z).unwrap_or("").is_empty() => {
+                let root = self.commit_obj(id)?.root;
+                let Object::Tree(t) = self.store.get(&root)? else {
+                    return Err(Error::Corrupt(format!("object {root} is not a tree")));
+                };
+                Ok(Some(t.entries().iter().map(|e| (e.name.clone(), e.mode, e.id)).collect()))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// The file entry for repository-relative `rel` in revision `rev`, with the same answer as
     /// `rev_files(rev).get(rel)` but reading only one tree per path component per zone. A
     /// directory, or no file at all, is `None`.
