@@ -17,6 +17,7 @@ pub mod glob;
 pub mod http;
 pub mod log;
 pub mod metrics;
+pub mod peer;
 pub mod policy;
 pub mod ratelimit;
 pub mod readguard;
