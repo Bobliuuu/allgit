@@ -342,7 +342,7 @@ enum Src {
         file: fs::File,
         len: u64,
         /// Entries of one first-byte bucket, read the first time a lookup lands in it.
-        buckets: std::sync::Mutex<Vec<Option<std::sync::Arc<Vec<u8>>>>>,
+        buckets: Vec<std::sync::OnceLock<Vec<u8>>>,
     },
 }
 
@@ -420,7 +420,7 @@ impl PackIndex {
                     src: Src::File {
                         file: f,
                         len,
-                        buckets: std::sync::Mutex::new(vec![None; 256]),
+                        buckets: (0..256).map(|_| std::sync::OnceLock::new()).collect(),
                     },
                     version,
                     count,
@@ -567,19 +567,16 @@ impl PackIndex {
             #[cfg(unix)]
             Src::File { file, buckets, .. } => {
                 let first = id.as_bytes()[0] as usize;
-                let cached = buckets.lock().unwrap()[first].clone();
-                let ents = match cached {
+                // lock-free after the first lookup in a bucket (concurrent readers must not queue here)
+                let ents = match buckets[first].get() {
                     Some(e) => e,
                     None => {
-                        let e = std::sync::Arc::new(
-                            pread_exact(file, (self.base + lo * IDX_ENTRY) as u64, (hi - lo) * IDX_ENTRY)
-                                .map_err(|e| format!("index read: {e}"))?,
-                        );
-                        buckets.lock().unwrap()[first] = Some(e.clone());
-                        e
+                        let e = pread_exact(file, (self.base + lo * IDX_ENTRY) as u64, (hi - lo) * IDX_ENTRY)
+                            .map_err(|e| format!("index read: {e}"))?;
+                        buckets[first].get_or_init(|| e)
                     }
                 };
-                self.search(&ents, id)
+                self.search(ents, id)
             }
             #[cfg(not(unix))]
             Src::File { .. } => unreachable!("file-backed indexes exist on unix only"),
