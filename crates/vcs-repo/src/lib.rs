@@ -47,6 +47,7 @@ pub mod revrange;
 pub mod shelve;
 pub mod sparse;
 pub mod stash;
+mod statusmemo;
 pub mod sync;
 pub mod tags;
 mod treemerge;

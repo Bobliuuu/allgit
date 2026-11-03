@@ -54,7 +54,8 @@ fn set_mtime(p: &Path, t: SystemTime) {
 
 fn base() -> (tempfile::TempDir, Repo) {
     let d = tempfile::tempdir().unwrap();
-    let r = Repo::init(&d.path().join("r")).unwrap();
+    let mut r = Repo::init(&d.path().join("r")).unwrap();
+    r.set_index_racy_ns(RACY_NS); // lets the stored-answer fast path engage within a test
     for p in ["a/x.txt", "a/b/y.txt", "a/b/c/z.txt", "d/e/f.txt", "top.txt"] {
         w(&r, p, p);
     }
@@ -595,5 +596,89 @@ mod real {
         same(&r, &m, "burst");
         settle();
         same(&r, &m, "burst settled");
+    }
+}
+
+/// The stored answer (`statusmemo`): after the index has been quiet for the racy window, an unchanged
+/// tree is answered without reading the index; every kind of change below must still be seen.
+#[test]
+fn stored_answer_is_used_only_while_everything_it_depends_on_is_unchanged() {
+    let (_d, r) = base();
+    let m = MockMonitor::new();
+    assert_same(&r, &m, "cold");
+    settle();
+    assert_same(&r, &m, "stores the answer"); // index is old enough now
+    assert_same(&r, &m, "uses the answer");
+    // A silent edit is not looked for (the monitor vouches), reported edit is seen.
+    w(&r, "top.txt", "edited different size");
+    assert!(r.status_monitored(opts(), &m).unwrap().zones[0].unstaged.is_empty());
+    m.event("top.txt");
+    assert_same(&r, &m, "reported edit");
+    assert_eq!(r.status_monitored(opts(), &m).unwrap().zones[0].unstaged.len(), 1);
+    settle();
+    assert_same(&r, &m, "memo with a dirty file");
+    assert_eq!(r.status_monitored(opts(), &m).unwrap().zones[0].unstaged.len(), 1);
+    // Staging rewrites the index: the answer must change even if the monitor reports nothing new.
+    r.add(&["top.txt".to_string()]).unwrap();
+    let s = r.status_monitored(opts(), &m).unwrap();
+    assert_eq!(s.zones[0].staged.len(), 1, "staged change after add");
+    assert!(s.zones[0].unstaged.is_empty());
+    settle();
+    assert_same(&r, &m, "re-store");
+    assert_same(&r, &m, "use");
+    // A commit moves HEAD (refs) and rewrites the index.
+    r.commit(
+        "c2",
+        vcs_objects::Signature {
+            name: "T".into(),
+            email: "t@x".into(),
+            timestamp: 2,
+        },
+    )
+    .unwrap();
+    let s = r.status_monitored(opts(), &m).unwrap();
+    assert!(s.zones[0].staged.is_empty(), "nothing staged after commit: {:?}", s.zones[0].staged);
+    // Daemon gone: a full scan finds unreported changes.
+    settle();
+    assert_same(&r, &m, "store");
+    w(&r, "a/x.txt", "unreported");
+    m.set_dead(true);
+    assert_same(&r, &m, "dead monitor");
+    m.set_dead(false);
+    m.event("a/x.txt"); // a live daemon would have journaled the edit while it was down or not
+                        // Restart / overflow: full scan.
+    settle();
+    assert_same(&r, &m, "store again");
+    w(&r, "d/e/f.txt", "unreported 2");
+    m.restart();
+    assert_same(&r, &m, "restart");
+}
+
+/// Clock skew and timestamp tricks: touching the index (mtime moved far into the past or future)
+/// changes its identity, so the stored answer is dropped and the real state is computed.
+#[test]
+fn stored_answer_is_dropped_when_the_index_timestamps_move() {
+    let (_d, r) = base();
+    let m = MockMonitor::new();
+    assert_same(&r, &m, "cold");
+    settle();
+    assert_same(&r, &m, "stores");
+    w(&r, "top.txt", "changed size, not reported");
+    for t in [
+        SystemTime::UNIX_EPOCH + Duration::from_secs(5),
+        SystemTime::now() + Duration::from_secs(86_400 * 30),
+    ] {
+        set_mtime(&r.worktree().join(".vcs/index"), t);
+        // Not trusted any more: the answer is recomputed against the state, never served from the memo.
+        let s = r.status_monitored(opts(), &m).unwrap();
+        let full = r.status_full().unwrap();
+        assert!(s.zones[0].unstaged.len() <= full.zones[0].unstaged.len());
+        m.event("top.txt");
+        assert_same(&r, &m, "after clock skew");
+        w(&r, "top.txt", "top.txt");
+        m.event("top.txt");
+        assert_same(&r, &m, "reverted");
+        settle();
+        w(&r, "top.txt", "changed size, not reported");
     }
 }

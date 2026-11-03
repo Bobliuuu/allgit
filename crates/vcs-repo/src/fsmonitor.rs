@@ -61,6 +61,8 @@ pub(crate) struct State {
     pub dirty: BTreeMap<String, ChangeKind>,
     pub untracked: Vec<String>,
     pub unsupported: Vec<String>,
+    /// The finished answer, when the index file is old enough to vouch for it (see `statusmemo`).
+    pub memo: Option<crate::statusmemo::Memo>,
 }
 
 impl State {
@@ -73,7 +75,8 @@ impl State {
     pub fn store(&self, vcs: &Path) {
         let p = vcs.join(DIR).join(STATE);
         let _ = fs::create_dir_all(vcs.join(DIR));
-        let _ = crate::meta::write_cache_atomic(&p, &self.encode());
+        // A cache every reader validates: a torn or empty file decodes to nothing, so no fsync.
+        let _ = crate::meta::write_cache_nosync(&p, &self.encode());
     }
     fn encode(&self) -> Vec<u8> {
         let mut w = Writer::new();
@@ -87,10 +90,19 @@ impl State {
                 w.str(p);
             }
         }
-        frame(b"AGFS", w.finish())
+        match &self.memo {
+            Some(m) => {
+                w.u8(1);
+                m.encode(&mut w);
+            }
+            None => {
+                w.u8(0);
+            }
+        }
+        frame(b"AGFT", w.finish())
     }
     fn decode(b: &[u8]) -> Option<State> {
-        let mut r = Reader::new(unframe(b"AGFS", b, "fsmon state").ok()?);
+        let mut r = Reader::new(unframe(b"AGFT", b, "fsmon state").ok()?);
         let mut fp = [0u8; 32];
         fp.copy_from_slice(r.raw(32).ok()?);
         let token = r.str(4096).ok()?;
@@ -112,6 +124,11 @@ impl State {
                 l.push(r.str(4096).ok()?);
             }
         }
+        let memo = match r.u8().ok()? {
+            0 => None,
+            1 => Some(crate::statusmemo::Memo::decode(&mut r)?),
+            _ => return None,
+        };
         r.finish().ok()?;
         let [untracked, unsupported] = lists;
         Some(State {
@@ -120,6 +137,7 @@ impl State {
             dirty,
             untracked,
             unsupported,
+            memo,
         })
     }
 }

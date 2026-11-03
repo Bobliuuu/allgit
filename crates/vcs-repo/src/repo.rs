@@ -1216,11 +1216,37 @@ impl Repo {
     /// `fsmonitor`). The last result is kept in `.vcs/fsmon/state`, keyed by index, zone layout
     /// and the monitor token it was computed at.
     pub fn status_monitored(&self, opts: StatusOpts, mon: &dyn FsMonitor) -> Result<Status> {
+        // Fast path: a stored answer for this very index file and these small files, and the monitor
+        // reports nothing changed since its token (see `statusmemo`). No index is read or decoded.
+        let mut pre_ans: Option<(String, Changed)> = None;
+        if let Some(saved) = fsmonitor::State::load(&self.vcs) {
+            if let Some(m) = saved.memo.as_ref().filter(|m| self.memo_current(m)) {
+                let ans = mon.changed_since(Some(&saved.token));
+                if matches!(&ans, Changed::Paths { paths, .. } if paths.is_empty()) {
+                    // The monitor answered; the files must still be the ones the memo was taken for.
+                    if self.memo_current(m) {
+                        return Ok(Status {
+                            zones: m.zones.iter().cloned().map(crate::statusmemo::MemoZone::into_status).collect(),
+                            untracked: saved.untracked.clone(),
+                            unsubscribed: m.unsubscribed.clone(),
+                            unsupported: saved.unsupported.clone(),
+                            merging: self.merge_state()?,
+                        });
+                    }
+                } else {
+                    pre_ans = Some((saved.token.clone(), ans));
+                }
+            }
+        }
+        let small0 = crate::statusmemo::small_hash(self);
         let ix_bytes = self.rd("index")?;
         let ix = Index::decode(&ix_bytes)?;
         let fp = fsmonitor::fingerprint(&ix_bytes, &self.rd("zones")?, &self.rd("workspace")?);
         let (prev, extra) = self.saved_state_for(fp);
-        let ans = mon.changed_since(prev.as_ref().map(|s| s.token.as_str()));
+        let ans = match (pre_ans, prev.as_ref()) {
+            (Some((t, a)), Some(p)) if t == p.token => a,
+            _ => mon.changed_since(prev.as_ref().map(|s| s.token.as_str())),
+        };
         let (token, inc) = match (prev.as_ref(), ans) {
             (Some(p), Changed::Paths { mut paths, new_token }) => {
                 paths.extend(extra);
@@ -1239,6 +1265,8 @@ impl Repo {
         }
         // A racy-entry refresh may have rewritten the index (new `written_ns`, same entries);
         // bind the state to what is on disk now only if the entries are unchanged.
+        let idx_path = self.state_path("index");
+        let stat_a = crate::statusmemo::stat_index(&idx_path);
         let fp_now = match self.rd("index") {
             Ok(b) if b == ix_bytes => fp,
             Ok(b) if Index::decode(&b).is_ok_and(|n| n.entries == ix.entries) => {
@@ -1246,17 +1274,60 @@ impl Repo {
             }
             _ => return Ok(st),
         };
+        let stat_b = crate::statusmemo::stat_index(&idx_path);
+        // The memo is taken only for an index file that has been quiet for the racy window.
+        let memo = match (stat_a, stat_b, small0, crate::statusmemo::small_hash(self)) {
+            (Some(a), Some(b), Some(s0), Some(s1))
+                if a == b && s0 == s1 && (now_ns() as i128) - a.mtime_ns.max(a.ctime_ns) >= self.index_racy_ns as i128 =>
+            {
+                Some(crate::statusmemo::Memo {
+                    idx: a,
+                    small: s0,
+                    unsubscribed: st.unsubscribed.clone(),
+                    zones: st.zones.iter().map(crate::statusmemo::MemoZone::of).collect(),
+                })
+            }
+            _ => None,
+        };
         let new = fsmonitor::State {
             fp: fp_now,
             token,
             dirty,
             untracked: st.untracked.clone(),
             unsupported: st.unsupported.clone(),
+            memo,
         };
         if prev.as_ref() != Some(&new) {
             new.store(&self.vcs);
         }
         Ok(st)
+    }
+
+    /// Tracked paths that may differ from the index according to a stored answer and the monitor, without
+    /// reading the index. `None`: no usable memo or monitor (callers use the slow route).
+    pub(crate) fn memo_candidates(&self) -> Option<Vec<String>> {
+        if std::env::var_os("VCS_NO_FSMONITOR").is_some() {
+            return None;
+        }
+        let mon = fsmonitor::JournalMonitor::open(&self.vcs)?;
+        let saved = fsmonitor::State::load(&self.vcs)?;
+        let m = saved.memo.as_ref().filter(|m| self.memo_current(m))?;
+        let Changed::Paths { paths, .. } = mon.changed_since(Some(&saved.token)) else {
+            return None;
+        };
+        if !self.memo_current(m) {
+            return None;
+        }
+        let all: Vec<String> = saved.dirty.keys().cloned().chain(paths).collect();
+        if all.len() > 20_000 || !all.iter().all(|p| fsmonitor::plain_path(p)) {
+            return None;
+        }
+        Some(all)
+    }
+
+    /// Is `m` (a stored answer) still about the files on disk now?
+    fn memo_current(&self, m: &crate::statusmemo::Memo) -> bool {
+        crate::statusmemo::stat_index(&self.state_path("index")) == Some(m.idx) && crate::statusmemo::small_hash(self) == Some(m.small)
     }
 
     /// The saved monitor state usable for an index with fingerprint `fp`, and extra paths to treat as

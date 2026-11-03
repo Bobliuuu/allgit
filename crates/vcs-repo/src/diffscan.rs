@@ -46,6 +46,11 @@ impl Repo {
     /// [`Repo::diff_pairs`] limited to the paths `only` (repository-relative; a directory stands for
     /// everything below it).
     pub fn diff_pairs_limited(&self, staged: bool, only: &[String]) -> Result<Vec<FilePair>> {
+        // Stored answer (see `statusmemo`): when no candidate path is inside `only`, nothing differs and
+        // the index is never read.
+        if !staged && self.memo_candidates().is_some_and(|c| !c.iter().any(|p| kept(only, p))) {
+            return Ok(Vec::new());
+        }
         let zones = self.zones()?;
         let ws = self.workspace()?;
         let bytes = self.rd("index")?;
