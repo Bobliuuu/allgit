@@ -1,0 +1,428 @@
+{
+  "classes": [
+    {
+      "adaptive": [
+        {
+          "physical_bytes": 14276472,
+          "policy": "oracle_min_per_file_all_codecs(ignores time)"
+        },
+        {
+          "physical_bytes": 18146682,
+          "policy": "oracle_min_per_file_among_none,lz4,zstd1,zstd3"
+        },
+        {
+          "files_stored_raw": 17,
+          "physical_bytes": 18173602,
+          "policy": "probe16K_lz4>=0.95?store:zstd3",
+          "probe_MBps": 255.42404996696584
+        }
+      ],
+      "class": "source_text",
+      "codecs": [
+        {
+          "codec": "none",
+          "compress_MBps_median": 14292.302444394485,
+          "compress_MBps_min_max": [
+            11500.544689297176,
+            15621.230645425254
+          ],
+          "compress_peak_rss_delta_KiB": 880,
+          "decompress_MBps_median": 18560.25472936084,
+          "decompress_peak_rss_delta_KiB": 864,
+          "physical_bytes": 64524243,
+          "ratio": 1.0,
+          "reps": 3
+        },
+        {
+          "codec": "lz4",
+          "compress_MBps_median": 264.09430002299416,
+          "compress_MBps_min_max": [
+            263.19523423769596,
+            265.5598277566775
+          ],
+          "compress_peak_rss_delta_KiB": 64,
+          "decompress_MBps_median": 1335.055169513235,
+          "decompress_peak_rss_delta_KiB": 0,
+          "physical_bytes": 27700425,
+          "ratio": 2.329359314884158,
+          "reps": 3
+        },
+        {
+          "codec": "zstd1",
+          "compress_MBps_median": 184.56702589204122,
+          "compress_MBps_min_max": [
+            184.1928408311342,
+            184.93357692669574
+          ],
+          "compress_peak_rss_delta_KiB": 252,
+          "decompress_MBps_median": 789.2170561830308,
+          "decompress_peak_rss_delta_KiB": 916,
+          "physical_bytes": 19195721,
+          "ratio": 3.361386790316446,
+          "reps": 3
+        },
+        {
+          "codec": "zstd3",
+          "compress_MBps_median": 134.44697379044212,
+          "compress_MBps_min_max": [
+            134.32044024197424,
+            134.47222526286194
+          ],
+          "compress_peak_rss_delta_KiB": 0,
+          "decompress_MBps_median": 766.43664190977,
+          "decompress_peak_rss_delta_KiB": 764,
+          "physical_bytes": 18173312,
+          "ratio": 3.550494428313342,
+          "reps": 3
+        },
+        {
+          "codec": "zstd9",
+          "compress_MBps_median": 35.528872048596355,
+          "compress_MBps_min_max": [
+            35.52581415306536,
+            35.604239025705226
+          ],
+          "compress_peak_rss_delta_KiB": 9924,
+          "decompress_MBps_median": 805.1084816706185,
+          "decompress_peak_rss_delta_KiB": 0,
+          "physical_bytes": 16504001,
+          "ratio": 3.909612160105904,
+          "reps": 3
+        },
+        {
+          "codec": "zstd19",
+          "compress_MBps_median": 2.531906656429701,
+          "compress_MBps_min_max": [
+            2.531906656429701,
+            2.531906656429701
+          ],
+          "compress_peak_rss_delta_KiB": 17188,
+          "decompress_MBps_median": 727.948946471495,
+          "decompress_peak_rss_delta_KiB": 0,
+          "physical_bytes": 15711244,
+          "ratio": 4.106883134142656,
+          "reps": 1
+        },
+        {
+          "codec": "brotli5",
+          "compress_MBps_median": 25.7469529159208,
+          "compress_MBps_min_max": [
+            25.59721544158036,
+            26.01867893781936
+          ],
+          "compress_peak_rss_delta_KiB": 636,
+          "decompress_MBps_median": 295.33885014011446,
+          "decompress_peak_rss_delta_KiB": 0,
+          "physical_bytes": 16105401,
+          "ratio": 4.0063729552589225,
+          "reps": 3
+        },
+        {
+          "codec": "brotli9",
+          "compress_MBps_median": 2.2025607430896543,
+          "compress_MBps_min_max": [
+            2.2025607430896543,
+            2.2025607430896543
+          ],
+          "compress_peak_rss_delta_KiB": 30900,
+          "decompress_MBps_median": 294.69642158211377,
+          "decompress_peak_rss_delta_KiB": 0,
+          "physical_bytes": 15768626,
+          "ratio": 4.091938194234552,
+          "reps": 1
+        },
+        {
+          "codec": "brotli11",
+          "compress_MBps_median": 0.6634617219602023,
+          "compress_MBps_min_max": [
+            0.6634617219602023,
+            0.6634617219602023
+          ],
+          "compress_peak_rss_delta_KiB": 6292,
+          "decompress_MBps_median": 254.1795246314017,
+          "decompress_peak_rss_delta_KiB": 0,
+          "physical_bytes": 14277016,
+          "ratio": 4.519448811992646,
+          "reps": 1
+        }
+      ],
+      "dictionary": [
+        {
+          "buckets": [
+            {
+              "dict_compress_MBps": 82.95071157882161,
+              "dict_decompress_MBps": 354.73364642078167,
+              "files": 126,
+              "gain_pct": 26.746212304564597,
+              "nodict_compress_MBps": 49.10438941329193,
+              "raw": 72211,
+              "size_bucket": "[0,1024)",
+              "zstd_dict": 30267,
+              "zstd_nodict": 41318
+            },
+            {
+              "dict_compress_MBps": 120.42321660330613,
+              "dict_decompress_MBps": 538.1884775362951,
+              "files": 374,
+              "gain_pct": 20.867631517529116,
+              "nodict_compress_MBps": 83.56008850613405,
+              "raw": 901329,
+              "size_bucket": "[1024,4096)",
+              "zstd_dict": 301761,
+              "zstd_nodict": 381337
+            },
+            {
+              "dict_compress_MBps": 117.2070676482844,
+              "dict_decompress_MBps": 651.3513285449004,
+              "files": 905,
+              "gain_pct": 8.189094226883464,
+              "nodict_compress_MBps": 123.69935546644399,
+              "raw": 12350253,
+              "size_bucket": "[4096,32768)",
+              "zstd_dict": 3497777,
+              "zstd_nodict": 3809762
+            },
+            {
+              "dict_compress_MBps": 132.93982103225665,
+              "dict_decompress_MBps": 815.5456266102466,
+              "files": 248,
+              "gain_pct": 2.993081813090425,
+              "nodict_compress_MBps": 144.81068957378096,
+              "raw": 16585709,
+              "size_bucket": "[32768,262145)",
+              "zstd_dict": 4345843,
+              "zstd_nodict": 4479931
+            }
+          ],
+          "dict_bytes": 16384,
+          "level": 3,
+          "requested": 16384,
+          "test_files": 1653,
+          "train_files": 1595,
+          "train_secs": 2.3338428589999998
+        },
+        {
+          "buckets": [
+            {
+              "dict_compress_MBps": 20.815587289205823,
+              "dict_decompress_MBps": 348.61973408518156,
+              "files": 126,
+              "gain_pct": 29.696329418701783,
+              "nodict_compress_MBps": 22.59624471322161,
+              "raw": 72211,
+              "size_bucket": "[0,1024)",
+              "zstd_dict": 28615,
+              "zstd_nodict": 40702
+            },
+            {
+              "dict_compress_MBps": 27.019580456643496,
+              "dict_decompress_MBps": 468.87319034713084,
+              "files": 374,
+              "gain_pct": 25.06059451528441,
+              "nodict_compress_MBps": 27.31652134793376,
+              "raw": 901329,
+              "size_bucket": "[1024,4096)",
+              "zstd_dict": 277338,
+              "zstd_nodict": 370083
+            },
+            {
+              "dict_compress_MBps": 29.603136213291467,
+              "dict_decompress_MBps": 629.873797297198,
+              "files": 905,
+              "gain_pct": 11.504910224884533,
+              "nodict_compress_MBps": 30.76661093722741,
+              "raw": 12350253,
+              "size_bucket": "[4096,32768)",
+              "zstd_dict": 3124851,
+              "zstd_nodict": 3531101
+            },
+            {
+              "dict_compress_MBps": 34.333162613278944,
+              "dict_decompress_MBps": 853.6640024326712,
+              "files": 248,
+              "gain_pct": 4.4996392543322,
+              "nodict_compress_MBps": 39.86945263148882,
+              "raw": 16585709,
+              "size_bucket": "[32768,262145)",
+              "zstd_dict": 3817413,
+              "zstd_nodict": 3997276
+            }
+          ],
+          "dict_bytes": 16384,
+          "level": 9,
+          "requested": 16384,
+          "test_files": 1653,
+          "train_files": 1595,
+          "train_secs": 2.3338428589999998
+        },
+        {
+          "buckets": [
+            {
+              "dict_compress_MBps": 47.560053533134166,
+              "dict_decompress_MBps": 324.7116487173146,
+              "files": 126,
+              "gain_pct": 32.704874388886196,
+              "nodict_compress_MBps": 48.48679775356344,
+              "raw": 72211,
+              "size_bucket": "[0,1024)",
+              "zstd_dict": 27805,
+              "zstd_nodict": 41318
+            },
+            {
+              "dict_compress_MBps": 120.6653637957722,
+              "dict_decompress_MBps": 530.4443984096008,
+              "files": 374,
+              "gain_pct": 25.67623912707133,
+              "nodict_compress_MBps": 83.29144098705268,
+              "raw": 901329,
+              "size_bucket": "[1024,4096)",
+              "zstd_dict": 283424,
+              "zstd_nodict": 381337
+            },
+            {
+              "dict_compress_MBps": 116.54192925219407,
+              "dict_decompress_MBps": 600.6864026936659,
+              "files": 905,
+              "gain_pct": 11.760629666630093,
+              "nodict_compress_MBps": 123.13240138936764,
+              "raw": 12350253,
+              "size_bucket": "[4096,32768)",
+              "zstd_dict": 3361710,
+              "zstd_nodict": 3809762
+            },
+            {
+              "dict_compress_MBps": 134.6417505838847,
+              "dict_decompress_MBps": 750.1082940928367,
+              "files": 248,
+              "gain_pct": 5.342872468348284,
+              "nodict_compress_MBps": 144.4509096926467,
+              "raw": 16585709,
+              "size_bucket": "[32768,262145)",
+              "zstd_dict": 4240574,
+              "zstd_nodict": 4479931
+            }
+          ],
+          "dict_bytes": 114688,
+          "level": 3,
+          "requested": 114688,
+          "test_files": 1653,
+          "train_files": 1595,
+          "train_secs": 2.74233899
+        },
+        {
+          "buckets": [
+            {
+              "dict_compress_MBps": 14.366700117542292,
+              "dict_decompress_MBps": 400.43142408766005,
+              "files": 126,
+              "gain_pct": 38.50179352365977,
+              "nodict_compress_MBps": 22.5809114669165,
+              "raw": 72211,
+              "size_bucket": "[0,1024)",
+              "zstd_dict": 25031,
+              "zstd_nodict": 40702
+            },
+            {
+              "dict_compress_MBps": 23.58633418323922,
+              "dict_decompress_MBps": 513.0524471524029,
+              "files": 374,
+              "gain_pct": 33.35495010578708,
+              "nodict_compress_MBps": 27.26077743735584,
+              "raw": 901329,
+              "size_bucket": "[1024,4096)",
+              "zstd_dict": 246642,
+              "zstd_nodict": 370083
+            },
+            {
+              "dict_compress_MBps": 25.690665775087776,
+              "dict_decompress_MBps": 629.9563671063621,
+              "files": 905,
+              "gain_pct": 17.70832949836326,
+              "nodict_compress_MBps": 30.688868257059795,
+              "raw": 12350253,
+              "size_bucket": "[4096,32768)",
+              "zstd_dict": 2905802,
+              "zstd_nodict": 3531101
+            },
+            {
+              "dict_compress_MBps": 30.187995079019295,
+              "dict_decompress_MBps": 810.0380547766466,
+              "files": 248,
+              "gain_pct": 8.60255834223106,
+              "nodict_compress_MBps": 39.597555717891034,
+              "raw": 16585709,
+              "size_bucket": "[32768,262145)",
+              "zstd_dict": 3653408,
+              "zstd_nodict": 3997276
+            }
+          ],
+          "dict_bytes": 114688,
+          "level": 9,
+          "requested": 114688,
+          "test_files": 1653,
+          "train_files": 1595,
+          "train_secs": 2.74233899
+        }
+      ],
+      "sample_bytes": 64524243,
+      "sample_files": 3254
+    }
+  ],
+  "dataset": {
+    "by_class": {
+      "source_text": {
+        "blobs": 16267,
+        "bytes": 330319171
+      }
+    },
+    "files_per_rev": [
+      978,
+      1137,
+      1289,
+      1293,
+      1480,
+      1674,
+      1679,
+      1775,
+      1869,
+      2107,
+      2453,
+      2365
+    ],
+    "logical_bytes_all_revisions": 370775907,
+    "logical_bytes_last_revision": 48376238,
+    "name": "linux_fs",
+    "revisions": 12,
+    "unique_blobs": 16267,
+    "unique_bytes": 330319171
+  },
+  "experiment": "codecs",
+  "machine": {
+    "args": [
+      "crates/vcs-compress-lab/target/release/compress-lab",
+      "codecs",
+      "--name",
+      "linux_fs",
+      "--source",
+      "git:/home/ubuntu/rt/lab_data/repos/linux:12:fs",
+      "--out",
+      "/home/ubuntu/rt/lab_out/linux_fs_codecs.json"
+    ],
+    "cpu": "AMD EPYC 7J13 64-Core Processor",
+    "crates": {
+      "blake3": "1",
+      "brotli": "9",
+      "fastcdc": "5",
+      "lz4_flex": "0.14",
+      "zstd": "0.14"
+    },
+    "kernel": "6.8.0-1046-nvidia",
+    "loadavg_at_start": "29.25 18.50 13.73 7/708 3087751",
+    "memtotal": "MemTotal:       226763280 kB",
+    "nproc": 30,
+    "zstd": "1.5.7"
+  },
+  "max_file_window": 16777216,
+  "sample_cap_bytes": 67108864,
+  "source_spec": "git:/home/ubuntu/rt/lab_data/repos/linux:12:fs"
+}
