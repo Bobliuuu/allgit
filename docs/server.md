@@ -153,9 +153,14 @@ restricted principal:
   copies) therefore cannot be cloned by a restricted token.
 * Sizes and timing: no padding, no constant-time lookups.
 * Cost: the first restricted read after a restart walks the whole history of every zone (one request per commit/tree and
-  one 1-byte ranged read per file entry), and the id sets cost 32 bytes per reachable object of RAM. The sets only grow
-  while the process lives, so an object removed from a zone's history stays attributed to that zone until restart. Not
-  measured at scale.
+  one 1-byte ranged read per file entry), and the id sets cost 32 bytes per reachable object of RAM. The walk reads one
+  level of the history at a time with `VCS_REMOTE_PARALLEL` (default 8) concurrent requests, so on a remote with latency
+  it costs round trips per tree depth, not per file (test `readindex_walk.rs`: 240 files at 5 ms per read, 0.2 s
+  instead of 1.2 s). Measured on a laptop (local directory backend, 20,000 files in 2 zones, one request that triggers the
+  walk): 60 s with 1 request at a time, 11 s with 8, 5.3 s with 32; that repository was stored only in packs, where each
+  object lookup is a pack search and the restricted token cannot read the result anyway (see above), so treat it as an
+  upper bound. The sets only grow while the process lives, so an object removed from a zone's history stays attributed to
+  that zone until restart. Not measured against a real object store.
 * This is zone-level access control for a trusted server operator model. It is not a confidentiality boundary against
   someone who already holds the denied content or the denied ids.
 
