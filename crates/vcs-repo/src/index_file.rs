@@ -499,7 +499,10 @@ impl crate::repo::Repo {
         let path = self.vcs.join("index");
         // The new index's fingerprint is hashed while the file is written, not after it.
         let (written, digest) = std::thread::scope(|sc| {
-            let d = pending.as_ref().filter(|p| p.old_fp.is_some()).map(|_| sc.spawn(|| crate::fsmonitor::index_digest(bytes)));
+            let d = pending
+                .as_ref()
+                .filter(|p| p.old_fp.is_some())
+                .map(|_| sc.spawn(|| crate::fsmonitor::index_digest(bytes)));
             let w = crate::meta::write_atomic_nosync(&path, bytes);
             (w, d.map(|h| h.join().expect("digest thread panicked")))
         });

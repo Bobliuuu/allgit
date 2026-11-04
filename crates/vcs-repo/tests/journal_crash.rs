@@ -315,3 +315,29 @@ fn journal_written_but_refs_not_applied_then_torn_record() {
         assert_consistent(&r);
     }
 }
+
+/// Deferred ref durability: a power cut that loses the whole unsynced tail (journal record and
+/// renames alike) leaves the previous consistent state; only the most recent ref updates vanish.
+#[test]
+fn power_cut_losing_deferred_ref_updates_leaves_previous_state() {
+    let (d, r) = setup();
+    r.tag_create("root", "a", None, None).unwrap();
+    r.flush_refs().unwrap();
+    let root = vcs(&r);
+    let img = d.path().join("img");
+    copy_dir(&root, &img);
+    r.tag_create("root", "b", None, None).unwrap();
+    r.tag_delete("root", "a").unwrap();
+    assert!(root.join("oplog.dirty").exists());
+    drop(r);
+    for f in ["refs", "op_head", "oplog.journal"] {
+        fs::copy(img.join(f), root.join(f)).unwrap();
+    }
+    let _ = fs::remove_file(root.join("oplog.dirty"));
+    let r = Repo::discover(&d.path().join("r")).unwrap();
+    assert_eq!(tags(&r), ["a"]);
+    assert_consistent(&r);
+    r.tag_create("root", "c", None, None).unwrap();
+    assert_eq!(tags(&r), ["a", "c"]);
+    assert_consistent(&r);
+}

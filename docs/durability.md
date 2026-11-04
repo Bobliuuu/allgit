@@ -80,3 +80,38 @@ a write back.
 - On macOS `fdatasync` is `F_FULLFSYNC`, so the single sync is the expensive hardware flush.
 
 Tests: `crates/vcs-repo/tests/journal_crash.rs`.
+
+## Deferred durability for ref-only operations (default, like git)
+
+Git does not fsync refs by default; neither does vcs for operations that only move refs:
+`branch` (create, `-d`), `tag` (create, delete), `switch -c`. They still append the same journal
+record and rename `refs`/`op_head` atomically, but skip the `fdatasync` of the journal (the 6 ms
+cost that made them 4-6x slower than git on wall time, issue #494). A file `.vcs/oplog.dirty`
+marks "journal records not yet synced".
+
+**What can be lost.** After a *power cut or kernel crash* only, the most recent ref-only updates
+since the last flush (a branch or tag just created or deleted). The repository is never torn:
+the journal checksum drops a partial record, `refs` is replaced by rename, and the previous
+consistent state (refs, op log and `op_head` agreeing) is what you get back. After `kill -9` or a
+process crash nothing is lost: the data is in the page cache. **Committed objects are never lost
+or corrupted by this**: commits, trees, blobs, annotations, `commit`, `merge`, `rebase`, `snapshot`,
+imports and every other operation keep their full durability, and an update is only ever deferred
+after the objects it names were made durable.
+
+**When it becomes durable.** The next object-writing barrier (`add`, `commit`, ... any
+`ObjectStore::sync` with something pending), any journalled operation that syncs (it covers the
+earlier records, they share the file), a checkpoint, `gc`, or `Repo::flush_refs()` for embedders.
+
+**Restoring per-op durability.** `vcs config set core.fsync refs` (repo or `--user`), or the
+environment `VCS_FSYNC_REFS=1` (or `VCS_FSYNC=refs`). Every ref-only operation then pays its
+`fdatasync` at commit time, exactly as described above. Library users call
+`vcs_repo::set_fsync_refs(true)`.
+
+**Not weakened.** The server and remote paths do not go through this journal: publishing a
+manifest (`put_if_match`/`put_if_absent` in the directory backend, the S3 CAS) writes and fsyncs
+its temp file before the rename, and the server's audit log is fsynced at graceful shutdown.
+Pushes stay durable.
+
+Tests: `crates/vcs-cli/tests/ref_durability.rs` (defer + flush behaviour, the knob, 120 randomly
+timed `kill -9`s of ref operations each followed by a clean `fsck`),
+`crates/vcs-repo/tests/journal_crash.rs` (power cut losing the deferred tail).

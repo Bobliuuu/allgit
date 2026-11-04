@@ -82,6 +82,7 @@ impl Repo {
             )));
         }
         let _lock = self.lock()?;
+        self.flush_refs()?; // deferred ref updates become durable before anything is deleted
         let orphans = self.store.clean_orphans(now, opts.grace)?;
         // Objects are immutable by id, so what the first pass learned (kind, children) is reused by the
         // second; its list, roots and ages are still taken fresh.
