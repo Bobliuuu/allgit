@@ -5,8 +5,8 @@ filesystem (USB stick, email, air-gapped network).
 
 ```
 vcs bundle create <file> [zone | zone/branch | root-branch ...] [--since <rev>]
-vcs bundle verify <file>            # full: hash the whole file, decode every object; inside a repository also prerequisites
-vcs bundle verify --quick <file>    # opt-in: header, refs, lengths, prerequisites only
+vcs bundle verify <file>            # default, ~1 ms: header, refs, lengths, prerequisites only (like git)
+vcs bundle verify --full <file>     # hash the whole file, decode every object, check the graph
 vcs clone <bundle> <dir>            # new repository from a complete bundle
 vcs fetch <bundle>                  # import objects, set remote-tracking heads (local branches untouched)
 ```
@@ -38,14 +38,15 @@ readable with `head -c 400 file | strings`. The `pack-format` record selects the
 
 ## Quick and full verify
 
-`vcs bundle verify` is full by default: every check in the next section, and it is what `fetch` and `clone` always run.
-`vcs bundle verify --quick` is an explicit opt-in that reads a few hundred bytes however big the bundle is (git's own
+`vcs bundle verify --full` runs every check in the next section, and that is what `fetch` and `clone` always run: the
+receiver hashes the whole file and every object before it writes anything, so a corrupt pack body can never be applied
+however the bundle was verified. `vcs bundle verify` (the default, formerly `--quick`, which is still accepted) reads a few hundred bytes however big the bundle is (git's own
 `bundle verify` does not hash the pack either). It checks the magic, version and header length, the header against its
 `x-hdr-blake3` line (so a changed head, zone or length is caught), the length equation `16 + H + P + 32 == file size`
 (truncation or appended bytes), the pack's magic and that its object count equals the header's, and, when the bundle
 lists prerequisites, that a repository here has them. It does **not** hash the pack or the trailer: a flipped byte inside
-the pack body or the trailer passes `--quick`. A bundle written before the header hash existed has nothing cheap to check
-the header against, so `--quick` hashes the whole file for it instead.
+the pack body or the trailer passes the default verify (use `--full`). A bundle written before the header hash existed has nothing cheap to check
+the header against, so the default hashes the whole file for it instead.
 
 ## Reading untrusted files
 
