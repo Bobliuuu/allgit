@@ -50,3 +50,14 @@ fn block(s: &mut String, tag: &str, text: &str) {
     }
     s.push_str(&format!("</{tag}>\n\n"));
 }
+
+/// The prompt for a request. `VCS_ASSIST_PROMPT=v1` forces the whole-file prompt; the default (v2) uses the
+/// hunk prompt (see `hunks.rs`) whenever the line merge has conflicting regions, else the whole-file prompt.
+pub fn build(r: &Req) -> (&'static str, String, bool) {
+    if std::env::var("VCS_ASSIST_PROMPT").as_deref() != Ok("v1") {
+        if let Some(u) = crate::hunks::user_v2(r) {
+            return (crate::hunks::SYSTEM_V2, u, true);
+        }
+    }
+    (SYSTEM, user_message(r), false)
+}
