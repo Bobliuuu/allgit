@@ -225,3 +225,60 @@ fn fetched_commit_can_be_detached_by_id_and_origin_name() {
     ok(&runner, &["switch", "--detach", "origin/main"]);
     assert!(runner.join("b.txt").exists());
 }
+
+/// `git add -u` / `commit -a` look only at tracked files (no untracked-file walk): an untracked
+/// file is never staged, a modified or deleted tracked file is, and `switch --detach` keeps ignoring
+/// untracked files while still refusing a tracked edit.
+#[test]
+fn detach_and_add_u_ignore_untracked_files_but_not_tracked_edits() {
+    let t = tempfile::tempdir().unwrap();
+    ok(t.path(), &["init", "r"]);
+    let d = t.path().join("r");
+    std::fs::create_dir_all(d.join("sub/deep")).unwrap();
+    std::fs::write(d.join("sub/deep/x.txt"), "x1").unwrap();
+    std::fs::write(d.join("sub/y.txt"), "y1").unwrap();
+    commit(&d, "a.txt", "a1", 1_700_000_001);
+    ok(&d, &["add", "."]);
+    ok(&d, &["commit", "-m", "tree"]);
+    std::fs::write(d.join("sub/deep/x.txt"), "x2").unwrap();
+    ok(&d, &["add", "."]);
+    ok(&d, &["commit", "-m", "x2"]);
+    std::fs::write(d.join("untracked.txt"), "u").unwrap();
+    std::fs::create_dir_all(d.join("newdir")).unwrap();
+    std::fs::write(d.join("newdir/n.txt"), "n").unwrap();
+
+    // untracked files do not block a detach, and are still there afterwards
+    ok(&d, &["switch", "--detach", "HEAD~1"]);
+    assert_eq!(std::fs::read_to_string(d.join("sub/deep/x.txt")).unwrap(), "x1");
+    assert!(d.join("untracked.txt").exists() && d.join("newdir/n.txt").exists());
+    let st = ok(&d, &["status"]);
+    assert!(
+        st.contains("HEAD detached at") && !st.contains("modified") && !st.contains("staged"),
+        "{st}"
+    );
+    // from one detached commit to another, and back to the branch
+    ok(&d, &["switch", "--detach", "HEAD~1"]);
+    assert!(!d.join("sub").exists() || !d.join("sub/y.txt").exists());
+    ok(&d, &["switch", "main"]);
+    assert_eq!(std::fs::read_to_string(d.join("sub/deep/x.txt")).unwrap(), "x2");
+
+    // a tracked edit refuses the detach and leaves the tree alone
+    std::fs::write(d.join("sub/y.txt"), "y-edited").unwrap();
+    fails(&d, &["switch", "--detach", "HEAD~1"]);
+    assert_eq!(std::fs::read_to_string(d.join("sub/y.txt")).unwrap(), "y-edited");
+    // `git add -u` stages the edit and a deletion, never an untracked file
+    std::fs::remove_file(d.join("sub/deep/x.txt")).unwrap();
+    ok(&d, &["git", "add", "-u"]);
+    let st = ok(&d, &["status"]);
+    assert!(st.contains("sub/y.txt") && st.contains("sub/deep/x.txt"), "{st}");
+    let staged = ok(&d, &["diff", "--staged", "--name-only"]);
+    assert!(
+        staged.contains("sub/y.txt") && staged.contains("sub/deep/x.txt") && !staged.contains("untracked"),
+        "{staged}"
+    );
+    assert!(!staged.contains("newdir"), "{staged}");
+    ok(&d, &["git", "commit", "-m", "u"]);
+    let files = ok(&d, &["ls-files"]);
+    assert!(!files.contains("untracked.txt") && !files.contains("newdir"), "{files}");
+    assert!(ok(&d, &["status"]).contains("untracked.txt"));
+}
