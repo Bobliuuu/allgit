@@ -446,7 +446,17 @@ impl Repo {
         Workspace::decode(&self.rd("workspace")?)
     }
     pub(crate) fn index(&self) -> Result<Index> {
-        Index::decode(&self.rd("index")?)
+        self.index_image()?.to_index()
+    }
+    /// The block view of `img` for lazy diff-like readers (`None` for the older layouts).
+    pub(crate) fn index_view<'a>(&self, img: &'a crate::indeximage::IndexImage) -> Result<Option<crate::indexview::IndexView<'a>>> {
+        match crate::indexview::IndexView::of_image(img)? {
+            Some(v) => Ok(Some(v)),
+            None => match img.flat()? {
+                std::borrow::Cow::Borrowed(b) => crate::indexview::IndexView::parse(b),
+                std::borrow::Cow::Owned(_) => Ok(None),
+            },
+        }
     }
     /// Shorten the index racy window (tests only; production uses 2 s).
     #[doc(hidden)]
@@ -475,7 +485,12 @@ impl Repo {
         let clean = self.index_holds_no_attrs();
         let bytes = ix.encode();
         crate::meta::write_atomic_nosync(&self.vcs.join("index"), &bytes)?;
+        let _ = fs::remove_file(self.vcs.join("index.log")); // folded into the new base
         self.carry_attrs_marker(clean, &bytes);
+        // `ix` now mirrors the stored index: later cache writes (trees, written_ns) may rely on that
+        if let Ok(img) = self.index_image() {
+            ix.entries.set_src_digest(img.digest());
+        }
         Ok(())
     }
     /// Fingerprint of the index file as it is on disk, when a monitor state is saved (else `None`: nothing
@@ -484,22 +499,21 @@ impl Repo {
         if !fsmonitor::state_exists(&self.vcs) {
             return None;
         }
-        let ix = self.rd("index").ok()?;
-        Some(self.fingerprint_disk(&ix, &self.rd("zones").ok()?, &self.rd("workspace").ok()?))
+        let img = self.index_image().ok()?;
+        Some(self.fingerprint_img(&img, &self.rd("zones").ok()?, &self.rd("workspace").ok()?))
     }
 
-    /// [`fsmonitor::fingerprint`] of `ix_bytes`, which were just read from this worktree's index file.
-    pub(crate) fn fingerprint_disk(&self, ix_bytes: &[u8], zones: &[u8], workspace: &[u8]) -> [u8; 32] {
-        let d = fsmonitor::index_digest_cached(&self.vcs, ix_bytes);
-        fsmonitor::fingerprint_with(&d, ix_bytes.len(), zones, workspace)
+    /// [`fsmonitor::fingerprint`] of the index `img` (its digest covers base and log; no hashing of entries).
+    pub(crate) fn fingerprint_img(&self, img: &crate::indeximage::IndexImage, zones: &[u8], workspace: &[u8]) -> [u8; 32] {
+        fsmonitor::fingerprint_with(&img.digest(), img.stored_len(), zones, workspace)
     }
 
-    /// Record that the index went from fingerprint `old` to `new_bytes` changing only entries in `touched`.
-    pub(crate) fn fsmon_log_rewrite(&self, old: Option<[u8; 32]>, new_bytes: &[u8], touched: &[String]) {
-        let (Some(old), Ok(z), Ok(w)) = (old, self.rd("zones"), self.rd("workspace")) else {
+    /// Record that the index went from fingerprint `old` to what is on disk now, changing only entries in `touched`.
+    pub(crate) fn fsmon_log_rewrite(&self, old: Option<[u8; 32]>, touched: &[String]) {
+        let (Some(old), Ok(z), Ok(w), Ok(img)) = (old, self.rd("zones"), self.rd("workspace"), self.index_image()) else {
             return;
         };
-        let new = fsmonitor::fingerprint(new_bytes, &z, &w);
+        let new = self.fingerprint_img(&img, &z, &w);
         if new != old {
             fsmonitor::log_rebind(&self.vcs, &old, &new, touched);
         }
@@ -611,10 +625,7 @@ impl Repo {
         if rel_paths.is_empty() || rel_paths.len() > MAX || rel_paths.iter().any(|p| p.is_empty()) {
             return Ok(None);
         }
-        let Ok(raw) = self.rd("index") else { return Ok(None) };
-        let Some(f) = crate::index_file::IndexFile::parse(raw)? else {
-            return Ok(None);
-        };
+        let Ok(Some(f)) = self.open_index_file() else { return Ok(None) };
         if f.is_empty() {
             return Ok(None);
         }
@@ -667,8 +678,8 @@ impl Repo {
         if edits.is_empty() {
             return Ok(None);
         }
-        if let (Some(bytes), _) = self.prepare_index_patch(&f, &edits)? {
-            self.write_index_bytes(&bytes)?;
+        if let (Some(patch), _) = self.prepare_index_patch(&f, &edits)? {
+            self.write_index_patch(&f, &patch)?;
         }
         Ok(Some(rep))
     }
@@ -1299,9 +1310,9 @@ impl Repo {
     /// `fsmonitor`). The last result is kept in `.vcs/fsmon/state`, keyed by index, zone layout
     /// and the monitor token it was computed at.
     pub fn status_monitored(&self, opts: StatusOpts, mon: &dyn FsMonitor) -> Result<Status> {
-        let ix_bytes = self.rd("index")?;
-        let ix = Index::decode(&ix_bytes)?;
-        let fp = self.fingerprint_disk(&ix_bytes, &self.rd("zones")?, &self.rd("workspace")?);
+        let img = self.index_image()?;
+        let ix = img.to_index()?;
+        let fp = self.fingerprint_img(&img, &self.rd("zones")?, &self.rd("workspace")?);
         let (prev, extra) = self.saved_state_for(fp);
         let ans = mon.changed_since(prev.as_ref().map(|s| s.token.as_str()));
         let (token, inc) = match (prev.as_ref(), ans) {
@@ -1322,10 +1333,10 @@ impl Repo {
         }
         // A racy-entry refresh may have rewritten the index (new `written_ns`, same entries);
         // bind the state to what is on disk now only if the entries are unchanged.
-        let fp_now = match self.rd("index") {
-            Ok(b) if b == ix_bytes => fp,
-            Ok(b) if Index::decode(&b).is_ok_and(|n| n.entries == ix.entries) => {
-                self.fingerprint_disk(&b, &self.rd("zones")?, &self.rd("workspace")?)
+        let fp_now = match self.index_image() {
+            Ok(b) if b.digest() == img.digest() => fp,
+            Ok(b) if b.to_index().is_ok_and(|n| n.entries == ix.entries) => {
+                self.fingerprint_img(&b, &self.rd("zones")?, &self.rd("workspace")?)
             }
             _ => return Ok(st),
         };
@@ -1366,12 +1377,12 @@ impl Repo {
     /// Tracked paths that may differ from the index, from the monitor: the unstaged set saved with the
     /// state plus whatever changed since its token. `None` (do a full scan) without a running watcher, a
     /// state for this index, or a usable answer. Untracked files are not covered.
-    pub(crate) fn monitored_candidates(&self, ix_bytes: &[u8]) -> Option<Vec<String>> {
+    pub(crate) fn monitored_candidates(&self, img: &crate::indeximage::IndexImage) -> Option<Vec<String>> {
         if std::env::var_os("VCS_NO_FSMONITOR").is_some() {
             return None;
         }
         let mon = fsmonitor::JournalMonitor::open(&self.vcs)?;
-        let fp = self.fingerprint_disk(ix_bytes, &self.rd("zones").ok()?, &self.rd("workspace").ok()?);
+        let fp = self.fingerprint_img(img, &self.rd("zones").ok()?, &self.rd("workspace").ok()?);
         let (prev, extra) = self.saved_state_for(fp);
         let prev = prev?;
         let Changed::Paths { paths, .. } = mon.changed_since(Some(&prev.token)) else {
@@ -1675,13 +1686,11 @@ impl Repo {
             return;
         }
         let Ok(_l) = self.lock() else { return };
-        let bytes = ix.encode();
-        if self.rd("index").ok().as_deref() != Some(bytes.as_slice()) {
-            return;
+        let Ok(img) = self.index_image() else { return };
+        if ix.entries.src_digest() != Some(img.digest()) {
+            return; // changed since `ix` was loaded: never clobber a concurrent writer
         }
-        let mut ix = ix.clone();
-        ix.written_ns = next;
-        let _ = crate::meta::write_cache_atomic(&self.vcs.join("index"), &ix.encode());
+        let _ = img.commit(&self.vcs, vec![crate::indeximage::Op::WrittenNs(next)]);
     }
 
     /// Directory scan for untracked and unsupported entries. The scan is syscall-bound (one
@@ -2035,10 +2044,13 @@ impl Repo {
         // effort: a lost cache write only costs time.
         if !fresh_trees.is_empty() {
             ix.entries.store_trees(fp, fresh_trees);
-            let new_bytes = ix.encode();
             let old_fp = self.fsmon_fp_of_disk_index();
-            let _ = crate::meta::write_cache_atomic(&self.vcs.join("index"), &new_bytes);
-            self.fsmon_log_rewrite(old_fp, &new_bytes, &[]); // entries are unchanged: only cache trees are new
+            if let Ok(img) = self.index_image() {
+                if ix.entries.src_digest() == Some(img.digest()) {
+                    let _ = img.commit(&self.vcs, vec![crate::indeximage::Op::SetTrees(ix.entries.trees_snapshot())]);
+                }
+            }
+            self.fsmon_log_rewrite(old_fp, &[]); // entries are unchanged: only cache trees are new
         }
         if merging.is_some() {
             self.clear_merge_state()?;
@@ -2233,7 +2245,7 @@ impl Repo {
         if old_fp.is_some() {
             // after `save_ws`: the state's fingerprint covers the subscribed branches too
             let touched: Vec<String> = diff.old.keys().chain(diff.new.keys()).cloned().collect();
-            self.fsmon_log_rewrite(old_fp, &self.rd("index")?, &touched);
+            self.fsmon_log_rewrite(old_fp, &touched);
         }
         if cur == vcs_objects::names::DETACHED_BRANCH {
             self.drop_detached_ref(zone)?;

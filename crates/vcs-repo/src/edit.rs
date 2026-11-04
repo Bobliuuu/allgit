@@ -204,8 +204,8 @@ impl Repo {
             // The operation is recorded before the (unsynced) index write, see `prepare_index_patch`.
             let (n, patched) = self.restore_staged(specs, &zones, &ws)?;
             self.record_op(&format!("{what} {}", specs.join(" ")), None)?;
-            if let Some(bytes) = patched {
-                self.write_index_bytes(&bytes)?;
+            if let Some((f, patch)) = patched {
+                self.write_index_patch(&f, &patch)?;
             }
             return Ok(RestoreReport { restored: n });
         }
@@ -225,8 +225,8 @@ impl Repo {
                 self.prepare_index_patch(&f, &edits)?.0
             };
             self.record_op(&format!("{what} {}", specs.join(" ")), None)?;
-            if let Some(bytes) = patched {
-                self.write_index_bytes(&bytes)?;
+            if let Some(patch) = patched {
+                self.write_index_patch(&f, &patch)?;
             }
             return Ok(RestoreReport { restored: n });
         }
@@ -247,10 +247,7 @@ impl Repo {
         if specs.iter().any(|p| p.is_empty()) {
             return Ok(None);
         }
-        let Ok(raw) = self.rd("index") else { return Ok(None) };
-        let Some(f) = crate::index_file::IndexFile::parse(raw)? else {
-            return Ok(None);
-        };
+        let Ok(Some(f)) = self.open_index_file() else { return Ok(None) };
         let mut part = Index {
             written_ns: f.written_ns,
             ..Index::default()
@@ -357,7 +354,7 @@ impl Repo {
 
     /// `restore --staged`: put the index entries under `specs` back to what HEAD has. Works on the
     /// lazily read index file and looks HEAD up per path, so one file costs a block, not the tree.
-    fn restore_staged(&self, specs: &[String], zones: &Zones, ws: &Workspace) -> Result<(usize, Option<Vec<u8>>)> {
+    fn restore_staged(&self, specs: &[String], zones: &Zones, ws: &Workspace) -> Result<(usize, Option<(crate::index_file::IndexFile, crate::index_file::Patch)>)> {
         let refs = self.refs()?;
         let f = self.index_file()?;
         let mut roots: BTreeMap<String, Option<ObjectId>> = BTreeMap::new();
@@ -453,7 +450,7 @@ impl Repo {
         }
         let n = edits.len();
         let (patched, _) = self.prepare_index_patch(&f, &edits)?;
-        Ok((n, patched))
+        Ok((n, patched.map(|p| (f, p))))
     }
 
     /// Remove tracked files from the index and the working tree (`cached`: index only).
@@ -536,8 +533,8 @@ impl Repo {
         self.prune_dirs(dirs);
         let (patched, _) = self.prepare_index_patch(&f, &edits)?;
         self.record_op(&format!("rm {}", specs.join(" ")), None)?;
-        if let Some(bytes) = patched {
-            self.write_index_bytes(&bytes)?;
+        if let Some(patch) = patched {
+            self.write_index_patch(&f, &patch)?;
         }
         Ok(RmReport {
             removed: paths.into_keys().collect(),
@@ -688,8 +685,8 @@ impl Repo {
         self.prune_dirs(dirs);
         let (patched, _) = self.prepare_index_patch(&f, &edits)?;
         self.record_op(&format!("mv {src} {dst}"), None)?;
-        if let Some(bytes) = patched {
-            self.write_index_bytes(&bytes)?;
+        if let Some(patch) = patched {
+            self.write_index_patch(&f, &patch)?;
         }
         Ok(MvReport { moved: plan })
     }

@@ -21,6 +21,8 @@ pub mod ignore;
 pub mod import;
 pub mod import_p4;
 pub mod index;
+mod index5;
+mod indeximage;
 mod index_file;
 mod indexview;
 mod journal;

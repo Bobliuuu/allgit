@@ -10,6 +10,7 @@
 
 use crate::error::{Error, Result};
 use crate::index::IndexEntry;
+use crate::index5::BLOCK5;
 use crate::worktree_fs::StatCursor;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -19,6 +20,8 @@ use vcs_objects::{EntryMode, ObjectId};
 pub(crate) struct IndexView<'a> {
     pub written_ns: u64,
     blocks: Vec<(&'a [u8], usize)>,
+    /// `AGI5`: the image whose mapped base is walked in blocks of `BLOCK5` records, merged with the log.
+    v5: Option<&'a crate::indeximage::IndexImage>,
     pub trees_fp: Option<ObjectId>,
     pub trees: BTreeMap<String, ObjectId>,
 }
@@ -64,15 +67,44 @@ impl<'a> IndexView<'a> {
         Ok(Some(IndexView {
             written_ns,
             blocks,
+            v5: None,
             trees_fp,
             trees,
         }))
+    }
+
+    /// A view over an `AGI5` image (base plus log); `None` for the older layouts.
+    pub fn of_image(img: &'a crate::indeximage::IndexImage) -> Result<Option<Self>> {
+        if !img.is_v5() {
+            return Ok(None);
+        }
+        let (trees_fp, trees) = match img.trees()? {
+            Some((fp, t)) => (Some(*fp), t.clone()),
+            None => (None, BTreeMap::new()),
+        };
+        Ok(Some(IndexView {
+            written_ns: img.written_ns,
+            blocks: Vec::new(),
+            v5: Some(img),
+            trees_fp,
+            trees,
+        }))
+    }
+
+    fn nblocks(&self) -> usize {
+        match self.v5 {
+            Some(img) => img.base5().map_or(1, |b| b.n.div_ceil(BLOCK5).max(1)),
+            None => self.blocks.len(),
+        }
     }
 
     /// Visit the entries of block `i` in order. `f` gets the path borrowed from the file.
     ///
     /// Names are NOT validated here (only ordering is): callers that act on a path beyond `lstat` validate it.
     pub fn each_in_block(&self, i: usize, mut f: impl FnMut(&str, IndexEntry) -> Result<()>) -> Result<()> {
+        if let Some(img) = self.v5 {
+            return Self::each_v5(img, i, &mut f);
+        }
         let (bytes, cnt) = self.blocks[i];
         let mut r = Reader::new(bytes);
         let mut prev: &str = "";
@@ -84,8 +116,45 @@ impl<'a> IndexView<'a> {
         r.finish().map_err(corrupt)
     }
 
+    fn each_v5(img: &crate::indeximage::IndexImage, i: usize, f: &mut dyn FnMut(&str, IndexEntry) -> Result<()>) -> Result<()> {
+        let b = img.base5().expect("v5 view has a base");
+        let nb = b.n.div_ceil(BLOCK5).max(1);
+        let (a, z) = ((i * BLOCK5).min(b.n), ((i + 1) * BLOCK5).min(b.n));
+        let lo = if i == 0 { None } else { Some(b.path(a)?) };
+        let hi = if i + 1 < nb { Some(b.path(z)?) } else { None };
+        let mut ov = img.overlay_range(lo, hi).peekable();
+        let mut prev: &str = "";
+        for ri in a..z {
+            let (p, e) = b.get_at(ri)?;
+            if p <= prev {
+                return Err(Error::Corrupt("index: entries out of order".into()));
+            }
+            prev = p;
+            while let Some((k, v)) = ov.next_if(|(k, _)| k.as_str() < p) {
+                if let Some(v) = v {
+                    f(k, v.clone())?;
+                }
+            }
+            match ov.next_if(|(k, _)| k.as_str() == p) {
+                Some((_, Some(v))) => f(p, v.clone())?,
+                Some((_, None)) => {}
+                None => f(p, e)?,
+            }
+        }
+        for (k, v) in ov {
+            if let Some(v) = v {
+                f(k, v.clone())?;
+            }
+        }
+        Ok(())
+    }
+
     /// First path of block `i`.
     fn first_path(&self, i: usize) -> Result<&str> {
+        if let Some(img) = self.v5 {
+            let b = img.base5().expect("v5 view has a base");
+            return if b.n == 0 { Ok("") } else { b.path((i * BLOCK5).min(b.n - 1)) };
+        }
         let mut r = Reader::new(self.blocks[i].0);
         let b = r.bytes(4096).map_err(corrupt)?;
         std::str::from_utf8(b).map_err(|_| Error::Corrupt("index: utf-8".into()))
@@ -93,8 +162,8 @@ impl<'a> IndexView<'a> {
 
     /// Indexes of the blocks that can hold a path in `[lo, hi)` (`hi == None`: unbounded).
     fn blocks_in(&self, lo: &str, hi: Option<&str>) -> Result<Vec<usize>> {
-        let mut firsts = Vec::with_capacity(self.blocks.len());
-        for i in 0..self.blocks.len() {
+        let mut firsts = Vec::with_capacity(self.nblocks());
+        for i in 0..self.nblocks() {
             firsts.push(self.first_path(i)?);
         }
         let mut out = Vec::new();
@@ -113,7 +182,7 @@ impl<'a> IndexView<'a> {
     /// is empty or holds the empty path), ascending and without repeats.
     pub fn blocks_for(&self, only: &[String]) -> Result<Vec<usize>> {
         if only.is_empty() || only.iter().any(|f| f.is_empty()) {
-            return Ok((0..self.blocks.len()).collect());
+            return Ok((0..self.nblocks()).collect());
         }
         let mut all = Vec::new();
         for f in only {

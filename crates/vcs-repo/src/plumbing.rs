@@ -13,8 +13,9 @@ impl Repo {
     /// Tracked files of the working tree (the index), as `(path, mode, content id)` sorted by path.
     /// Paths are repository-relative; only subscribed zones are tracked.
     pub fn tracked_files(&self) -> Result<Vec<(String, vcs_objects::EntryMode, ObjectId)>> {
-        let raw = self.rd("index")?;
-        Ok(crate::index::Index::decode_list(&raw)?
+        Ok(self
+            .index_image()?
+            .list()?
             .into_iter()
             .map(|(p, e)| (p, e.mode, e.id))
             .collect())
@@ -27,8 +28,8 @@ impl Repo {
         init: impl Fn() -> T + Sync,
         visit: impl Fn(&mut T, &str, &crate::index::IndexEntry) + Sync,
     ) -> Result<Vec<T>> {
-        let raw = self.rd("index")?;
-        crate::index::Index::scan(&raw, init, visit)
+        let img = self.index_image()?;
+        crate::index::Index::scan(&img.flat()?, init, visit)
     }
 
     /// Files of revision `rev` across the subscribed zones in which `rev` resolves (so `HEAD`
