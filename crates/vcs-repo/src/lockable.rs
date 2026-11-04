@@ -223,10 +223,7 @@ impl Repo {
     fn index_fp(&self) -> Option<String> {
         let base = file_fp(&fs::metadata(self.vcs.join("index")).ok()?)?;
         // the edit log is part of the index: its size and mtime change with every appended frame
-        let log = fs::metadata(self.vcs.join("index.log"))
-            .ok()
-            .and_then(|m| file_fp(&m))
-            .unwrap_or_default();
+        let log = fs::metadata(self.vcs.join("index.log")).ok().and_then(|m| file_fp(&m)).unwrap_or_default();
         Some(format!("{base}+{log}"))
     }
 
