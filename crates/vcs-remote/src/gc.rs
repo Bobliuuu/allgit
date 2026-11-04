@@ -527,10 +527,14 @@ pub fn remote_gc_with(
     let renew = |force: bool| -> Result<(), GcError> { lock.as_ref().map_or(Ok(()), |l| l.renew(force)) };
 
     // 1. Candidates: units that are old and contain nothing reachable.
+    // Roots BEFORE the listing: a push that lands between the two has its pack in the listing but its head
+    // not in the roots (harmless: young), whereas the other order finds a root whose pack the listing missed
+    // and aborts as "damaged" (seen under concurrent pushes at scale, docs/scalability.md finding 11).
+    let roots0 = roots(b, &quirks, now)?;
     let view = View::load(b)?;
     rep.packs = view.packs.len();
     let mut marked = HashSet::new();
-    view.closure(roots(b, &quirks, now)?, true, &mut marked)?;
+    view.closure(roots0, true, &mut marked)?;
     let mut candidates: Vec<Unit> = Vec::new();
     for u in view.all_units() {
         let objs = view.objects_of(&u);
@@ -591,10 +595,10 @@ pub fn remote_gc_with(
     // generally, I1: a survivor must not lose a dependency. Candidates were chosen at one
     // instant; if time moves on (a stalled sweeper, a clock step) a parent can stop being young
     // while its child is a candidate, and deleting only the child would leave the parent dangling.
-    let keep_set = |v: &View| -> Result<(HashSet<ObjectId>, HashSet<Unit>), GcError> {
+    let keep_set = |v: &View, rts: Vec<ObjectId>| -> Result<(HashSet<ObjectId>, HashSet<Unit>), GcError> {
         let mut keep = HashSet::new();
         let mut touched_units = HashSet::new();
-        v.closure(roots(b, &quirks, now)?, true, &mut keep)?;
+        v.closure(rts, true, &mut keep)?;
         if !quirks.sweeper_young_not_roots {
             let mut survivors = Vec::new();
             let at = b.now_ms()?;
@@ -633,7 +637,7 @@ pub fn remote_gc_with(
             .collect()
     };
     let (delete, view2, keep) = if quirks.sweeper_tombs_after_deciding {
-        let (keep, touched) = keep_set(&view)?;
+        let (keep, touched) = keep_set(&view, roots(b, &quirks, now)?)?;
         let delete = decide(&view, &keep, &touched);
         hook(GcPoint::Remarked);
         tomb_all()?;
@@ -643,8 +647,9 @@ pub fn remote_gc_with(
         tomb_all()?;
         hook(GcPoint::Tombed);
         renew(false)?;
+        let roots2 = roots(b, &quirks, now)?; // before the listing, see above
         let v2 = View::load(b)?;
-        let (keep, touched) = keep_set(&v2)?;
+        let (keep, touched) = keep_set(&v2, roots2)?;
         let delete = decide(&v2, &keep, &touched);
         hook(GcPoint::Remarked);
         (delete, v2, keep)
