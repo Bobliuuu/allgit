@@ -25,6 +25,7 @@ pub mod ratelimit;
 pub mod readguard;
 pub mod resilient;
 pub mod server;
+pub mod tickets;
 #[cfg(feature = "tls")]
 pub mod tls;
 pub mod validate;

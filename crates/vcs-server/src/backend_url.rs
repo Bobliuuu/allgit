@@ -79,6 +79,13 @@ pub fn s3_config(url: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<S3Co
 /// Open the backend named by `--backend`. S3 mode refuses providers that ignore conditional
 /// writes (the CAS the whole design rests on) at startup.
 pub fn open(url: &str) -> Result<Arc<dyn Backend>, String> {
+    // sole-writer server: reads of a sharded manifest come from the snapshot this process keeps current
+    let b = vcs_remote::sharded::ShardedBackend::from_arc(open_raw(url)?).with_read_ttl(std::time::Duration::from_secs(2));
+    Ok(Arc::new(b))
+}
+
+/// The store itself, without the sharded-manifest layer (`migrate-sharded` needs the marker as it is).
+pub fn open_raw(url: &str) -> Result<Arc<dyn Backend>, String> {
     if url.starts_with("s3://") {
         let cfg = s3_config(url, &|k| std::env::var(k).ok())?;
         let b = S3Backend::connect(cfg).map_err(|e| format!("cannot open {}: {e}", url.split('?').next().unwrap_or(url)))?;
