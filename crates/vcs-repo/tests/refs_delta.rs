@@ -224,3 +224,26 @@ fn operations_store_tag_deltas_and_undo_restores_tags() {
     r.op_undo().unwrap();
     assert!(tags(&r).len() >= 12);
 }
+
+#[test]
+fn a_delta_repository_with_no_tags_works() {
+    let (d, r) = setup(8);
+    for i in 0..8 {
+        r.tag_delete("root", &format!("t{i:04}")).unwrap();
+    }
+    // push the log over its bound so the next base is written without a tag table
+    let base0 = fs::read(vcs(&r).join("refs")).unwrap();
+    for i in 0..400 {
+        r.create_branch("root", &format!("a-very-long-branch-name-to-fill-the-log-{i:05}")).unwrap();
+        if fs::read(vcs(&r).join("refs")).unwrap() != base0 {
+            break;
+        }
+    }
+    assert_ne!(fs::read(vcs(&r).join("refs")).unwrap(), base0, "compacted");
+    let r = reopen(&d);
+    assert!(r.refs_delta_info().0 && tags(&r).is_empty());
+    r.tag_create("root", "two", None, None).unwrap();
+    assert_eq!(tags(&reopen(&d)), ["two".to_owned()].into());
+    r.tag_delete("root", "two").unwrap();
+    assert!(tags(&reopen(&d)).is_empty());
+}
