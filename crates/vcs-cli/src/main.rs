@@ -168,7 +168,6 @@ enum Cmd {
     /// Show staged, unstaged and untracked changes per zone
     Status,
     /// Watch the working tree and journal changed paths so `status` can skip a full scan (runs until killed)
-    #[cfg(feature = "watcher")]
     Watch {
         /// Stop after this many seconds without a `status` asking for the journal (set when a command starts the watcher itself)
         #[arg(long)]
@@ -900,14 +899,21 @@ fn principal() -> String {
         .unwrap_or_else(|| "unknown@localhost".into())
 }
 
+/// The `vcs-watchd` binary next to this one (it links the platform file-event API, which `vcs` itself must not:
+/// on macOS CoreServices costs about 2 ms of dyld work in every process). None when it was not installed.
+fn watchd_path() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let p = exe.with_file_name(if cfg!(windows) { "vcs-watchd.exe" } else { "vcs-watchd" });
+    p.is_file().then_some(p)
+}
+
 fn open() -> Result<(Repo, PathBuf), Error> {
     let cwd = std::env::current_dir().map_err(|source| Error::Io { path: ".".into(), source })?;
     let repo = Repo::discover(&cwd)?;
     // Big repositories get a background watcher so `status`, `diff` and friends can skip the full scan.
-    #[cfg(feature = "watcher")]
     if std::env::args_os().nth(1).is_none_or(|a| a != "watch") {
-        if let Ok(exe) = std::env::current_exe() {
-            repo.autostart_watcher(&exe);
+        if let Some(watchd) = watchd_path() {
+            repo.autostart_watcher(&watchd);
         }
     }
     Ok((repo, cwd))
@@ -1141,18 +1147,25 @@ fn run(cli: Cli) -> Result<(), Error> {
             }
             maybe_auto_repack(&repo);
         }
-        #[cfg(feature = "watcher")]
         Cmd::Watch { idle_exit } => {
-            let (repo, _) = open()?;
-            eprintln!(
-                "watching {} (Ctrl-C to stop); `vcs status` uses the journal while this runs",
-                repo.worktree().display()
-            );
-            vcs_repo::watcher::run_idle(
-                &repo,
-                &std::sync::atomic::AtomicBool::new(false),
-                idle_exit.map(std::time::Duration::from_secs),
-            )?;
+            let (_repo, _) = open()?;
+            let Some(watchd) = watchd_path() else {
+                return Err(Error::Msg(
+                    "vcs-watchd not found next to vcs (build or install with the `watcher` feature)".into(),
+                ));
+            };
+            let mut c = std::process::Command::new(watchd);
+            c.arg("watch");
+            if let Some(n) = idle_exit {
+                c.arg("--idle-exit").arg(n.to_string());
+            }
+            let st = c.status().map_err(|source| Error::Io {
+                path: "vcs-watchd".into(),
+                source,
+            })?;
+            if !st.success() {
+                return Err(Error::Msg(format!("vcs-watchd exited with {st}")));
+            }
         }
         Cmd::Status => {
             let (repo, _) = open()?;

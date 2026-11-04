@@ -11,7 +11,6 @@ vcs-remote.workspace = true
 vcs-merge.workspace = true
 thiserror.workspace = true
 blake3.workspace = true
-notify = { version = "6", default-features = false, features = ["macos_fsevent"], optional = true }
 unicode-normalization.workspace = true
 libc = "0.2"
 
@@ -19,11 +18,11 @@ libc = "0.2"
 tempfile.workspace = true
 proptest.workspace = true
 sha2 = "0.10"
+# The real-watcher tests in tests/fsmonitor.rs (dev-dependency cycle is fine: tests only).
+vcs-watchd = { path = "../vcs-watchd" }
 
 [features]
 default = []
-# `vcs watch`: a notify-based (inotify / FSEvents) daemon that journals changed paths for `status`.
-watcher = ["dep:notify"]
 # Use the structural Rust merge in merge and rebase (see vcs-merge).
 structural = ["vcs-merge/structural"]
 structural-python = ["vcs-merge/structural-python"]

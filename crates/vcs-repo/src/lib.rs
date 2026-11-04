@@ -54,8 +54,6 @@ pub mod sync;
 pub mod tags;
 mod treemerge;
 pub mod treeops;
-#[cfg(feature = "watcher")]
-pub mod watcher;
 pub mod worktree;
 pub mod worktree_fs;
 mod writer_threads;

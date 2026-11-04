@@ -461,7 +461,6 @@ fn state_for_another_index_is_not_trusted() {
 }
 
 /// The real thing: `vcs watch`'s notify daemon (inotify on Linux) feeding the journal monitor.
-#[cfg(feature = "watcher")]
 mod real {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -487,7 +486,7 @@ mod real {
         let s2 = stop.clone();
         let h = std::thread::spawn(move || {
             let r = Repo::discover(&root).unwrap();
-            vcs_repo::watcher::run(&r, &s2).unwrap();
+            vcs_watchd::run(&r, &s2).unwrap();
         });
         let vcs = r.worktree().join(".vcs");
         for _ in 0..500 {

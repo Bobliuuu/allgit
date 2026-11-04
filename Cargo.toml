@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/vcs-objects", "crates/vcs-store", "crates/vcs-merge", "crates/vcs-remote", "crates/vcs-repo", "crates/vcs-store-s3", "crates/vcs-server", "crates/vcs-cli", "crates/vcs-bench", "crates/vcs-assist-claude", "crates/vcs-assist-openai"]
+members = ["crates/vcs-objects", "crates/vcs-store", "crates/vcs-merge", "crates/vcs-remote", "crates/vcs-repo", "crates/vcs-watchd", "crates/vcs-store-s3", "crates/vcs-server", "crates/vcs-cli", "crates/vcs-bench", "crates/vcs-assist-claude", "crates/vcs-assist-openai"]
 
 [workspace.package]
 version = "0.1.0"
@@ -23,6 +23,7 @@ vcs-store = { path = "crates/vcs-store" }
 vcs-merge = { path = "crates/vcs-merge" }
 vcs-remote = { path = "crates/vcs-remote" }
 vcs-repo = { path = "crates/vcs-repo" }
+vcs-watchd = { path = "crates/vcs-watchd" }
 vcs-store-s3 = { path = "crates/vcs-store-s3" }
 vcs-server = { path = "crates/vcs-server" }
 
@@ -35,3 +36,10 @@ opt-level = 3
 
 [profile.dev]
 opt-level = 1
+
+# Release builds: whole-program optimization. Measured on a 20k-file repo (CPU time, interleaved): about
+# 5-8% less CPU per small command and a 35% smaller binary (docs/research/more-optimizations.md).
+# panic stays "unwind": vcs-server isolates a panicking connection thread.
+[profile.release]
+lto = "fat"
+codegen-units = 1
