@@ -1636,7 +1636,7 @@ impl Repo {
             }
             Ok((out, clean))
         };
-        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(16);
+        let threads = crate::writer_threads::status_threads();
         if threads <= 1 || list.len() < 2048 {
             return check(list);
         }
@@ -2491,7 +2491,7 @@ impl Repo {
             };
             let m = if mode == EntryMode::Symlink {
                 io(&abs(), self.wfs.symlink(&data, p))?
-            } else if old.contains_key(p) {
+            } else if old.contains_key(p) || crate::writer_threads::atomic_only() {
                 io(&abs(), self.wfs.write(p, &data, mode))?
             } else {
                 // Not tracked before, and the preflight saw nothing there: create in place (never
