@@ -17,7 +17,7 @@ use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use vcs_objects::names::{validate_branch_name, validate_path, validate_zone_name};
 use vcs_objects::{id_of_encoded, Object, ObjectId, RefUpdate, Signature, Transaction};
-use vcs_store::pack::{build_pack_fast_v2, decode_payload_max, PACK_MAGIC, PACK_MAGIC_V2};
+use vcs_store::pack::{decode_payload_max, encode_payload_at, PackFormat, PACK_MAGIC, PACK_MAGIC_V2, RAW_SMALL};
 use vcs_store::ObjectStore;
 
 pub const MAGIC: &[u8; 8] = b"VCSBNDL\n";
@@ -517,42 +517,83 @@ impl Repo {
                 children(&self.store.get(&id)?, &mut stack);
             }
         }
-        // Breadth-first by level; each level's objects are read and encoded on several threads.
+        // Breadth-first by level; each level's objects are read on several threads. `objs` holds
+        // finished v2 pack entries (codec byte + body): an object stored in a v2 pack is forwarded
+        // exactly as stored (no decompress, no re-hash, no recompress; the receiver verifies every
+        // object when it reads the bundle), anything else is read and compressed here, in parallel.
         let mut objs: BTreeMap<ObjectId, Vec<u8>> = BTreeMap::new();
         let mut level: Vec<ObjectId> = heads.iter().map(|h| h.2).collect();
         while !level.is_empty() {
             level.sort_unstable();
             level.dedup();
             level.retain(|id| !have.contains(id) && !objs.contains_key(id));
+            let mut next = Vec::new();
+            // Pass 1: forward stored v2 entries. This is a lookup and a copy per object, so wide
+            // fan-out only buys allocator contention (about 3x the CPU for no wall time): two threads.
+            let probe = |id: &ObjectId| -> Result<(ObjectId, Option<(u8, Vec<u8>)>, Vec<ObjectId>)> {
+                let mut kids = Vec::new();
+                let hit = self.store.get_payload_v2(id)?;
+                if let Some((kind, pl)) = &hit {
+                    // a blob has no children: no need to decode its content
+                    if *kind != vcs_objects::Kind::Blob as u8 {
+                        let enc = decode_payload_max(2, pl, MAX_OBJECT as u64).map_err(|e| Error::Corrupt(format!("object {id}: {e}")))?;
+                        children(&Object::decode(&enc).map_err(vcs_store::StoreError::from)?, &mut kids);
+                    }
+                }
+                Ok((*id, hit, kids))
+            };
+            let pthreads = if level.len() < 4096 { 1 } else { 2 };
+            let pper = level.len().div_ceil(pthreads).max(1);
+            let probed: Vec<Result<Vec<_>>> = std::thread::scope(|sc| {
+                let probe = &probe;
+                let hs: Vec<_> = level
+                    .chunks(pper)
+                    .map(|ch| sc.spawn(move || ch.iter().map(probe).collect::<Result<Vec<_>>>()))
+                    .collect();
+                hs.into_iter().map(|h| h.join().expect("bundle worker panicked")).collect()
+            });
+            let mut missed: Vec<ObjectId> = Vec::new();
+            for part in probed {
+                for (id, hit, kids) in part? {
+                    match hit {
+                        Some((_, pl)) => {
+                            objs.insert(id, pl);
+                            next.extend(kids);
+                        }
+                        None => missed.push(id),
+                    }
+                }
+            }
+            // Pass 2: everything else (loose, pending, other pack formats) is read and compressed,
+            // on several threads when there is enough of it. zstd level 1 (RAW_SMALL): a bundle is
+            // written once and read once, so write speed beats size.
             let fetch = |id: &ObjectId| -> Result<(ObjectId, Vec<u8>, Vec<ObjectId>)> {
-                let enc = self.store.get_encoded(id).map_err(|e| match e {
+                let enc = self.store.get_encoded_unchecked(id).map_err(|e| match e {
                     vcs_store::StoreError::NotFound(i) => Error::Msg(format!(
                         "cannot bundle: object {i} is not in this repository (a sparse clone must fetch it first)"
                     )),
                     e => e.into(),
                 })?;
                 let mut kids = Vec::new();
-                // a blob (first byte = its kind) has no children: no need to decode its content
                 if enc.first() != Some(&(vcs_objects::Kind::Blob as u8)) {
                     children(&Object::decode(&enc).map_err(vcs_store::StoreError::from)?, &mut kids);
                 }
-                Ok((*id, enc, kids))
+                Ok((*id, encode_payload_at(PackFormat::V2, &enc, RAW_SMALL), kids))
             };
-            let threads = if level.len() < 256 {
+            let threads = if missed.len() < 256 {
                 1
             } else {
                 std::thread::available_parallelism().map_or(1, |n| n.get()).min(16)
             };
-            let per = level.len().div_ceil(threads).max(1);
+            let per = missed.len().div_ceil(threads).max(1);
             let parts: Vec<Result<Vec<_>>> = std::thread::scope(|sc| {
                 let fetch = &fetch;
-                let hs: Vec<_> = level
+                let hs: Vec<_> = missed
                     .chunks(per)
                     .map(|ch| sc.spawn(move || ch.iter().map(fetch).collect::<Result<Vec<_>>>()))
                     .collect();
                 hs.into_iter().map(|h| h.join().expect("bundle worker panicked")).collect()
             });
-            let mut next = Vec::new();
             for part in parts {
                 for (id, enc, kids) in part? {
                     objs.insert(id, enc);
@@ -581,13 +622,13 @@ impl Repo {
             prerequisites: prereqs,
             bytes: 0,
         };
-        // zstd level 1: a bundle is written once and read once, so write speed beats size
-        let pack = build_pack_fast_v2(objs.into_iter().collect(), vcs_store::pack::RAW_SMALL).pack;
-        let header = encode_header(&info, pack.len() as u64);
+        // pack = magic, count, (len, entry)*, BLAKE3 of all that: streamed, never built in memory
+        let pack_len = (PACK_MAGIC_V2.len() + 4 + 32) as u64 + objs.values().map(|p| 4 + p.len() as u64).sum::<u64>();
+        let header = encode_header(&info, pack_len);
         let tmp = PathBuf::from(format!("{}.tmp{}", file.display(), std::process::id()));
         let mut hasher = blake3::Hasher::new();
         let res = (|| -> Result<()> {
-            let mut out = io(&tmp, fs::File::create(&tmp))?;
+            let mut out = std::io::BufWriter::with_capacity(8 << 20, io(&tmp, fs::File::create(&tmp))?);
             let mut put = |b: &[u8]| -> Result<()> {
                 hasher.update(b);
                 io(&tmp, out.write_all(b))
@@ -596,10 +637,23 @@ impl Repo {
             put(&VERSION.to_le_bytes())?;
             put(&(header.len() as u32).to_le_bytes())?;
             put(header.as_bytes())?;
-            put(&pack)?;
+            let mut pack_sum = blake3::Hasher::new();
+            let mut put_pack = |b: &[u8]| -> Result<()> {
+                pack_sum.update(b);
+                put(b)
+            };
+            put_pack(PACK_MAGIC_V2)?;
+            put_pack(&(objs.len() as u32).to_le_bytes())?;
+            for pl in objs.values() {
+                put_pack(&(pl.len() as u32).to_le_bytes())?;
+                put_pack(pl)?;
+            }
+            let psum = *pack_sum.finalize().as_bytes();
+            put(&psum)?;
             let sum = *hasher.finalize().as_bytes();
             io(&tmp, out.write_all(&sum))?;
-            io(&tmp, out.sync_all())?;
+            let f = io(&tmp, out.into_inner().map_err(|e| e.into_error()))?;
+            io(&tmp, f.sync_all())?;
             io(file, fs::rename(&tmp, file))
         })();
         if res.is_err() {
@@ -607,7 +661,7 @@ impl Repo {
         }
         res?;
         let mut info = info;
-        info.bytes = PREFACE + header.len() as u64 + pack.len() as u64 + TRAILER;
+        info.bytes = PREFACE + header.len() as u64 + pack_len + TRAILER;
         Ok(info)
     }
 

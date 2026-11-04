@@ -28,6 +28,8 @@ use vcs_store::{MemoryStore, ObjectStore};
 const ZONE: &str = "z";
 const T0: u64 = 1000;
 const TICK: u64 = 100;
+/// Clock jumps are only explored in the first schedule steps (the search is exhaustive and exponential).
+const JUMP_DEPTH: usize = 6;
 
 struct Writer {
     store: MemoryStore,
@@ -471,10 +473,12 @@ fn run_schedule(sc: &Scenario, fault: Option<LockFault>, sched: &[Choice]) -> Op
             }
             Choice::Fwd => {
                 fwd = true;
+                special = true; // bound the search: no new faults/crashes after a clock jump
                 clock.set(clock.get() + 400);
             }
             Choice::Back => {
                 back = true;
+                special = true;
                 clock.set(clock.get().saturating_sub(500));
             }
         }
@@ -496,10 +500,10 @@ fn run_schedule(sc: &Scenario, fault: Option<LockFault>, sched: &[Choice]) -> Op
         if ticks < sc.ticks {
             avail.push(Choice::Tick);
         }
-        if sc.jumps && !fwd {
+        if sc.jumps && !fwd && sched.len() < JUMP_DEPTH {
             avail.push(Choice::Fwd);
         }
-        if sc.jumps && !back {
+        if sc.jumps && !back && sched.len() < JUMP_DEPTH {
             avail.push(Choice::Back);
         }
         return Some(avail);
