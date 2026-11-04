@@ -172,6 +172,9 @@ enum Cmd {
         /// Stop after this many seconds without a `status` asking for the journal (set when a command starts the watcher itself)
         #[arg(long)]
         idle_exit: Option<u64>,
+        /// Start the watcher in the background (own session, output to .vcs/fsmon/watchd.log) and return once it is journaling
+        #[arg(long)]
+        daemonize: bool,
     },
     /// Show unstaged changes (or --staged)
     Diff {
@@ -899,6 +902,57 @@ fn principal() -> String {
         .unwrap_or_else(|| "unknown@localhost".into())
 }
 
+/// `vcs watch --daemonize`: run `c` detached (new session, stdio to a log file) and return once the journal exists.
+fn daemonize_watcher(repo: &vcs_repo::Repo, mut c: std::process::Command) -> std::result::Result<(), Error> {
+    use vcs_repo::fsmonitor::JournalMonitor;
+    let vcs = repo.worktree().join(vcs_objects::names::META_DIR);
+    if JournalMonitor::daemon_running(&vcs) {
+        println!("watcher already running for {}", repo.worktree().display());
+        return Ok(());
+    }
+    let dir = vcs.join(vcs_repo::fsmonitor::DIR);
+    let _ = std::fs::create_dir_all(&dir);
+    let io = |p: &Path, source| Error::Io {
+        path: p.to_path_buf(),
+        source,
+    };
+    let log_path = dir.join("watchd.log");
+    let log = std::fs::File::create(&log_path).map_err(|e| io(&log_path, e))?;
+    let log2 = log.try_clone().map_err(|e| io(&log_path, e))?;
+    c.current_dir(repo.worktree())
+        .stdin(std::process::Stdio::null())
+        .stdout(log)
+        .stderr(log2);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // setsid: survives the terminal closing (SIGHUP) as well as the parent exiting.
+        unsafe {
+            c.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+    }
+    let mut child = c.spawn().map_err(|e| io(Path::new("vcs-watchd"), e))?;
+    for _ in 0..200 {
+        if JournalMonitor::daemon_running(&vcs) {
+            println!(
+                "watching {} (pid {}); log {}",
+                repo.worktree().display(),
+                child.id(),
+                log_path.display()
+            );
+            return Ok(());
+        }
+        if let Ok(Some(st)) = child.try_wait() {
+            return Err(Error::Msg(format!("vcs-watchd exited with {st}; see {}", log_path.display())));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    Err(Error::Msg(format!("watcher did not start within 10 s; see {}", log_path.display())))
+}
+
 /// The `vcs-watchd` binary next to this one (it links the platform file-event API, which `vcs` itself must not:
 /// on macOS CoreServices costs about 2 ms of dyld work in every process). None when it was not installed.
 fn watchd_path() -> Option<PathBuf> {
@@ -1151,8 +1205,8 @@ fn run(cli: Cli) -> Result<(), Error> {
             }
             maybe_auto_repack(&repo);
         }
-        Cmd::Watch { idle_exit } => {
-            let (_repo, _) = open()?;
+        Cmd::Watch { idle_exit, daemonize } => {
+            let (repo, _) = open()?;
             let Some(watchd) = watchd_path() else {
                 return Err(Error::Msg(
                     "vcs-watchd not found next to vcs (build or install with the `watcher` feature)".into(),
@@ -1162,6 +1216,9 @@ fn run(cli: Cli) -> Result<(), Error> {
             c.arg("watch");
             if let Some(n) = idle_exit {
                 c.arg("--idle-exit").arg(n.to_string());
+            }
+            if daemonize {
+                return daemonize_watcher(&repo, c);
             }
             let st = c.status().map_err(|source| Error::Io {
                 path: "vcs-watchd".into(),
