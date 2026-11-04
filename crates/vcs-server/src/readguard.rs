@@ -92,37 +92,36 @@ impl ReadIndex {
 }
 
 /// Add everything reachable from `starts` to `seen`. A missing object ends that branch of the walk.
+/// Level by level: each level's objects are read concurrently (`VCS_REMOTE_PARALLEL`, default 8), so
+/// the walk costs round trips per tree depth, not one per file.
 fn walk(b: &dyn Backend, starts: Vec<ObjectId>, seen: &mut HashSet<ObjectId>) -> Result<(), BackendError> {
     // (id, may be a plain blob: probe its kind with a 1-byte read before downloading)
-    let mut stack: Vec<(ObjectId, bool)> = starts.into_iter().map(|i| (i, false)).collect();
-    while let Some((id, probe)) = stack.pop() {
-        if seen.contains(&id) {
-            continue;
-        }
-        if probe {
-            if let Some(k) = b.get_range(&object_key(&id), 0, 1)? {
-                if k.first() == Some(&KIND_BLOB) {
-                    seen.insert(id);
-                    continue;
+    let mut level: Vec<(ObjectId, bool)> = starts.into_iter().map(|i| (i, false)).collect();
+    let limit = vcs_remote::par::parallelism();
+    while !level.is_empty() {
+        level.retain(|(id, _)| seen.insert(*id));
+        let next = vcs_remote::par::map_bounded(&level, limit, |&(id, probe)| -> Result<Vec<(ObjectId, bool)>, BackendError> {
+            if probe {
+                if let Some(k) = b.get_range(&object_key(&id), 0, 1)? {
+                    if k.first() == Some(&KIND_BLOB) {
+                        return Ok(Vec::new());
+                    }
                 }
             }
-        }
-        seen.insert(id);
-        let Ok(obj) = fetch_object(b, &id) else { continue };
-        match obj {
-            Object::Commit(c) => {
-                stack.extend(c.parents.iter().map(|p| (*p, false)));
-                stack.push((c.root, false));
-            }
-            Object::Tree(t) => {
-                for e in t.entries() {
-                    stack.push((e.id, !matches!(e.mode, EntryMode::Directory)));
-                }
-            }
-            Object::Chunked(m) => stack.extend(m.chunks.iter().map(|c| (c.id, true))),
-            Object::Tag(t) => stack.push((t.target, false)),
-            Object::Snapshot(_) | Object::Transaction(_) | Object::Operation(_) | Object::Blob(_) => {}
-        }
+            let Ok(obj) = fetch_object(b, &id) else { return Ok(Vec::new()) };
+            Ok(match obj {
+                Object::Commit(c) => c.parents.iter().map(|p| (*p, false)).chain([(c.root, false)]).collect(),
+                Object::Tree(t) => t
+                    .entries()
+                    .iter()
+                    .map(|e| (e.id, !matches!(e.mode, EntryMode::Directory)))
+                    .collect(),
+                Object::Chunked(m) => m.chunks.iter().map(|c| (c.id, true)).collect(),
+                Object::Tag(t) => vec![(t.target, false)],
+                Object::Snapshot(_) | Object::Transaction(_) | Object::Operation(_) | Object::Blob(_) => Vec::new(),
+            })
+        })?;
+        level = next.into_iter().flatten().collect();
     }
     Ok(())
 }
