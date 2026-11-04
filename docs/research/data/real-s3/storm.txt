@@ -1,0 +1,2 @@
+endpoint https://s3.us-east-1.amazonaws.com trials 5 files 300 commits 50 (a local server, not a cloud)
+storm: 128 threads, 15.1 s, one prefix: 59025 ok, 0 failed (503/timeouts), 3902 req/s
