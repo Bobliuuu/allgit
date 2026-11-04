@@ -1,0 +1,66 @@
+{
+  "_meta": {
+    "retrieved": "2026-10-31",
+    "currency": "USD",
+    "note": "List prices, pay-as-you-go, no discounts/commitments/free tiers unless noted. Per-provider details and sources are in docs/research/storage/cost-model.md. Fields: storage_per_unit is USD per unit-month; unit_bytes is the byte size of one pricing unit; *_per_1k are USD per 1000 requests; egress_tiers are [upto_unit_inclusive_or_null, usd_per_unit] per month.",
+    "verification": "aws_*: AWS Price List bulk API (AmazonS3 v20261015173540, AWSDataTransfer pub 2026-09-16). r2_*: Cloudflare docs page fetch. gcs_*: cloud.google.com/storage/pricing + /vpc/network-pricing HTML fetch (region table is JS-selected; first listed region is Iowa us-central1, see doc caveat). b2_*: backblaze.com pricing pages fetch."
+  },
+  "classes": {
+    "s3_standard": {
+      "provider": "AWS S3", "region": "us-east-1", "storage_class": "STANDARD",
+      "storage_per_unit": 0.023, "unit_bytes": 1000000000,
+      "storage_tiers_note": "0.023 first 50TB, 0.022 next 450TB, 0.021 over 500TB; flat 0.023 used",
+      "put_per_1k": 0.005, "list_per_1k": 0.005, "get_per_1k": 0.0004, "delete_per_1k": 0.0,
+      "retrieval_per_unit": 0.0, "min_object_bytes": 0, "min_duration_days": 0,
+      "egress_tiers": [[10240, 0.09], [51200, 0.085], [153600, 0.07], [null, 0.05]],
+      "egress_unit_bytes": 1000000000, "egress_free_monthly_units": 100,
+      "egress_free_applies_by_default": false
+    },
+    "s3_standard_ia": {
+      "provider": "AWS S3", "region": "us-east-1", "storage_class": "STANDARD_IA",
+      "storage_per_unit": 0.0125, "unit_bytes": 1000000000,
+      "put_per_1k": 0.01, "list_per_1k": 0.01, "get_per_1k": 0.001, "delete_per_1k": 0.0,
+      "retrieval_per_unit": 0.01, "min_object_bytes": 131072, "min_duration_days": 30,
+      "egress_tiers": [[10240, 0.09], [51200, 0.085], [153600, 0.07], [null, 0.05]],
+      "egress_unit_bytes": 1000000000, "egress_free_monthly_units": 100,
+      "egress_free_applies_by_default": false
+    },
+    "r2_standard": {
+      "provider": "Cloudflare R2", "region": "automatic (location hint not priced)", "storage_class": "Standard",
+      "storage_per_unit": 0.015, "unit_bytes": 1000000000,
+      "put_per_1k": 0.0045, "list_per_1k": 0.0045, "get_per_1k": 0.00036, "delete_per_1k": 0.0,
+      "retrieval_per_unit": 0.0, "min_object_bytes": 0, "min_duration_days": 0,
+      "egress_tiers": [[null, 0.0]], "egress_unit_bytes": 1000000000,
+      "free_tier": {"storage_units": 10, "class_a_ops": 1000000, "class_b_ops": 10000000}
+    },
+    "r2_infrequent": {
+      "provider": "Cloudflare R2", "region": "automatic", "storage_class": "Infrequent Access",
+      "storage_per_unit": 0.01, "unit_bytes": 1000000000,
+      "put_per_1k": 0.009, "list_per_1k": 0.009, "get_per_1k": 0.0009, "delete_per_1k": 0.0,
+      "retrieval_per_unit": 0.01, "min_object_bytes": 0, "min_duration_days": 30,
+      "egress_tiers": [[null, 0.0]], "egress_unit_bytes": 1000000000
+    },
+    "gcs_standard": {
+      "provider": "Google Cloud Storage", "region": "us-central1 (Iowa) [region mapping partly unverified]", "storage_class": "STANDARD",
+      "storage_per_unit": 0.02, "unit_bytes": 1073741824,
+      "put_per_1k": 0.005, "list_per_1k": 0.005, "get_per_1k": 0.0004, "delete_per_1k": 0.0,
+      "retrieval_per_unit": 0.0, "min_object_bytes": 0, "min_duration_days": 0,
+      "egress_tiers": [[1024, 0.12], [10240, 0.11], [null, 0.08]], "egress_unit_bytes": 1073741824
+    },
+    "gcs_nearline": {
+      "provider": "Google Cloud Storage", "region": "us-central1 (Iowa) [region mapping partly unverified]", "storage_class": "NEARLINE",
+      "storage_per_unit": 0.01, "unit_bytes": 1073741824,
+      "put_per_1k": 0.01, "list_per_1k": 0.01, "get_per_1k": 0.001, "delete_per_1k": 0.0,
+      "retrieval_per_unit": 0.01, "min_object_bytes": 0, "min_duration_days": 30,
+      "egress_tiers": [[1024, 0.12], [10240, 0.11], [null, 0.08]], "egress_unit_bytes": 1073741824
+    },
+    "b2_standard": {
+      "provider": "Backblaze B2", "region": "pricing page shows US West comparison rates; single global price listed", "storage_class": "B2 Cloud Storage",
+      "storage_per_unit": 0.00695, "unit_bytes": 1000000000,
+      "put_per_1k": 0.0, "list_per_1k": 0.0, "get_per_1k": 0.0, "delete_per_1k": 0.0,
+      "retrieval_per_unit": 0.0, "min_object_bytes": 0, "min_duration_days": 0,
+      "egress_tiers": [[null, 0.01]], "egress_unit_bytes": 1000000000,
+      "egress_free_multiple_of_stored": 3
+    }
+  }
+}

@@ -1,0 +1,9 @@
+store bytes (du -sb .vcs): {'v2': 78747149, 'v3lru': 56326783, 'v3k256': 57577772, 'v3k64': 58952480, 'v2new': 78747149}
+status: v2=126ms/949cpu v3lru=115ms/938cpu v3k256=128ms/901cpu v3k64=119ms/1001cpu v2new=121ms/1041cpu
+add-1: v2=56ms/57cpu v3lru=56ms/57cpu v3k256=63ms/57cpu v3k64=56ms/57cpu v2new=54ms/57cpu
+commit-1: v2=66ms/60cpu v3lru=67ms/65cpu v3k256=64ms/62cpu v3k64=65ms/60cpu v2new=63ms/60cpu
+log-50: v2=3ms/3cpu v3lru=3ms/3cpu v3k256=3ms/3cpu v3k64=3ms/3cpu v2new=2ms/2cpu
+switch-old: v2=268ms/829cpu v3lru=351ms/946cpu v3k256=187ms/848cpu v3k64=165ms/851cpu v2new=163ms/843cpu
+restore-10pct: v2=1018ms/1027cpu v3lru=3748ms/23607cpu v3k256=1301ms/3415cpu v3k64=1128ms/1703cpu v2new=846ms/1014cpu
+restore-all: v2=1005ms/1876cpu v3lru=25531ms/194371cpu v3k256=2992ms/21243cpu v3k64=1337ms/7380cpu v2new=905ms/1912cpu
+fsck: {'v2': (0, 'checked 101366 objects\nok'), 'v3lru': (0, 'checked 101366 objects\nok'), 'v3k256': (0, 'checked 101366 objects\nok'), 'v3k64': (0, 'checked 101366 objects\nok'), 'v2new': (0, 'checked 101366 objects\nok')}

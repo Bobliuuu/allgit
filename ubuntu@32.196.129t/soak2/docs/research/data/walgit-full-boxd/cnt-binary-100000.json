@@ -1,0 +1,5948 @@
+{
+ "meta": {
+  "layout": "binary",
+  "n_files": 100000,
+  "bytes": 409600000,
+  "g0_files": 10000,
+  "reps": 1,
+  "init_reps": 1,
+  "count_pass": true,
+  "date": "2026-11-02T09:05:50Z",
+  "kernel": "7.0.0-1014-aws",
+  "git": "git version 2.56.0",
+  "cpu": "Intel(R) Xeon(R) Platinum 8375C CPU @ 2.90GHz",
+  "cores": 16,
+  "load_start": [
+   "2.83",
+   "3.48",
+   "4.71"
+  ],
+  "rustfs": "rustfs 1.0.4\nbuild time   : 2026-10-25 13:48:08 +00:00\nbuild profile: release\nbuild os     : linux-x86_64\nbuild target : x86_64-unknown-linux-gnu\nrust version : rustc 1.99.1 (58cf8f9c3 2026-10-13)\nrust channel : stable-x86_64-unknown-linux-gnu\ngit branch   : \ngit commit   : 46337942d55f3a8e6a97b147ca98d9ea8115555d\ngit tag      : 1.0.4\ngit status   :",
+  "walgit_rev": "80e9a20b29e29aefd16a4dae6f8e274cce85cca5",
+  "vcs_version": "vcs 0.1.0",
+  "vcs_rev": "eec2afc",
+  "load_end": [
+   "8.23",
+   "8.83",
+   "8.35"
+  ]
+ },
+ "res": {
+  "git": {
+   "store_after_init": {
+    "du_kib": 407256,
+    "apparent_kib": 407153,
+    "files": 22,
+    "dir": "/home/ubuntu/rt/walgitd-env/wb/work-binary-100000-c/git/remotes/init0.git"
+   },
+   "init_push": {
+    "wall_ms": {
+     "runs": [
+      18984.347047000483
+     ],
+     "median": 18984.347047000483,
+     "min": 18984.347047000483,
+     "max": 18984.347047000483
+    },
+    "client_cpu_s": {
+     "runs": [
+      56.897617
+     ],
+     "median": 56.897617,
+     "min": 56.897617,
+     "max": 56.897617
+    },
+    "srv_cpu_s": null,
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": null,
+    "rf_rss_mib": {
+     "runs": [
+      253.55078125
+     ],
+     "median": 253.55078125,
+     "min": 253.55078125,
+     "max": 253.55078125
+    }
+   },
+   "init_push_stdout": "",
+   "init_push_proxy": {
+    "requests": 0,
+    "by_method": {},
+    "bytes_up": 0,
+    "bytes_down": 0,
+    "status": {}
+   },
+   "inc_push": {
+    "wall_ms": {
+     "runs": [
+      54.10503600069205
+     ],
+     "median": 54.10503600069205,
+     "min": 54.10503600069205,
+     "max": 54.10503600069205
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.045392999999990025
+     ],
+     "median": 0.045392999999990025,
+     "min": 0.045392999999990025,
+     "max": 0.045392999999990025
+    },
+    "srv_cpu_s": null,
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": null,
+    "rf_rss_mib": {
+     "runs": [
+      276.39453125
+     ],
+     "median": 276.39453125,
+     "min": 276.39453125,
+     "max": 276.39453125
+    }
+   },
+   "inc_push_proxy": {
+    "requests": 0,
+    "by_method": {},
+    "bytes_up": 0,
+    "bytes_down": 0,
+    "status": {}
+   },
+   "clone_full_facts": {
+    "checked_out_files": 100000,
+    "client_store_kib": 415936,
+    "client_store_apparent_kib": 415784
+   },
+   "clone_full_warm": {
+    "wall_ms": {
+     "runs": [
+      10362.071641000512
+     ],
+     "median": 10362.071641000512,
+     "min": 10362.071641000512,
+     "max": 10362.071641000512
+    },
+    "client_cpu_s": {
+     "runs": [
+      9.184057999999993
+     ],
+     "median": 9.184057999999993,
+     "min": 9.184057999999993,
+     "max": 9.184057999999993
+    },
+    "srv_cpu_s": null,
+    "rf_cpu_s": {
+     "runs": [
+      0.040000000000000036
+     ],
+     "median": 0.040000000000000036,
+     "min": 0.040000000000000036,
+     "max": 0.040000000000000036
+    },
+    "srv_rss_mib": null,
+    "rf_rss_mib": {
+     "runs": [
+      282.8203125
+     ],
+     "median": 282.8203125,
+     "min": 282.8203125,
+     "max": 282.8203125
+    }
+   },
+   "clone_full_warm_proxy": {
+    "requests": 0,
+    "by_method": {},
+    "bytes_up": 0,
+    "bytes_down": 0,
+    "status": {}
+   },
+   "clone_full_cold": {
+    "wall_ms": {
+     "runs": [
+      14910.206081998695
+     ],
+     "median": 14910.206081998695,
+     "min": 14910.206081998695,
+     "max": 14910.206081998695
+    },
+    "client_cpu_s": {
+     "runs": [
+      7.382010999999977
+     ],
+     "median": 7.382010999999977,
+     "min": 7.382010999999977,
+     "max": 7.382010999999977
+    },
+    "srv_cpu_s": null,
+    "rf_cpu_s": {
+     "runs": [
+      1.8699999999999992
+     ],
+     "median": 1.8699999999999992,
+     "min": 1.8699999999999992,
+     "max": 1.8699999999999992
+    },
+    "srv_rss_mib": null,
+    "rf_rss_mib": {
+     "runs": [
+      397.9453125
+     ],
+     "median": 397.9453125,
+     "min": 397.9453125,
+     "max": 397.9453125
+    }
+   },
+   "clone_full_cold_proxy": {
+    "requests": 17,
+    "by_method": {
+     "PUT": 13,
+     "GET": 3,
+     "HEAD": 1
+    },
+    "bytes_up": 417325302,
+    "bytes_down": 668,
+    "status": {
+     "200": 16,
+     "304": 1
+    }
+   },
+   "clone_partial_facts": {
+    "checked_out_files": 10000,
+    "client_store_kib": 52556,
+    "client_store_apparent_kib": 52384
+   },
+   "clone_partial_warm": {
+    "wall_ms": {
+     "runs": [
+      2212.8229179998016
+     ],
+     "median": 2212.8229179998016,
+     "min": 2212.8229179998016,
+     "max": 2212.8229179998016
+    },
+    "client_cpu_s": {
+     "runs": [
+      1.1779329999997117
+     ],
+     "median": 1.1779329999997117,
+     "min": 1.1779329999997117,
+     "max": 1.1779329999997117
+    },
+    "srv_cpu_s": null,
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": null,
+    "rf_rss_mib": {
+     "runs": [
+      615.87109375
+     ],
+     "median": 615.87109375,
+     "min": 615.87109375,
+     "max": 615.87109375
+    }
+   },
+   "clone_partial_warm_proxy": {
+    "requests": 0,
+    "by_method": {},
+    "bytes_up": 0,
+    "bytes_down": 0,
+    "status": {}
+   },
+   "clone_partial_cold": {
+    "wall_ms": {
+     "runs": [
+      4695.627914001307
+     ],
+     "median": 4695.627914001307,
+     "min": 4695.627914001307,
+     "max": 4695.627914001307
+    },
+    "client_cpu_s": {
+     "runs": [
+      1.1922829999998612
+     ],
+     "median": 1.1922829999998612,
+     "min": 1.1922829999998612,
+     "max": 1.1922829999998612
+    },
+    "srv_cpu_s": null,
+    "rf_cpu_s": {
+     "runs": [
+      0.009999999999999787
+     ],
+     "median": 0.009999999999999787,
+     "min": 0.009999999999999787,
+     "max": 0.009999999999999787
+    },
+    "srv_rss_mib": null,
+    "rf_rss_mib": {
+     "runs": [
+      635.80859375
+     ],
+     "median": 635.80859375,
+     "min": 635.80859375,
+     "max": 635.80859375
+    }
+   },
+   "clone_partial_cold_proxy": {
+    "requests": 0,
+    "by_method": {},
+    "bytes_up": 0,
+    "bytes_down": 0,
+    "status": {}
+   },
+   "fetch_1_warm": {
+    "wall_ms": {
+     "runs": [
+      1095.160903998476
+     ],
+     "median": 1095.160903998476,
+     "min": 1095.160903998476,
+     "max": 1095.160903998476
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.09515600000008817
+     ],
+     "median": 0.09515600000008817,
+     "min": 0.09515600000008817,
+     "max": 0.09515600000008817
+    },
+    "srv_cpu_s": null,
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": null,
+    "rf_rss_mib": {
+     "runs": [
+      646.7109375
+     ],
+     "median": 646.7109375,
+     "min": 646.7109375,
+     "max": 646.7109375
+    }
+   },
+   "fetch_1_warm_proxy": {
+    "requests": 0,
+    "by_method": {},
+    "bytes_up": 0,
+    "bytes_down": 0,
+    "status": {}
+   },
+   "fetch_1_cold": {
+    "wall_ms": {
+     "runs": [
+      3245.5980439990526
+     ],
+     "median": 3245.5980439990526,
+     "min": 3245.5980439990526,
+     "max": 3245.5980439990526
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.10882700000001932
+     ],
+     "median": 0.10882700000001932,
+     "min": 0.10882700000001932,
+     "max": 0.10882700000001932
+    },
+    "srv_cpu_s": null,
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": null,
+    "rf_rss_mib": {
+     "runs": [
+      576.42578125
+     ],
+     "median": 576.42578125,
+     "min": 576.42578125,
+     "max": 576.42578125
+    }
+   },
+   "fetch_1_cold_proxy": {
+    "requests": 0,
+    "by_method": {},
+    "bytes_up": 0,
+    "bytes_down": 0,
+    "status": {}
+   },
+   "fetch_noop_warm": {
+    "wall_ms": {
+     "runs": [
+      122.40805200053728
+     ],
+     "median": 122.40805200053728,
+     "min": 122.40805200053728,
+     "max": 122.40805200053728
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.021856000000070708
+     ],
+     "median": 0.021856000000070708,
+     "min": 0.021856000000070708,
+     "max": 0.021856000000070708
+    },
+    "srv_cpu_s": null,
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": null,
+    "rf_rss_mib": {
+     "runs": [
+      546.8515625
+     ],
+     "median": 546.8515625,
+     "min": 546.8515625,
+     "max": 546.8515625
+    }
+   },
+   "fetch_noop_warm_proxy": {
+    "requests": 0,
+    "by_method": {},
+    "bytes_up": 0,
+    "bytes_down": 0,
+    "status": {}
+   },
+   "fetch_noop_cold": {
+    "wall_ms": {
+     "runs": [
+      151.68931199877989
+     ],
+     "median": 151.68931199877989,
+     "min": 151.68931199877989,
+     "max": 151.68931199877989
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.020347999999785316
+     ],
+     "median": 0.020347999999785316,
+     "min": 0.020347999999785316,
+     "max": 0.020347999999785316
+    },
+    "srv_cpu_s": null,
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": null,
+    "rf_rss_mib": {
+     "runs": [
+      546.8515625
+     ],
+     "median": 546.8515625,
+     "min": 546.8515625,
+     "max": 546.8515625
+    }
+   },
+   "fetch_noop_cold_proxy": {
+    "requests": 1,
+    "by_method": {
+     "GET": 1
+    },
+    "bytes_up": 0,
+    "bytes_down": 0,
+    "status": {
+     "304": 1
+    }
+   },
+   "maint": {
+    "remote_before": {
+     "du_kib": 407388,
+     "apparent_kib": 407181,
+     "files": 37,
+     "dir": "/home/ubuntu/rt/walgitd-env/wb/work-binary-100000-c/git/remotes/init0.git"
+    },
+    "gc_default": {
+     "wall_ms": 9094.09093999966,
+     "client_cpu_s": 2.320807000000059,
+     "srv_cpu_s": null,
+     "rf_cpu_s": 0.0,
+     "srv_rss_mib": null,
+     "rf_rss_mib": 536.4375,
+     "stdout": "",
+     "proxy": {
+      "requests": 0,
+      "by_method": {},
+      "bytes_up": 0,
+      "bytes_down": 0,
+      "status": {}
+     }
+    },
+    "remote_after": {
+     "du_kib": 407708,
+     "apparent_kib": 407594,
+     "files": 26,
+     "dir": "/home/ubuntu/rt/walgitd-env/wb/work-binary-100000-c/git/remotes/init0.git"
+    },
+    "gc_aggressive": {
+     "wall_ms": 68355.05266799919,
+     "client_cpu_s": 1008.7564889999999,
+     "srv_cpu_s": null,
+     "rf_cpu_s": 0.14000000000000057,
+     "srv_rss_mib": null,
+     "rf_rss_mib": 535.81640625,
+     "stdout": "",
+     "proxy": {
+      "requests": 16,
+      "by_method": {
+       "PUT": 6,
+       "GET": 7,
+       "HEAD": 2,
+       "DELETE": 1
+      },
+      "bytes_up": 4205,
+      "bytes_down": 668,
+      "status": {
+       "200": 10,
+       "304": 5,
+       "204": 1
+      }
+     }
+    },
+    "gc_aggressive_size_kib": 407548,
+    "client_before_kib": 416036,
+    "client": {
+     "gc": {
+      "wall_ms": 5948.783390000244,
+      "client_cpu_s": 3.196582000000035,
+      "srv_cpu_s": null,
+      "rf_cpu_s": 0.0,
+      "srv_rss_mib": null,
+      "rf_rss_mib": 566.94921875,
+      "stdout": "",
+      "proxy": {
+       "requests": 0,
+       "by_method": {},
+       "bytes_up": 0,
+       "bytes_down": 0,
+       "status": {}
+      },
+      "size_kib": 415956
+     },
+     "gc_aggressive": {
+      "wall_ms": 119876.55530300071,
+      "client_cpu_s": 1007.631237,
+      "srv_cpu_s": null,
+      "rf_cpu_s": 0.28999999999999915,
+      "srv_rss_mib": null,
+      "rf_rss_mib": 566.22265625,
+      "stdout": "",
+      "proxy": {
+       "requests": 25,
+       "by_method": {
+        "GET": 13,
+        "HEAD": 5,
+        "PUT": 6,
+        "DELETE": 1
+       },
+       "bytes_up": 536,
+       "bytes_down": 2672,
+       "status": {
+        "200": 19,
+        "304": 5,
+        "204": 1
+       }
+      },
+      "size_kib": 415800
+     }
+    }
+   },
+   "post_clone_full_facts": {
+    "checked_out_files": 100000,
+    "client_store_kib": 415936,
+    "client_store_apparent_kib": 415789
+   },
+   "post_clone_full_warm": {
+    "wall_ms": {
+     "runs": [
+      17052.668624000944
+     ],
+     "median": 17052.668624000944,
+     "min": 17052.668624000944,
+     "max": 17052.668624000944
+    },
+    "client_cpu_s": {
+     "runs": [
+      10.545312999999624
+     ],
+     "median": 10.545312999999624,
+     "min": 10.545312999999624,
+     "max": 10.545312999999624
+    },
+    "srv_cpu_s": null,
+    "rf_cpu_s": {
+     "runs": [
+      0.010000000000001563
+     ],
+     "median": 0.010000000000001563,
+     "min": 0.010000000000001563,
+     "max": 0.010000000000001563
+    },
+    "srv_rss_mib": null,
+    "rf_rss_mib": {
+     "runs": [
+      571.3984375
+     ],
+     "median": 571.3984375,
+     "min": 571.3984375,
+     "max": 571.3984375
+    }
+   },
+   "post_clone_full_warm_proxy": {
+    "requests": 0,
+    "by_method": {},
+    "bytes_up": 0,
+    "bytes_down": 0,
+    "status": {}
+   },
+   "post_clone_full_cold": {
+    "wall_ms": {
+     "runs": [
+      7264.351497000462
+     ],
+     "median": 7264.351497000462,
+     "min": 7264.351497000462,
+     "max": 7264.351497000462
+    },
+    "client_cpu_s": {
+     "runs": [
+      6.653545000000122
+     ],
+     "median": 6.653545000000122,
+     "min": 6.653545000000122,
+     "max": 6.653545000000122
+    },
+    "srv_cpu_s": null,
+    "rf_cpu_s": {
+     "runs": [
+      0.010000000000001563
+     ],
+     "median": 0.010000000000001563,
+     "min": 0.010000000000001563,
+     "max": 0.010000000000001563
+    },
+    "srv_rss_mib": null,
+    "rf_rss_mib": {
+     "runs": [
+      585.04296875
+     ],
+     "median": 585.04296875,
+     "min": 585.04296875,
+     "max": 585.04296875
+    }
+   },
+   "post_clone_full_cold_proxy": {
+    "requests": 0,
+    "by_method": {},
+    "bytes_up": 0,
+    "bytes_down": 0,
+    "status": {}
+   },
+   "post_clone_partial_facts": {
+    "checked_out_files": 10000,
+    "client_store_kib": 52556,
+    "client_store_apparent_kib": 52385
+   },
+   "post_clone_partial_warm": {
+    "wall_ms": {
+     "runs": [
+      2076.2720789989544
+     ],
+     "median": 2076.2720789989544,
+     "min": 2076.2720789989544,
+     "max": 2076.2720789989544
+    },
+    "client_cpu_s": {
+     "runs": [
+      1.111004000000321
+     ],
+     "median": 1.111004000000321,
+     "min": 1.111004000000321,
+     "max": 1.111004000000321
+    },
+    "srv_cpu_s": null,
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": null,
+    "rf_rss_mib": {
+     "runs": [
+      742.75
+     ],
+     "median": 742.75,
+     "min": 742.75,
+     "max": 742.75
+    }
+   },
+   "post_clone_partial_warm_proxy": {
+    "requests": 0,
+    "by_method": {},
+    "bytes_up": 0,
+    "bytes_down": 0,
+    "status": {}
+   },
+   "post_clone_partial_cold": {
+    "wall_ms": {
+     "runs": [
+      3178.95498299913
+     ],
+     "median": 3178.95498299913,
+     "min": 3178.95498299913,
+     "max": 3178.95498299913
+    },
+    "client_cpu_s": {
+     "runs": [
+      1.6046790000000328
+     ],
+     "median": 1.6046790000000328,
+     "min": 1.6046790000000328,
+     "max": 1.6046790000000328
+    },
+    "srv_cpu_s": null,
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": null,
+    "rf_rss_mib": {
+     "runs": [
+      764.4921875
+     ],
+     "median": 764.4921875,
+     "min": 764.4921875,
+     "max": 764.4921875
+    }
+   },
+   "post_clone_partial_cold_proxy": {
+    "requests": 0,
+    "by_method": {},
+    "bytes_up": 0,
+    "bytes_down": 0,
+    "status": {}
+   },
+   "post_fetch_1_warm": {
+    "wall_ms": {
+     "runs": [
+      1631.6568950005603
+     ],
+     "median": 1631.6568950005603,
+     "min": 1631.6568950005603,
+     "max": 1631.6568950005603
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.13503600000149163
+     ],
+     "median": 0.13503600000149163,
+     "min": 0.13503600000149163,
+     "max": 0.13503600000149163
+    },
+    "srv_cpu_s": null,
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": null,
+    "rf_rss_mib": {
+     "runs": [
+      671.74609375
+     ],
+     "median": 671.74609375,
+     "min": 671.74609375,
+     "max": 671.74609375
+    }
+   },
+   "post_fetch_1_warm_proxy": {
+    "requests": 0,
+    "by_method": {},
+    "bytes_up": 0,
+    "bytes_down": 0,
+    "status": {}
+   },
+   "post_fetch_1_cold": {
+    "wall_ms": {
+     "runs": [
+      3676.213437000115
+     ],
+     "median": 3676.213437000115,
+     "min": 3676.213437000115,
+     "max": 3676.213437000115
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.10835000000042783
+     ],
+     "median": 0.10835000000042783,
+     "min": 0.10835000000042783,
+     "max": 0.10835000000042783
+    },
+    "srv_cpu_s": null,
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": null,
+    "rf_rss_mib": {
+     "runs": [
+      654.78125
+     ],
+     "median": 654.78125,
+     "min": 654.78125,
+     "max": 654.78125
+    }
+   },
+   "post_fetch_1_cold_proxy": {
+    "requests": 0,
+    "by_method": {},
+    "bytes_up": 0,
+    "bytes_down": 0,
+    "status": {}
+   },
+   "post_fetch_noop_warm": {
+    "wall_ms": {
+     "runs": [
+      121.41933599923505
+     ],
+     "median": 121.41933599923505,
+     "min": 121.41933599923505,
+     "max": 121.41933599923505
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.021113000000696047
+     ],
+     "median": 0.021113000000696047,
+     "min": 0.021113000000696047,
+     "max": 0.021113000000696047
+    },
+    "srv_cpu_s": null,
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": null,
+    "rf_rss_mib": {
+     "runs": [
+      669.24609375
+     ],
+     "median": 669.24609375,
+     "min": 669.24609375,
+     "max": 669.24609375
+    }
+   },
+   "post_fetch_noop_warm_proxy": {
+    "requests": 0,
+    "by_method": {},
+    "bytes_up": 0,
+    "bytes_down": 0,
+    "status": {}
+   },
+   "post_fetch_noop_cold": {
+    "wall_ms": {
+     "runs": [
+      129.70196999958716
+     ],
+     "median": 129.70196999958716,
+     "min": 129.70196999958716,
+     "max": 129.70196999958716
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.021400999999968917
+     ],
+     "median": 0.021400999999968917,
+     "min": 0.021400999999968917,
+     "max": 0.021400999999968917
+    },
+    "srv_cpu_s": null,
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": null,
+    "rf_rss_mib": {
+     "runs": [
+      671.27734375
+     ],
+     "median": 671.27734375,
+     "min": 671.27734375,
+     "max": 671.27734375
+    }
+   },
+   "post_fetch_noop_cold_proxy": {
+    "requests": 0,
+    "by_method": {},
+    "bytes_up": 0,
+    "bytes_down": 0,
+    "status": {}
+   }
+  },
+  "walgit": {
+   "store_after_init": {
+    "du_kib": 406812,
+    "apparent_kib": 406747,
+    "files": 7,
+    "dir": "/home/ubuntu/rt/walgitd-env/wb/rfdata/walgit-b/p/repos/o/init0"
+   },
+   "init_push": {
+    "wall_ms": {
+     "runs": [
+      27947.71883700014
+     ],
+     "median": 27947.71883700014,
+     "min": 27947.71883700014,
+     "max": 27947.71883700014
+    },
+    "client_cpu_s": {
+     "runs": [
+      53.82042799999999
+     ],
+     "median": 53.82042799999999,
+     "min": 53.82042799999999,
+     "max": 53.82042799999999
+    },
+    "srv_cpu_s": {
+     "runs": [
+      4.53
+     ],
+     "median": 4.53,
+     "min": 4.53,
+     "max": 4.53
+    },
+    "rf_cpu_s": {
+     "runs": [
+      1.8199999999999998
+     ],
+     "median": 1.8199999999999998,
+     "min": 1.8199999999999998,
+     "max": 1.8199999999999998
+    },
+    "srv_rss_mib": {
+     "runs": [
+      153.703125
+     ],
+     "median": 153.703125,
+     "min": 153.703125,
+     "max": 153.703125
+    },
+    "rf_rss_mib": {
+     "runs": [
+      274.9375
+     ],
+     "median": 274.9375,
+     "min": 274.9375,
+     "max": 274.9375
+    }
+   },
+   "init_push_stdout": "",
+   "init_push_proxy": {
+    "requests": 20,
+    "by_method": {
+     "GET": 12,
+     "PUT": 7,
+     "HEAD": 1
+    },
+    "bytes_up": 417065029,
+    "bytes_down": 1176,
+    "status": {
+     "404": 4,
+     "200": 10,
+     "304": 6
+    }
+   },
+   "idle_65s": {
+    "requests": 25,
+    "by_method": {
+     "PUT": 7,
+     "GET": 15,
+     "HEAD": 2,
+     "DELETE": 1
+    },
+    "bytes_up": 1338,
+    "bytes_down": 856,
+    "status": {
+     "200": 12,
+     "304": 11,
+     "204": 1,
+     "404": 1
+    }
+   },
+   "inc_push": {
+    "wall_ms": {
+     "runs": [
+      90.06474899979366
+     ],
+     "median": 90.06474899979366,
+     "min": 90.06474899979366,
+     "max": 90.06474899979366
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.012513000000041075
+     ],
+     "median": 0.012513000000041075,
+     "min": 0.012513000000041075,
+     "max": 0.012513000000041075
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.120000000000001
+     ],
+     "median": 0.120000000000001,
+     "min": 0.120000000000001,
+     "max": 0.120000000000001
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.020000000000000462
+     ],
+     "median": 0.020000000000000462,
+     "min": 0.020000000000000462,
+     "max": 0.020000000000000462
+    },
+    "srv_rss_mib": {
+     "runs": [
+      542.72265625
+     ],
+     "median": 542.72265625,
+     "min": 542.72265625,
+     "max": 542.72265625
+    },
+    "rf_rss_mib": {
+     "runs": [
+      276.4609375
+     ],
+     "median": 276.4609375,
+     "min": 276.4609375,
+     "max": 276.4609375
+    }
+   },
+   "inc_push_proxy": {
+    "requests": 7,
+    "by_method": {
+     "GET": 3,
+     "PUT": 4
+    },
+    "bytes_up": 12633,
+    "bytes_down": 127,
+    "status": {
+     "304": 2,
+     "404": 1,
+     "200": 4
+    }
+   },
+   "clone_full_facts": {
+    "checked_out_files": 100000,
+    "client_store_kib": 415940,
+    "client_store_apparent_kib": 415788
+   },
+   "clone_full_warm": {
+    "wall_ms": {
+     "runs": [
+      15758.672015999764
+     ],
+     "median": 15758.672015999764,
+     "min": 15758.672015999764,
+     "max": 15758.672015999764
+    },
+    "client_cpu_s": {
+     "runs": [
+      8.356747000000013
+     ],
+     "median": 8.356747000000013,
+     "min": 8.356747000000013,
+     "max": 8.356747000000013
+    },
+    "srv_cpu_s": {
+     "runs": [
+      2.6999999999999993
+     ],
+     "median": 2.6999999999999993,
+     "min": 2.6999999999999993,
+     "max": 2.6999999999999993
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.009999999999999787
+     ],
+     "median": 0.009999999999999787,
+     "min": 0.009999999999999787,
+     "max": 0.009999999999999787
+    },
+    "srv_rss_mib": {
+     "runs": [
+      470.77734375
+     ],
+     "median": 470.77734375,
+     "min": 470.77734375,
+     "max": 470.77734375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      280.921875
+     ],
+     "median": 280.921875,
+     "min": 280.921875,
+     "max": 280.921875
+    }
+   },
+   "clone_full_warm_proxy": {
+    "requests": 8,
+    "by_method": {
+     "GET": 7,
+     "HEAD": 1
+    },
+    "bytes_up": 0,
+    "bytes_down": 668,
+    "status": {
+     "304": 5,
+     "200": 3
+    }
+   },
+   "clone_full_cold": {
+    "wall_ms": {
+     "runs": [
+      13010.754958999314
+     ],
+     "median": 13010.754958999314,
+     "min": 13010.754958999314,
+     "max": 13010.754958999314
+    },
+    "client_cpu_s": {
+     "runs": [
+      5.36008199999992
+     ],
+     "median": 5.36008199999992,
+     "min": 5.36008199999992,
+     "max": 5.36008199999992
+    },
+    "srv_cpu_s": {
+     "runs": [
+      2.58
+     ],
+     "median": 2.58,
+     "min": 2.58,
+     "max": 2.58
+    },
+    "rf_cpu_s": {
+     "runs": [
+      1.049999999999999
+     ],
+     "median": 1.049999999999999,
+     "min": 1.049999999999999,
+     "max": 1.049999999999999
+    },
+    "srv_rss_mib": {
+     "runs": [
+      327.25390625
+     ],
+     "median": 327.25390625,
+     "min": 327.25390625,
+     "max": 327.25390625
+    },
+    "rf_rss_mib": {
+     "runs": [
+      506.9765625
+     ],
+     "median": 506.9765625,
+     "min": 506.9765625,
+     "max": 506.9765625
+    }
+   },
+   "clone_full_cold_proxy": {
+    "requests": 48,
+    "by_method": {
+     "GET": 45,
+     "HEAD": 3
+    },
+    "bytes_up": 0,
+    "bytes_down": 833253614,
+    "status": {
+     "200": 17,
+     "304": 5,
+     "206": 26
+    }
+   },
+   "clone_partial_facts": {
+    "checked_out_files": 10000,
+    "client_store_kib": 52560,
+    "client_store_apparent_kib": 52391
+   },
+   "clone_partial_warm": {
+    "wall_ms": {
+     "runs": [
+      1678.3203300001333
+     ],
+     "median": 1678.3203300001333,
+     "min": 1678.3203300001333,
+     "max": 1678.3203300001333
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.9560800000003837
+     ],
+     "median": 0.9560800000003837,
+     "min": 0.9560800000003837,
+     "max": 0.9560800000003837
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.31000000000000005
+     ],
+     "median": 0.31000000000000005,
+     "min": 0.31000000000000005,
+     "max": 0.31000000000000005
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": {
+     "runs": [
+      81.890625
+     ],
+     "median": 81.890625,
+     "min": 81.890625,
+     "max": 81.890625
+    },
+    "rf_rss_mib": {
+     "runs": [
+      519.73828125
+     ],
+     "median": 519.73828125,
+     "min": 519.73828125,
+     "max": 519.73828125
+    }
+   },
+   "clone_partial_warm_proxy": {
+    "requests": 7,
+    "by_method": {
+     "GET": 7
+    },
+    "bytes_up": 0,
+    "bytes_down": 0,
+    "status": {
+     "304": 7
+    }
+   },
+   "clone_partial_cold": {
+    "wall_ms": {
+     "runs": [
+      7022.886284001288
+     ],
+     "median": 7022.886284001288,
+     "min": 7022.886284001288,
+     "max": 7022.886284001288
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.9486170000000129
+     ],
+     "median": 0.9486170000000129,
+     "min": 0.9486170000000129,
+     "max": 0.9486170000000129
+    },
+    "srv_cpu_s": {
+     "runs": [
+      1.14
+     ],
+     "median": 1.14,
+     "min": 1.14,
+     "max": 1.14
+    },
+    "rf_cpu_s": {
+     "runs": [
+      1.0099999999999998
+     ],
+     "median": 1.0099999999999998,
+     "min": 1.0099999999999998,
+     "max": 1.0099999999999998
+    },
+    "srv_rss_mib": {
+     "runs": [
+      350.0
+     ],
+     "median": 350.0,
+     "min": 350.0,
+     "max": 350.0
+    },
+    "rf_rss_mib": {
+     "runs": [
+      656.1796875
+     ],
+     "median": 656.1796875,
+     "min": 656.1796875,
+     "max": 656.1796875
+    }
+   },
+   "clone_partial_cold_proxy": {
+    "requests": 51,
+    "by_method": {
+     "GET": 48,
+     "HEAD": 3
+    },
+    "bytes_up": 0,
+    "bytes_down": 833253614,
+    "status": {
+     "200": 17,
+     "304": 8,
+     "206": 26
+    }
+   },
+   "fetch_1_warm": {
+    "wall_ms": {
+     "runs": [
+      1280.6251880010677
+     ],
+     "median": 1280.6251880010677,
+     "min": 1280.6251880010677,
+     "max": 1280.6251880010677
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.09491400000001704
+     ],
+     "median": 0.09491400000001704,
+     "min": 0.09491400000001704,
+     "max": 0.09491400000001704
+    },
+    "srv_cpu_s": {
+     "runs": [
+      1.04
+     ],
+     "median": 1.04,
+     "min": 1.04,
+     "max": 1.04
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": {
+     "runs": [
+      84.24609375
+     ],
+     "median": 84.24609375,
+     "min": 84.24609375,
+     "max": 84.24609375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      571.3359375
+     ],
+     "median": 571.3359375,
+     "min": 571.3359375,
+     "max": 571.3359375
+    }
+   },
+   "fetch_1_warm_proxy": {
+    "requests": 4,
+    "by_method": {
+     "GET": 4
+    },
+    "bytes_up": 0,
+    "bytes_down": 0,
+    "status": {
+     "304": 4
+    }
+   },
+   "fetch_1_cold": {
+    "wall_ms": {
+     "runs": [
+      6853.6103130009
+     ],
+     "median": 6853.6103130009,
+     "min": 6853.6103130009,
+     "max": 6853.6103130009
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.10467199999993682
+     ],
+     "median": 0.10467199999993682,
+     "min": 0.10467199999993682,
+     "max": 0.10467199999993682
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.88
+     ],
+     "median": 0.88,
+     "min": 0.88,
+     "max": 0.88
+    },
+    "rf_cpu_s": {
+     "runs": [
+      1.0199999999999996
+     ],
+     "median": 1.0199999999999996,
+     "min": 1.0199999999999996,
+     "max": 1.0199999999999996
+    },
+    "srv_rss_mib": {
+     "runs": [
+      356.1484375
+     ],
+     "median": 356.1484375,
+     "min": 356.1484375,
+     "max": 356.1484375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      664.13671875
+     ],
+     "median": 664.13671875,
+     "min": 664.13671875,
+     "max": 664.13671875
+    }
+   },
+   "fetch_1_cold_proxy": {
+    "requests": 54,
+    "by_method": {
+     "GET": 51,
+     "HEAD": 3
+    },
+    "bytes_up": 0,
+    "bytes_down": 833276617,
+    "status": {
+     "200": 23,
+     "304": 5,
+     "206": 26
+    }
+   },
+   "fetch_noop_warm": {
+    "wall_ms": {
+     "runs": [
+      103.51907799849869
+     ],
+     "median": 103.51907799849869,
+     "min": 103.51907799849869,
+     "max": 103.51907799849869
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.022005000000262953
+     ],
+     "median": 0.022005000000262953,
+     "min": 0.022005000000262953,
+     "max": 0.022005000000262953
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.010000000000001563
+     ],
+     "median": 0.010000000000001563,
+     "min": 0.010000000000001563,
+     "max": 0.010000000000001563
+    },
+    "srv_rss_mib": {
+     "runs": [
+      64.00390625
+     ],
+     "median": 64.00390625,
+     "min": 64.00390625,
+     "max": 64.00390625
+    },
+    "rf_rss_mib": {
+     "runs": [
+      546.8515625
+     ],
+     "median": 546.8515625,
+     "min": 546.8515625,
+     "max": 546.8515625
+    }
+   },
+   "fetch_noop_warm_proxy": {
+    "requests": 2,
+    "by_method": {
+     "GET": 2
+    },
+    "bytes_up": 0,
+    "bytes_down": 0,
+    "status": {
+     "304": 2
+    }
+   },
+   "fetch_noop_cold": {
+    "wall_ms": {
+     "runs": [
+      1951.900926000235
+     ],
+     "median": 1951.900926000235,
+     "min": 1951.900926000235,
+     "max": 1951.900926000235
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.029525000000148793
+     ],
+     "median": 0.029525000000148793,
+     "min": 0.029525000000148793,
+     "max": 0.029525000000148793
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.06
+     ],
+     "median": 0.06,
+     "min": 0.06,
+     "max": 0.06
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.4400000000000013
+     ],
+     "median": 0.4400000000000013,
+     "min": 0.4400000000000013,
+     "max": 0.4400000000000013
+    },
+    "srv_rss_mib": {
+     "runs": [
+      129.96875
+     ],
+     "median": 129.96875,
+     "min": 129.96875,
+     "max": 129.96875
+    },
+    "rf_rss_mib": {
+     "runs": [
+      651.04296875
+     ],
+     "median": 651.04296875,
+     "min": 651.04296875,
+     "max": 651.04296875
+    }
+   },
+   "fetch_noop_cold_proxy": {
+    "requests": 28,
+    "by_method": {
+     "GET": 25,
+     "HEAD": 3
+    },
+    "bytes_up": 0,
+    "bytes_down": 27970249,
+    "status": {
+     "200": 23,
+     "304": 3,
+     "206": 2
+    }
+   },
+   "maint": {
+    "remote_before": {
+     "du_kib": 814020,
+     "apparent_kib": 813788,
+     "files": 31,
+     "dir": "/home/ubuntu/rt/walgitd-env/wb/rfdata/walgit-b/p/repos/o/init0"
+    },
+    "settle_samples": [
+     [
+      25,
+      [
+       814032,
+       32
+      ]
+     ],
+     [
+      50,
+      [
+       814032,
+       32
+      ]
+     ],
+     [
+      75,
+      [
+       814032,
+       32
+      ]
+     ]
+    ],
+    "remote_after_settle": {
+     "du_kib": 814032,
+     "apparent_kib": 813789,
+     "files": 32,
+     "dir": "/home/ubuntu/rt/walgitd-env/wb/rfdata/walgit-b/p/repos/o/init0"
+    },
+    "ops_compact_force_base": {
+     "wall_ms": 16827.191361000587,
+     "client_cpu_s": 0.007380999999895721,
+     "srv_cpu_s": 1007.92,
+     "rf_cpu_s": 1.7999999999999972,
+     "srv_rss_mib": 879.38671875,
+     "rf_rss_mib": 551.23046875,
+     "stdout": "additive pack 8f55d06a90ae0380e69d92b77dcbad504bdc9a0b\",\"committed additive pack a90e282eba7d80fce4d5304f9faf2094f7429e89\"]},\"value\":{\"outcome\":\"published\",\"packs\":[\"8f55d06a90ae0380e69d92b77dcbad504bdc9a0b\",\"a90e282eba7d80fce4d5304f9faf2094f7429e89\"],\"rebuild_base\":false,\"superseded\":4,\"tier\":1}}\n\n",
+     "proxy": {
+      "requests": 19,
+      "by_method": {
+       "PUT": 16,
+       "GET": 1,
+       "HEAD": 1,
+       "DELETE": 1
+      },
+      "bytes_up": 417327617,
+      "bytes_down": 0,
+      "status": {
+       "200": 17,
+       "304": 1,
+       "204": 1
+      }
+     }
+    },
+    "remote_after": {
+     "du_kib": 1221104,
+     "apparent_kib": 1220785,
+     "files": 44,
+     "dir": "/home/ubuntu/rt/walgitd-env/wb/rfdata/walgit-b/p/repos/o/init0"
+    },
+    "client_before_kib": 416040,
+    "client": {
+     "gc": {
+      "wall_ms": 4035.6414369998674,
+      "client_cpu_s": 2.177078999999594,
+      "srv_cpu_s": 3.3299999999999272,
+      "rf_cpu_s": 0.019999999999999574,
+      "srv_rss_mib": 885.6484375,
+      "rf_rss_mib": 546.19921875,
+      "stdout": "",
+      "proxy": {
+       "requests": 3,
+       "by_method": {
+        "HEAD": 1,
+        "DELETE": 1,
+        "PUT": 1
+       },
+       "bytes_up": 100,
+       "bytes_down": 0,
+       "status": {
+        "200": 2,
+        "204": 1
+       }
+      },
+      "size_kib": 415960
+     },
+     "gc_aggressive": {
+      "wall_ms": 68039.33361300005,
+      "client_cpu_s": 1011.4746889999997,
+      "srv_cpu_s": 8.5300000000002,
+      "rf_cpu_s": 0.10999999999999943,
+      "srv_rss_mib": 91.859375,
+      "rf_rss_mib": 546.265625,
+      "stdout": "",
+      "proxy": {
+       "requests": 21,
+       "by_method": {
+        "GET": 17,
+        "HEAD": 3,
+        "PUT": 1
+       },
+       "bytes_up": 82,
+       "bytes_down": 2192,
+       "status": {
+        "200": 11,
+        "304": 9,
+        "404": 1
+       }
+      },
+      "size_kib": 415800
+     }
+    }
+   },
+   "post_clone_full_facts": {
+    "checked_out_files": 100000,
+    "client_store_kib": 415776,
+    "client_store_apparent_kib": 415631
+   },
+   "post_clone_full_warm": {
+    "wall_ms": {
+     "runs": [
+      15798.976411000694
+     ],
+     "median": 15798.976411000694,
+     "min": 15798.976411000694,
+     "max": 15798.976411000694
+    },
+    "client_cpu_s": {
+     "runs": [
+      8.3666860000003
+     ],
+     "median": 8.3666860000003,
+     "min": 8.3666860000003,
+     "max": 8.3666860000003
+    },
+    "srv_cpu_s": {
+     "runs": [
+      2.699999999999818
+     ],
+     "median": 2.699999999999818,
+     "min": 2.699999999999818,
+     "max": 2.699999999999818
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.07000000000000028
+     ],
+     "median": 0.07000000000000028,
+     "min": 0.07000000000000028,
+     "max": 0.07000000000000028
+    },
+    "srv_rss_mib": {
+     "runs": [
+      884.6484375
+     ],
+     "median": 884.6484375,
+     "min": 884.6484375,
+     "max": 884.6484375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      572.73828125
+     ],
+     "median": 572.73828125,
+     "min": 572.73828125,
+     "max": 572.73828125
+    }
+   },
+   "post_clone_full_warm_proxy": {
+    "requests": 8,
+    "by_method": {
+     "GET": 7,
+     "HEAD": 1
+    },
+    "bytes_up": 0,
+    "bytes_down": 668,
+    "status": {
+     "304": 5,
+     "200": 3
+    }
+   },
+   "post_clone_full_cold": {
+    "wall_ms": {
+     "runs": [
+      13125.71326699981
+     ],
+     "median": 13125.71326699981,
+     "min": 13125.71326699981,
+     "max": 13125.71326699981
+    },
+    "client_cpu_s": {
+     "runs": [
+      5.369755000001533
+     ],
+     "median": 5.369755000001533,
+     "min": 5.369755000001533,
+     "max": 5.369755000001533
+    },
+    "srv_cpu_s": {
+     "runs": [
+      2.7
+     ],
+     "median": 2.7,
+     "min": 2.7,
+     "max": 2.7
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.9899999999999984
+     ],
+     "median": 0.9899999999999984,
+     "min": 0.9899999999999984,
+     "max": 0.9899999999999984
+    },
+    "srv_rss_mib": {
+     "runs": [
+      453.8359375
+     ],
+     "median": 453.8359375,
+     "min": 453.8359375,
+     "max": 453.8359375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      696.90625
+     ],
+     "median": 696.90625,
+     "min": 696.90625,
+     "max": 696.90625
+    }
+   },
+   "post_clone_full_cold_proxy": {
+    "requests": 57,
+    "by_method": {
+     "GET": 52,
+     "HEAD": 5
+    },
+    "bytes_up": 0,
+    "bytes_down": 833499059,
+    "status": {
+     "200": 26,
+     "304": 5,
+     "206": 26
+    }
+   },
+   "post_clone_partial_facts": {
+    "checked_out_files": 10000,
+    "client_store_kib": 52572,
+    "client_store_apparent_kib": 52401
+   },
+   "post_clone_partial_warm": {
+    "wall_ms": {
+     "runs": [
+      5043.212760001552
+     ],
+     "median": 5043.212760001552,
+     "min": 5043.212760001552,
+     "max": 5043.212760001552
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.9474150000005466
+     ],
+     "median": 0.9474150000005466,
+     "min": 0.9474150000005466,
+     "max": 0.9474150000005466
+    },
+    "srv_cpu_s": {
+     "runs": [
+      1.72
+     ],
+     "median": 1.72,
+     "min": 1.72,
+     "max": 1.72
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": {
+     "runs": [
+      84.71875
+     ],
+     "median": 84.71875,
+     "min": 84.71875,
+     "max": 84.71875
+    },
+    "rf_rss_mib": {
+     "runs": [
+      618.25
+     ],
+     "median": 618.25,
+     "min": 618.25,
+     "max": 618.25
+    }
+   },
+   "post_clone_partial_warm_proxy": {
+    "requests": 7,
+    "by_method": {
+     "GET": 7
+    },
+    "bytes_up": 0,
+    "bytes_down": 0,
+    "status": {
+     "304": 7
+    }
+   },
+   "post_clone_partial_cold": {
+    "wall_ms": {
+     "runs": [
+      9147.532822998983
+     ],
+     "median": 9147.532822998983,
+     "min": 9147.532822998983,
+     "max": 9147.532822998983
+    },
+    "client_cpu_s": {
+     "runs": [
+      1.5323609999995824
+     ],
+     "median": 1.5323609999995824,
+     "min": 1.5323609999995824,
+     "max": 1.5323609999995824
+    },
+    "srv_cpu_s": {
+     "runs": [
+      1.4
+     ],
+     "median": 1.4,
+     "min": 1.4,
+     "max": 1.4
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.990000000000002
+     ],
+     "median": 0.990000000000002,
+     "min": 0.990000000000002,
+     "max": 0.990000000000002
+    },
+    "srv_rss_mib": {
+     "runs": [
+      450.859375
+     ],
+     "median": 450.859375,
+     "min": 450.859375,
+     "max": 450.859375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      794.9609375
+     ],
+     "median": 794.9609375,
+     "min": 794.9609375,
+     "max": 794.9609375
+    }
+   },
+   "post_clone_partial_cold_proxy": {
+    "requests": 60,
+    "by_method": {
+     "GET": 55,
+     "HEAD": 5
+    },
+    "bytes_up": 0,
+    "bytes_down": 833499059,
+    "status": {
+     "200": 26,
+     "304": 8,
+     "206": 26
+    }
+   },
+   "post_fetch_1_warm": {
+    "wall_ms": {
+     "runs": [
+      385.2567820013064
+     ],
+     "median": 385.2567820013064,
+     "min": 385.2567820013064,
+     "max": 385.2567820013064
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.05461699999978009
+     ],
+     "median": 0.05461699999978009,
+     "min": 0.05461699999978009,
+     "max": 0.05461699999978009
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.020000000000000018
+     ],
+     "median": 0.020000000000000018,
+     "min": 0.020000000000000018,
+     "max": 0.020000000000000018
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": {
+     "runs": [
+      87.32421875
+     ],
+     "median": 87.32421875,
+     "min": 87.32421875,
+     "max": 87.32421875
+    },
+    "rf_rss_mib": {
+     "runs": [
+      674.09765625
+     ],
+     "median": 674.09765625,
+     "min": 674.09765625,
+     "max": 674.09765625
+    }
+   },
+   "post_fetch_1_warm_proxy": {
+    "requests": 4,
+    "by_method": {
+     "GET": 4
+    },
+    "bytes_up": 0,
+    "bytes_down": 0,
+    "status": {
+     "304": 4
+    }
+   },
+   "post_fetch_1_cold": {
+    "wall_ms": {
+     "runs": [
+      6129.013821000626
+     ],
+     "median": 6129.013821000626,
+     "min": 6129.013821000626,
+     "max": 6129.013821000626
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.06275099999947997
+     ],
+     "median": 0.06275099999947997,
+     "min": 0.06275099999947997,
+     "max": 0.06275099999947997
+    },
+    "srv_cpu_s": {
+     "runs": [
+      1.04
+     ],
+     "median": 1.04,
+     "min": 1.04,
+     "max": 1.04
+    },
+    "rf_cpu_s": {
+     "runs": [
+      1.0199999999999996
+     ],
+     "median": 1.0199999999999996,
+     "min": 1.0199999999999996,
+     "max": 1.0199999999999996
+    },
+    "srv_rss_mib": {
+     "runs": [
+      563.05859375
+     ],
+     "median": 563.05859375,
+     "min": 563.05859375,
+     "max": 563.05859375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      757.47265625
+     ],
+     "median": 757.47265625,
+     "min": 757.47265625,
+     "max": 757.47265625
+    }
+   },
+   "post_fetch_1_cold_proxy": {
+    "requests": 63,
+    "by_method": {
+     "GET": 58,
+     "HEAD": 5
+    },
+    "bytes_up": 0,
+    "bytes_down": 833522034,
+    "status": {
+     "200": 32,
+     "304": 5,
+     "206": 26
+    }
+   },
+   "post_fetch_noop_warm": {
+    "wall_ms": {
+     "runs": [
+      325.7169620010245
+     ],
+     "median": 325.7169620010245,
+     "min": 325.7169620010245,
+     "max": 325.7169620010245
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.02704499999890686
+     ],
+     "median": 0.02704499999890686,
+     "min": 0.02704499999890686,
+     "max": 0.02704499999890686
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.020000000000000018
+     ],
+     "median": 0.020000000000000018,
+     "min": 0.020000000000000018,
+     "max": 0.020000000000000018
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.019999999999999574
+     ],
+     "median": 0.019999999999999574,
+     "min": 0.019999999999999574,
+     "max": 0.019999999999999574
+    },
+    "srv_rss_mib": {
+     "runs": [
+      66.86328125
+     ],
+     "median": 66.86328125,
+     "min": 66.86328125,
+     "max": 66.86328125
+    },
+    "rf_rss_mib": {
+     "runs": [
+      669.24609375
+     ],
+     "median": 669.24609375,
+     "min": 669.24609375,
+     "max": 669.24609375
+    }
+   },
+   "post_fetch_noop_warm_proxy": {
+    "requests": 2,
+    "by_method": {
+     "GET": 2
+    },
+    "bytes_up": 0,
+    "bytes_down": 0,
+    "status": {
+     "304": 2
+    }
+   },
+   "post_fetch_noop_cold": {
+    "wall_ms": {
+     "runs": [
+      2449.6527789997344
+     ],
+     "median": 2449.6527789997344,
+     "min": 2449.6527789997344,
+     "max": 2449.6527789997344
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.030897999999069725
+     ],
+     "median": 0.030897999999069725,
+     "min": 0.030897999999069725,
+     "max": 0.030897999999069725
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.07
+     ],
+     "median": 0.07,
+     "min": 0.07,
+     "max": 0.07
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.509999999999998
+     ],
+     "median": 0.509999999999998,
+     "min": 0.509999999999998,
+     "max": 0.509999999999998
+    },
+    "srv_rss_mib": {
+     "runs": [
+      147.26953125
+     ],
+     "median": 147.26953125,
+     "min": 147.26953125,
+     "max": 147.26953125
+    },
+    "rf_rss_mib": {
+     "runs": [
+      770.71484375
+     ],
+     "median": 770.71484375,
+     "min": 770.71484375,
+     "max": 770.71484375
+    }
+   },
+   "post_fetch_noop_cold_proxy": {
+    "requests": 37,
+    "by_method": {
+     "GET": 32,
+     "HEAD": 5
+    },
+    "bytes_up": 0,
+    "bytes_down": 28215666,
+    "status": {
+     "200": 32,
+     "304": 3,
+     "206": 2
+    }
+   }
+  },
+  "vcs_def": {
+   "store_after_init": {
+    "du_kib": 409084,
+    "apparent_kib": 409017,
+    "files": 7,
+    "dir": "/home/ubuntu/rt/walgitd-env/wb/rfdata/vcs/vcs_def-init0"
+   },
+   "init_push": {
+    "wall_ms": {
+     "runs": [
+      8376.080600000932
+     ],
+     "median": 8376.080600000932,
+     "min": 8376.080600000932,
+     "max": 8376.080600000932
+    },
+    "client_cpu_s": {
+     "runs": [
+      3.8615199999999845
+     ],
+     "median": 3.8615199999999845,
+     "min": 3.8615199999999845,
+     "max": 3.8615199999999845
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.81
+     ],
+     "median": 0.81,
+     "min": 0.81,
+     "max": 0.81
+    },
+    "rf_cpu_s": {
+     "runs": [
+      1.7200000000000002
+     ],
+     "median": 1.7200000000000002,
+     "min": 1.7200000000000002,
+     "max": 1.7200000000000002
+    },
+    "srv_rss_mib": {
+     "runs": [
+      516.21875
+     ],
+     "median": 516.21875,
+     "min": 516.21875,
+     "max": 516.21875
+    },
+    "rf_rss_mib": {
+     "runs": [
+      281.52734375
+     ],
+     "median": 281.52734375,
+     "min": 281.52734375,
+     "max": 281.52734375
+    }
+   },
+   "init_push_stdout": "ecb1f986\ng2/main (none) -> 209a9d9da844\ng3/main (none) -> 256754e5d4cd\ng4/main (none) -> 7ae8d93d912a\ng5/main (none) -> 1d9bf7ff105f\ng6/main (none) -> 186707c96246\ng7/main (none) -> 7d37106365d1\ng8/main (none) -> 148a04985e21\ng9/main (none) -> 693788f3ef01\npublished atomically (remote generation 1)\n",
+   "init_push_proxy": {
+    "requests": 9,
+    "by_method": {
+     "GET": 2,
+     "PUT": 7
+    },
+    "bytes_up": 418817574,
+    "bytes_down": 556,
+    "status": {
+     "404": 3,
+     "200": 6
+    }
+   },
+   "inc_push": {
+    "wall_ms": {
+     "runs": [
+      196.8995189999987
+     ],
+     "median": 196.8995189999987,
+     "min": 196.8995189999987,
+     "max": 196.8995189999987
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.004420999999979358
+     ],
+     "median": 0.004420999999979358,
+     "min": 0.004420999999979358,
+     "max": 0.004420999999979358
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.020000000000000462
+     ],
+     "median": 0.020000000000000462,
+     "min": 0.020000000000000462,
+     "max": 0.020000000000000462
+    },
+    "srv_rss_mib": {
+     "runs": [
+      4.34375
+     ],
+     "median": 4.34375,
+     "min": 4.34375,
+     "max": 4.34375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      276.86328125
+     ],
+     "median": 276.86328125,
+     "min": 276.86328125,
+     "max": 276.86328125
+    }
+   },
+   "inc_push_proxy": {
+    "requests": 10,
+    "by_method": {
+     "GET": 4,
+     "PUT": 5,
+     "HEAD": 1
+    },
+    "bytes_up": 13154,
+    "bytes_down": 2686,
+    "status": {
+     "200": 8,
+     "404": 2
+    }
+   },
+   "clone_full_facts": {
+    "checked_out_files": 100000,
+    "client_store_kib": 421560,
+    "client_store_apparent_kib": 421480
+   },
+   "clone_full_warm": {
+    "wall_ms": {
+     "runs": [
+      9034.659257000385
+     ],
+     "median": 9034.659257000385,
+     "min": 9034.659257000385,
+     "max": 9034.659257000385
+    },
+    "client_cpu_s": {
+     "runs": [
+      9.98162000000002
+     ],
+     "median": 9.98162000000002,
+     "min": 9.98162000000002,
+     "max": 9.98162000000002
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.74
+     ],
+     "median": 0.74,
+     "min": 0.74,
+     "max": 0.74
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.4900000000000002
+     ],
+     "median": 0.4900000000000002,
+     "min": 0.4900000000000002,
+     "max": 0.4900000000000002
+    },
+    "srv_rss_mib": {
+     "runs": [
+      347.1328125
+     ],
+     "median": 347.1328125,
+     "min": 347.1328125,
+     "max": 347.1328125
+    },
+    "rf_rss_mib": {
+     "runs": [
+      419.22265625
+     ],
+     "median": 419.22265625,
+     "min": 419.22265625,
+     "max": 419.22265625
+    }
+   },
+   "clone_full_warm_proxy": {
+    "requests": 56,
+    "by_method": {
+     "GET": 56
+    },
+    "bytes_up": 0,
+    "bytes_down": 418818333,
+    "status": {
+     "200": 3,
+     "206": 53
+    }
+   },
+   "clone_full_cold": {
+    "wall_ms": {
+     "runs": [
+      7015.101822000361
+     ],
+     "median": 7015.101822000361,
+     "min": 7015.101822000361,
+     "max": 7015.101822000361
+    },
+    "client_cpu_s": {
+     "runs": [
+      7.338144000000057
+     ],
+     "median": 7.338144000000057,
+     "min": 7.338144000000057,
+     "max": 7.338144000000057
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.59
+     ],
+     "median": 0.59,
+     "min": 0.59,
+     "max": 0.59
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.5399999999999991
+     ],
+     "median": 0.5399999999999991,
+     "min": 0.5399999999999991,
+     "max": 0.5399999999999991
+    },
+    "srv_rss_mib": {
+     "runs": [
+      344.52734375
+     ],
+     "median": 344.52734375,
+     "min": 344.52734375,
+     "max": 344.52734375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      558.0078125
+     ],
+     "median": 558.0078125,
+     "min": 558.0078125,
+     "max": 558.0078125
+    }
+   },
+   "clone_full_cold_proxy": {
+    "requests": 61,
+    "by_method": {
+     "GET": 61
+    },
+    "bytes_up": 0,
+    "bytes_down": 418830834,
+    "status": {
+     "200": 4,
+     "206": 57
+    }
+   },
+   "clone_partial_facts": {
+    "checked_out_files": 10000,
+    "client_store_kib": 46144,
+    "client_store_apparent_kib": 46066
+   },
+   "clone_partial_warm": {
+    "wall_ms": {
+     "runs": [
+      795.1576729992667
+     ],
+     "median": 795.1576729992667,
+     "min": 795.1576729992667,
+     "max": 795.1576729992667
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.8677479999998923
+     ],
+     "median": 0.8677479999998923,
+     "min": 0.8677479999998923,
+     "max": 0.8677479999998923
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.06000000000000005
+     ],
+     "median": 0.06000000000000005,
+     "min": 0.06000000000000005,
+     "max": 0.06000000000000005
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.08999999999999986
+     ],
+     "median": 0.08999999999999986,
+     "min": 0.08999999999999986,
+     "max": 0.08999999999999986
+    },
+    "srv_rss_mib": {
+     "runs": [
+      241.2578125
+     ],
+     "median": 241.2578125,
+     "min": 241.2578125,
+     "max": 241.2578125
+    },
+    "rf_rss_mib": {
+     "runs": [
+      566.1328125
+     ],
+     "median": 566.1328125,
+     "min": 566.1328125,
+     "max": 566.1328125
+    }
+   },
+   "clone_partial_warm_proxy": {
+    "requests": 25,
+    "by_method": {
+     "GET": 25
+    },
+    "bytes_up": 0,
+    "bytes_down": 49364758,
+    "status": {
+     "200": 4,
+     "206": 21
+    }
+   },
+   "clone_partial_cold": {
+    "wall_ms": {
+     "runs": [
+      818.0594980003661
+     ],
+     "median": 818.0594980003661,
+     "min": 818.0594980003661,
+     "max": 818.0594980003661
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.8420920000000933
+     ],
+     "median": 0.8420920000000933,
+     "min": 0.8420920000000933,
+     "max": 0.8420920000000933
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.08
+     ],
+     "median": 0.08,
+     "min": 0.08,
+     "max": 0.08
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.08999999999999986
+     ],
+     "median": 0.08999999999999986,
+     "min": 0.08999999999999986,
+     "max": 0.08999999999999986
+    },
+    "srv_rss_mib": {
+     "runs": [
+      93.75
+     ],
+     "median": 93.75,
+     "min": 93.75,
+     "max": 93.75
+    },
+    "rf_rss_mib": {
+     "runs": [
+      611.578125
+     ],
+     "median": 611.578125,
+     "min": 611.578125,
+     "max": 611.578125
+    }
+   },
+   "clone_partial_cold_proxy": {
+    "requests": 25,
+    "by_method": {
+     "GET": 25
+    },
+    "bytes_up": 0,
+    "bytes_down": 49364758,
+    "status": {
+     "200": 4,
+     "206": 21
+    }
+   },
+   "fetch_1_warm": {
+    "wall_ms": {
+     "runs": [
+      185.4923629998666
+     ],
+     "median": 185.4923629998666,
+     "min": 185.4923629998666,
+     "max": 185.4923629998666
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.02032199999985096
+     ],
+     "median": 0.02032199999985096,
+     "min": 0.02032199999985096,
+     "max": 0.02032199999985096
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": {
+     "runs": [
+      93.75390625
+     ],
+     "median": 93.75390625,
+     "min": 93.75390625,
+     "max": 93.75390625
+    },
+    "rf_rss_mib": {
+     "runs": [
+      571.37109375
+     ],
+     "median": 571.37109375,
+     "min": 571.37109375,
+     "max": 571.37109375
+    }
+   },
+   "fetch_1_warm_proxy": {
+    "requests": 2,
+    "by_method": {
+     "GET": 2
+    },
+    "bytes_up": 0,
+    "bytes_down": 2506,
+    "status": {
+     "200": 2
+    }
+   },
+   "fetch_1_cold": {
+    "wall_ms": {
+     "runs": [
+      329.8447480010509
+     ],
+     "median": 329.8447480010509,
+     "min": 329.8447480010509,
+     "max": 329.8447480010509
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.024292000000059488
+     ],
+     "median": 0.024292000000059488,
+     "min": 0.024292000000059488,
+     "max": 0.024292000000059488
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.010000000000001563
+     ],
+     "median": 0.010000000000001563,
+     "min": 0.010000000000001563,
+     "max": 0.010000000000001563
+    },
+    "srv_rss_mib": {
+     "runs": [
+      4.41796875
+     ],
+     "median": 4.41796875,
+     "min": 4.41796875,
+     "max": 4.41796875
+    },
+    "rf_rss_mib": {
+     "runs": [
+      542.82421875
+     ],
+     "median": 542.82421875,
+     "min": 542.82421875,
+     "max": 542.82421875
+    }
+   },
+   "fetch_1_cold_proxy": {
+    "requests": 5,
+    "by_method": {
+     "GET": 5
+    },
+    "bytes_up": 0,
+    "bytes_down": 11513,
+    "status": {
+     "200": 3,
+     "206": 2
+    }
+   },
+   "fetch_noop_warm": {
+    "wall_ms": {
+     "runs": [
+      25.00406900071539
+     ],
+     "median": 25.00406900071539,
+     "min": 25.00406900071539,
+     "max": 25.00406900071539
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.003872999999884996
+     ],
+     "median": 0.003872999999884996,
+     "min": 0.003872999999884996,
+     "max": 0.003872999999884996
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": {
+     "runs": [
+      4.41796875
+     ],
+     "median": 4.41796875,
+     "min": 4.41796875,
+     "max": 4.41796875
+    },
+    "rf_rss_mib": {
+     "runs": [
+      546.8515625
+     ],
+     "median": 546.8515625,
+     "min": 546.8515625,
+     "max": 546.8515625
+    }
+   },
+   "fetch_noop_warm_proxy": {
+    "requests": 1,
+    "by_method": {
+     "GET": 1
+    },
+    "bytes_up": 0,
+    "bytes_down": 598,
+    "status": {
+     "200": 1
+    }
+   },
+   "fetch_noop_cold": {
+    "wall_ms": {
+     "runs": [
+      89.75884599931305
+     ],
+     "median": 89.75884599931305,
+     "min": 89.75884599931305,
+     "max": 89.75884599931305
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.0074619999998049025
+     ],
+     "median": 0.0074619999998049025,
+     "min": 0.0074619999998049025,
+     "max": 0.0074619999998049025
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": {
+     "runs": [
+      4.37109375
+     ],
+     "median": 4.37109375,
+     "min": 4.37109375,
+     "max": 4.37109375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      651.0625
+     ],
+     "median": 651.0625,
+     "min": 651.0625,
+     "max": 651.0625
+    }
+   },
+   "fetch_noop_cold_proxy": {
+    "requests": 1,
+    "by_method": {
+     "GET": 1
+    },
+    "bytes_up": 0,
+    "bytes_down": 598,
+    "status": {
+     "200": 1
+    }
+   },
+   "maint": {
+    "remote_before": {
+     "du_kib": 409180,
+     "apparent_kib": 409059,
+     "files": 16,
+     "dir": "/home/ubuntu/rt/walgitd-env/wb/rfdata/vcs/vcs_def-init0"
+    },
+    "dry_run": "4 pack(s) on the remote; 2 after compaction\n  would merge 3 packs\ndry run: nothing was changed\n",
+    "compact": {
+     "wall_ms": 723.592373999054,
+     "client_cpu_s": 0.014464999999745487,
+     "srv_cpu_s": 0.0,
+     "rf_cpu_s": 0.08999999999999986,
+     "srv_rss_mib": 4.37109375,
+     "rf_rss_mib": 560.76171875,
+     "stdout": "4 pack(s) on the remote; 2 after compaction\n  merged 3 packs into packs/pack-56f66d9eeac0d4fffa3027e826f60b1a4f3ec9798854d1cf7826e534d956f094\nread 12 object(s) (0 duplicate(s) dropped), wrote 12; 22 request(s), 4494095 byte(s) read and 35491 written on the remote\n",
+     "proxy": {
+      "requests": 28,
+      "by_method": {
+       "PUT": 8,
+       "DELETE": 9,
+       "GET": 11
+      },
+      "bytes_up": 35511,
+      "bytes_down": 4497098,
+      "status": {
+       "200": 16,
+       "412": 2,
+       "204": 9,
+       "206": 1
+      }
+     }
+    },
+    "remote_after": {
+     "du_kib": 409156,
+     "apparent_kib": 409055,
+     "files": 12,
+     "dir": "/home/ubuntu/rt/walgitd-env/wb/rfdata/vcs/vcs_def-init0"
+    },
+    "client_before_kib": 421628,
+    "client": {
+     "repack_default": {
+      "wall_ms": 39.58386499834887,
+      "client_cpu_s": 0.005342999999811582,
+      "srv_cpu_s": 0.0,
+      "rf_cpu_s": 0.0,
+      "srv_rss_mib": 4.3515625,
+      "rf_rss_mib": 548.3359375,
+      "stdout": "packed 8 object(s)\n",
+      "proxy": {
+       "requests": 0,
+       "by_method": {},
+       "bytes_up": 0,
+       "bytes_down": 0,
+       "status": {}
+      },
+      "size_kib": 421604,
+      "fsck_ok": true
+     },
+     "repack_v2": {
+      "wall_ms": 54.814065999380546,
+      "client_cpu_s": 0.0037570000004052417,
+      "srv_cpu_s": 0.0,
+      "rf_cpu_s": 0.0,
+      "srv_rss_mib": 4.3515625,
+      "rf_rss_mib": 548.3359375,
+      "stdout": "packed 8 object(s); rewrote 0 existing pack(s) as v2\n",
+      "proxy": {
+       "requests": 0,
+       "by_method": {},
+       "bytes_up": 0,
+       "bytes_down": 0,
+       "status": {}
+      },
+      "size_kib": 421604,
+      "fsck_ok": true
+     },
+     "repack_v3": {
+      "wall_ms": 3411.650465001003,
+      "client_cpu_s": 2.653917999999976,
+      "srv_cpu_s": 0.0,
+      "rf_cpu_s": 0.030000000000001137,
+      "srv_rss_mib": 4.3515625,
+      "rf_rss_mib": 550.4453125,
+      "stdout": "packed 8 object(s); rewrote 2 existing pack(s) as v3\n",
+      "proxy": {
+       "requests": 10,
+       "by_method": {
+        "GET": 4,
+        "HEAD": 2,
+        "PUT": 4
+       },
+       "bytes_up": 334,
+       "bytes_down": 668,
+       "status": {
+        "200": 8,
+        "304": 2
+       }
+      },
+      "size_kib": 423176,
+      "fsck_ok": true
+     },
+     "repack_v4": {
+      "wall_ms": 5923.222006000287,
+      "client_cpu_s": 31.833606000000145,
+      "srv_cpu_s": 0.0,
+      "rf_cpu_s": 0.0,
+      "srv_rss_mib": 4.3515625,
+      "rf_rss_mib": 550.046875,
+      "stdout": "packed 8 object(s); rewrote 2 existing pack(s) as v4\n",
+      "proxy": {
+       "requests": 4,
+       "by_method": {
+        "GET": 3,
+        "HEAD": 1
+       },
+       "bytes_up": 0,
+       "bytes_down": 668,
+       "status": {
+        "200": 3,
+        "304": 1
+       }
+      },
+      "size_kib": 420176,
+      "fsck_ok": true
+     }
+    }
+   },
+   "post_clone_full_facts": {
+    "checked_out_files": 100000,
+    "client_store_kib": 421576,
+    "client_store_apparent_kib": 421497
+   },
+   "post_clone_full_warm": {
+    "wall_ms": {
+     "runs": [
+      7941.676279999228
+     ],
+     "median": 7941.676279999228,
+     "min": 7941.676279999228,
+     "max": 7941.676279999228
+    },
+    "client_cpu_s": {
+     "runs": [
+      9.961506999999983
+     ],
+     "median": 9.961506999999983,
+     "min": 9.961506999999983,
+     "max": 9.961506999999983
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.7199999999999999
+     ],
+     "median": 0.7199999999999999,
+     "min": 0.7199999999999999,
+     "max": 0.7199999999999999
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.5499999999999972
+     ],
+     "median": 0.5499999999999972,
+     "min": 0.5499999999999972,
+     "max": 0.5499999999999972
+    },
+    "srv_rss_mib": {
+     "runs": [
+      326.3046875
+     ],
+     "median": 326.3046875,
+     "min": 326.3046875,
+     "max": 326.3046875
+    },
+    "rf_rss_mib": {
+     "runs": [
+      689.0859375
+     ],
+     "median": 689.0859375,
+     "min": 689.0859375,
+     "max": 689.0859375
+    }
+   },
+   "post_clone_full_warm_proxy": {
+    "requests": 60,
+    "by_method": {
+     "GET": 60
+    },
+    "bytes_up": 0,
+    "bytes_down": 418853836,
+    "status": {
+     "200": 4,
+     "206": 56
+    }
+   },
+   "post_clone_full_cold": {
+    "wall_ms": {
+     "runs": [
+      7242.920263999622
+     ],
+     "median": 7242.920263999622,
+     "min": 7242.920263999622,
+     "max": 7242.920263999622
+    },
+    "client_cpu_s": {
+     "runs": [
+      7.495859999999084
+     ],
+     "median": 7.495859999999084,
+     "min": 7.495859999999084,
+     "max": 7.495859999999084
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.61
+     ],
+     "median": 0.61,
+     "min": 0.61,
+     "max": 0.61
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.5600000000000023
+     ],
+     "median": 0.5600000000000023,
+     "min": 0.5600000000000023,
+     "max": 0.5600000000000023
+    },
+    "srv_rss_mib": {
+     "runs": [
+      320.640625
+     ],
+     "median": 320.640625,
+     "min": 320.640625,
+     "max": 320.640625
+    },
+    "rf_rss_mib": {
+     "runs": [
+      721.49609375
+     ],
+     "median": 721.49609375,
+     "min": 721.49609375,
+     "max": 721.49609375
+    }
+   },
+   "post_clone_full_cold_proxy": {
+    "requests": 60,
+    "by_method": {
+     "GET": 60
+    },
+    "bytes_up": 0,
+    "bytes_down": 418853836,
+    "status": {
+     "200": 4,
+     "206": 56
+    }
+   },
+   "post_clone_partial_facts": {
+    "checked_out_files": 10000,
+    "client_store_kib": 46144,
+    "client_store_apparent_kib": 46067
+   },
+   "post_clone_partial_warm": {
+    "wall_ms": {
+     "runs": [
+      608.7917130007554
+     ],
+     "median": 608.7917130007554,
+     "min": 608.7917130007554,
+     "max": 608.7917130007554
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.8996690000003582
+     ],
+     "median": 0.8996690000003582,
+     "min": 0.8996690000003582,
+     "max": 0.8996690000003582
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.06999999999999995
+     ],
+     "median": 0.06999999999999995,
+     "min": 0.06999999999999995,
+     "max": 0.06999999999999995
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.10999999999999943
+     ],
+     "median": 0.10999999999999943,
+     "min": 0.10999999999999943,
+     "max": 0.10999999999999943
+    },
+    "srv_rss_mib": {
+     "runs": [
+      198.86328125
+     ],
+     "median": 198.86328125,
+     "min": 198.86328125,
+     "max": 198.86328125
+    },
+    "rf_rss_mib": {
+     "runs": [
+      674.3359375
+     ],
+     "median": 674.3359375,
+     "min": 674.3359375,
+     "max": 674.3359375
+    }
+   },
+   "post_clone_partial_warm_proxy": {
+    "requests": 25,
+    "by_method": {
+     "GET": 25
+    },
+    "bytes_up": 0,
+    "bytes_down": 49365174,
+    "status": {
+     "200": 4,
+     "206": 21
+    }
+   },
+   "post_clone_partial_cold": {
+    "wall_ms": {
+     "runs": [
+      1196.6293990008126
+     ],
+     "median": 1196.6293990008126,
+     "min": 1196.6293990008126,
+     "max": 1196.6293990008126
+    },
+    "client_cpu_s": {
+     "runs": [
+      1.126245999997991
+     ],
+     "median": 1.126245999997991,
+     "min": 1.126245999997991,
+     "max": 1.126245999997991
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.1
+     ],
+     "median": 0.1,
+     "min": 0.1,
+     "max": 0.1
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.10000000000000142
+     ],
+     "median": 0.10000000000000142,
+     "min": 0.10000000000000142,
+     "max": 0.10000000000000142
+    },
+    "srv_rss_mib": {
+     "runs": [
+      94.66015625
+     ],
+     "median": 94.66015625,
+     "min": 94.66015625,
+     "max": 94.66015625
+    },
+    "rf_rss_mib": {
+     "runs": [
+      694.12890625
+     ],
+     "median": 694.12890625,
+     "min": 694.12890625,
+     "max": 694.12890625
+    }
+   },
+   "post_clone_partial_cold_proxy": {
+    "requests": 25,
+    "by_method": {
+     "GET": 25
+    },
+    "bytes_up": 0,
+    "bytes_down": 49365174,
+    "status": {
+     "200": 4,
+     "206": 21
+    }
+   },
+   "post_fetch_1_warm": {
+    "wall_ms": {
+     "runs": [
+      159.52269399895158
+     ],
+     "median": 159.52269399895158,
+     "min": 159.52269399895158,
+     "max": 159.52269399895158
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.019123000000035972
+     ],
+     "median": 0.019123000000035972,
+     "min": 0.019123000000035972,
+     "max": 0.019123000000035972
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": {
+     "runs": [
+      94.703125
+     ],
+     "median": 94.703125,
+     "min": 94.703125,
+     "max": 94.703125
+    },
+    "rf_rss_mib": {
+     "runs": [
+      654.59765625
+     ],
+     "median": 654.59765625,
+     "min": 654.59765625,
+     "max": 654.59765625
+    }
+   },
+   "post_fetch_1_warm_proxy": {
+    "requests": 2,
+    "by_method": {
+     "GET": 2
+    },
+    "bytes_up": 0,
+    "bytes_down": 2570,
+    "status": {
+     "200": 2
+    }
+   },
+   "post_fetch_1_cold": {
+    "wall_ms": {
+     "runs": [
+      305.80925100002787
+     ],
+     "median": 305.80925100002787,
+     "min": 305.80925100002787,
+     "max": 305.80925100002787
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.02324899999803165
+     ],
+     "median": 0.02324899999803165,
+     "min": 0.02324899999803165,
+     "max": 0.02324899999803165
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": {
+     "runs": [
+      4.27734375
+     ],
+     "median": 4.27734375,
+     "min": 4.27734375,
+     "max": 4.27734375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      759.41796875
+     ],
+     "median": 759.41796875,
+     "min": 759.41796875,
+     "max": 759.41796875
+    }
+   },
+   "post_fetch_1_cold_proxy": {
+    "requests": 5,
+    "by_method": {
+     "GET": 5
+    },
+    "bytes_up": 0,
+    "bytes_down": 11523,
+    "status": {
+     "200": 3,
+     "206": 2
+    }
+   },
+   "post_fetch_noop_warm": {
+    "wall_ms": {
+     "runs": [
+      57.01560099987546
+     ],
+     "median": 57.01560099987546,
+     "min": 57.01560099987546,
+     "max": 57.01560099987546
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.0038759999988542404
+     ],
+     "median": 0.0038759999988542404,
+     "min": 0.0038759999988542404,
+     "max": 0.0038759999988542404
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": {
+     "runs": [
+      4.27734375
+     ],
+     "median": 4.27734375,
+     "min": 4.27734375,
+     "max": 4.27734375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      669.25
+     ],
+     "median": 669.25,
+     "min": 669.25,
+     "max": 669.25
+    }
+   },
+   "post_fetch_noop_warm_proxy": {
+    "requests": 1,
+    "by_method": {
+     "GET": 1
+    },
+    "bytes_up": 0,
+    "bytes_down": 662,
+    "status": {
+     "200": 1
+    }
+   },
+   "post_fetch_noop_cold": {
+    "wall_ms": {
+     "runs": [
+      78.88662400000612
+     ],
+     "median": 78.88662400000612,
+     "min": 78.88662400000612,
+     "max": 78.88662400000612
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.007105000000592554
+     ],
+     "median": 0.007105000000592554,
+     "min": 0.007105000000592554,
+     "max": 0.007105000000592554
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": {
+     "runs": [
+      4.296875
+     ],
+     "median": 4.296875,
+     "min": 4.296875,
+     "max": 4.296875
+    },
+    "rf_rss_mib": {
+     "runs": [
+      672.375
+     ],
+     "median": 672.375,
+     "min": 672.375,
+     "max": 672.375
+    }
+   },
+   "post_fetch_noop_cold_proxy": {
+    "requests": 1,
+    "by_method": {
+     "GET": 1
+    },
+    "bytes_up": 0,
+    "bytes_down": 662,
+    "status": {
+     "200": 1
+    }
+   }
+  },
+  "vcs_best": {
+   "store_after_init": {
+    "du_kib": 411744,
+    "apparent_kib": 411675,
+    "files": 7,
+    "dir": "/home/ubuntu/rt/walgitd-env/wb/rfdata/vcs/vcs_best-init0"
+   },
+   "init_push": {
+    "wall_ms": {
+     "runs": [
+      5527.238089000093
+     ],
+     "median": 5527.238089000093,
+     "min": 5527.238089000093,
+     "max": 5527.238089000093
+    },
+    "client_cpu_s": {
+     "runs": [
+      1.9158529999999985
+     ],
+     "median": 1.9158529999999985,
+     "min": 1.9158529999999985,
+     "max": 1.9158529999999985
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.82
+     ],
+     "median": 0.82,
+     "min": 0.82,
+     "max": 0.82
+    },
+    "rf_cpu_s": {
+     "runs": [
+      1.6899999999999995
+     ],
+     "median": 1.6899999999999995,
+     "min": 1.6899999999999995,
+     "max": 1.6899999999999995
+    },
+    "srv_rss_mib": {
+     "runs": [
+      516.26171875
+     ],
+     "median": 516.26171875,
+     "min": 516.26171875,
+     "max": 516.26171875
+    },
+    "rf_rss_mib": {
+     "runs": [
+      282.0546875
+     ],
+     "median": 282.0546875,
+     "min": 282.0546875,
+     "max": 282.0546875
+    }
+   },
+   "init_push_stdout": "ecb1f986\ng2/main (none) -> 209a9d9da844\ng3/main (none) -> 256754e5d4cd\ng4/main (none) -> 7ae8d93d912a\ng5/main (none) -> 1d9bf7ff105f\ng6/main (none) -> 186707c96246\ng7/main (none) -> 7d37106365d1\ng8/main (none) -> 148a04985e21\ng9/main (none) -> 693788f3ef01\npublished atomically (remote generation 1)\n",
+   "init_push_proxy": {
+    "requests": 9,
+    "by_method": {
+     "GET": 2,
+     "PUT": 7
+    },
+    "bytes_up": 421538888,
+    "bytes_down": 556,
+    "status": {
+     "404": 3,
+     "200": 6
+    }
+   },
+   "inc_push": {
+    "wall_ms": {
+     "runs": [
+      213.80290100023558
+     ],
+     "median": 213.80290100023558,
+     "min": 213.80290100023558,
+     "max": 213.80290100023558
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.0050039999999853535
+     ],
+     "median": 0.0050039999999853535,
+     "min": 0.0050039999999853535,
+     "max": 0.0050039999999853535
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.009999999999999787
+     ],
+     "median": 0.009999999999999787,
+     "min": 0.009999999999999787,
+     "max": 0.009999999999999787
+    },
+    "srv_rss_mib": {
+     "runs": [
+      16.9296875
+     ],
+     "median": 16.9296875,
+     "min": 16.9296875,
+     "max": 16.9296875
+    },
+    "rf_rss_mib": {
+     "runs": [
+      281.46484375
+     ],
+     "median": 281.46484375,
+     "min": 281.46484375,
+     "max": 281.46484375
+    }
+   },
+   "inc_push_proxy": {
+    "requests": 11,
+    "by_method": {
+     "GET": 5,
+     "PUT": 5,
+     "HEAD": 1
+    },
+    "bytes_up": 13242,
+    "bytes_down": 4457479,
+    "status": {
+     "200": 9,
+     "404": 2
+    }
+   },
+   "clone_full_facts": {
+    "checked_out_files": 100000,
+    "client_store_kib": 421556,
+    "client_store_apparent_kib": 421480
+   },
+   "clone_full_warm": {
+    "wall_ms": {
+     "runs": [
+      6387.622778998775
+     ],
+     "median": 6387.622778998775,
+     "min": 6387.622778998775,
+     "max": 6387.622778998775
+    },
+    "client_cpu_s": {
+     "runs": [
+      9.988580999999982
+     ],
+     "median": 9.988580999999982,
+     "min": 9.988580999999982,
+     "max": 9.988580999999982
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.75
+     ],
+     "median": 0.75,
+     "min": 0.75,
+     "max": 0.75
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.46999999999999886
+     ],
+     "median": 0.46999999999999886,
+     "min": 0.46999999999999886,
+     "max": 0.46999999999999886
+    },
+    "srv_rss_mib": {
+     "runs": [
+      367.25
+     ],
+     "median": 367.25,
+     "min": 367.25,
+     "max": 367.25
+    },
+    "rf_rss_mib": {
+     "runs": [
+      466.24609375
+     ],
+     "median": 466.24609375,
+     "min": 466.24609375,
+     "max": 466.24609375
+    }
+   },
+   "clone_full_warm_proxy": {
+    "requests": 55,
+    "by_method": {
+     "GET": 55
+    },
+    "bytes_up": 0,
+    "bytes_down": 417089013,
+    "status": {
+     "200": 2,
+     "206": 53
+    }
+   },
+   "clone_full_cold": {
+    "wall_ms": {
+     "runs": [
+      7157.918909000728
+     ],
+     "median": 7157.918909000728,
+     "min": 7157.918909000728,
+     "max": 7157.918909000728
+    },
+    "client_cpu_s": {
+     "runs": [
+      7.374588000000131
+     ],
+     "median": 7.374588000000131,
+     "min": 7.374588000000131,
+     "max": 7.374588000000131
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.68
+     ],
+     "median": 0.68,
+     "min": 0.68,
+     "max": 0.68
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.5700000000000003
+     ],
+     "median": 0.5700000000000003,
+     "min": 0.5700000000000003,
+     "max": 0.5700000000000003
+    },
+    "srv_rss_mib": {
+     "runs": [
+      381.859375
+     ],
+     "median": 381.859375,
+     "min": 381.859375,
+     "max": 381.859375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      621.3359375
+     ],
+     "median": 621.3359375,
+     "min": 621.3359375,
+     "max": 621.3359375
+    }
+   },
+   "clone_full_cold_proxy": {
+    "requests": 59,
+    "by_method": {
+     "GET": 59
+    },
+    "bytes_up": 0,
+    "bytes_down": 421552241,
+    "status": {
+     "200": 4,
+     "206": 55
+    }
+   },
+   "clone_partial_facts": {
+    "checked_out_files": 10000,
+    "client_store_kib": 46144,
+    "client_store_apparent_kib": 46066
+   },
+   "clone_partial_warm": {
+    "wall_ms": {
+     "runs": [
+      720.3494450004655
+     ],
+     "median": 720.3494450004655,
+     "min": 720.3494450004655,
+     "max": 720.3494450004655
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.948421000000053
+     ],
+     "median": 0.948421000000053,
+     "min": 0.948421000000053,
+     "max": 0.948421000000053
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.08000000000000007
+     ],
+     "median": 0.08000000000000007,
+     "min": 0.08000000000000007,
+     "max": 0.08000000000000007
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.10000000000000142
+     ],
+     "median": 0.10000000000000142,
+     "min": 0.10000000000000142,
+     "max": 0.10000000000000142
+    },
+    "srv_rss_mib": {
+     "runs": [
+      322.02734375
+     ],
+     "median": 322.02734375,
+     "min": 322.02734375,
+     "max": 322.02734375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      633.75
+     ],
+     "median": 633.75,
+     "min": 633.75,
+     "max": 633.75
+    }
+   },
+   "clone_partial_warm_proxy": {
+    "requests": 13,
+    "by_method": {
+     "GET": 13
+    },
+    "bytes_up": 0,
+    "bytes_down": 54508926,
+    "status": {
+     "200": 4,
+     "206": 9
+    }
+   },
+   "clone_partial_cold": {
+    "wall_ms": {
+     "runs": [
+      641.3601620006375
+     ],
+     "median": 641.3601620006375,
+     "min": 641.3601620006375,
+     "max": 641.3601620006375
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.9338370000000396
+     ],
+     "median": 0.9338370000000396,
+     "min": 0.9338370000000396,
+     "max": 0.9338370000000396
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.11
+     ],
+     "median": 0.11,
+     "min": 0.11,
+     "max": 0.11
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.11999999999999922
+     ],
+     "median": 0.11999999999999922,
+     "min": 0.11999999999999922,
+     "max": 0.11999999999999922
+    },
+    "srv_rss_mib": {
+     "runs": [
+      139.96484375
+     ],
+     "median": 139.96484375,
+     "min": 139.96484375,
+     "max": 139.96484375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      644.6640625
+     ],
+     "median": 644.6640625,
+     "min": 644.6640625,
+     "max": 644.6640625
+    }
+   },
+   "clone_partial_cold_proxy": {
+    "requests": 13,
+    "by_method": {
+     "GET": 13
+    },
+    "bytes_up": 0,
+    "bytes_down": 54508926,
+    "status": {
+     "200": 4,
+     "206": 9
+    }
+   },
+   "fetch_1_warm": {
+    "wall_ms": {
+     "runs": [
+      177.33746300109487
+     ],
+     "median": 177.33746300109487,
+     "min": 177.33746300109487,
+     "max": 177.33746300109487
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.019234000000096785
+     ],
+     "median": 0.019234000000096785,
+     "min": 0.019234000000096785,
+     "max": 0.019234000000096785
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": {
+     "runs": [
+      76.453125
+     ],
+     "median": 76.453125,
+     "min": 76.453125,
+     "max": 76.453125
+    },
+    "rf_rss_mib": {
+     "runs": [
+      571.39453125
+     ],
+     "median": 571.39453125,
+     "min": 571.39453125,
+     "max": 571.39453125
+    }
+   },
+   "fetch_1_warm_proxy": {
+    "requests": 2,
+    "by_method": {
+     "GET": 2
+    },
+    "bytes_up": 0,
+    "bytes_down": 2513,
+    "status": {
+     "200": 2
+    }
+   },
+   "fetch_1_cold": {
+    "wall_ms": {
+     "runs": [
+      292.8185480013781
+     ],
+     "median": 292.8185480013781,
+     "min": 292.8185480013781,
+     "max": 292.8185480013781
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.023990000000139844
+     ],
+     "median": 0.023990000000139844,
+     "min": 0.023990000000139844,
+     "max": 0.023990000000139844
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": {
+     "runs": [
+      4.4140625
+     ],
+     "median": 4.4140625,
+     "min": 4.4140625,
+     "max": 4.4140625
+    },
+    "rf_rss_mib": {
+     "runs": [
+      546.84765625
+     ],
+     "median": 546.84765625,
+     "min": 546.84765625,
+     "max": 546.84765625
+    }
+   },
+   "fetch_1_cold_proxy": {
+    "requests": 4,
+    "by_method": {
+     "GET": 4
+    },
+    "bytes_up": 0,
+    "bytes_down": 11572,
+    "status": {
+     "200": 3,
+     "206": 1
+    }
+   },
+   "fetch_noop_warm": {
+    "wall_ms": {
+     "runs": [
+      22.0880249999027
+     ],
+     "median": 22.0880249999027,
+     "min": 22.0880249999027,
+     "max": 22.0880249999027
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.003592000000026019
+     ],
+     "median": 0.003592000000026019,
+     "min": 0.003592000000026019,
+     "max": 0.003592000000026019
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": {
+     "runs": [
+      4.4140625
+     ],
+     "median": 4.4140625,
+     "min": 4.4140625,
+     "max": 4.4140625
+    },
+    "rf_rss_mib": {
+     "runs": [
+      546.8515625
+     ],
+     "median": 546.8515625,
+     "min": 546.8515625,
+     "max": 546.8515625
+    }
+   },
+   "fetch_noop_warm_proxy": {
+    "requests": 1,
+    "by_method": {
+     "GET": 1
+    },
+    "bytes_up": 0,
+    "bytes_down": 598,
+    "status": {
+     "200": 1
+    }
+   },
+   "fetch_noop_cold": {
+    "wall_ms": {
+     "runs": [
+      83.58290700016369
+     ],
+     "median": 83.58290700016369,
+     "min": 83.58290700016369,
+     "max": 83.58290700016369
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.007088000000067041
+     ],
+     "median": 0.007088000000067041,
+     "min": 0.007088000000067041,
+     "max": 0.007088000000067041
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.010000000000001563
+     ],
+     "median": 0.010000000000001563,
+     "min": 0.010000000000001563,
+     "max": 0.010000000000001563
+    },
+    "srv_rss_mib": {
+     "runs": [
+      4.37109375
+     ],
+     "median": 4.37109375,
+     "min": 4.37109375,
+     "max": 4.37109375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      651.0703125
+     ],
+     "median": 651.0703125,
+     "min": 651.0703125,
+     "max": 651.0703125
+    }
+   },
+   "fetch_noop_cold_proxy": {
+    "requests": 1,
+    "by_method": {
+     "GET": 1
+    },
+    "bytes_up": 0,
+    "bytes_down": 598,
+    "status": {
+     "200": 1
+    }
+   },
+   "maint": {
+    "remote_before": {
+     "du_kib": 411840,
+     "apparent_kib": 411717,
+     "files": 16,
+     "dir": "/home/ubuntu/rt/walgitd-env/wb/rfdata/vcs/vcs_best-init0"
+    },
+    "dry_run": "4 pack(s) on the remote; 2 after compaction\n  would merge 3 packs\ndry run: nothing was changed\n",
+    "compact": {
+     "wall_ms": 712.4531600002229,
+     "client_cpu_s": 0.01400499999999738,
+     "srv_cpu_s": 0.0,
+     "rf_cpu_s": 0.06999999999999673,
+     "srv_rss_mib": 4.37109375,
+     "rf_rss_mib": 559.69140625,
+     "stdout": "4 pack(s) on the remote; 2 after compaction\n  merged 3 packs into packs/pack-b604d5d6e729e148ffbb71dfb50e947224b47e886afde7a392d2611dad1abfa6\nread 12 object(s) (0 duplicate(s) dropped), wrote 12; 22 request(s), 4494360 byte(s) read and 35491 written on the remote\n",
+     "proxy": {
+      "requests": 28,
+      "by_method": {
+       "PUT": 8,
+       "DELETE": 9,
+       "GET": 11
+      },
+      "bytes_up": 35511,
+      "bytes_down": 4497372,
+      "status": {
+       "200": 16,
+       "412": 2,
+       "204": 9,
+       "206": 1
+      }
+     }
+    },
+    "remote_after": {
+     "du_kib": 411816,
+     "apparent_kib": 411713,
+     "files": 12,
+     "dir": "/home/ubuntu/rt/walgitd-env/wb/rfdata/vcs/vcs_best-init0"
+    },
+    "client_before_kib": 421624,
+    "client": {
+     "repack_v3": {
+      "wall_ms": 4358.491427999979,
+      "client_cpu_s": 2.9090309999992314,
+      "srv_cpu_s": 0.009999999999999953,
+      "rf_cpu_s": 0.05000000000000071,
+      "srv_rss_mib": 4.3515625,
+      "rf_rss_mib": 549.12109375,
+      "stdout": "packed 8 object(s); rewrote 2 existing pack(s) as v3\n",
+      "proxy": {
+       "requests": 0,
+       "by_method": {},
+       "bytes_up": 0,
+       "bytes_down": 0,
+       "status": {}
+      },
+      "size_kib": 423176,
+      "fsck_ok": true
+     },
+     "repack_v4": {
+      "wall_ms": 6334.53955799996,
+      "client_cpu_s": 31.821045999999114,
+      "srv_cpu_s": 0.0,
+      "rf_cpu_s": 0.0,
+      "srv_rss_mib": 4.3515625,
+      "rf_rss_mib": 560.6953125,
+      "stdout": "packed 8 object(s); rewrote 2 existing pack(s) as v4\n",
+      "proxy": {
+       "requests": 0,
+       "by_method": {},
+       "bytes_up": 0,
+       "bytes_down": 0,
+       "status": {}
+      },
+      "size_kib": 420176,
+      "fsck_ok": true
+     }
+    }
+   },
+   "post_clone_full_facts": {
+    "checked_out_files": 100000,
+    "client_store_kib": 421572,
+    "client_store_apparent_kib": 421497
+   },
+   "post_clone_full_warm": {
+    "wall_ms": {
+     "runs": [
+      7927.5510480001685
+     ],
+     "median": 7927.5510480001685,
+     "min": 7927.5510480001685,
+     "max": 7927.5510480001685
+    },
+    "client_cpu_s": {
+     "runs": [
+      10.132370999999694
+     ],
+     "median": 10.132370999999694,
+     "min": 10.132370999999694,
+     "max": 10.132370999999694
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.8300000000000001
+     ],
+     "median": 0.8300000000000001,
+     "min": 0.8300000000000001,
+     "max": 0.8300000000000001
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.5800000000000018
+     ],
+     "median": 0.5800000000000018,
+     "min": 0.5800000000000018,
+     "max": 0.5800000000000018
+    },
+    "srv_rss_mib": {
+     "runs": [
+      327.6328125
+     ],
+     "median": 327.6328125,
+     "min": 327.6328125,
+     "max": 327.6328125
+    },
+    "rf_rss_mib": {
+     "runs": [
+      721.09375
+     ],
+     "median": 721.09375,
+     "min": 721.09375,
+     "max": 721.09375
+    }
+   },
+   "post_clone_full_warm_proxy": {
+    "requests": 63,
+    "by_method": {
+     "GET": 62,
+     "HEAD": 1
+    },
+    "bytes_up": 0,
+    "bytes_down": 421575823,
+    "status": {
+     "200": 7,
+     "206": 55,
+     "304": 1
+    }
+   },
+   "post_clone_full_cold": {
+    "wall_ms": {
+     "runs": [
+      6675.595720998899
+     ],
+     "median": 6675.595720998899,
+     "min": 6675.595720998899,
+     "max": 6675.595720998899
+    },
+    "client_cpu_s": {
+     "runs": [
+      7.49677900000097
+     ],
+     "median": 7.49677900000097,
+     "min": 7.49677900000097,
+     "max": 7.49677900000097
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.65
+     ],
+     "median": 0.65,
+     "min": 0.65,
+     "max": 0.65
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.5799999999999983
+     ],
+     "median": 0.5799999999999983,
+     "min": 0.5799999999999983,
+     "max": 0.5799999999999983
+    },
+    "srv_rss_mib": {
+     "runs": [
+      337.6484375
+     ],
+     "median": 337.6484375,
+     "min": 337.6484375,
+     "max": 337.6484375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      746.99609375
+     ],
+     "median": 746.99609375,
+     "min": 746.99609375,
+     "max": 746.99609375
+    }
+   },
+   "post_clone_full_cold_proxy": {
+    "requests": 59,
+    "by_method": {
+     "GET": 59
+    },
+    "bytes_up": 0,
+    "bytes_down": 421575155,
+    "status": {
+     "200": 4,
+     "206": 55
+    }
+   },
+   "post_clone_partial_facts": {
+    "checked_out_files": 10000,
+    "client_store_kib": 46144,
+    "client_store_apparent_kib": 46067
+   },
+   "post_clone_partial_warm": {
+    "wall_ms": {
+     "runs": [
+      741.535985000155
+     ],
+     "median": 741.535985000155,
+     "min": 741.535985000155,
+     "max": 741.535985000155
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.9928460000010091
+     ],
+     "median": 0.9928460000010091,
+     "min": 0.9928460000010091,
+     "max": 0.9928460000010091
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.07999999999999996
+     ],
+     "median": 0.07999999999999996,
+     "min": 0.07999999999999996,
+     "max": 0.07999999999999996
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.08999999999999986
+     ],
+     "median": 0.08999999999999986,
+     "min": 0.08999999999999986,
+     "max": 0.08999999999999986
+    },
+    "srv_rss_mib": {
+     "runs": [
+      317.3984375
+     ],
+     "median": 317.3984375,
+     "min": 317.3984375,
+     "max": 317.3984375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      758.3671875
+     ],
+     "median": 758.3671875,
+     "min": 758.3671875,
+     "max": 758.3671875
+    }
+   },
+   "post_clone_partial_warm_proxy": {
+    "requests": 13,
+    "by_method": {
+     "GET": 13
+    },
+    "bytes_up": 0,
+    "bytes_down": 54509342,
+    "status": {
+     "200": 4,
+     "206": 9
+    }
+   },
+   "post_clone_partial_cold": {
+    "wall_ms": {
+     "runs": [
+      1353.6497020013485
+     ],
+     "median": 1353.6497020013485,
+     "min": 1353.6497020013485,
+     "max": 1353.6497020013485
+    },
+    "client_cpu_s": {
+     "runs": [
+      1.2701639999995677
+     ],
+     "median": 1.2701639999995677,
+     "min": 1.2701639999995677,
+     "max": 1.2701639999995677
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.14
+     ],
+     "median": 0.14,
+     "min": 0.14,
+     "max": 0.14
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.10000000000000142
+     ],
+     "median": 0.10000000000000142,
+     "min": 0.10000000000000142,
+     "max": 0.10000000000000142
+    },
+    "srv_rss_mib": {
+     "runs": [
+      147.40234375
+     ],
+     "median": 147.40234375,
+     "min": 147.40234375,
+     "max": 147.40234375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      772.1328125
+     ],
+     "median": 772.1328125,
+     "min": 772.1328125,
+     "max": 772.1328125
+    }
+   },
+   "post_clone_partial_cold_proxy": {
+    "requests": 13,
+    "by_method": {
+     "GET": 13
+    },
+    "bytes_up": 0,
+    "bytes_down": 54509342,
+    "status": {
+     "200": 4,
+     "206": 9
+    }
+   },
+   "post_fetch_1_warm": {
+    "wall_ms": {
+     "runs": [
+      160.85644800114096
+     ],
+     "median": 160.85644800114096,
+     "min": 160.85644800114096,
+     "max": 160.85644800114096
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.01880200000050536
+     ],
+     "median": 0.01880200000050536,
+     "min": 0.01880200000050536,
+     "max": 0.01880200000050536
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.00999999999999801
+     ],
+     "median": 0.00999999999999801,
+     "min": 0.00999999999999801,
+     "max": 0.00999999999999801
+    },
+    "srv_rss_mib": {
+     "runs": [
+      67.75
+     ],
+     "median": 67.75,
+     "min": 67.75,
+     "max": 67.75
+    },
+    "rf_rss_mib": {
+     "runs": [
+      656.59765625
+     ],
+     "median": 656.59765625,
+     "min": 656.59765625,
+     "max": 656.59765625
+    }
+   },
+   "post_fetch_1_warm_proxy": {
+    "requests": 2,
+    "by_method": {
+     "GET": 2
+    },
+    "bytes_up": 0,
+    "bytes_down": 2577,
+    "status": {
+     "200": 2
+    }
+   },
+   "post_fetch_1_cold": {
+    "wall_ms": {
+     "runs": [
+      260.3340079986083
+     ],
+     "median": 260.3340079986083,
+     "min": 260.3340079986083,
+     "max": 260.3340079986083
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.022714999999152496
+     ],
+     "median": 0.022714999999152496,
+     "min": 0.022714999999152496,
+     "max": 0.022714999999152496
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": {
+     "runs": [
+      4.38671875
+     ],
+     "median": 4.38671875,
+     "min": 4.38671875,
+     "max": 4.38671875
+    },
+    "rf_rss_mib": {
+     "runs": [
+      669.19140625
+     ],
+     "median": 669.19140625,
+     "min": 669.19140625,
+     "max": 669.19140625
+    }
+   },
+   "post_fetch_1_cold_proxy": {
+    "requests": 4,
+    "by_method": {
+     "GET": 4
+    },
+    "bytes_up": 0,
+    "bytes_down": 11578,
+    "status": {
+     "200": 3,
+     "206": 1
+    }
+   },
+   "post_fetch_noop_warm": {
+    "wall_ms": {
+     "runs": [
+      43.44189900075435
+     ],
+     "median": 43.44189900075435,
+     "min": 43.44189900075435,
+     "max": 43.44189900075435
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.00355900000067777
+     ],
+     "median": 0.00355900000067777,
+     "min": 0.00355900000067777,
+     "max": 0.00355900000067777
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": {
+     "runs": [
+      4.38671875
+     ],
+     "median": 4.38671875,
+     "min": 4.38671875,
+     "max": 4.38671875
+    },
+    "rf_rss_mib": {
+     "runs": [
+      669.25
+     ],
+     "median": 669.25,
+     "min": 669.25,
+     "max": 669.25
+    }
+   },
+   "post_fetch_noop_warm_proxy": {
+    "requests": 1,
+    "by_method": {
+     "GET": 1
+    },
+    "bytes_up": 0,
+    "bytes_down": 662,
+    "status": {
+     "200": 1
+    }
+   },
+   "post_fetch_noop_cold": {
+    "wall_ms": {
+     "runs": [
+      76.42316999954346
+     ],
+     "median": 76.42316999954346,
+     "min": 76.42316999954346,
+     "max": 76.42316999954346
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.006741000001056818
+     ],
+     "median": 0.006741000001056818,
+     "min": 0.006741000001056818,
+     "max": 0.006741000001056818
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.010000000000001563
+     ],
+     "median": 0.010000000000001563,
+     "min": 0.010000000000001563,
+     "max": 0.010000000000001563
+    },
+    "srv_rss_mib": {
+     "runs": [
+      4.2890625
+     ],
+     "median": 4.2890625,
+     "min": 4.2890625,
+     "max": 4.2890625
+    },
+    "rf_rss_mib": {
+     "runs": [
+      665.125
+     ],
+     "median": 665.125,
+     "min": 665.125,
+     "max": 665.125
+    }
+   },
+   "post_fetch_noop_cold_proxy": {
+    "requests": 1,
+    "by_method": {
+     "GET": 1
+    },
+    "bytes_up": 0,
+    "bytes_down": 662,
+    "status": {
+     "200": 1
+    }
+   }
+  },
+  "vcs_fast": {
+   "store_after_init": {
+    "du_kib": 410076,
+    "apparent_kib": 410009,
+    "files": 7,
+    "dir": "/home/ubuntu/rt/walgitd-env/wb/rfdata/vcs/vcs_fast-init0"
+   },
+   "init_push": {
+    "wall_ms": {
+     "runs": [
+      8496.688853001615
+     ],
+     "median": 8496.688853001615,
+     "min": 8496.688853001615,
+     "max": 8496.688853001615
+    },
+    "client_cpu_s": {
+     "runs": [
+      1.2099879999999814
+     ],
+     "median": 1.2099879999999814,
+     "min": 1.2099879999999814,
+     "max": 1.2099879999999814
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.82
+     ],
+     "median": 0.82,
+     "min": 0.82,
+     "max": 0.82
+    },
+    "rf_cpu_s": {
+     "runs": [
+      1.75
+     ],
+     "median": 1.75,
+     "min": 1.75,
+     "max": 1.75
+    },
+    "srv_rss_mib": {
+     "runs": [
+      516.109375
+     ],
+     "median": 516.109375,
+     "min": 516.109375,
+     "max": 516.109375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      319.265625
+     ],
+     "median": 319.265625,
+     "min": 319.265625,
+     "max": 319.265625
+    }
+   },
+   "init_push_stdout": "ecb1f986\ng2/main (none) -> 209a9d9da844\ng3/main (none) -> 256754e5d4cd\ng4/main (none) -> 7ae8d93d912a\ng5/main (none) -> 1d9bf7ff105f\ng6/main (none) -> 186707c96246\ng7/main (none) -> 7d37106365d1\ng8/main (none) -> 148a04985e21\ng9/main (none) -> 693788f3ef01\npublished atomically (remote generation 1)\n",
+   "init_push_proxy": {
+    "requests": 9,
+    "by_method": {
+     "GET": 2,
+     "PUT": 7
+    },
+    "bytes_up": 419833507,
+    "bytes_down": 556,
+    "status": {
+     "404": 3,
+     "200": 6
+    }
+   },
+   "inc_push": {
+    "wall_ms": {
+     "runs": [
+      197.4431229991751
+     ],
+     "median": 197.4431229991751,
+     "min": 197.4431229991751,
+     "max": 197.4431229991751
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.004446000000001504
+     ],
+     "median": 0.004446000000001504,
+     "min": 0.004446000000001504,
+     "max": 0.004446000000001504
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.03000000000000025
+     ],
+     "median": 0.03000000000000025,
+     "min": 0.03000000000000025,
+     "max": 0.03000000000000025
+    },
+    "srv_rss_mib": {
+     "runs": [
+      4.39453125
+     ],
+     "median": 4.39453125,
+     "min": 4.39453125,
+     "max": 4.39453125
+    },
+    "rf_rss_mib": {
+     "runs": [
+      281.46484375
+     ],
+     "median": 281.46484375,
+     "min": 281.46484375,
+     "max": 281.46484375
+    }
+   },
+   "inc_push_proxy": {
+    "requests": 10,
+    "by_method": {
+     "GET": 4,
+     "PUT": 5,
+     "HEAD": 1
+    },
+    "bytes_up": 13582,
+    "bytes_down": 2690,
+    "status": {
+     "200": 8,
+     "404": 2
+    }
+   },
+   "clone_full_facts": {
+    "checked_out_files": 100000,
+    "client_store_kib": 421560,
+    "client_store_apparent_kib": 421478
+   },
+   "clone_full_warm": {
+    "wall_ms": {
+     "runs": [
+      7204.196678998414
+     ],
+     "median": 7204.196678998414,
+     "min": 7204.196678998414,
+     "max": 7204.196678998414
+    },
+    "client_cpu_s": {
+     "runs": [
+      9.917832000000004
+     ],
+     "median": 9.917832000000004,
+     "min": 9.917832000000004,
+     "max": 9.917832000000004
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.68
+     ],
+     "median": 0.68,
+     "min": 0.68,
+     "max": 0.68
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.4900000000000002
+     ],
+     "median": 0.4900000000000002,
+     "min": 0.4900000000000002,
+     "max": 0.4900000000000002
+    },
+    "srv_rss_mib": {
+     "runs": [
+      320.80078125
+     ],
+     "median": 320.80078125,
+     "min": 320.80078125,
+     "max": 320.80078125
+    },
+    "rf_rss_mib": {
+     "runs": [
+      488.25390625
+     ],
+     "median": 488.25390625,
+     "min": 488.25390625,
+     "max": 488.25390625
+    }
+   },
+   "clone_full_warm_proxy": {
+    "requests": 60,
+    "by_method": {
+     "GET": 59,
+     "HEAD": 1
+    },
+    "bytes_up": 0,
+    "bytes_down": 419834739,
+    "status": {
+     "200": 6,
+     "206": 53,
+     "304": 1
+    }
+   },
+   "clone_full_cold": {
+    "wall_ms": {
+     "runs": [
+      6870.27979099912
+     ],
+     "median": 6870.27979099912,
+     "min": 6870.27979099912,
+     "max": 6870.27979099912
+    },
+    "client_cpu_s": {
+     "runs": [
+      7.34720799999991
+     ],
+     "median": 7.34720799999991,
+     "min": 7.34720799999991,
+     "max": 7.34720799999991
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.58
+     ],
+     "median": 0.58,
+     "min": 0.58,
+     "max": 0.58
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.5600000000000005
+     ],
+     "median": 0.5600000000000005,
+     "min": 0.5600000000000005,
+     "max": 0.5600000000000005
+    },
+    "srv_rss_mib": {
+     "runs": [
+      324.53125
+     ],
+     "median": 324.53125,
+     "min": 324.53125,
+     "max": 324.53125
+    },
+    "rf_rss_mib": {
+     "runs": [
+      638.7421875
+     ],
+     "median": 638.7421875,
+     "min": 638.7421875,
+     "max": 638.7421875
+    }
+   },
+   "clone_full_cold_proxy": {
+    "requests": 61,
+    "by_method": {
+     "GET": 61
+    },
+    "bytes_up": 0,
+    "bytes_down": 419847000,
+    "status": {
+     "200": 4,
+     "206": 57
+    }
+   },
+   "clone_partial_facts": {
+    "checked_out_files": 10000,
+    "client_store_kib": 46144,
+    "client_store_apparent_kib": 46064
+   },
+   "clone_partial_warm": {
+    "wall_ms": {
+     "runs": [
+      1092.6519360000384
+     ],
+     "median": 1092.6519360000384,
+     "min": 1092.6519360000384,
+     "max": 1092.6519360000384
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.9060719999997673
+     ],
+     "median": 0.9060719999997673,
+     "min": 0.9060719999997673,
+     "max": 0.9060719999997673
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.07000000000000006
+     ],
+     "median": 0.07000000000000006,
+     "min": 0.07000000000000006,
+     "max": 0.07000000000000006
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.08000000000000007
+     ],
+     "median": 0.08000000000000007,
+     "min": 0.08000000000000007,
+     "max": 0.08000000000000007
+    },
+    "srv_rss_mib": {
+     "runs": [
+      247.51171875
+     ],
+     "median": 247.51171875,
+     "min": 247.51171875,
+     "max": 247.51171875
+    },
+    "rf_rss_mib": {
+     "runs": [
+      635.890625
+     ],
+     "median": 635.890625,
+     "min": 635.890625,
+     "max": 635.890625
+    }
+   },
+   "clone_partial_warm_proxy": {
+    "requests": 25,
+    "by_method": {
+     "GET": 25
+    },
+    "bytes_up": 0,
+    "bytes_down": 50469716,
+    "status": {
+     "200": 4,
+     "206": 21
+    }
+   },
+   "clone_partial_cold": {
+    "wall_ms": {
+     "runs": [
+      587.2446030007268
+     ],
+     "median": 587.2446030007268,
+     "min": 587.2446030007268,
+     "max": 587.2446030007268
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.8739450000000488
+     ],
+     "median": 0.8739450000000488,
+     "min": 0.8739450000000488,
+     "max": 0.8739450000000488
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.07
+     ],
+     "median": 0.07,
+     "min": 0.07,
+     "max": 0.07
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.09999999999999964
+     ],
+     "median": 0.09999999999999964,
+     "min": 0.09999999999999964,
+     "max": 0.09999999999999964
+    },
+    "srv_rss_mib": {
+     "runs": [
+      94.7578125
+     ],
+     "median": 94.7578125,
+     "min": 94.7578125,
+     "max": 94.7578125
+    },
+    "rf_rss_mib": {
+     "runs": [
+      646.7109375
+     ],
+     "median": 646.7109375,
+     "min": 646.7109375,
+     "max": 646.7109375
+    }
+   },
+   "clone_partial_cold_proxy": {
+    "requests": 25,
+    "by_method": {
+     "GET": 25
+    },
+    "bytes_up": 0,
+    "bytes_down": 50469716,
+    "status": {
+     "200": 4,
+     "206": 21
+    }
+   },
+   "fetch_1_warm": {
+    "wall_ms": {
+     "runs": [
+      182.69595300080255
+     ],
+     "median": 182.69595300080255,
+     "min": 182.69595300080255,
+     "max": 182.69595300080255
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.023447000000032858
+     ],
+     "median": 0.023447000000032858,
+     "min": 0.023447000000032858,
+     "max": 0.023447000000032858
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": {
+     "runs": [
+      98.36328125
+     ],
+     "median": 98.36328125,
+     "min": 98.36328125,
+     "max": 98.36328125
+    },
+    "rf_rss_mib": {
+     "runs": [
+      573.40625
+     ],
+     "median": 573.40625,
+     "min": 573.40625,
+     "max": 573.40625
+    }
+   },
+   "fetch_1_warm_proxy": {
+    "requests": 2,
+    "by_method": {
+     "GET": 2
+    },
+    "bytes_up": 0,
+    "bytes_down": 2511,
+    "status": {
+     "200": 2
+    }
+   },
+   "fetch_1_cold": {
+    "wall_ms": {
+     "runs": [
+      322.1552489994792
+     ],
+     "median": 322.1552489994792,
+     "min": 322.1552489994792,
+     "max": 322.1552489994792
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.0277419999997619
+     ],
+     "median": 0.0277419999997619,
+     "min": 0.0277419999997619,
+     "max": 0.0277419999997619
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.010000000000001563
+     ],
+     "median": 0.010000000000001563,
+     "min": 0.010000000000001563,
+     "max": 0.010000000000001563
+    },
+    "srv_rss_mib": {
+     "runs": [
+      4.3359375
+     ],
+     "median": 4.3359375,
+     "min": 4.3359375,
+     "max": 4.3359375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      546.8515625
+     ],
+     "median": 546.8515625,
+     "min": 546.8515625,
+     "max": 546.8515625
+    }
+   },
+   "fetch_1_cold_proxy": {
+    "requests": 5,
+    "by_method": {
+     "GET": 5
+    },
+    "bytes_up": 0,
+    "bytes_down": 11893,
+    "status": {
+     "200": 3,
+     "206": 2
+    }
+   },
+   "fetch_noop_warm": {
+    "wall_ms": {
+     "runs": [
+      5.3445650009962264
+     ],
+     "median": 5.3445650009962264,
+     "min": 5.3445650009962264,
+     "max": 5.3445650009962264
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.00310300000001007
+     ],
+     "median": 0.00310300000001007,
+     "min": 0.00310300000001007,
+     "max": 0.00310300000001007
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": {
+     "runs": [
+      4.3359375
+     ],
+     "median": 4.3359375,
+     "min": 4.3359375,
+     "max": 4.3359375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      546.8515625
+     ],
+     "median": 546.8515625,
+     "min": 546.8515625,
+     "max": 546.8515625
+    }
+   },
+   "fetch_noop_warm_proxy": {
+    "requests": 1,
+    "by_method": {
+     "GET": 1
+    },
+    "bytes_up": 0,
+    "bytes_down": 598,
+    "status": {
+     "200": 1
+    }
+   },
+   "fetch_noop_cold": {
+    "wall_ms": {
+     "runs": [
+      83.80747500086727
+     ],
+     "median": 83.80747500086727,
+     "min": 83.80747500086727,
+     "max": 83.80747500086727
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.006873000000041429
+     ],
+     "median": 0.006873000000041429,
+     "min": 0.006873000000041429,
+     "max": 0.006873000000041429
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": {
+     "runs": [
+      4.37890625
+     ],
+     "median": 4.37890625,
+     "min": 4.37890625,
+     "max": 4.37890625
+    },
+    "rf_rss_mib": {
+     "runs": [
+      651.0703125
+     ],
+     "median": 651.0703125,
+     "min": 651.0703125,
+     "max": 651.0703125
+    }
+   },
+   "fetch_noop_cold_proxy": {
+    "requests": 1,
+    "by_method": {
+     "GET": 1
+    },
+    "bytes_up": 0,
+    "bytes_down": 598,
+    "status": {
+     "200": 1
+    }
+   },
+   "maint": {
+    "remote_before": {
+     "du_kib": 410184,
+     "apparent_kib": 410053,
+     "files": 16,
+     "dir": "/home/ubuntu/rt/walgitd-env/wb/rfdata/vcs/vcs_fast-init0"
+    },
+    "dry_run": "4 pack(s) on the remote; 2 after compaction\n  would merge 3 packs\ndry run: nothing was changed\n",
+    "compact": {
+     "wall_ms": 711.8666780006606,
+     "client_cpu_s": 0.015404999999645952,
+     "srv_cpu_s": 0.0,
+     "rf_cpu_s": 0.07000000000000028,
+     "srv_rss_mib": 4.37890625,
+     "rf_rss_mib": 564.94921875,
+     "stdout": "4 pack(s) on the remote; 2 after compaction\n  merged 3 packs into packs/pack-ddf6891eb2a3332481df377cb50547d84dac74b225e4dfad9dadb8ae8e22d4a4\nread 12 object(s) (0 duplicate(s) dropped), wrote 12; 22 request(s), 4493279 byte(s) read and 38615 written on the remote\n",
+     "proxy": {
+      "requests": 28,
+      "by_method": {
+       "PUT": 8,
+       "DELETE": 9,
+       "GET": 11
+      },
+      "bytes_up": 38635,
+      "bytes_down": 4496288,
+      "status": {
+       "200": 16,
+       "412": 2,
+       "204": 9,
+       "206": 1
+      }
+     }
+    },
+    "remote_after": {
+     "du_kib": 410152,
+     "apparent_kib": 410050,
+     "files": 12,
+     "dir": "/home/ubuntu/rt/walgitd-env/wb/rfdata/vcs/vcs_fast-init0"
+    },
+    "client_before_kib": 421628,
+    "client": {
+     "repack_v1": {
+      "wall_ms": 3845.527319001121,
+      "client_cpu_s": 1.3777979999995296,
+      "srv_cpu_s": 0.0,
+      "rf_cpu_s": 0.0,
+      "srv_rss_mib": 4.2734375,
+      "rf_rss_mib": 569.69140625,
+      "stdout": "packed 8 object(s); rewrote 2 existing pack(s) as v1\n",
+      "proxy": {
+       "requests": 0,
+       "by_method": {},
+       "bytes_up": 0,
+       "bytes_down": 0,
+       "status": {}
+      },
+      "size_kib": 421512,
+      "fsck_ok": true
+     }
+    }
+   },
+   "post_clone_full_facts": {
+    "checked_out_files": 100000,
+    "client_store_kib": 421576,
+    "client_store_apparent_kib": 421495
+   },
+   "post_clone_full_warm": {
+    "wall_ms": {
+     "runs": [
+      13463.324579999608
+     ],
+     "median": 13463.324579999608,
+     "min": 13463.324579999608,
+     "max": 13463.324579999608
+    },
+    "client_cpu_s": {
+     "runs": [
+      7.769506000000547
+     ],
+     "median": 7.769506000000547,
+     "min": 7.769506000000547,
+     "max": 7.769506000000547
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.61
+     ],
+     "median": 0.61,
+     "min": 0.61,
+     "max": 0.61
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.5300000000000011
+     ],
+     "median": 0.5300000000000011,
+     "min": 0.5300000000000011,
+     "max": 0.5300000000000011
+    },
+    "srv_rss_mib": {
+     "runs": [
+      356.1796875
+     ],
+     "median": 356.1796875,
+     "min": 356.1796875,
+     "max": 356.1796875
+    },
+    "rf_rss_mib": {
+     "runs": [
+      722.7109375
+     ],
+     "median": 722.7109375,
+     "min": 722.7109375,
+     "max": 722.7109375
+    }
+   },
+   "post_clone_full_warm_proxy": {
+    "requests": 67,
+    "by_method": {
+     "GET": 62,
+     "PUT": 4,
+     "HEAD": 1
+    },
+    "bytes_up": 336,
+    "bytes_down": 419872698,
+    "status": {
+     "200": 9,
+     "206": 57,
+     "304": 1
+    }
+   },
+   "post_clone_full_cold": {
+    "wall_ms": {
+     "runs": [
+      6661.275636000937
+     ],
+     "median": 6661.275636000937,
+     "min": 6661.275636000937,
+     "max": 6661.275636000937
+    },
+    "client_cpu_s": {
+     "runs": [
+      7.541748999998163
+     ],
+     "median": 7.541748999998163,
+     "min": 7.541748999998163,
+     "max": 7.541748999998163
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.64
+     ],
+     "median": 0.64,
+     "min": 0.64,
+     "max": 0.64
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.5899999999999999
+     ],
+     "median": 0.5899999999999999,
+     "min": 0.5899999999999999,
+     "max": 0.5899999999999999
+    },
+    "srv_rss_mib": {
+     "runs": [
+      331.953125
+     ],
+     "median": 331.953125,
+     "min": 331.953125,
+     "max": 331.953125
+    },
+    "rf_rss_mib": {
+     "runs": [
+      742.75
+     ],
+     "median": 742.75,
+     "min": 742.75,
+     "max": 742.75
+    }
+   },
+   "post_clone_full_cold_proxy": {
+    "requests": 61,
+    "by_method": {
+     "GET": 61
+    },
+    "bytes_up": 0,
+    "bytes_down": 419872698,
+    "status": {
+     "200": 4,
+     "206": 57
+    }
+   },
+   "post_clone_partial_facts": {
+    "checked_out_files": 10000,
+    "client_store_kib": 46144,
+    "client_store_apparent_kib": 46065
+   },
+   "post_clone_partial_warm": {
+    "wall_ms": {
+     "runs": [
+      1079.7607619988412
+     ],
+     "median": 1079.7607619988412,
+     "min": 1079.7607619988412,
+     "max": 1079.7607619988412
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.9189009999990958
+     ],
+     "median": 0.9189009999990958,
+     "min": 0.9189009999990958,
+     "max": 0.9189009999990958
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.05999999999999994
+     ],
+     "median": 0.05999999999999994,
+     "min": 0.05999999999999994,
+     "max": 0.05999999999999994
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.10000000000000142
+     ],
+     "median": 0.10000000000000142,
+     "min": 0.10000000000000142,
+     "max": 0.10000000000000142
+    },
+    "srv_rss_mib": {
+     "runs": [
+      240.46484375
+     ],
+     "median": 240.46484375,
+     "min": 240.46484375,
+     "max": 240.46484375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      764.515625
+     ],
+     "median": 764.515625,
+     "min": 764.515625,
+     "max": 764.515625
+    }
+   },
+   "post_clone_partial_warm_proxy": {
+    "requests": 25,
+    "by_method": {
+     "GET": 25
+    },
+    "bytes_up": 0,
+    "bytes_down": 50470132,
+    "status": {
+     "200": 4,
+     "206": 21
+    }
+   },
+   "post_clone_partial_cold": {
+    "wall_ms": {
+     "runs": [
+      1163.6617629992543
+     ],
+     "median": 1163.6617629992543,
+     "min": 1163.6617629992543,
+     "max": 1163.6617629992543
+    },
+    "client_cpu_s": {
+     "runs": [
+      1.1267079999997804
+     ],
+     "median": 1.1267079999997804,
+     "min": 1.1267079999997804,
+     "max": 1.1267079999997804
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.09
+     ],
+     "median": 0.09,
+     "min": 0.09,
+     "max": 0.09
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.08000000000000185
+     ],
+     "median": 0.08000000000000185,
+     "min": 0.08000000000000185,
+     "max": 0.08000000000000185
+    },
+    "srv_rss_mib": {
+     "runs": [
+      95.5390625
+     ],
+     "median": 95.5390625,
+     "min": 95.5390625,
+     "max": 95.5390625
+    },
+    "rf_rss_mib": {
+     "runs": [
+      774.24609375
+     ],
+     "median": 774.24609375,
+     "min": 774.24609375,
+     "max": 774.24609375
+    }
+   },
+   "post_clone_partial_cold_proxy": {
+    "requests": 25,
+    "by_method": {
+     "GET": 25
+    },
+    "bytes_up": 0,
+    "bytes_down": 50470132,
+    "status": {
+     "200": 4,
+     "206": 21
+    }
+   },
+   "post_fetch_1_warm": {
+    "wall_ms": {
+     "runs": [
+      197.32456800011278
+     ],
+     "median": 197.32456800011278,
+     "min": 197.32456800011278,
+     "max": 197.32456800011278
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.023736000001008506
+     ],
+     "median": 0.023736000001008506,
+     "min": 0.023736000001008506,
+     "max": 0.023736000001008506
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.00999999999999801
+     ],
+     "median": 0.00999999999999801,
+     "min": 0.00999999999999801,
+     "max": 0.00999999999999801
+    },
+    "srv_rss_mib": {
+     "runs": [
+      99.2421875
+     ],
+     "median": 99.2421875,
+     "min": 99.2421875,
+     "max": 99.2421875
+    },
+    "rf_rss_mib": {
+     "runs": [
+      656.625
+     ],
+     "median": 656.625,
+     "min": 656.625,
+     "max": 656.625
+    }
+   },
+   "post_fetch_1_warm_proxy": {
+    "requests": 2,
+    "by_method": {
+     "GET": 2
+    },
+    "bytes_up": 0,
+    "bytes_down": 2575,
+    "status": {
+     "200": 2
+    }
+   },
+   "post_fetch_1_cold": {
+    "wall_ms": {
+     "runs": [
+      322.27338300072006
+     ],
+     "median": 322.27338300072006,
+     "min": 322.27338300072006,
+     "max": 322.27338300072006
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.02814600000056089
+     ],
+     "median": 0.02814600000056089,
+     "min": 0.02814600000056089,
+     "max": 0.02814600000056089
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": {
+     "runs": [
+      4.41796875
+     ],
+     "median": 4.41796875,
+     "min": 4.41796875,
+     "max": 4.41796875
+    },
+    "rf_rss_mib": {
+     "runs": [
+      669.24609375
+     ],
+     "median": 669.24609375,
+     "min": 669.24609375,
+     "max": 669.24609375
+    }
+   },
+   "post_fetch_1_cold_proxy": {
+    "requests": 5,
+    "by_method": {
+     "GET": 5
+    },
+    "bytes_up": 0,
+    "bytes_down": 11957,
+    "status": {
+     "200": 3,
+     "206": 2
+    }
+   },
+   "post_fetch_noop_warm": {
+    "wall_ms": {
+     "runs": [
+      8.94092099952104
+     ],
+     "median": 8.94092099952104,
+     "min": 8.94092099952104,
+     "max": 8.94092099952104
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.0033100000000558794
+     ],
+     "median": 0.0033100000000558794,
+     "min": 0.0033100000000558794,
+     "max": 0.0033100000000558794
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": {
+     "runs": [
+      4.41796875
+     ],
+     "median": 4.41796875,
+     "min": 4.41796875,
+     "max": 4.41796875
+    },
+    "rf_rss_mib": {
+     "runs": [
+      669.25
+     ],
+     "median": 669.25,
+     "min": 669.25,
+     "max": 669.25
+    }
+   },
+   "post_fetch_noop_warm_proxy": {
+    "requests": 1,
+    "by_method": {
+     "GET": 1
+    },
+    "bytes_up": 0,
+    "bytes_down": 662,
+    "status": {
+     "200": 1
+    }
+   },
+   "post_fetch_noop_cold": {
+    "wall_ms": {
+     "runs": [
+      83.01304300039192
+     ],
+     "median": 83.01304300039192,
+     "min": 83.01304300039192,
+     "max": 83.01304300039192
+    },
+    "client_cpu_s": {
+     "runs": [
+      0.006777999999030726
+     ],
+     "median": 0.006777999999030726,
+     "min": 0.006777999999030726,
+     "max": 0.006777999999030726
+    },
+    "srv_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "rf_cpu_s": {
+     "runs": [
+      0.0
+     ],
+     "median": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "srv_rss_mib": {
+     "runs": [
+      4.375
+     ],
+     "median": 4.375,
+     "min": 4.375,
+     "max": 4.375
+    },
+    "rf_rss_mib": {
+     "runs": [
+      667.140625
+     ],
+     "median": 667.140625,
+     "min": 667.140625,
+     "max": 667.140625
+    }
+   },
+   "post_fetch_noop_cold_proxy": {
+    "requests": 1,
+    "by_method": {
+     "GET": 1
+    },
+    "bytes_up": 0,
+    "bytes_down": 662,
+    "status": {
+     "200": 1
+    }
+   }
+  }
+ }
+}
