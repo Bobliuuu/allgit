@@ -29,6 +29,23 @@ pub(crate) fn for_dir<'a>(dir: &Path, paths: impl Iterator<Item = &'a str>) -> u
     }
 }
 
+/// True when `VCS_CHECKOUT_ATOMIC=1` asks checkout to write every file through a temporary file and a
+/// rename, even a path known to be absent (the default creates those in place: no rename, one `fstat`).
+/// An escape hatch and the "before" arm of measurements. Read once.
+pub(crate) fn atomic_only() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("VCS_CHECKOUT_ATOMIC").is_ok_and(|v| v == "1"))
+}
+
+/// Threads for the first-scan `lstat` / content check of tracked files (at most 16).
+/// `VCS_STATUS_THREADS=N` overrides it (1 = the old single-threaded scan).
+pub(crate) fn status_threads() -> usize {
+    if let Some(n) = std::env::var("VCS_STATUS_THREADS").ok().and_then(|v| v.parse::<usize>().ok()) {
+        return n.max(1);
+    }
+    std::thread::available_parallelism().map_or(1, |n| n.get()).min(16)
+}
+
 /// True when `paths` (sorted) spread over more than one directory per `FILES_PER_DIR` files.
 fn dir_heavy<'a>(paths: impl Iterator<Item = &'a str>) -> bool {
     let (mut files, mut dirs, mut last) = (0usize, 0usize, None::<&str>);
