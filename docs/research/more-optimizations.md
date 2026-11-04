@@ -33,12 +33,12 @@ Gain is on our own cases. "Measured" means a number in this document; everything
 |---|---|---|---|---|---|
 | 1 | Drop CoreServices from the main binary (A) | 1.2-2 ms CPU on every command (-30% on small ones) | **done, measured** | done | missing `vcs-watchd` disables the watcher |
 | 2 | Fat LTO + cgu=1 (B) | 2-8% CPU, -35% size | **done, measured** | done | build time +50% |
-| 3 | PGO (`-Cprofile-generate` on the scoreboard workload, `llvm-profdata`) on top of LTO | not measured (needs a representative training run in CI; typical 5-15% on branchy code) | issue | 2-3 days (CI pipeline) | profile staleness |
+| 3 | PGO (`-Cprofile-generate` on the scoreboard workload, `llvm-profdata`) on top of LTO | **measured: no gain** (-1.3% .. +0.9% CPU, inside noise; see follow-up below) | **script shipped, not adopted** (#505) | done | profile staleness |
 | 4 | Remaining startup: 2.8 vs 2.6 ms floor means the Rust side is already near the floor on this host; what is left is dyld of libiconv (pulled by std/unicode-normalization users) | <= 0.3 ms | not worth an issue | | |
 | 5 | `panic = "abort"` | measured with the LTO row: no visible gain beyond LTO on these commands (-0.3 MB size) | **rejected**: kills `vcs-server` on any handler panic | | |
-| 6 | mimalloc/jemalloc | not measured; processes live 3-10 ms and allocate little, so allocator init and arena warmup would eat the gain; only the long-running server/gc/clone paths could benefit | issue (measure on clone/gc) | 1 day | extra dependency, `unsafe` global allocator |
+| 6 | mimalloc/jemalloc | **measured: no consistent win, server +19..23% CPU worse** (follow-up below) | **rejected** (#508) | done | |
 | 7 | Command-level fast path for `status`/`diff` on the 20k repo: 8.6 ms CPU is now 6 ms above the process floor; remaining cost is index decode + stat of every file (see #493 mmap index, #294) | 2-3x on status/add | existing issues | | |
-| 8 | `getattrlistbulk` (macOS) / `statx` via io_uring (Linux) for directory scans: one syscall per directory instead of lstat per file | estimate: first scan sys time (7.5 s of 5.8 s wall scan at 100k files in `10x-opportunities.md`) could drop 2-4x | issue | 1 week | platform code, unsafe |
+| 8 | `getattrlistbulk` (macOS) / `statx` via io_uring (Linux) for directory scans: one syscall per directory instead of lstat per file | **macOS measured: status -23%, diff -43% CPU at 100k files**; Linux not done (cannot be measured here) | **macOS done** (#506) | done | platform code, unsafe |
 | 9 | Bloom filter of changed paths per commit (commit-graph extension) for `log -- path` / `blame` | not measured; git's changed-path Bloom gives 5-10x on deep history path log | **done (filters existed; gc builds them eagerly, see history-walks.md)** | | |
 | 10 | Multi-pack index analog and geometric repack | `gc` 1.8x loss; see 10x idea 9 | existing idea | 1-2 weeks | compaction correctness |
 | 11 | Reachability bitmaps | fetch has no have/want walk; local gc mark 17.9 s -> 0.48 s CPU at 100k commits (docs/gc.md) | **done for gc mark** | 2-3 weeks | format |
@@ -49,3 +49,79 @@ Gain is on our own cases. "Measured" means a number in this document; everything
 
 Not measured and why: Linux perf/samply is unavailable locally and the Linux box is off limits (no AWS). Numbers above are
 macOS only; the CoreServices win (A) does not exist on Linux, the LTO win (B) should.
+
+## Follow-up: PGO, allocators, bulk directory stat (issues #505, #508, #506)
+
+Method: `scripts/pgo/ab.py` (new). 100,000-file flat repo from `datagen` (1000 dirs x 100 files), 5 small commits, no
+watcher (`VCS_NO_AUTOWATCH=1 VCS_NO_FSMONITOR=1`, so `status`/`diff` are real cold scans), every variant runs once per round in
+shuffled order, CPU time = user+sys of the child from `wait4` rusage, warmup round dropped, median and MAD% reported.
+macOS arm64, 10 cores. Load average is noted per table; the allocator runs were under load 50-75 (other agents), the
+PGO and bulk-stat confirmation runs under load 3-6. Linux and AWS were not used.
+
+### #506 getattrlistbulk: adopted (macOS)
+
+`StatCursor` (used by the sorted-path stat loops of `status`, `diff`, and `add`) reads a directory with one
+`getattrlistbulk(2)` after 8 files of it were stat-ed one by one, and answers the remaining lookups from that map. Entries it
+cannot describe exactly as `fstatat` does (symlinks, directories, devices, a missing attribute) are left out and fall back to
+`fstatat`. `VCS_BULKSTAT=0` disables it. Equivalence test: `stat_seq_bulk_matches_std` compares against `symlink_metadata`
+for files (executable, empty, non-ASCII names), a symlink, a directory, missing paths, big and small directories, twice.
+CPU ms, median of 21 interleaved runs, load 3-5, MAD 1-3%:
+
+| scenario | before (main) | after | same binary, `VCS_BULKSTAT=0` |
+|---|---|---|---|
+| `status` (clean) | 1316 | **1017 (-22.7%)** | 1305 (-0.9%) |
+| `status` (1% dirty) | 1306 | **1018 (-22.1%)** | 1338 (+2.4%) |
+| `diff` | 769 | **437 (-43.3%)** | 764 (-0.7%) |
+| `add .` (no change) | 1183 | 1196 (+1.1%, noise) | 1196 |
+| `--version` (startup floor) | 2.9 | 2.9 | 2.8 |
+
+Linux: `statx` has no per-directory form, and the io_uring batching variant could not be built or timed here (no Linux box, no
+AWS), so Linux keeps `fstatat`; the `cfg(target_os = "macos")` gate leaves that path untouched. Not measured, not claimed.
+
+### #505 PGO: script shipped, not adopted
+
+`scripts/pgo/pgo-build.sh [OUT_DIR]` is the reproducible flow: instrumented build (`-Cprofile-generate`, explicit `--target` so
+build scripts stay uninstrumented), training = `scripts/pgo/ab.py` scenarios on a generated 100k-file repo (floor, status,
+dirty status, add, diff, log, clone, gc, client + `vcs-server` over HTTP), `llvm-profdata merge` using the toolchain's own
+copy (`rustup component add llvm-tools`; a system llvm-profdata of another major version rejects the profile), then the
+optimized build (`-Cprofile-use`). No CI, no checked-in profile (it is tied to the exact source and rustc). Release recipe:
+
+```
+rustup component add llvm-tools
+scripts/pgo/pgo-build.sh dist/        # ~3 release builds of CPU time; vcs, vcs-watchd, vcs-server land in dist/
+```
+
+Result, PGO vs the same source built without it (CPU ms, 21 runs for the first six rows, 5 for clone/gc, load 5-6):
+
+| scenario | no PGO | PGO | delta |
+|---|---|---|---|
+| `--version` | 2.9 | 2.8 | -1.0% |
+| `log --oneline` | 3.8 | 3.8 | -0.1% |
+| `status` | 751.6 | 758.8 | +0.9% |
+| `status` (1% dirty) | 722.7 | 720.5 | -0.3% |
+| `add .` | 1201.5 | 1186.1 | -1.3% |
+| `diff` | 467.3 | 466.0 | -0.3% |
+| `clone` (file remote) | 37554 | 37761 | +0.6% |
+| `gc` | 983.6 | 979.6 | -0.4% |
+
+Every delta is inside the 1-7% MAD. The big commands are syscall-bound (sys time dominates, see the bulk-stat table) and the
+small ones are at the process-start floor, so there is little branchy user code left for PGO to improve. Not adopted; the
+script stays so the question can be re-run when the hot paths change.
+
+### #508 mimalloc / jemalloc: rejected
+
+Both were built as opt-in cargo features on `vcs` and `vcs-server` (fat LTO, same flags), then removed again. CPU ms,
+interleaved, load 50-75, 7 runs (server: 5 runs, load 7-22):
+
+| scenario | system allocator | mimalloc | jemalloc |
+|---|---|---|---|
+| `--version` | 7.3 | 6.2 (-15%, MAD 18% on base) | 6.1 (-16%, MAD 29%) |
+| `status` | 1628 (MAD 50%) | 1832 (+12.5%) | 1599 (-1.8%) |
+| `clone` (100k files) | 31977 | 34306 (+7.3%) | 28534 (-10.8%, MAD 11%) |
+| `gc` | 851 | 739 (-13.2%) | 828 (-2.7%) |
+| server CPU (publish + 2 clones served) | 205 | 244 (**+18.9%**) | 253 (**+23.5%**) |
+| client clone from server (2x) | 71554 | 74073 (+3.5%) | 73540 (+2.8%) |
+
+No allocator wins on server, clone and gc together; the server, the one long-running process, is 19-24% worse with either, and
+the clone and `status` movements flip sign between the two. The startup-floor differences are noise (the base's own spread
+is 18%). Adding a dependency plus a global allocator for that is not justified, so nothing was merged.
