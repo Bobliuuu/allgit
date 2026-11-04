@@ -144,9 +144,11 @@ clone, locks, a refused publish, fetch, sync, 401/403 checks, token never in `.v
 | `docker build -f deploy/Dockerfile .` | builds from a clean cache; image 140 MB (debian bookworm-slim + one 2.5 MB static-ish binary) |
 | container, directory backend (`--root /data`, volume) | runs as uid 10001; `HEALTHCHECK` goes `healthy` (it uses `/readyz`); e2e workflow, `conformance`, `conformance_gc`: pass |
 | container, S3 backend against MinIO (`--backend 's3://vcs-test/PREFIX?endpoint=http://host.docker.internal:9000'`, keys in `AWS_*`) | starts (the conditional-write probe passes); e2e workflow and `conformance_gc`: pass; `conformance`: pass after the fix below |
+| HTTPS in the CLI client (default build, `tls` feature) | `cargo test -p vcs-cli --test server_tls`: clone, publish, fetch, lock over `https://` against `vcs-server --tls-cert --tls-key` with a generated CA, wrong CA refused, certificate reload on SIGHUP, mutual TLS: 3 of 3 pass |
 | systemd unit on a Debian 12 host with systemd as PID 1 (a privileged container, binary taken from the image) | `systemd-analyze verify` clean; `Type=notify` reaches `active` (READY=1 received); main process runs as `vcs`; `/readyz` 200; e2e and conformance pass through it; `systemctl reload` keeps it active; `systemctl stop` logs `draining`, `shutdown complete` and ends `Result=success`, exit status 0, in 0.15 s |
 
-Problems found by doing this and fixed here: the unit's `ExecReload=/bin/kill` fails on a host without `procps`; the unit's
+Problems found by doing this and fixed here: **a server on an S3 backend never answered a conditional GET with 304** (an S3 ETag keeps its
+quotes, the comparison did not; every conditional read sent the whole body, found when `conformance` ran against the image on MinIO); the unit's `ExecReload=/bin/kill` fails on a host without `procps`; the unit's
 `--metrics-token @/etc/vcs/metrics-token` file was never created by the instructions (the server then exits 2 with
 `--metrics-token must be at least 16 characters`); no `.dockerignore` (the build context copied a checked-in `target-main/`).
 Not tested: a real VM boot, SELinux/AppArmor profiles, `--features tls` in the image (the Dockerfile builds the default
