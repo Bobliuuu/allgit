@@ -65,3 +65,22 @@ fn watchd_binary_runs_directly() {
         .unwrap();
     assert_eq!(st.code(), Some(2));
 }
+
+#[test]
+fn watch_daemonize_returns_with_a_running_detached_watcher() {
+    let d = tempfile::tempdir().unwrap();
+    assert!(vcs(d.path(), &["init"]).status.success());
+    let out = vcs(d.path(), &["watch", "--daemonize", "--idle-exit", "2"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let pid = d.path().join(".vcs/fsmon/pid");
+    assert!(pid.exists(), "journal and pid must exist when --daemonize returns");
+    // a second call finds it
+    let again = vcs(d.path(), &["watch", "--daemonize"]);
+    assert!(String::from_utf8_lossy(&again.stdout).contains("already running"));
+    // it stops by itself (idle exit) and removes its pid file
+    let t = Instant::now();
+    while pid.exists() && t.elapsed() < Duration::from_secs(60) {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(!pid.exists(), "detached watcher did not idle-exit");
+}
