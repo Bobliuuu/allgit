@@ -1,0 +1,12 @@
+load 0.12 1.14 3.39 16 cores; bundle 59 MiB
+base run1 wall_ms=2158 1.87+1.64 cpu
+fix run1 wall_ms=1775 1.50+1.59 cpu
+base run2 wall_ms=2129 1.88+1.67 cpu
+fix run2 wall_ms=1958 1.50+1.66 cpu
+base run3 wall_ms=2358 1.90+1.90 cpu
+fix run3 wall_ms=2917 1.53+1.80 cpu
+base run4 wall_ms=5790 1.91+1.76 cpu
+fix run4 wall_ms=1720 1.45+1.66 cpu
+base run5 wall_ms=2071 1.82+1.64 cpu
+fix run5 wall_ms=1749 1.49+1.63 cpu
+ok

@@ -1,0 +1,11 @@
+# Found by the model test (seed 1154). `op restore` moved the root zone's files before the
+# preflight of the second zone refused (untracked w/z2/f.txt in the way), leaving a.txt
+# written although the command failed. The restore must now change nothing.
+write w/z2/f.txt 0
+zone-create z1 w/z2
+write a.txt 2
+add .
+commit
+undo
+write w/z2/f.txt 1
+op-restore 2

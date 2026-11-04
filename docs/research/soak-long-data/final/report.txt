@@ -1,0 +1,143 @@
+span 7241s
+op,n_ok,n_expected_fail,n_error,ops_per_s,p50_ms,p95_ms,p99_ms,max_ms
+add,37259,0,342,5.19,472.4,3521.0,5221.0,11369.5
+branch_create,4133,0,7,0.57,57.2,595.8,993.5,3440.1
+branch_delete,2290,0,1850,0.57,31.1,448.4,868.3,2285.9
+branch_switch,5748,0,2532,1.14,78.4,950.5,1670.9,3853.8
+clone_fresh,2477,0,3,0.34,3025.2,20921.4,24890.6,28179.4
+clone_initial,80,0,0,0.01,206.1,2190.9,2482.7,2482.7
+commit,14759,0,22083,5.09,338.8,2677.1,4655.4,17337.2
+fsck_clone,772,0,0,0.11,546.8,1507.0,1816.0,2246.9
+lock,1349,649,4447,0.89,146.5,1160.9,2138.7,14804.8
+merge,35328,0,56788,12.72,41.9,1722.9,16841.1,245671.9
+publish,1164,80671,292,11.34,464.6,2092.5,3109.4,6275.0
+publish_auto,451,8340,4298,1.81,459.7,3907.9,79395.5,269278.8
+publish_lock,218,2487,497,0.44,370.8,29034.5,97343.4,106725.9
+stale_lock_removed,0,0,0,0.0,nan,nan,nan,None
+sync,99168,0,4713,14.35,188.1,5341.7,9158.6,81548.8
+undo,1272,0,0,0.18,355.7,1941.2,2879.2,6848.5
+unlock,1281,0,68,0.19,118.7,1128.6,2184.0,13687.2
+ERR 45058x [merge] error: a merge of origin/main into root/main is already in progress
+
+Options:
+  vcs conflict list
+  vcs merge --abort
+ERR 10022x [merge] error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 4926x [commit] .bin
+  art/fN.bin
+  art/fN.bin
+  art/fN.bin
+  art/fN.bin
+  art/fN.bin
+  art/fN.bin
+
+Options:
+  vcs lock <path> --lease-secs <n>   take the l
+ERR 4446x [lock] error: backend error: server returned N: Invalid: malformed remote manifest: limit exceeded: element count exceeds input
+ERR 4298x [sync] error: untracked path "zN/uN/fN.txt" would be overwritten; move or remove it first
+ERR 2892x [publish_auto] error: a merge of origin/main into root/main is already in progress
+
+Options:
+  vcs conflict list
+  vcs merge --abort
+ERR 2860x [commit] bin
+  art/fN.bin
+  art/fN.bin
+  art/fN.bin
+  art/fN.bin
+  art/fN.bin
+  art/fN.bin
+
+Options:
+  vcs lock <path> --lease-secs <n>   take the lo
+ERR 2126x [commit] error: cannot commit: merge of origin/main into root/main has N unresolved conflict(s):
+  art/fN.bin (modify/modify)
+  art/fN.bin (modify/mo
+ERR 1843x [branch_switch] error: zone "root" is in the middle of a merge; resolve and commit, or `vcs merge --abort`
+ERR 1843x [branch_delete] error: zone "root" is in the middle of a merge; resolve or `vcs merge --abort` first
+ERR 1474x [merge] error: a merge of origin/main into zN/main is already in progress
+
+Options:
+  vcs conflict list
+  vcs merge --abort
+ERR 1283x [commit] error: cannot commit: merge of origin/main into root/main has N unresolved conflict(s):
+  art/fN.bin (modify/modify)
+
+Options:
+  edit the fi
+ERR 1261x [commit] in
+  art/fN.bin
+  art/fN.bin
+  art/fN.bin
+  art/fN.bin
+  art/fN.bin
+  art/fN.bin
+
+Options:
+  vcs lock <path> --lease-secs <n>   take the loc
+ERR 1125x [commit] n
+  art/fN.bin
+  art/fN.bin
+  art/fN.bin
+  art/fN.bin
+  art/fN.bin
+  art/fN.bin
+
+Options:
+  vcs lock <path> --lease-secs <n>   take the lock
+ERR 993x [commit] igin/main into root/main has N unresolved conflict(s):
+  art/fN.bin (modify/modify)
+  art/fN.bin (modify/modify)
+  art/fN.bin (modify/modify
+ERR 809x [commit] r: cannot commit: merge of origin/main into root/main has N unresolved conflict(s):
+  art/fN.bin (modify/modify)
+  art/fN.bin (modify/modify
+ERR 708x [commit] .vcsattributes):
+  art/fN.bin
+  art/fN.bin
+  art/fN.bin
+  art/fN.bin
+  art/fN.bin
+
+Options:
+  vcs lock <path> --lease-secs <n>   take the lo
+ERR 675x [branch_switch] error: zone "root" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 630x [commit] /fN.bin (modify/modify)
+  art/fN.bin (modify/modify)
+  art/fN.bin (modify/modify)
+  art/fN.bin (modify/modify)
+  art/fN.bin (modify/modify)
+
+ERR 553x [commit] vcsattributes):
+  art/fN.bin
+  art/fN.bin
+  art/fN.bin
+  art/fN.bin
+  art/fN.bin
+
+Options:
+  vcs lock <path> --lease-secs <n>   take the loc
+ERR 484x [commit] nresolved conflict(s):
+  art/fN.bin (modify/modify)
+  art/fN.bin (modify/modify)
+  art/fN.bin (modify/modify)
+  art/fN.bin (modify/modify)
+ 
+ERR 473x [commit]  lockable file(s) without a lock (see .vcsattributes):
+  art/fN.bin
+  art/fN.bin
+
+Options:
+  vcs lock <path> --lease-secs <n>   take the loc
+ERR 418x [commit] gin/main into root/main has N unresolved conflict(s):
+  art/fN.bin (modify/modify)
+  art/fN.bin (modify/modify)
+  art/fN.bin (modify/modify)
+ERR 406x [publish_auto] error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 397x [commit] /fN.bin (modify/modify)
+  art/fN.bin (modify/modify)
+  art/fN.bin (modify/modify)
+  art/uN.txt (modify/modify)
+  art/uN.txt (delete/modify)
+
+resources: {"rss_kb": {"first_quartile_mean": 57421.2, "last_quartile_mean": 116854.0, "max": 185824.0, "last": 141072.0}, "cpu_pct": {"first_quartile_mean": 46.5, "last_quartile_mean": 20.6, "max": 72.0, "last": 0.2}, "fds": {"first_quartile_mean": 208.7, "last_quartile_mean": 63.5, "max": 417.0, "last": 4.0}, "threads": {"first_quartile_mean": 208.0, "last_quartile_mean": 62.6, "max": 415.0, "last": 4.0}, "manifest_bytes": {"first_quartile_mean": 28429.7, "last_quartile_mean": 131455.7, "max": 131662.0, "last": 131623.0}, "packs": {"first_quartile_mean": 572.4, "last_quartile_mean": 419.3, "max": 834.0, "last": 515.0}}

@@ -1,0 +1,53 @@
+[package]
+name = "vcs-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "vcs"
+path = "src/main.rs"
+
+[[bin]]
+name = "git"
+path = "src/bin/git_shim.rs"
+required-features = ["git-shim"]
+
+[[bin]]
+name = "git-remote-allgit"
+path = "src/bin/git_remote_allgit.rs"
+
+[dependencies]
+vcs-repo.workspace = true
+vcs-objects.workspace = true
+vcs-merge.workspace = true
+vcs-store.workspace = true
+vcs-remote.workspace = true
+vcs-store-s3.workspace = true
+vcs-server.workspace = true
+clap.workspace = true
+clap_complete.workspace = true
+clap_mangen.workspace = true
+regex = "1"
+libc = "0.2"
+tempfile.workspace = true
+
+[features]
+default = ["watcher"]
+# A `git`-named binary that runs `vcs git <args>` (docs/git-to-vcs.md). Off by default.
+git-shim = []
+# https:// for s3:// endpoints and for vcs-server remotes (rustls, certificate verification always on).
+# Off by default: the default build has no TLS dependencies and builds offline.
+tls = ["vcs-store-s3/tls", "vcs-server/tls"]
+# `vcs watch`: inotify/FSEvents daemon that lets `status` skip unchanged files and the untracked walk.
+watcher = ["vcs-repo/watcher"]
+structural = ["vcs-repo/structural"]
+structural-python = ["vcs-repo/structural-python"]
+structural-typescript = ["vcs-repo/structural-typescript"]
+structural-go = ["vcs-repo/structural-go"]
+
+[dev-dependencies]
+tempfile.workspace = true
+serde_json = "1"
+rcgen = "0.13"
+zstd = "0.13"
