@@ -143,6 +143,12 @@ How it scales, and what was measured. Full audit with 14 findings and what stays
 [docs/scalability.md](docs/scalability.md). Everything below is on loopback or local disk unless stated: **no result here is a
 statement about a real WAN or about AWS S3 latency**.
 
+**Real S3 (new, [real-s3](docs/research/real-s3.md)).** From a c6i.4xlarge in the bucket's region, 100,000 files, job-sized slice (2000 files) cloned straight
+from S3 with no server: cold clone 341 ms on a standard bucket (git blobless partial clone from a `git daemon` on the same box, no WAN: 426 to 480 ms), 245 ms on an
+S3 Express One Zone directory bucket; warm fetch + checkout 264 ms (Express 149 ms) vs git 231 to 245 ms; a 3-file push p50 232 ms (Express 60 ms) vs git 83 ms.
+The git baseline has no network in the path, so it flatters git. Express has no remote GC or compaction yet: a clone after 300 uncompacted pushes needs 1850
+requests and 3.6 s. Real `SlowDown` (503) was not triggered (3,900 req/s from one box, zero 503s). walgit was not run on real S3.
+
 **1M files.** On a c6i.4xlarge, one run per cell, a 4 GB tree of 1,000,000 files: `clone` 40.5 s vs git 603.1 s, `add` 18.9 s vs
 215.5 s, `commit` 1.5 s vs 4.5 s, `diff` 3.7 s vs 19.7 s, `gc` 3.5 s vs 15.2 s, `publish` 11.2 s (git: n/a). vcs peaks at 1.0 to
 2.3 GiB RSS on add, publish and clone, and a no-op `add` is about 7.6x slower than git's stat cache. The `diff` result uses all 16 cores
@@ -585,8 +591,8 @@ Early research software; tested means an executable test exists in the repositor
   cargo features, off by default), locks (advisory unless `vcs-server` is in front), p4 import (checked once against
   real `p4d` output on a small history, otherwise fixtures).
 - 🤖 **Assisted merge:** the Claude helper has never been called against the live API (fixture and mock tests only). The OpenAI helper had one small live run, documented in [docs/assist-openai.md](docs/assist-openai.md); there are no broader quality or cost numbers.
-- 🪣 **S3:** exercised against MinIO, RustFS and one earlier run on real AWS S3 from a Mac; other providers and a public-CA
-  HTTPS endpoint are untested.
+- 🪣 **S3:** exercised against MinIO, RustFS, real AWS S3 from a Mac and from an in-region EC2 box (standard and S3 Express One Zone, see
+  [real-s3](docs/research/real-s3.md)); other providers are untested, and Express has no GC/compaction.
 - 🪟 **Windows:** only compile-checked in CI. The code has never been run there.
 - ⚡ **Performance:** see above. git is still ahead on `status` CPU (about 1.1x), checkout and re-add in some measurements, on
   store request counts, warm store traffic, client store size and server memory in the walgit comparison, and on
