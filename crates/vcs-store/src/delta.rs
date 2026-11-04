@@ -211,7 +211,9 @@ pub fn apply(base: &[u8], d: &[u8], max_out: usize) -> Result<Vec<u8>, &'static 
     if tl > max_out {
         return Err("delta target too large");
     }
-    let mut out = Vec::with_capacity(tl);
+    // `tl` is untrusted: up to `max_out` (4 GiB for a pack entry) from a few bytes of delta. Reserve what a
+    // delta of this size plausibly produces; a longer honest result just grows the vector.
+    let mut out = Vec::with_capacity(tl.min(base.len().saturating_add(d.len()).saturating_mul(2).max(4096)));
     while p < d.len() {
         let c = d[p];
         p += 1;
@@ -324,6 +326,24 @@ mod tests {
         }
         // declared target above the caller cap
         assert!(apply(&base, &[100, 0xff, 0xff, 0x7f], 1 << 10).is_err());
+    }
+
+    #[test]
+    fn huge_declared_target_from_a_tiny_delta_fails_without_a_huge_reserve() {
+        // base length 3, target 3_000_000_000 declared, one 3-byte copy: must be refused as a length
+        // mismatch (the declared size is under the caller cap), and must not reserve 3 GB up front.
+        let base = [1u8, 2, 3];
+        let mut d = vec![3u8];
+        let mut t = 3_000_000_000usize;
+        while t >= 0x80 {
+            d.push((t & 0x7f) as u8 | 0x80);
+            t >>= 7;
+        }
+        d.push(t as u8);
+        d.extend([0x90, 3]); // copy offset 0, size 3
+        let before = std::time::Instant::now();
+        assert!(apply(&base, &d, u32::MAX as usize).is_err());
+        assert!(before.elapsed().as_secs() < 5);
     }
 
     #[test]
