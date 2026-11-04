@@ -101,6 +101,8 @@ def cell(name, prepf, cmdf, tools=None):
     tools = [t for t in (tools or TOOLS) if t in TOOLS]
     if not tools: return
     w = {t: [] for t in tools}; c = {t: [] for t in tools}; fails = {t: 0 for t in tools}
+    t_q = time.time()
+    while float(load1()) >= float(os.environ.get("BENCH_MAX_LOAD1", "1.0")) and time.time() - t_q < 600: time.sleep(2)
     l0 = load1(); runs = RUNS; i = 0; worst_first = 0
     while i < runs:
         order = tools[i % len(tools):] + tools[:i % len(tools)]
@@ -130,7 +132,7 @@ try:
     cpu = [l for l in open("/proc/cpuinfo") if l.startswith("model name")][0].split(":")[1].strip()
     vers = {"git": ver("git --version"), "vcs": ver(VCS + " --version"), "jj": ver(JJ + " --version"), "sl": ver(SL + " --version")}
     meta = dict(date=time.strftime("%FT%TZ", time.gmtime()), uname=os.uname().release, cpu=cpu, cores=os.cpu_count(),
-                versions=vers, layout=layout, files=N, runs=RUNS, load_start=load1(),
+                versions=vers, build_sha=os.environ.get("BUILD_SHA"), layout=layout, files=N, runs=RUNS, load_start=load1(),
                 fs=subprocess.run(["df", "-T", WORK], capture_output=True, text=True).stdout.splitlines()[1].split()[1])
     print(json.dumps(meta))
     print("\n| cell | tool | wall ms per run | median wall ms | median cpu ms | load1 | runs |")
