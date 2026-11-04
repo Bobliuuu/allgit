@@ -27,7 +27,7 @@ pub mod smallpack;
 pub mod stats;
 pub mod timeline;
 
-pub use backend::{Backend, BackendError, Conditional, SharedBytes, Versioned};
+pub use backend::{Backend, BackendError, Conditional, LocalFlock, SharedBytes, Versioned};
 pub use clientcache::ClientCache;
 pub use compact::{compact, CompactOptions, CompactReport};
 pub use diskcache::DiskCacheBackend;

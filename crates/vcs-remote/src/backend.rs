@@ -122,6 +122,12 @@ pub trait Backend: Send + Sync {
     fn supports_gc(&self) -> bool {
         false
     }
+    /// Kernel-released exclusive lock `name` for same-host backends (`FsBackend`). A holder that is
+    /// SIGKILLed releases it, so the GC lease can be taken over immediately instead of waiting out
+    /// its TTL. Default: unsupported (S3 etc. rely on the lease alone).
+    fn local_flock(&self, _name: &str) -> Result<LocalFlock, BackendError> {
+        Ok(LocalFlock::Unsupported)
+    }
     /// The backend's own clock in unix ms. Remote GC never uses the client's clock.
     fn now_ms(&self) -> Result<u64, BackendError> {
         Err(BackendError::Other("backend has no trusted clock".into()))
@@ -257,4 +263,13 @@ pub fn conformance_gc(b: &dyn Backend) {
     assert!(b.now_ms().unwrap() >= m1);
     b.delete("gc/k").unwrap();
     assert_eq!(b.modified_ms("gc/k").unwrap(), None);
+}
+
+/// Result of [`Backend::local_flock`].
+pub enum LocalFlock {
+    Unsupported,
+    /// A live process holds it.
+    Held,
+    /// Acquired; released when dropped (or when the process dies).
+    Acquired(Box<dyn std::any::Any + Send>),
 }
