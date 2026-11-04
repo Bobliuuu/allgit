@@ -46,7 +46,7 @@ see the research note (status with and without recording).
 
 ## The predictor
 
-For every zone: `score = direct + dependencies + co-access + hint`.
+For every zone: `score = direct + dependencies + co-access + co-change + hint`.
 
 * **direct**: sum over events of `weight(kind) * 2^(-age / half-life)` with weights read 1, build 1.5, edit 3 and a
   14-day half-life, divided by the largest zone's value (so 0..1). Frequency and recency both count.
@@ -57,12 +57,20 @@ For every zone: `score = direct + dependencies + co-access + hint`.
   depend on), not all of them.
 * **co-access**: events less than 30 minutes apart form a session; a zone that shared sessions with a used zone gets
   `0.4 * source_score * P(zone used | source used)` (smoothed by one pseudo-session).
+* **co-change** (from history, not from your profile): `0.35 * source_score * P(zone changed | source changed)`, where the
+  probabilities are mined from the commits every zone already has locally (the newest 300 per zone, no request needed). A zone
+  has its own commit chain, so "changed together" is read as **one author, one message, within 120 seconds**: that is what a
+  `vcs commit` that moves several zones and a `vcs import-git` of one git commit that fans out to several zones both look like.
+  A group of more than 8 zones is a bulk change (the first import, a repository-wide rename) and is dropped; a pair needs at
+  least 2 shared groups. Sources are the zones you used plus role and pinned zones, so it also helps a fresh clone that has
+  only hints. `--explain` shows `committed together with api (7 of 9 changes, +0.120)`.
 * **hint**: `0.5` for each zone named by your `role` in the hints file.
 
 Ties break on zone name, so the same inputs always give the same ranking.
 
-Not done: co-change from commit history. A zone has its own commit chain, so "files that change together" across
-zones is not visible in one history; co-access in your own sessions is used instead.
+Measured on real histories (not simulated): [research/zone-profile-hitrate.md](research/zone-profile-hitrate.md). In short, a
+decayed-frequency profile finds 62 to 93 percent of the zones a person touches next with 6 slots (random: 10 to 45 percent on repositories of more than 6 zones), but it
+**does not beat plain recency or frequency** on those histories, and co-change is a tie (it moved the hit rate by at most 2 points).
 
 ## Choosing and fetching
 
@@ -97,9 +105,14 @@ metadata, planning, contents, sync). With the global `--json` flag (`vcs --json 
 line: `{"version":1,"command":"sync --auto","plan":{hot:[...],skipped:[...],notes:[...]},"stages":[...],"transfer":{...},"sync":[...]}`
 (only the members that apply; scores have 4 decimals; every zone carries `zone`, `label`, `bytes`, `why`, `reasons`).
 
-On-demand is explicit: nothing fetches a skipped zone behind your back. A command that needs a missing zone's
-files fails or sees nothing there; the fix is the one command above. (A transparent fetch-on-access hook is not
-implemented.)
+**Fetch on access.** In a repository that was set up or synced with `--auto`, a command that names a skipped zone gets it
+first, with one line on stderr (`zone billing was skipped by --auto; fetching it now`): `zone checkout Z BRANCH`, and a path
+inside the zone given to `add`, `rm`, `restore`, `mv` or `blame` (the zone is fetched, subscribed and checked out, then the
+command runs). Reading history needs no subscription: `log --zone Z`, `show` and `diff` work from the commits and trees that are
+local, and a file body they need is fetched on its own by the missing-object path (`fetched missing object ...`) without
+subscribing the zone. A repository that never used `--auto` is left alone (an unsubscribed zone there is a choice, for example
+`clone --zone`). Turn it off with `vcs config set profile.autofetch off` or `VCS_AUTOFETCH=off`; then the fix is the one
+command above. A failed fetch (offline) prints a warning and the command runs, and fails, as before.
 
 ```text
 vcs clone URL dir --auto-profile my.profile     # or --auto (hints only)
@@ -152,8 +165,10 @@ dependencies decide.
   benchmark, not on real developers; see the research note.
 * Dependency edges are manifest-based. Source-level imports (`--deep` in `clone --for`) are not scanned.
 * Planning costs requests: it downloads commits and trees of all zones plus a few manifests, and `sync --auto`
-  does a normal fetch after that. For small remotes that is more requests than a plain clone; see the research
-  note for the measured sizes.
+  does a normal fetch after that. The pack listing is read once per process and the contents of all chosen zones are one
+  download (not one per zone): `clone --auto` of a 50-zone, 5,000-file repository went from 53 to 30 requests with the same bytes
+  (planning 22 to 14, contents 21 to 6; a full clone is 4 to 6). What is left is about one ranged read per manifest file, because
+  tiny blobs sit far apart in a pack. For small remotes that is still more requests than a plain clone; see the research note.
 * `--auto` plans from the remote's `main` branch of each zone.
 * Profile recording runs inside the `vcs` process for the commands in the table; it adds a repository discovery and one
   file append to them (`VCS_PROFILE=off` skips it).

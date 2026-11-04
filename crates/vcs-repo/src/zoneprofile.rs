@@ -247,7 +247,37 @@ impl Repo {
                 want.insert(*id);
             }
         }
-        self.prefetch_ids(backend, want)
+        let idx_cache = vcs_remote::IdxCacheBackend::new(backend, self.common.join("remote-idx"));
+        self.prefetch_ids_with(&idx_cache, &self.counters.packs, want)
+    }
+    /// The newest `max_per_zone` commits of every zone's `main` (local branch, else the remote's) as co-change records. Needs the
+    /// commit objects to be local (`--auto` fetches them for all zones before planning); a zone whose head is missing is skipped.
+    pub fn cochange_records(&self, max_per_zone: usize) -> Result<Vec<ChangeRec>> {
+        use vcs_store::ObjectStore;
+        let refs = self.refs()?;
+        let rr = self.remote_refs()?;
+        let mut out = Vec::new();
+        for z in self.zones()?.names() {
+            let Some(head) = refs.head(z, crate::meta::DEFAULT_BRANCH).or(rr.head(z, crate::meta::DEFAULT_BRANCH)) else {
+                continue;
+            };
+            let mut cur = Some(head);
+            for _ in 0..max_per_zone {
+                let Some(id) = cur else { break };
+                if !self.store.contains(&id)? {
+                    break;
+                }
+                let c = self.commit_obj(&id)?;
+                out.push(ChangeRec {
+                    zone: z.to_owned(),
+                    author: c.author.email.clone(),
+                    message: c.message.clone(),
+                    ts: c.author.timestamp,
+                });
+                cur = c.parents.first().copied();
+            }
+        }
+        Ok(out)
     }
     /// The `.vcs` directory (where the remote pack index cache lives).
     pub fn profile_state_dir(&self) -> PathBuf {
@@ -406,6 +436,10 @@ pub struct Params {
     pub max_depth: u32,
     /// Weight of co-access (zones used in the same sessions).
     pub co_factor: f64,
+    /// Weight of co-change mined from history (zones committed together).
+    pub cochange_factor: f64,
+    /// Fewer shared groups than this are a coincidence, not evidence.
+    pub cochange_min_support: u32,
     /// Prior score of a zone named by the user's role hint.
     pub role_prior: f64,
     /// Zones scoring below this have no real evidence.
@@ -424,6 +458,8 @@ impl Default for Params {
             dep_factor: 0.3,
             max_depth: 2,
             co_factor: 0.4,
+            cochange_factor: 0.35,
+            cochange_min_support: 2,
             role_prior: 0.5,
             min_score: 0.05,
         }
@@ -434,6 +470,73 @@ impl Default for Params {
 #[derive(Clone, Debug, Default)]
 pub struct Graph {
     pub deps: BTreeMap<String, BTreeSet<String>>,
+    /// Zones that were committed together in the repository's history (see [`mine_cochange`]).
+    pub cochange: Cochange,
+}
+
+/// One commit as the co-change miner sees it: which zone, who, what message, when (seconds).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChangeRec {
+    pub zone: String,
+    pub author: String,
+    pub message: String,
+    pub ts: u64,
+}
+
+/// Co-change counts: `changes[z]` = groups of commits that touched `z`; `pairs[(a, b)]` = groups that touched both.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Cochange {
+    pub changes: BTreeMap<String, u32>,
+    pub pairs: BTreeMap<(String, String), u32>,
+    pub groups: u32,
+}
+
+impl Cochange {
+    /// P(b changes | a changed), smoothed by one pseudo-group, and the counts behind it.
+    pub fn cond(&self, a: &str, b: &str) -> Option<(f64, u32, u32)> {
+        let n = *self.pairs.get(&(a.to_owned(), b.to_owned()))?;
+        let t = self.changes.get(a).copied().unwrap_or(0);
+        Some((f64::from(n) / (f64::from(t) + 1.0), n, t))
+    }
+}
+
+/// Mine zones that change together. A zone has its own commit chain, so there is no single "commit touched files of these
+/// zones" record; the signal is **one author, one message, within `window_s` seconds**: a `vcs commit` that moves several zones,
+/// and an import of one git commit that fans out to several zones, both look like that. Commits are grouped by
+/// (author, message) and split where the gap to the previous one exceeds `window_s`; every group counts once per zone.
+/// Groups of one zone carry no pair but count toward `changes` (so P(b|a) is a share of all of a's changes). A group of more than
+/// `max_group` zones is a bulk change (the first import, a repository-wide rename): it says nothing about which zones belong
+/// together, so it is dropped entirely.
+pub fn mine_cochange(recs: &[ChangeRec], window_s: u64, max_group: usize) -> Cochange {
+    let mut order: Vec<&ChangeRec> = recs.iter().collect();
+    order.sort_by(|a, b| (&a.author, &a.message, a.ts, &a.zone).cmp(&(&b.author, &b.message, b.ts, &b.zone)));
+    let mut out = Cochange::default();
+    let mut i = 0;
+    while i < order.len() {
+        let mut j = i + 1;
+        while j < order.len()
+            && order[j].author == order[i].author
+            && order[j].message == order[i].message
+            && order[j].ts.saturating_sub(order[j - 1].ts) <= window_s
+        {
+            j += 1;
+        }
+        let zs: BTreeSet<&str> = order[i..j].iter().map(|r| r.zone.as_str()).collect();
+        i = j;
+        if zs.len() > max_group {
+            continue;
+        }
+        out.groups += 1;
+        for a in &zs {
+            *out.changes.entry((*a).to_owned()).or_default() += 1;
+            for b in &zs {
+                if a != b {
+                    *out.pairs.entry(((*a).to_owned(), (*b).to_owned())).or_default() += 1;
+                }
+            }
+        }
+    }
+    out
 }
 
 impl Graph {
@@ -452,6 +555,8 @@ pub struct Ranked {
     pub direct: f64,
     pub dep: f64,
     pub co: f64,
+    /// Seeded by zones that were committed together with a used zone (from history, not the profile).
+    pub cochange: f64,
     pub hint: f64,
     pub pinned: bool,
     pub excluded: bool,
@@ -593,6 +698,24 @@ pub fn rank(profile: &Profile, hints: &Hints, graph: &Graph, zones: &[String], p
             ));
         }
     }
+    // co-change from history: P(b changed | a changed) in the repository's own commits, from every seed
+    for (a, w) in &seeds {
+        if *w <= 0.0 {
+            continue;
+        }
+        for b in zones {
+            if b == a {
+                continue;
+            }
+            if let Some((cond, n, t)) = graph.cochange.cond(a, b).filter(|(_, n, _)| *n >= p.cochange_min_support) {
+                let add = w * p.cochange_factor * cond;
+                if let Some(r) = out.get_mut(b.as_str()) {
+                    r.cochange += add;
+                    r.reasons.push(format!("committed together with {a} ({n} of {t} changes, +{add:.3})"));
+                }
+            }
+        }
+    }
     // hints
     let resolve = |n: &str| -> Option<String> { known.contains(n).then(|| n.to_owned()) };
     for n in hints.role_zones() {
@@ -622,7 +745,7 @@ pub fn rank(profile: &Profile, hints: &Hints, graph: &Graph, zones: &[String], p
     }
     let mut v: Vec<Ranked> = out.into_values().collect();
     for r in &mut v {
-        r.score = r.direct + r.dep + r.co + r.hint;
+        r.score = r.direct + r.dep + r.co + r.cochange + r.hint;
     }
     v.sort_by(|a, b| b.pinned.cmp(&a.pinned).then(b.score.total_cmp(&a.score)).then(a.zone.cmp(&b.zone)));
     v
@@ -1010,5 +1133,85 @@ mod tests {
         let after = Profile::load(&f).unwrap();
         assert_eq!(after.events.len(), KEEP_EVENTS);
         assert_eq!(after.events.last().unwrap().ts_ms, 6004);
+    }
+
+    fn rec(zone: &str, who: &str, msg: &str, ts: u64) -> ChangeRec {
+        ChangeRec {
+            zone: zone.into(),
+            author: who.into(),
+            message: msg.into(),
+            ts,
+        }
+    }
+
+    #[test]
+    fn cochange_groups_one_author_one_message_within_the_window() {
+        let recs = vec![
+            rec("api", "a@x", "rename field", 1000),
+            rec("web", "a@x", "rename field", 1001),
+            rec("api", "a@x", "tune cache", 5000),
+            rec("api", "b@x", "rename field", 1002), // another author: not the same change
+            rec("web", "a@x", "rename field", 9000), // same message, far apart: another group
+        ];
+        let c = mine_cochange(&recs, 120, 8);
+        assert_eq!(c.groups, 4);
+        assert_eq!(c.changes["api"], 3);
+        assert_eq!(c.changes["web"], 2);
+        assert_eq!(c.pairs[&("api".into(), "web".into())], 1);
+        assert_eq!(c.pairs[&("web".into(), "api".into())], 1);
+        assert!(!c.pairs.contains_key(&("api".into(), "api".into())));
+        // P(web | api) = 1 pair of 3 api changes, smoothed by one pseudo-group
+        let (p, n, t) = c.cond("api", "web").unwrap();
+        assert_eq!((n, t), (1, 3));
+        assert!((p - 0.25).abs() < 1e-9);
+        assert!(c.cond("api", "none").is_none());
+    }
+
+    #[test]
+    fn cochange_ignores_bulk_commits_and_single_coincidences() {
+        let mut recs = Vec::new();
+        // an import that touched 10 zones at once, and one pair that met once
+        for z in 0..10 {
+            recs.push(rec(&format!("z{z}"), "a@x", "import", 10));
+        }
+        recs.push(rec("api", "a@x", "once", 500));
+        recs.push(rec("web", "a@x", "once", 501));
+        let c = mine_cochange(&recs, 120, 8);
+        assert_eq!(c.groups, 1, "the import is dropped");
+        assert!(!c.changes.contains_key("z0"));
+        let prof = Profile { disabled: false, events: vec![ev(99, Kind::Edit, "api")] };
+        let g = Graph { cochange: c, ..Graph::default() };
+        let r = rank(&prof, &Hints::default(), &g, &zs(&["api", "web"]), &params(100));
+        assert_eq!(r.iter().find(|x| x.zone == "web").unwrap().cochange, 0.0, "one shared group is below the support threshold");
+    }
+
+    #[test]
+    fn cochange_lifts_a_zone_that_is_committed_with_a_used_zone_and_is_deterministic() {
+        let prof = Profile {
+            disabled: false,
+            events: vec![ev(99, Kind::Edit, "api")],
+        };
+        let mut recs = Vec::new();
+        for i in 0..10 {
+            recs.push(rec("api", "a@x", &format!("m{i}"), 100 * i));
+            recs.push(rec("schema", "a@x", &format!("m{i}"), 100 * i + 1));
+        }
+        recs.push(rec("other", "a@x", "lone", 5)); // never with api
+        let g = Graph {
+            cochange: mine_cochange(&recs, 120, 8),
+            ..Graph::default()
+        };
+        let zones = zs(&["api", "schema", "other", "idle"]);
+        let r = rank(&prof, &Hints::default(), &g, &zones, &params(100));
+        let by = |z: &str| r.iter().find(|x| x.zone == z).unwrap();
+        assert!(by("schema").cochange > 0.2, "{:?}", by("schema"));
+        assert!(by("schema").score >= Params::default().min_score);
+        assert!(by("schema").reasons.iter().any(|x| x.contains("committed together with api (10 of 10")));
+        assert_eq!(by("other").cochange, 0.0);
+        assert_eq!(by("idle").score, 0.0);
+        assert_eq!(r, rank(&prof, &Hints::default(), &g, &zones, &params(100)));
+        // without history the same profile gives schema nothing
+        let none = rank(&prof, &Hints::default(), &Graph::default(), &zones, &params(100));
+        assert_eq!(none.iter().find(|x| x.zone == "schema").unwrap().score, 0.0);
     }
 }
