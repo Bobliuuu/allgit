@@ -61,6 +61,24 @@ pub(crate) struct State {
     pub dirty: BTreeMap<String, ChangeKind>,
     pub untracked: Vec<String>,
     pub unsupported: Vec<String>,
+    /// The staged half of the saved result, so a clean `status` need not decode the index (absent in
+    /// states written by older builds).
+    pub staged: Option<StagedSnap>,
+}
+
+/// Staged changes per subscribed zone, with the HEAD commit each was computed against.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub(crate) struct StagedSnap {
+    /// `(zone, head commit id bytes or None, staged changes)` in workspace order.
+    pub zones: Vec<(String, Option<[u8; 32]>, Vec<(String, ChangeKind)>)>,
+}
+
+fn kind_byte(k: ChangeKind) -> u8 {
+    match k {
+        ChangeKind::Added => 0,
+        ChangeKind::Modified => 1,
+        ChangeKind::Deleted => 2,
+    }
 }
 
 impl State {
@@ -85,6 +103,20 @@ impl State {
             w.varint(l.len() as u64);
             for p in l {
                 w.str(p);
+            }
+        }
+        if let Some(sn) = &self.staged {
+            w.varint(sn.zones.len() as u64);
+            for (z, head, ch) in &sn.zones {
+                w.str(z);
+                match head {
+                    Some(h) => w.u8(1).raw(h),
+                    None => w.u8(0),
+                };
+                w.varint(ch.len() as u64);
+                for (p, k) in ch {
+                    w.str(p).u8(kind_byte(*k));
+                }
             }
         }
         frame(b"AGFS", w.finish())
@@ -112,6 +144,37 @@ impl State {
                 l.push(r.str(4096).ok()?);
             }
         }
+        let mut staged = None;
+        if r.remaining() > 0 {
+            let n = r.count(2).ok()?;
+            let mut zs = Vec::new();
+            for _ in 0..n {
+                let z = r.str(4096).ok()?;
+                let head = match r.u8().ok()? {
+                    0 => None,
+                    1 => {
+                        let mut h = [0u8; 32];
+                        h.copy_from_slice(r.raw(32).ok()?);
+                        Some(h)
+                    }
+                    _ => return None,
+                };
+                let m = r.count(2).ok()?;
+                let mut ch = Vec::new();
+                for _ in 0..m {
+                    let p = r.str(4096).ok()?;
+                    let k = match r.u8().ok()? {
+                        0 => ChangeKind::Added,
+                        1 => ChangeKind::Modified,
+                        2 => ChangeKind::Deleted,
+                        _ => return None,
+                    };
+                    ch.push((p, k));
+                }
+                zs.push((z, head, ch));
+            }
+            staged = Some(StagedSnap { zones: zs });
+        }
         r.finish().ok()?;
         let [untracked, unsupported] = lists;
         Some(State {
@@ -120,6 +183,7 @@ impl State {
             dirty,
             untracked,
             unsupported,
+            staged,
         })
     }
 }

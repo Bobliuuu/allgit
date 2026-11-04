@@ -22,6 +22,50 @@ use vcs_repo::Repo;
 
 const ROTATE_AT: u64 = 32 << 20;
 
+/// One recursive watch on the root instead of one watch per directory. FSEvents is recursive by
+/// nature and every extra stream costs a thread-synchronised setup: per-directory watches took
+/// minutes to start on a 2,000-directory tree (macOS, loaded host) where the single stream starts at
+/// once. Directories created or renamed need no bookkeeping then. inotify has no recursive mode
+/// (notify would add the per-directory watches itself, without the new-directory scan), so Linux keeps
+/// the explicit per-directory set. `VCS_WATCH_PER_DIR=1` forces the explicit set (tests).
+fn recursive() -> bool {
+    cfg!(target_os = "macos") && std::env::var_os("VCS_WATCH_PER_DIR").is_none()
+}
+
+/// Which directories get a watch. A directory owned by a zone this worktree is not subscribed to is
+/// never walked by `status` (its untracked scan skips it), so watching it only costs descriptors and
+/// events. Sparse sets do NOT narrow this: the untracked walk still reports new names there.
+#[derive(Clone, Default)]
+struct Scope {
+    zones: Option<vcs_repo::meta::Zones>,
+    subs: std::collections::BTreeSet<String>,
+    key: String,
+}
+
+impl Scope {
+    fn load(repo: &Repo) -> Scope {
+        match (repo.zones(), repo.workspace()) {
+            (Ok(z), Ok(w)) if z.names().count() > 1 => {
+                let subs: std::collections::BTreeSet<String> = w.subs.keys().cloned().collect();
+                let mut key = String::new();
+                for n in z.names() {
+                    key.push_str(&format!("{n}={}\n", z.path_of(n).unwrap_or("")));
+                }
+                key.push_str(&format!("{subs:?}"));
+                Scope { zones: Some(z), subs, key }
+            }
+            _ => Scope::default(),
+        }
+    }
+    /// Should the directory at repo-relative `rel` (empty for the root) be watched?
+    fn watches(&self, rel: &str) -> bool {
+        match &self.zones {
+            Some(z) if !rel.is_empty() => self.subs.contains(z.owner(rel)),
+            _ => true,
+        }
+    }
+}
+
 struct Daemon {
     root: PathBuf,
     dir: PathBuf,
@@ -33,6 +77,9 @@ struct Daemon {
     dirs: HashSet<PathBuf>,
     idle: Option<Duration>,
     last_query: std::time::Instant,
+    scope: Scope,
+    last_scope_check: std::time::Instant,
+    repo: PathBuf,
 }
 
 fn werr(e: impl std::fmt::Display) -> Error {
@@ -61,7 +108,8 @@ pub fn run_idle(repo: &Repo, stop: &AtomicBool, idle: Option<Duration>) -> Resul
     let _ = fs::remove_dir_all(&probe);
     fs::create_dir_all(&probe).map_err(werr)?;
     let _ = fs::remove_file(dir.join(JOURNAL));
-    let (watcher, rx, dirs) = build(&root, &probe)?;
+    let scope = Scope::load(repo);
+    let (watcher, rx, dirs) = build(&root, &probe, &scope)?;
     let jpath = dir.join(JOURNAL);
     let (journal, jlen) = fresh_journal(&jpath)?;
     fs::write(dir.join(PID), std::process::id().to_string()).map_err(werr)?;
@@ -76,6 +124,9 @@ pub fn run_idle(repo: &Repo, stop: &AtomicBool, idle: Option<Duration>) -> Resul
         dirs,
         idle,
         last_query: std::time::Instant::now(),
+        scope,
+        last_scope_check: std::time::Instant::now(),
+        repo: repo.worktree().to_path_buf(),
     };
     let r = d.event_loop(stop);
     let _ = fs::remove_file(d.dir.join(PID));
@@ -96,11 +147,15 @@ type Built = (notify::RecommendedWatcher, Receiver<notify::Result<Event>>, HashS
 
 /// A watcher with one non-recursive watch per directory of the worktree (not `.vcs`) plus the
 /// probe directory.
-fn build(root: &Path, probe: &Path) -> Result<Built> {
+fn build(root: &Path, probe: &Path, scope: &Scope) -> Result<Built> {
     let (tx, rx) = channel();
     let mut w = notify::recommended_watcher(tx).map_err(werr)?;
     let mut dirs = HashSet::new();
-    watch_tree(&mut w, root, root, &mut dirs, &mut |_| {})?;
+    if recursive() {
+        w.watch(root, RecursiveMode::Recursive).map_err(werr)?;
+    } else {
+        watch_tree(&mut w, root, root, scope, &mut dirs, &mut |_| {})?;
+    }
     w.watch(probe, RecursiveMode::NonRecursive).map_err(werr)?;
     Ok((w, rx, dirs))
 }
@@ -110,6 +165,7 @@ fn watch_tree(
     w: &mut notify::RecommendedWatcher,
     root: &Path,
     start: &Path,
+    scope: &Scope,
     dirs: &mut HashSet<PathBuf>,
     found: &mut dyn FnMut(&Path),
 ) -> Result<()> {
@@ -120,6 +176,14 @@ fn watch_tree(
         }
         if d != start {
             found(&d);
+        }
+        if !d
+            .strip_prefix(root)
+            .ok()
+            .and_then(|r| r.to_str())
+            .is_none_or(|r| scope.watches(&r.replace(std::path::MAIN_SEPARATOR, "/")))
+        {
+            continue;
         }
         w.watch(&d, RecursiveMode::NonRecursive).map_err(werr)?;
         dirs.insert(d.clone());
@@ -158,7 +222,7 @@ impl Daemon {
 
     /// Replace every watch and say that events may have been lost.
     fn rebuild(&mut self) -> Result<()> {
-        let (w, rx, dirs) = build(&self.root, &self.dir.join(PROBE_DIR))?;
+        let (w, rx, dirs) = build(&self.root, &self.dir.join(PROBE_DIR), &self.scope)?;
         self.watcher = w;
         self.rx = rx;
         self.dirs = dirs;
@@ -170,6 +234,19 @@ impl Daemon {
             let first = match self.rx.recv_timeout(Duration::from_millis(50)) {
                 Ok(e) => e,
                 Err(RecvTimeoutError::Timeout) => {
+                    if self.last_scope_check.elapsed() > Duration::from_millis(500) {
+                        self.last_scope_check = std::time::Instant::now();
+                        if let Ok(r) = Repo::discover(&self.repo) {
+                            let now = Scope::load(&r);
+                            if now.key != self.scope.key {
+                                self.scope = now;
+                                if let Err(e) = self.rebuild() {
+                                    let _ = self.append("X\n");
+                                    return Err(e);
+                                }
+                            }
+                        }
+                    }
                     if self.idle.is_some_and(|i| self.last_query.elapsed() > i) {
                         return Ok(());
                     }
@@ -238,6 +315,15 @@ impl Daemon {
                 *rebuild = true;
                 continue;
             }
+            if recursive() {
+                // Events from a directory owned by an unsubscribed zone are not wanted (status never
+                // looks there); the explicit-watch mode never sees them because it does not watch them.
+                if !self.scope.watches(rel.rsplit_once('/').map_or("", |(d, _)| d)) {
+                    continue;
+                }
+                out.push_str(&format!("P {rel}\n"));
+                continue;
+            }
             out.push_str(&format!("P {rel}\n"));
             let was_dir = self.dirs.contains(p);
             let is_dir = fs::symlink_metadata(p).is_ok_and(|m| m.is_dir());
@@ -248,7 +334,9 @@ impl Daemon {
             } else if is_dir && !was_dir && !*rebuild {
                 let mut found = Vec::new();
                 let mut dirs = std::mem::take(&mut self.dirs);
-                let r = watch_tree(&mut self.watcher, &self.root, p, &mut dirs, &mut |f| found.push(f.to_path_buf()));
+                let r = watch_tree(&mut self.watcher, &self.root, p, &self.scope, &mut dirs, &mut |f| {
+                    found.push(f.to_path_buf())
+                });
                 self.dirs = dirs;
                 if r.is_err() {
                     *rebuild = true;
@@ -262,5 +350,24 @@ impl Daemon {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsubscribed_zone_directories_are_not_watched() {
+        let d = std::env::temp_dir().join(format!("watchd-scope-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        let r = Repo::init(&d).unwrap();
+        r.create_zone("assets", "assets/big").unwrap();
+        let mut s = Scope::load(&r);
+        assert!(s.watches("") && s.watches("src") && s.watches("assets") && s.watches("assets/big/x"));
+        s.subs.remove("assets");
+        assert!(s.watches("") && s.watches("src") && s.watches("assets"));
+        assert!(!s.watches("assets/big") && !s.watches("assets/big/x/y"));
+        let _ = fs::remove_dir_all(&d);
     }
 }

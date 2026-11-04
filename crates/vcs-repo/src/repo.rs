@@ -1311,10 +1311,24 @@ impl Repo {
     /// and the monitor token it was computed at.
     pub fn status_monitored(&self, opts: StatusOpts, mon: &dyn FsMonitor) -> Result<Status> {
         let img = self.index_image()?;
-        let ix = img.to_index()?;
         let fp = self.fingerprint_img(&img, &self.rd("zones")?, &self.rd("workspace")?);
         let (prev, extra) = self.saved_state_for(fp);
         let ans = mon.changed_since(prev.as_ref().map(|s| s.token.as_str()));
+        // Nothing changed since the saved result, for the very index and HEADs it was computed under:
+        // answer from it without decoding the index (100k entries) at all.
+        if let (Some(p), Changed::Paths { paths, new_token }) = (prev.as_ref(), &ans) {
+            if paths.is_empty() && extra.is_empty() {
+                if let Some(st) = self.status_from_state(p)? {
+                    if &p.token != new_token {
+                        let mut np = p.clone();
+                        np.token = new_token.clone();
+                        np.store(&self.vcs);
+                    }
+                    return Ok(st);
+                }
+            }
+        }
+        let ix = img.to_index()?;
         let (token, inc) = match (prev.as_ref(), ans) {
             (Some(p), Changed::Paths { mut paths, new_token }) => {
                 paths.extend(extra);
@@ -1325,6 +1339,19 @@ impl Repo {
         };
         let st = self.status_inner(opts, &ix, true, inc.as_ref())?;
         let Some(token) = token else { return Ok(st) };
+        let snap = fsmonitor::StagedSnap {
+            zones: st
+                .zones
+                .iter()
+                .map(|z| {
+                    (
+                        z.zone.clone(),
+                        z.head.as_ref().map(|h| *h.as_bytes()),
+                        z.staged.iter().map(|c| (c.path.clone(), c.kind)).collect(),
+                    )
+                })
+                .collect(),
+        };
         let mut dirty = BTreeMap::new();
         for z in &st.zones {
             for c in &z.unstaged {
@@ -1346,11 +1373,64 @@ impl Repo {
             dirty,
             untracked: st.untracked.clone(),
             unsupported: st.unsupported.clone(),
+            staged: Some(snap),
         };
         if prev.as_ref() != Some(&new) {
             new.store(&self.vcs);
         }
         Ok(st)
+    }
+
+    /// The `status` result a saved state describes, without reading the index: the staged lists and
+    /// HEADs saved with it are checked against the current HEADs, the unstaged/untracked lists are the
+    /// saved ones. `None` when the state predates staged snapshots or any HEAD moved.
+    fn status_from_state(&self, p: &fsmonitor::State) -> Result<Option<Status>> {
+        if std::env::var_os("VCS_NO_STATESKIP").is_some() {
+            return Ok(None);
+        }
+        let Some(snap) = &p.staged else { return Ok(None) };
+        let zones = self.zones()?;
+        let ws = self.workspace()?;
+        let refs = self.refs()?;
+        if snap.zones.len() != ws.subs.len() {
+            return Ok(None);
+        }
+        let single_zone = zones.names().count() <= 1;
+        let mut st = Status::default();
+        for ((zone, branch), (sz, shead, staged)) in ws.subs.iter().zip(&snap.zones) {
+            let head = self.current_head(zone, &ws, &refs);
+            if sz != zone || head.as_ref().map(|h| *h.as_bytes()) != *shead {
+                return Ok(None);
+            }
+            st.zones.push(ZoneStatus {
+                zone: zone.clone(),
+                path: zones.path_of(zone).unwrap_or("").to_owned(),
+                branch: branch.clone(),
+                head,
+                staged: staged
+                    .iter()
+                    .map(|(path, kind)| Change {
+                        path: path.clone(),
+                        kind: *kind,
+                    })
+                    .collect(),
+                unstaged: p
+                    .dirty
+                    .iter()
+                    .filter(|(q, _)| (single_zone || zones.owner(q) == zone) && !ws.skips(zone, q))
+                    .map(|(q, k)| Change { path: q.clone(), kind: *k })
+                    .collect(),
+            });
+        }
+        for n in zones.names() {
+            if !ws.subs.contains_key(n) {
+                st.unsubscribed.push(n.to_owned());
+            }
+        }
+        st.untracked = p.untracked.clone();
+        st.unsupported = p.unsupported.clone();
+        st.merging = self.merge_state()?;
+        Ok(Some(st))
     }
 
     /// The saved monitor state usable for an index with fingerprint `fp`, and extra paths to treat as
