@@ -290,6 +290,8 @@ pub struct Refs {
     pub snapshots: BTreeMap<String, ObjectId>,
     /// (zone, tag name) -> a commit (lightweight tag) or an annotated tag object.
     pub tags: crate::reftags::Tags,
+    /// Set when loaded from a `refs-delta` repository: what the on-disk state was (see `refsdelta.rs`).
+    pub(crate) delta: Option<std::sync::Arc<crate::refsdelta::DeltaState>>,
 }
 
 impl Refs {

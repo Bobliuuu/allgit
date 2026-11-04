@@ -104,6 +104,14 @@ impl<'a> Reader<'a> {
             }
         }
     }
+    /// The next varint without consuming it.
+    pub fn peek_varint(&self) -> Result<u64, DecodeError> {
+        let mut c = Reader {
+            buf: self.buf,
+            pos: self.pos,
+        };
+        c.varint()
+    }
     pub fn raw(&mut self, n: usize) -> Result<&'a [u8], DecodeError> {
         if self.remaining() < n {
             return Err(DecodeError::Eof);

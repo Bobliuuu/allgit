@@ -45,6 +45,15 @@ pub(crate) const OP_TAGS_DELTA_MIN: usize = 64;
 /// How far back an omitted tag view is looked up when recording (full copy again beyond it).
 const OP_TAGS_LOOKBACK: usize = 64;
 
+fn apply_tag_delta(m: &mut std::collections::BTreeMap<(String, String), ObjectId>, d: &[((String, String), Option<ObjectId>)]) {
+    for (k, v) in d {
+        match v {
+            Some(id) => m.insert(k.clone(), *id),
+            None => m.remove(k),
+        };
+    }
+}
+
 impl Repo {
     /// The current operation id, or `None` for a repository that predates the log.
     pub fn op_head(&self) -> Result<Option<ObjectId>> {
@@ -78,6 +87,7 @@ impl Repo {
             branches: refs.branches,
             workspace: ws.subs,
             tags: Some(refs.tags.into_map()),
+            tags_delta: None,
         })
     }
 
@@ -86,7 +96,16 @@ impl Repo {
     /// Caller holds the repository lock.
     pub(crate) fn record_op(&self, description: &str, author: Option<Signature>) -> Result<ObjectId> {
         let parents: Vec<ObjectId> = self.op_head()?.into_iter().collect();
-        let mut view = self.current_view()?;
+        let refs = self.refs()?;
+        if refs.delta.is_some() {
+            return self.record_op_delta(refs, parents, description, author);
+        }
+        let mut view = OpView {
+            branches: refs.branches,
+            workspace: self.workspace()?.subs,
+            tags: Some(refs.tags.into_map()),
+            tags_delta: None,
+        };
         // Every operation used to store the whole tag set: 100,000 tags cost 4.4 MB per commit. A large,
         // unchanged set is now omitted (None) and read from the nearest earlier operation that has it.
         // "Unchanged" is decided from a hash cached for the previous operation (no re-read of its 4.4 MB);
@@ -124,9 +143,60 @@ impl Repo {
 
     /// (operation, hash of the tag view in effect after it) as cached by the last `record_op` that had a large set.
     fn op_tags_cache(&self) -> Option<(ObjectId, ObjectId)> {
+        self.op_tags_cache3().map(|(a, b, _)| (a, b))
+    }
+
+    /// [`Repo::op_tags_cache`] plus the number of tag-delta operations since the last full copy.
+    fn op_tags_cache3(&self) -> Option<(ObjectId, ObjectId, u32)> {
         let t = fs::read_to_string(self.common.join(OP_TAGS_CACHE)).ok()?;
-        let (a, b) = t.trim().split_once(' ')?;
-        Some((ObjectId::from_hex(a).ok()?, ObjectId::from_hex(b).ok()?))
+        let mut it = t.split_whitespace();
+        let a = ObjectId::from_hex(it.next()?).ok()?;
+        let b = ObjectId::from_hex(it.next()?).ok()?;
+        Some((a, b, it.next().and_then(|d| d.parse().ok()).unwrap_or(0)))
+    }
+
+    /// `record_op` for a `refs-delta` repository: the tag table is never read here unless a full copy is due.
+    fn record_op_delta(
+        &self,
+        refs: crate::meta::Refs,
+        parents: Vec<ObjectId>,
+        description: &str,
+        author: Option<Signature>,
+    ) -> Result<ObjectId> {
+        let token = refs.tag_token().expect("delta refs have a token");
+        let cache = self.op_tags_cache3().filter(|(op, _, _)| Some(op) == parents.first());
+        let stash = crate::refsdelta::take_stash(&self.common);
+        let mut view = OpView {
+            branches: refs.branches.clone(),
+            workspace: self.workspace()?.subs,
+            tags: None,
+            tags_delta: None,
+        };
+        let mut depth = 0;
+        match (cache, stash) {
+            (Some((_, t, d)), _) if t == token => depth = d,
+            (Some((_, t, d)), Some((pre, ops))) if t == pre && d < crate::refsdelta::DELTA_DEPTH => {
+                view.tags_delta = Some(ops);
+                depth = d + 1;
+            }
+            _ => view.tags = Some(refs.tags.clone().into_map()),
+        }
+        if view.tags.is_none() {
+            self.note_feature(crate::repo::FEATURE_OP_TAGS_DELTA)?;
+        }
+        let op = Operation {
+            parents,
+            view,
+            description: description.lines().next().unwrap_or("").to_owned(),
+            author: author.unwrap_or_else(env_signature),
+        };
+        let id = self.store.put(&Object::Operation(op))?;
+        self.write_op_head(&id)?;
+        let _ = crate::meta::write_cache_atomic(
+            &self.common.join(OP_TAGS_CACHE),
+            format!("{} {} {depth}\n", id.to_hex(), token.to_hex()).as_bytes(),
+        );
+        Ok(id)
     }
 
     /// The tag view in effect after operation `id`: its own, or that of the nearest earlier operation that
@@ -134,10 +204,17 @@ impl Repo {
     /// view, or more than `limit` omissions.
     fn op_tags_before(&self, id: &ObjectId, limit: usize) -> Result<Option<std::collections::BTreeMap<(String, String), ObjectId>>> {
         let mut cur = *id;
+        let mut deltas: Vec<Vec<vcs_objects::object::TagChange>> = Vec::new();
         for _ in 0..=limit {
             let op = self.op_get(&cur)?;
-            if op.view.tags.is_some() {
-                return Ok(op.view.tags);
+            if let Some(mut m) = op.view.tags {
+                for d in deltas.iter().rev() {
+                    apply_tag_delta(&mut m, d);
+                }
+                return Ok(Some(m));
+            }
+            if let Some(d) = op.view.tags_delta {
+                deltas.push(d);
             }
             match op.parents.first() {
                 Some(p) => cur = *p,

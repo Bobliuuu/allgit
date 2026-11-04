@@ -40,6 +40,9 @@ impl Repo {
     /// Every writer of the `refs` file outside [`Repo::commit_refs_op`] must use this.
     pub(crate) fn write_refs(&self, refs: &Refs) -> Result<()> {
         self.journal_checkpoint()?;
+        if self.try_write_refs_delta(refs)? {
+            return Ok(());
+        }
         crate::meta::write_atomic(&self.common.join("refs"), &refs.encode())
     }
 
@@ -415,7 +418,7 @@ mod imp {
             let Some(boot) = boot_id() else { return Ok(None) };
             // A large tag set is stored once and omitted from unchanged operations (ops.rs `record_op`);
             // the journal record always carries the full view, so large sets take the synced path.
-            if refs.tags.len() >= crate::ops::OP_TAGS_DELTA_MIN {
+            if refs.delta.is_some() || refs.tags.len_hint() >= crate::ops::OP_TAGS_DELTA_MIN.min(crate::refsdelta::delta_min()) {
                 return Ok(None);
             }
             // Data objects the new state names (annotation, commits, ...) are durable first.
@@ -427,6 +430,7 @@ mod imp {
                     branches: refs.branches.clone(),
                     workspace: ws.subs,
                     tags: Some(refs.tags.clone().into_map()),
+                    tags_delta: None,
                 },
                 description: description.lines().next().unwrap_or("").to_owned(),
                 author: author.clone().unwrap_or_else(crate::ops::env_signature),
