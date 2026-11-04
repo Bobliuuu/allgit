@@ -66,6 +66,21 @@ fn main() {
             }
             return;
         }
+        Some("migrate-sharded") => {
+            // one-way opt-in: per-zone sharded manifest (docs/manifest-scaling.md). Stop writers first or not:
+            // the freeze makes concurrent publishers retry, and a crash mid-way is resumed by running it again.
+            let url = match (args.get(1).map(String::as_str), args.get(2)) {
+                (Some("--backend"), Some(u)) => u.clone(),
+                _ => die("usage: vcs-server migrate-sharded --backend <dir|s3://...>"),
+            };
+            let b = backend_url::open_raw(&url).unwrap_or_else(|e| die(&e));
+            match vcs_remote::sharded::migrate_to_sharded(b.as_ref()) {
+                Ok(r) if r.already => println!("already sharded"),
+                Ok(r) => println!("migrated to sharded manifests: {} zones", r.zones),
+                Err(e) => die(&format!("migration failed (safe to re-run): {e}")),
+            }
+            return;
+        }
         Some("audit") if args.get(1).map(String::as_str) == Some("verify") => audit_verify(&args[2..]),
         _ => {}
     }

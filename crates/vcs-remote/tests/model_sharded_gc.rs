@@ -72,9 +72,9 @@ struct S {
 fn effective(s: &S) -> [usize; 2] {
     let mut h = s.head;
     if s.decided {
-        for z in 0..2 {
-            if let Some(p) = s.pend[z] {
-                h[z] = p;
+        for (z, p) in s.pend.iter().enumerate() {
+            if let Some(p) = p {
+                h[z] = *p;
             }
         }
     }
@@ -150,7 +150,7 @@ fn read_roots(s: &mut S, f: &Flags, out: &mut BTreeSet<usize>, step: &mut dyn Fn
 
 fn sweeper_step(s: &mut S, f: &Flags) -> bool {
     // roots read: ATOMIC in one step, or ZONEWISE in two steps (rr tracks progress)
-    let mut read = |s: &mut S, first: bool| -> Option<BTreeSet<usize>> {
+    let read = |s: &mut S, first: bool| -> Option<BTreeSet<usize>> {
         if !f.zonewise_roots {
             let mut r = BTreeSet::new();
             for z in 0..2 {

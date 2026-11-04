@@ -130,6 +130,8 @@ pub struct RemoteGcReport {
     pub packs_rewritten: Vec<(String, String)>,
     /// Shelves (`principal/name`) past their expiry: removed (dry run: would be removed).
     pub expired_shelves: Vec<String>,
+    /// Sharded manifests: decision records deleted (committed and fully finalized, or aborted and old).
+    pub decisions_deleted: usize,
 }
 
 /// Points at which a test can interleave other actors with the sweeper.
@@ -378,6 +380,8 @@ fn roots(b: &dyn Backend, quirks: &GcQuirks, now: u64) -> Result<Vec<ObjectId>, 
         .chain(m.tags.values().copied())
         .chain(shelf_roots)
         .collect();
+    // sharded manifests: prepared or committed-but-unfinalized records make objects reachable
+    r.extend(crate::sharded::pending_roots(b).map_err(|e| GcError::Damaged(format!("sharded pending records: {e}")))?);
     for txid in &m.applied {
         if let Some(v) = b.get(&tx_key(txid))? {
             if let Ok(Object::Transaction(t)) = Object::decode(&v.data) {
@@ -514,6 +518,10 @@ pub fn remote_gc_with(
         }
         Some(g)
     };
+    if !opts.dry_run {
+        let g = crate::sharded::gc_decisions(b, opts.grace_ms).map_err(|e| GcError::Damaged(format!("sharded decisions: {e}")))?;
+        rep.decisions_deleted = g.committed_deleted + g.aborted_deleted;
+    }
     // Expired shelves stop pinning their bases and are removed (meta first). Dry run: report only.
     if !quirks.sweeper_ignores_shelves {
         for (p, n) in crate::shelf::expired(b, now).map_err(|e| GcError::Damaged(format!("shelves: {e}")))? {

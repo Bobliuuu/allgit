@@ -54,6 +54,10 @@ pub struct Config {
     pub max_inflight_body: usize,
     /// Reconcile stale manifest writes in the server instead of answering 412 (see [`crate::groupcommit`]).
     pub group_commit: bool,
+    /// How long a branch ticket may be held before it is considered abandoned.
+    pub ticket_lease: Duration,
+    /// How long a ticket request waits for its turn before answering 503 (the client asks again).
+    pub ticket_wait: Duration,
     /// How long an idle persistent (keep-alive) connection waits for its next request before it is closed.
     pub keepalive_idle: Duration,
     /// Requests served on one connection before the server asks the client to reconnect.
@@ -102,6 +106,8 @@ impl Config {
             max_connections: 256,
             max_inflight_body: 2 << 30,
             group_commit: true,
+            ticket_lease: Duration::from_secs(15),
+            ticket_wait: Duration::from_secs(50),
             keepalive_idle: Duration::from_secs(5),
             max_requests_per_conn: 1000,
             rate_limit: None,
@@ -155,6 +161,7 @@ struct Shared {
     merged_writes: AtomicU64,
     /// Manifest writes waiting for the next batch commit (flat combining, see `manifest_combine`).
     batch_q: Mutex<Vec<BatchItem>>,
+    tickets: crate::tickets::Tickets,
     batches: AtomicU64,
     batched_writes: AtomicU64,
     limiter: Option<Limiter>,
@@ -251,6 +258,7 @@ impl Server {
             manifest_parsed: Mutex::new(None),
             merged_writes: AtomicU64::new(0),
             batch_q: Mutex::new(Vec::new()),
+            tickets: Default::default(),
             batches: AtomicU64::new(0),
             batched_writes: AtomicU64::new(0),
             cfg,
@@ -886,6 +894,35 @@ fn route_inner(sh: &Shared, req: &Request, ctx: &mut Ctx) -> Response {
     resp
 }
 
+/// `POST /v1/ticket?zone=Z&branch=B` blocks (up to `ticket_wait`) until it is this writer's turn to push
+/// to Z/B and answers its id (or 202 `wait` when the turn has not come: ask again); `DELETE /v1/ticket?zone=Z&branch=B&id=N` gives the turn back. Advisory (see
+/// [`crate::tickets`]): pushes without a ticket are unaffected.
+fn ticket(sh: &Shared, req: &Request, who: &Principal) -> Response {
+    if who.role < Role::Write {
+        return text(403, "Forbidden: read-only principal");
+    }
+    let (Some(zone), Some(branch)) = (req.query_param("zone"), req.query_param("branch")) else {
+        return text(400, "zone and branch are required");
+    };
+    if vcs_objects::names::validate_zone_name(&zone).is_err() || vcs_objects::names::validate_branch_name(&branch).is_err() {
+        return text(400, "bad zone or branch name");
+    }
+    if who.zones.as_ref().is_some_and(|z| !z.contains(&zone)) {
+        return text(403, "Forbidden: zone not in this token's scope");
+    }
+    if req.method == "DELETE" {
+        let Some(id) = req.query_param("id").and_then(|v| v.parse::<u64>().ok()) else {
+            return text(400, "id is required");
+        };
+        sh.tickets.release(&zone, &branch, id);
+        return Response::new(204, "");
+    }
+    match sh.tickets.acquire(&zone, &branch, sh.cfg.ticket_lease, sh.cfg.ticket_wait) {
+        crate::tickets::Acquire::Granted(id) => text(200, &id.to_string()),
+        crate::tickets::Acquire::Timeout => text(202, "wait"),
+    }
+}
+
 fn dispatch(sh: &Shared, req: &Request, who: &Principal, extra: &mut Extra) -> Response {
     match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/v1/audit") => audit_page(sh, req, who),
@@ -919,6 +956,7 @@ fn dispatch(sh: &Shared, req: &Request, who: &Principal, extra: &mut Extra) -> R
                 Err(e) => backend_err(e),
             }
         }
+        ("POST", "/v1/ticket") | ("DELETE", "/v1/ticket") => ticket(sh, req, who),
         ("GET", "/v1/clock") => {
             if !sh.backend.supports_gc() {
                 return text(501, "garbage collection is not supported by this server's backend");
@@ -974,6 +1012,14 @@ fn dispatch(sh: &Shared, req: &Request, who: &Principal, extra: &mut Extra) -> R
             }
             if shadows_manifest(&key) {
                 return text(400, "key is a variant spelling of the manifest key");
+            }
+            if key.starts_with(vcs_remote::sharded::SHARD_PREFIX) || key.starts_with(vcs_remote::sharded::DECISION_PREFIX) {
+                // sharded-manifest records are the server's own state: clients see them only composed into `manifest`.
+                // Remote GC runs in the client and needs to read them (pending records are roots) and to delete old
+                // decision records, so an admin may GET, HEAD and DELETE; nobody may PUT.
+                if m == "PUT" || who.role < Role::Admin {
+                    return text(403, "Forbidden: sharded manifest records are not client-addressable");
+                }
             }
             match m {
                 "GET" | "HEAD" => object_read(sh, req, who, &key, m == "HEAD"),

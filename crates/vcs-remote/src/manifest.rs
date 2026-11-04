@@ -155,6 +155,11 @@ impl Manifest {
         if v == 5 {
             return Self::decode_compact(bytes);
         }
+        if v == 9 {
+            return Err(ManifestError(
+                "this repository uses sharded manifests; use a vcs build that supports them (ShardedBackend)".into(),
+            ));
+        }
         if !(1..=4).contains(&v) {
             return Err(ManifestError(format!("unsupported version {v}")));
         }

@@ -248,7 +248,7 @@ aborting the whole transaction, a crash at every protocol point recovered both b
 transaction on the same zones, and a threaded stress with an atomic-pair invariant and a concurrent reader (40 repeated
 runs green). It is **not** wired into `Publisher`, fetch, GC, locks, tags or the CLI.
 
-**Decision: do not switch the default.** Reasons: one writer is 2-3x slower; the protocol would need decision-record GC,
+**Decision (updated, see "Sharded manifest, integrated" at the end): the default is still the single manifest;** sharding is now an integrated repository-level opt-in. Original reasoning for not switching the default: Reasons: one writer is 2-3x slower; the protocol would need decision-record GC,
 a shard-aware remote GC (liveness roots are today the single manifest), locks that span zones (docs/locks.md), the
 applied-id idempotency list per shard, and a migration of the manifest; none of that is modelled. Recommended path:
 
@@ -257,3 +257,100 @@ applied-id idempotency list per shard, and a migration of the manifest; none of 
 3. Integrate behind `sharded` as a repository-level opt-in recorded in a small root manifest (zone list and format
    version), keeping the single-manifest mode as the default for repositories under 1 MiB and 8 publishers.
 4. Re-measure on real S3 and R2 (cloud numbers are still owed by #187).
+
+## Sharded manifest, integrated (opt-in; issue #313)
+
+Implemented in `crates/vcs-remote/src/sharded.rs`, always compiled (no cargo feature: a single-manifest repository pays
+one marker check per manifest read). The prototype in `shard.rs` (feature `sharded`) is kept only for its own tests.
+
+**Model first.** `tests/model_sharded.rs` (decision-record GC, per-shard applied ids, locks spanning zones),
+`tests/model_sharded_migrate.rs` (single to sharded cut-over, crash of the migrator at every step) and
+`tests/model_sharded_gc.rs` (GC roots) explore every interleaving of the new rules, each with mutation tests that remove
+one rule and must fail. What the models found: (a) a Committed decision record may be deleted only after EVERY
+participant finalized it and recorded the txid (delete after the first zone only: half-applied transaction); (b) without
+the per-shard applied list a re-run after GC applies the transaction twice or reports a committed one as failed
+(an ABA revert in between makes the double apply legal-looking); (c) Aborted decision records must NOT be collected by
+rule, only by age (a zombie writer could otherwise re-prepare), so they use a grace period (`gc_decisions`);
+(d) a lock check that is only read at prepare time (not held until the decision) lets a steal commit in between, so the
+lock map of a touched zone is a precondition (the guard digest); (e) pending records are GC roots and, when roots are
+read zone by zone, object ages must be taken when the read STARTS; (f) the reader's re-check of the marker after
+reading the old manifest is not needed (recorded as a passing negative result).
+
+**Layout.** `manifest` holds a marker (`AGMF` version 9, byte 1 = frozen with the old manifest embedded, 2 = moved).
+Zones: `shard/<zone>` (heads, tags, locks, applied ids, at most one pending record). `shard/~root` (zone registry,
+labels, snapshots, lock token counter, validator time, applied ids). `decision/<tx>` (create-only, committed record
+lists its participants). Older binaries decode version 9 and fail with an error that says the repository is sharded.
+
+**Integration without touching the Publisher.** `ShardedBackend` wraps any backend. Reads of `manifest` compose a
+double-collect snapshot into an ordinary `Manifest` (tag = hash of its content except applied ids and generation, so the
+tag of a manifest just written is known without reading back); a CAS of `manifest` is diffed against the manifest the
+writer loaded (kept per tag) and becomes a transaction on exactly the participants whose keys changed, with per-key
+old values as preconditions. One participant: a single CAS, no decision record. Several: two-phase commit as in the model.
+Fetch, clone, tags, locks, the server's batch commit and remote GC run unchanged on top. The CLI (`file://`, `s3://`) and
+`vcs-server` always wrap; the server also keeps the composed snapshot current itself (2 s read TTL, sole-writer
+deployment) and refuses writer access to `shard/` and `decision/` keys (an admin may read and delete them: remote GC runs in the client).
+
+**Opt-in and migration.** `vcs-server migrate-sharded --backend <dir|s3://...>`: freeze (CAS the manifest to the frozen
+marker; concurrent publishers lose their CAS, later ones get a retryable "migrating" error), create-only zone records,
+create-only root, CAS to moved. Re-run after a crash at any step. Tested live: a server keeps serving while the repository
+is migrated under it (`vcs-server/tests/sharded_server.rs`). There is no way back (rewrite the manifest from a composed
+snapshot by hand if ever needed).
+
+**GC.** Remote GC adds pending records to its roots and deletes decision records that can no longer matter
+(`RemoteGcReport::decisions_deleted`); tests: an object referenced only by a pending record survives, the same object is
+collected without it.
+
+**Correctness tests (real code).** `tests/sharded_manifest.rs`: the real `Publisher`, fetch and remote GC through the
+adapter; a two-zone publish with the client dying (and, separately, losing only the acknowledgement) at EVERY backend
+call (about 40 calls) then a healthy reader sees both or neither and a re-run of the same transaction converges with no
+pending record left; a dead writer's pending records are aborted by the next writer; 4 writers x 15 atomic pair updates
+with a concurrent reader that must never see a torn pair; decision GC then re-run after an ABA revert. Server:
+`sharded_server.rs`.
+
+### Soak (sharded, kill -9)
+
+`scripts/soak/soak.py run --kind vcs --backend local --n 40 --minutes 5 --chaos kill9 --clientkill 0.02 --gc-every 20 --sharded`:
+a seeded repository is migrated with `vcs-server migrate-sharded`, then 40 collaborator processes (commit, sync, publish, lockable
+binaries) run against the sharded server while the server is `kill -9`ed every 2 to 8 s (72 chaos log lines) and 2 percent of the
+clients are killed mid-operation, and remote GC runs every 20 s. Result: **1,042 acknowledged files, 0 missing, 0 wrong content**,
+fresh-clone fsck ok, clone of a copy of the store (direct `file` backend through `ShardedBackend`) fsck ok, remote GC dry run
+clean (6,613 of 6,780 objects reachable), server alive at the end, 0 bad audits. Local disk, one run, box load1 30 to 70.
+The soak found two real bugs before it passed, both fixed with regression tests: the root record's name started with a dot
+and `FsBackend::list` skips dotfiles (the lock token counter vanished from the composed manifest: "lock token not below
+next_token"; `locks_on_a_directory_backend_survive_composition`), and the server refused the client-side GC access to
+`shard/` records (`sharded_server.rs` now runs remote GC over HTTP).
+
+### Measurements (LOCAL, in-memory backend with 25 ms injected latency per request, direct-to-store publishers, one run per cell)
+
+`crates/vcs-bench/src/bin/shardbench.rs`. Not S3. 5 pushes per writer.
+
+| workload | writers | mode | pushes/s | p50 ms | p99 ms | CAS lost | requests/publish |
+|---|---|---|---|---|---|---|---|
+| disjoint zones | 16 | single | 22.3 | 320 | 2,502 | 316 | 13.1 |
+| disjoint zones | 16 | sharded | 36.6 | 430 | 474 | 0 | 49.4 |
+| disjoint zones | 64 | single | 27.6 | 1,003 | 7,675 | 3,701 | 28.3 |
+| disjoint zones | 64 | sharded | 58.9 | 824 | 2,073 | 0 | 169.1 |
+| one zone, branch per writer | 64 | single | 26.7 | 929 | 7,736 | 3,683 | 28.2 |
+| one zone, branch per writer | 64 | sharded | 20.0 | 1,999 | 9,359 | 2,919 | 115.0 |
+
+Reading: disjoint writers never lose a CAS in sharded mode and throughput is 1.6 to 2.1 times higher with a p99 3.7 times
+lower, as the prototype predicted. Costs, stated plainly: (1) a publish makes 49 to 169 requests instead of 13 to 28,
+because a manifest read composes EVERY zone (list + one read per zone + a validation pass of conditional reads), so the
+request count grows linearly with zones; direct-to-store clients of a repository with thousands of zones would drown in
+reads (the server hides this with its snapshot; lazy per-zone composition for the Publisher is the next step and is not
+built). (2) Writers in the SAME zone conflict at zone granularity and sharding does not help them (last row).
+Through `vcs-server` on a local fsync disk, the single manifest is faster (batch commit = one fsync for a whole batch):
+32 writers, 4 pushes each: single 46.7 pushes/s, sharded 9.6 (13.1 with `--no-group-commit`), box load1 about 40, so absolute numbers are
+inflated and only the ratio means anything. Sharding pays when each write is a round trip to a store that serves keys in
+parallel (S3), not on a local disk where batching saves fsyncs.
+
+### Applied-id window per provider (decision)
+
+* Single manifest: keep `MAX_APPLIED` = 4096 for S3-class stores (50+ writes/s: 4096 ids cover about 80 s, longer than
+  8 retries x the 10 s request timeout). For R2 and GCS (about 1 write/s per key) a window of 1024 already covers 17
+  minutes: recommended `Publisher::with_applied_window(1024)` there, saving 96 KB of manifest. Not made a default
+  because the store type is not known to the publisher.
+* Sharded: `APPLIED_CAP` = 256 per participant. The count is publishes to THAT zone, so a window of 256 covers more wall
+  time than 4096 does for the single object; 16 ids per participant are exposed in a composed manifest for the
+  Publisher's own already-applied probe, and the per-shard list (not the composed one) is what makes a re-run
+  idempotent.
