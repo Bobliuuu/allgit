@@ -1504,7 +1504,12 @@ mod tests {
             let mut child = blob;
             for depth in 0..3 {
                 let mode = if depth == 0 { EntryMode::File } else { EntryMode::Directory };
-                let t = Tree::new(vec![TreeEntry { name: format!("e{depth}"), mode, id: child }]).unwrap();
+                let t = Tree::new(vec![TreeEntry {
+                    name: format!("e{depth}"),
+                    mode,
+                    id: child,
+                }])
+                .unwrap();
                 child = s.put(&Object::Tree(t)).unwrap();
                 ids.push(child);
             }
@@ -1514,7 +1519,10 @@ mod tests {
             let s2 = LocalStore::open(d.path()).unwrap();
             for (i, id) in ids.iter().enumerate() {
                 if s2.contains(id).unwrap() && i > 0 {
-                    assert!(s2.contains(&ids[i - 1]).unwrap(), "crash_at {crash_at}: object {i} visible without its child");
+                    assert!(
+                        s2.contains(&ids[i - 1]).unwrap(),
+                        "crash_at {crash_at}: object {i} visible without its child"
+                    );
                 }
             }
         }

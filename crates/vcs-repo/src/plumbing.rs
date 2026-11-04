@@ -13,12 +13,7 @@ impl Repo {
     /// Tracked files of the working tree (the index), as `(path, mode, content id)` sorted by path.
     /// Paths are repository-relative; only subscribed zones are tracked.
     pub fn tracked_files(&self) -> Result<Vec<(String, vcs_objects::EntryMode, ObjectId)>> {
-        Ok(self
-            .index_image()?
-            .list()?
-            .into_iter()
-            .map(|(p, e)| (p, e.mode, e.id))
-            .collect())
+        Ok(self.index_image()?.list()?.into_iter().map(|(p, e)| (p, e.mode, e.id)).collect())
     }
 
     /// Stream the staged entries (same validation as [`Repo::tracked_files`]) through `visit` on

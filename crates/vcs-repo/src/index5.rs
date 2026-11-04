@@ -51,8 +51,18 @@ fn corrupt(e: impl std::fmt::Display) -> Error {
 /// Fast 64-bit checksum (four multiply/xorshift lanes, ~10 GB/s). Detects torn and bit-flipped
 /// data; not cryptographic.
 pub(crate) fn sum64(b: &[u8]) -> u64 {
-    const P: [u64; 4] = [0x9E37_79B1_85EB_CA87, 0xC2B2_AE3D_27D4_EB4F, 0x1656_67B1_9E37_79F9, 0x85EB_CA77_C2B2_AE63];
-    let mut l: [u64; 4] = [0x243F_6A88_85A3_08D3, 0x1319_8A2E_0370_7344, 0xA409_3822_299F_31D0, 0x082E_FA98_EC4E_6C89];
+    const P: [u64; 4] = [
+        0x9E37_79B1_85EB_CA87,
+        0xC2B2_AE3D_27D4_EB4F,
+        0x1656_67B1_9E37_79F9,
+        0x85EB_CA77_C2B2_AE63,
+    ];
+    let mut l: [u64; 4] = [
+        0x243F_6A88_85A3_08D3,
+        0x1319_8A2E_0370_7344,
+        0xA409_3822_299F_31D0,
+        0x082E_FA98_EC4E_6C89,
+    ];
     let mut it = b.chunks_exact(32);
     for c in &mut it {
         for i in 0..4 {
@@ -81,7 +91,10 @@ pub(crate) fn sum64(b: &[u8]) -> u64 {
 pub(crate) enum Bytes {
     Vec(Vec<u8>),
     #[cfg(unix)]
-    Map { ptr: *mut libc::c_void, len: usize },
+    Map {
+        ptr: *mut libc::c_void,
+        len: usize,
+    },
 }
 
 // SAFETY: the map is read-only and never remapped; the bytes behind it are immutable by the
@@ -250,7 +263,10 @@ impl Base5 {
 
     /// Bytes `[off, off+len)` of the body, after verifying the chunks they lie in.
     fn slice(&self, off: usize, len: usize) -> Result<&[u8]> {
-        let end = off.checked_add(len).filter(|e| *e <= self.sums_off).ok_or_else(|| corrupt("offset out of range"))?;
+        let end = off
+            .checked_add(len)
+            .filter(|e| *e <= self.sums_off)
+            .ok_or_else(|| corrupt("offset out of range"))?;
         if len > 0 && !self.full.load(Ordering::Relaxed) {
             for c in off / CHUNK..=(end - 1) / CHUNK {
                 self.verify_chunk(c)?;
@@ -476,7 +492,9 @@ pub(crate) fn encode<'a>(
     let hs = sum64(&out[..56]);
     out[56..64].copy_from_slice(&hs.to_le_bytes());
     // chunk sums (the header is in chunk 0 and final by now)
-    let sums: Vec<u64> = (0..nchunks).map(|c| sum64(&out[c * CHUNK..((c + 1) * CHUNK).min(sums_off)])).collect();
+    let sums: Vec<u64> = (0..nchunks)
+        .map(|c| sum64(&out[c * CHUNK..((c + 1) * CHUNK).min(sums_off)]))
+        .collect();
     let mut st = Vec::with_capacity(nchunks * 8);
     for s in &sums {
         st.extend_from_slice(&s.to_le_bytes());
@@ -637,7 +655,12 @@ pub(crate) fn looks_whole(path: &std::path::Path) -> Option<bool> {
     if got < HDR || h[4] != FORMAT || sum64(&h[..56]) != u64at(&h, 56) {
         return Some(false);
     }
-    let (n, heap, tree, nch) = (u64at(&h, 24) as u128, u64at(&h, 32) as u128, u64at(&h, 40) as u128, u64at(&h, 48) as u128);
+    let (n, heap, tree, nch) = (
+        u64at(&h, 24) as u128,
+        u64at(&h, 32) as u128,
+        u64at(&h, 40) as u128,
+        u64at(&h, 48) as u128,
+    );
     let want = RECS_OFF as u128 + n * REC as u128 + heap + tree + nch * 8 + 8;
     Some(f.metadata().ok()?.len() as u128 == want)
 }

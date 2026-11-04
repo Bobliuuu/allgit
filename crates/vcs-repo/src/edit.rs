@@ -354,7 +354,12 @@ impl Repo {
 
     /// `restore --staged`: put the index entries under `specs` back to what HEAD has. Works on the
     /// lazily read index file and looks HEAD up per path, so one file costs a block, not the tree.
-    fn restore_staged(&self, specs: &[String], zones: &Zones, ws: &Workspace) -> Result<(usize, Option<(crate::index_file::IndexFile, crate::index_file::Patch)>)> {
+    fn restore_staged(
+        &self,
+        specs: &[String],
+        zones: &Zones,
+        ws: &Workspace,
+    ) -> Result<(usize, Option<(crate::index_file::IndexFile, crate::index_file::Patch)>)> {
         let refs = self.refs()?;
         let f = self.index_file()?;
         let mut roots: BTreeMap<String, Option<ObjectId>> = BTreeMap::new();
