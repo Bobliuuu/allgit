@@ -63,13 +63,135 @@ fn main() {
         .as_nanos();
     println!("endpoint {endpoint} trials {trials} files {files} commits {commits} (a local server, not a cloud)");
 
+
+    // ---- bulk throughput: one big PUT, one big GET, parallel ranged GETs (decides parallel ranges / multipart) ----
+    if a.iter().any(|x| x == "--throughput") {
+        let mb = num("--mb", 64);
+        let mut c2 = base.clone();
+        c2.prefix = format!("{}e2e-{t0}-bulk/", std::env::var("S3E2E_PREFIX").unwrap_or_default());
+        let bk = std::sync::Arc::new(S3Backend::connect(c2).unwrap());
+        let big: Vec<u8> = noise(7, mb << 20).into_bytes();
+        for rep in 0..3 {
+            let s = Instant::now();
+            bk.put_if_absent(&format!("big{rep}"), &big).unwrap();
+            let el = s.elapsed().as_secs_f64();
+            println!("PUT {mb} MiB single request (rep {rep}): {:.0} ms, {:.0} MB/s", el * 1e3, (mb << 20) as f64 / el / 1e6);
+        }
+        assert!(!bk.put_if_absent("big0", &big[..1024]).unwrap(), "create-only must refuse an existing multipart object");
+        {
+            use sha2::{Digest, Sha256};
+            let v = bk.get("big0").unwrap().unwrap();
+            assert_eq!(Sha256::digest(&v.data), Sha256::digest(&big), "uploaded object differs from the source bytes");
+            println!("create-only refusal and byte-for-byte readback of the {mb} MiB object: ok");
+        }
+        for rep in 0..3 {
+            let s = Instant::now();
+            let v = bk.get("big0").unwrap().unwrap();
+            let el = s.elapsed().as_secs_f64();
+            println!("GET {mb} MiB single request (rep {rep}): {:.0} ms, {:.0} MB/s ({} B)", el * 1e3, v.data.len() as f64 / el / 1e6, v.data.len());
+        }
+        for (threads, part) in [(1usize, 8usize), (4, 8), (8, 8), (16, 4), (16, 8), (32, 2)] {
+            let total = mb << 20;
+            let (part, parts) = (part << 20, total / (part << 20));
+            let mut ms = vec![];
+            for _ in 0..3 {
+                let next = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let s = Instant::now();
+                let hs: Vec<_> = (0..threads)
+                    .map(|_| {
+                        let (b, n) = (bk.clone(), next.clone());
+                        std::thread::spawn(move || loop {
+                            let i = n.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if i >= parts {
+                                break;
+                            }
+                            b.get_range("big0", (i * part) as u64, part as u64).unwrap().unwrap();
+                        })
+                    })
+                    .collect();
+                for h in hs {
+                    h.join().unwrap();
+                }
+                ms.push(s.elapsed().as_secs_f64() * 1e3);
+            }
+            ms.sort_by(|x, y| x.partial_cmp(y).unwrap());
+            println!("GET {mb} MiB as {} ranges of {} MiB on {threads} threads: median {:.0} ms ({:.0} MB/s), min {:.0}", parts, part >> 20, ms[1], total as f64 / ms[1] / 1e3, ms[0]);
+        }
+        // parallel PUTs of distinct 8 MiB objects (what multipart parts would look like)
+        for threads in [1usize, 4, 8, 16] {
+            let part = &big[..8 << 20];
+            let n = 16usize;
+            let next = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let s = Instant::now();
+            let hs: Vec<_> = (0..threads)
+                .map(|_| {
+                    let (b, nx, p) = (bk.clone(), next.clone(), part.to_vec());
+                    std::thread::spawn(move || loop {
+                        let i = nx.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if i >= n {
+                            break;
+                        }
+                        b.put_if_absent(&format!("par{threads}-{i}"), &p).unwrap();
+                    })
+                })
+                .collect();
+            for h in hs {
+                h.join().unwrap();
+            }
+            let el = s.elapsed().as_secs_f64();
+            println!("PUT {n} x 8 MiB objects on {threads} threads: {:.0} ms, {:.0} MB/s", el * 1e3, (n * (8 << 20)) as f64 / el / 1e6);
+        }
+        return;
+    }
+
+    // ---- request storm on ONE prefix: does S3 answer 503 SlowDown, and how does the client back off? ----
+    if a.iter().any(|x| x == "--storm") {
+        let (threads, secs) = (num("--threads", 128), num("--secs", 15));
+        let mut c2 = base.clone();
+        c2.prefix = format!("{}e2e-{t0}-storm/", std::env::var("S3E2E_PREFIX").unwrap_or_default());
+        let bk = std::sync::Arc::new(S3Backend::connect(c2).unwrap());
+        let body = vec![1u8; 256];
+        let (ok, bad) = (std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)), std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)));
+        let msgs = std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::<String, u64>::new()));
+        let end = Instant::now() + Duration::from_secs(secs as u64);
+        let s = Instant::now();
+        let hs: Vec<_> = (0..threads)
+            .map(|t| {
+                let (b, ok, bad, msgs, body) = (bk.clone(), ok.clone(), bad.clone(), msgs.clone(), body.clone());
+                std::thread::spawn(move || {
+                    let mut i = 0u64;
+                    while Instant::now() < end {
+                        i += 1;
+                        match b.put_if_absent(&format!("s/{t}/{i}"), &body) {
+                            Ok(_) => ok.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                            Err(e) => {
+                                *msgs.lock().unwrap().entry(format!("{e}").chars().skip_while(|c| *c != ':').take(40).collect()).or_default() += 1;
+                                bad.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                            }
+                        };
+                    }
+                })
+            })
+            .collect();
+        for h in hs {
+            h.join().unwrap();
+        }
+        let el = s.elapsed().as_secs_f64();
+        let (ok, bad) = (ok.load(std::sync::atomic::Ordering::Relaxed), bad.load(std::sync::atomic::Ordering::Relaxed));
+        println!("storm: {threads} threads, {el:.1} s, one prefix: {ok} ok, {bad} failed (503/timeouts), {:.0} req/s", (ok + bad) as f64 / el);
+        for (m, n) in msgs.lock().unwrap().iter() {
+            println!("  failure kind {m:?}: {n}");
+        }
+        return;
+    }
+
     // ---- repository workloads: publish, incremental publish, clone, fetch ----
     let (mut p_ms, mut p_rq, mut i_ms, mut i_rq, mut c_ms, mut c_rq, mut f_ms, mut f_rq) =
         (vec![], vec![], vec![], vec![], vec![], vec![], vec![], vec![]);
     for t in 0..trials {
         let dir = tempfile::tempdir().unwrap();
         let mut cfg = base.clone();
-        cfg.prefix = format!("e2e-{t0}-{t}/");
+        cfg.prefix = format!("{}e2e-{t0}-{t}/", std::env::var("S3E2E_PREFIX").unwrap_or_default());
         let remote = S3Backend::connect(cfg.clone()).expect("connect");
         let r = Repo::init(&dir.path().join("a")).unwrap();
         r.create_zone("src", "src").unwrap();
@@ -127,7 +249,7 @@ fn main() {
 
     // ---- small requests: pooled vs a fresh connection each time ----
     let mut cfg = base.clone();
-    cfg.prefix = format!("e2e-{t0}-small/");
+    cfg.prefix = format!("{}e2e-{t0}-small/", std::env::var("S3E2E_PREFIX").unwrap_or_default());
     let pooled = S3Backend::connect(cfg.clone()).unwrap();
     let body = vec![7u8; 1024];
     for i in 0..50 {
