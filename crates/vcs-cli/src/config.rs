@@ -13,6 +13,11 @@ pub const KEYS: &[(&str, &str, &str)] = &[
     ("user.name", "VCS_AUTHOR_NAME", "author name for commits, tags and stashes"),
     ("user.email", "VCS_AUTHOR_EMAIL", "author email for commits, tags and stashes"),
     ("core.editor", "VCS_EDITOR", "editor for `vcs commit` without -m"),
+    (
+        "core.fsync",
+        "VCS_FSYNC",
+        "`refs`: fsync every ref-only operation (branch, tag, branch -d, switch -c) as it happens; default defers it to the next object write, gc or flush like git (docs/durability.md; env VCS_FSYNC_REFS=1 also works)",
+    ),
     ("merge.structural", "VCS_MERGE_STRUCTURAL", "on/off: structural merge (default on)"),
     (
         "merge.assist",
@@ -105,6 +110,7 @@ pub fn validate_value(key: &str, value: &str) -> Result<(), Error> {
         return msg("config values cannot contain newlines");
     }
     match key {
+        "core.fsync" if !matches!(value, "refs" | "default") => msg("core.fsync must be 'refs' or 'default'"),
         "merge.renames" if !matches!(value, "on" | "off") => msg("merge.renames must be 'on' or 'off'"),
         "merge.structural" if !matches!(value, "on" | "off") => msg("merge.structural must be 'on' or 'off'"),
         "log.default-format" if !matches!(value, "full" | "oneline") => msg("log.default-format must be 'full' or 'oneline'"),

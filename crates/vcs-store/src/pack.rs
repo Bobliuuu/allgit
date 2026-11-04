@@ -951,9 +951,10 @@ impl Pack {
         let Some((off, len)) = self.idx.lookup(id).map_err(corrupt)? else {
             return Ok(None);
         };
-        self.read_range(off, len as u64)?
-            .map(Some)
-            .ok_or_else(|| StoreError::Corrupt { id: *id, reason: "pack truncated".into() })
+        self.read_range(off, len as u64)?.map(Some).ok_or_else(|| StoreError::Corrupt {
+            id: *id,
+            reason: "pack truncated".into(),
+        })
     }
     pub fn modified(&self) -> Option<std::time::SystemTime> {
         fs::metadata(&self.pack_path).ok()?.modified().ok()

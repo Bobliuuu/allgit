@@ -2091,7 +2091,7 @@ impl Repo {
             old: None,
             new: head,
         }])?;
-        self.commit_refs_op(&refs, &format!("create branch {zone}/{branch}"), None)?;
+        self.commit_refs_op_lazy(&refs, &format!("create branch {zone}/{branch}"), None)?;
         Ok(head)
     }
 
@@ -2126,7 +2126,7 @@ impl Repo {
             old: None,
             new: id,
         }])?;
-        self.commit_refs_op(&refs, &format!("create branch {zone}/{branch} at {}", id.short()), None)?;
+        self.commit_refs_op_lazy(&refs, &format!("create branch {zone}/{branch} at {}", id.short()), None)?;
         Ok(id)
     }
 
@@ -2176,11 +2176,19 @@ impl Repo {
             let prefix = zones.path_of(zone).unwrap();
             if self.index_file()?.cached_tree(&zones_fp(&zones), prefix)? == Some(root) {
                 ws.subs.insert(zone.into(), branch.into());
-                self.save_ws(&ws)?;
+                if crate::journal::fsync_refs() {
+                    self.save_ws(&ws)?;
+                } else {
+                    // deferred like the ref ops (git does not fsync HEAD): still an atomic rename
+                    self.require_branch_free(zone, branch)?;
+                    crate::meta::write_cache_nosync(&self.vcs.join("workspace"), &ws.encode())?;
+                }
                 if cur == vcs_objects::names::DETACHED_BRANCH {
                     self.drop_detached_ref(zone)?;
                 }
-                self.record_op(&format!("checkout {zone}/{branch}"), None)?;
+                // ref-only: refs are unchanged, so the op rides the (deferred-fsync) journal
+                let cur_refs = self.refs()?;
+                self.commit_refs_op_lazy(&cur_refs, &format!("checkout {zone}/{branch}"), None)?;
                 return Ok(());
             }
         }
