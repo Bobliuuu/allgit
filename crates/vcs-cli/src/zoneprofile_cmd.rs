@@ -3,6 +3,7 @@
 //! `vcs_repo::zoneprofile` (pure, tested); this module gathers inputs, prints the plan and
 //! applies it. Contract and limits: docs/zone-profile.md.
 
+use crate::json::J;
 use crate::{autozone, need_remote, open, remote, Cmd, ZoneCmd};
 use clap::{Args, Subcommand};
 use std::collections::{BTreeMap, BTreeSet};
@@ -110,6 +111,45 @@ pub enum ProfileCmd {
         #[arg(long)]
         stats: bool,
     },
+}
+
+// ------------------------------------------------------------------ --json
+
+static JSON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+thread_local! {
+    static DOC: std::cell::RefCell<Vec<(&'static str, J)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// `--json`: every command here then writes exactly one document (see [`flush_json`]).
+pub fn set_json(on: bool) {
+    JSON.store(on, std::sync::atomic::Ordering::SeqCst);
+}
+fn json_on() -> bool {
+    JSON.load(std::sync::atomic::Ordering::SeqCst)
+}
+fn put(key: &'static str, v: J) {
+    DOC.with(|d| d.borrow_mut().push((key, v)));
+}
+fn flush_json(command: &'static str) {
+    if !json_on() {
+        return;
+    }
+    let mut fields = vec![
+        ("version", J::Num(u64::from(crate::json::SCHEMA_VERSION))),
+        ("command", J::Str(command.into())),
+    ];
+    DOC.with(|d| fields.append(&mut d.borrow_mut()));
+    println!("{}", J::Obj(fields).render());
+}
+fn say(m: &str) {
+    if json_on() {
+        put("message", jstr(m));
+    } else {
+        println!("{m}");
+    }
+}
+fn jstr(s: impl Into<String>) -> J {
+    J::Str(s.into())
 }
 
 // ------------------------------------------------------------------ helpers
@@ -304,7 +344,48 @@ fn compute(repo: &Repo, backend: Option<&dyn Backend>, o: &Opts) -> Result<Compu
     })
 }
 
+fn plan_json(repo: &Repo, c: &Computed, applied: bool) -> Result<J, Error> {
+    let zones = repo.zones()?;
+    let by: BTreeMap<&str, &zp::Ranked> = c.ranked.iter().map(|r| (r.zone.as_str(), r)).collect();
+    let item = |ch: &zp::Choice, hot: bool| {
+        let mut f = vec![
+            ("zone", jstr(ch.zone.clone())),
+            ("label", jstr(zones.label(&ch.zone))),
+            ("score", J::Float(ch.score)),
+            ("bytes", J::Num(ch.bytes)),
+            ("why", jstr(ch.why.clone())),
+            ("already_subscribed", J::Bool(c.already.contains(&ch.zone))),
+            (
+                "reasons",
+                J::Arr(
+                    by.get(ch.zone.as_str())
+                        .map(|r| r.reasons.iter().cloned().map(J::Str).collect())
+                        .unwrap_or_default(),
+                ),
+            ),
+        ];
+        if !hot {
+            f.push(("files", J::Num(c.files.get(&ch.zone).copied().unwrap_or(0))));
+        }
+        J::Obj(f)
+    };
+    Ok(J::Obj(vec![
+        ("applied", J::Bool(applied)),
+        ("events", J::Num(c.events as u64)),
+        ("recording", J::Bool(!c.disabled)),
+        ("role", c.role.clone().map_or(J::Null, J::Str)),
+        ("zones_known", J::Num(c.ranked.len() as u64)),
+        ("hot", J::Arr(c.plan.hot.iter().map(|h| item(h, true)).collect())),
+        ("skipped", J::Arr(c.plan.skipped.iter().map(|h| item(h, false)).collect())),
+        ("notes", J::Arr(c.notes.iter().cloned().map(J::Str).collect())),
+    ]))
+}
+
 fn print_plan(repo: &Repo, c: &Computed, explain: bool, applied: bool) -> Result<(), Error> {
+    if json_on() {
+        put("plan", plan_json(repo, c, applied)?);
+        return Ok(());
+    }
     let zones = repo.zones()?;
     let by: BTreeMap<&str, &zp::Ranked> = c.ranked.iter().map(|r| (r.zone.as_str(), r)).collect();
     println!(
@@ -429,7 +510,21 @@ impl<'a> Stages<'a> {
     }
     fn mark(&mut self, what: &str) {
         let s = self.ct.stats();
-        if self.on {
+        if self.on && json_on() {
+            DOC.with(|d| {
+                let mut d = d.borrow_mut();
+                if !d.iter().any(|(k, _)| *k == "stages") {
+                    d.push(("stages", J::Arr(vec![])));
+                }
+                if let Some((_, J::Arr(v))) = d.iter_mut().find(|(k, _)| *k == "stages") {
+                    v.push(J::Obj(vec![
+                        ("stage", jstr(what)),
+                        ("requests", J::Num(s.requests - self.last.0)),
+                        ("bytes_down", J::Num(s.bytes_down - self.last.1)),
+                    ]));
+                }
+            });
+        } else if self.on {
             println!(
                 "  stage {what}: requests {}, downloaded {} bytes",
                 s.requests - self.last.0,
@@ -442,10 +537,45 @@ impl<'a> Stages<'a> {
 
 fn stats_line(label: &str, ct: &vcs_remote::CountingBackend) {
     let s = ct.stats();
+    if json_on() {
+        put(
+            "transfer",
+            J::Obj(vec![
+                ("label", jstr(label)),
+                ("requests", J::Num(s.requests)),
+                ("bytes_down", J::Num(s.bytes_down)),
+            ]),
+        );
+        return;
+    }
     println!("{label}: requests {}, downloaded {} bytes", s.requests, s.bytes_down);
 }
 
 fn print_sync(rep: &vcs_repo::SyncReport) {
+    if json_on() {
+        let v = rep
+            .actions
+            .iter()
+            .map(|(a, b, act)| {
+                let (name, to) = match act {
+                    SyncAction::UpToDate => ("up-to-date", None),
+                    SyncAction::FastForwarded { to, .. } => ("fast-forwarded", Some(to.to_string())),
+                    SyncAction::Ahead => ("ahead", None),
+                    SyncAction::Diverged => ("diverged", None),
+                    SyncAction::Dirty => ("dirty", None),
+                    SyncAction::NoRemote => ("no-remote", None),
+                };
+                J::Obj(vec![
+                    ("zone", jstr(a.clone())),
+                    ("branch", jstr(b.clone())),
+                    ("action", jstr(name)),
+                    ("to", to.map_or(J::Null, J::Str)),
+                ])
+            })
+            .collect();
+        put("sync", J::Arr(v));
+        return;
+    }
     for (a, b, act) in &rep.actions {
         let what = match act {
             SyncAction::UpToDate => "up to date".to_owned(),
@@ -470,6 +600,12 @@ fn print_sync(rep: &vcs_repo::SyncReport) {
 
 /// `vcs sync` / `vcs pull` with the flags in `a` (`--auto` or not).
 pub fn sync(a: &SyncAuto) -> Result<(), Error> {
+    sync_inner(a)?;
+    flush_json(if a.auto { "sync --auto" } else { "sync" });
+    Ok(())
+}
+
+fn sync_inner(a: &SyncAuto) -> Result<(), Error> {
     let (repo, _) = open()?;
     let backend = remote::open_memo(&need_remote(&repo)?, false)?;
     let ct = vcs_remote::CountingBackend::new(&backend);
@@ -544,6 +680,12 @@ pub fn intercept(cmd: &Cmd) -> Option<Result<(), Error>> {
 }
 
 fn clone_auto(url: &str, dir: &Path, stats: bool, explain: bool, dry_run: bool, a: &CloneAuto) -> Result<(), Error> {
+    clone_auto_inner(url, dir, stats, explain, dry_run, a)?;
+    flush_json("clone --auto");
+    Ok(())
+}
+
+fn clone_auto_inner(url: &str, dir: &Path, stats: bool, explain: bool, dry_run: bool, a: &CloneAuto) -> Result<(), Error> {
     let cwd = std::env::current_dir().map_err(|e| io_err(Path::new("."), e))?;
     let url = remote::normalize_url(url, &cwd);
     let (bz, bb) = budget_of(&a.budget)?;
@@ -582,7 +724,11 @@ fn clone_auto(url: &str, dir: &Path, stats: bool, explain: bool, dry_run: bool, 
         st.mark("contents of chosen zones");
     }
     if !dry_run {
-        println!("Cloned {url} into {} (zones chosen from your profile and hints)", dir.display());
+        if json_on() {
+            put("cloned_into", jstr(dir.display().to_string()));
+        } else {
+            println!("Cloned {url} into {} (zones chosen from your profile and hints)", dir.display());
+        }
     }
     print_plan(&repo, &c, explain, !dry_run)?;
     if stats {
@@ -594,19 +740,16 @@ fn clone_auto(url: &str, dir: &Path, stats: bool, explain: bool, dry_run: bool, 
 // ------------------------------------------------------------------ vcs profile
 
 pub fn run(c: &ProfileCmd) -> Result<(), Error> {
+    run_inner(c)?;
+    flush_json("profile");
+    Ok(())
+}
+
+fn run_inner(c: &ProfileCmd) -> Result<(), Error> {
     let (repo, cwd) = open()?;
     match c {
         ProfileCmd::Show => {
             let p = repo.profile_load()?;
-            println!("profile file: {} (local only, never uploaded)", repo.profile_file().display());
-            println!(
-                "recording: {}",
-                if p.disabled {
-                    "off (`vcs profile on` to resume)"
-                } else {
-                    "on (`vcs profile off` to stop and erase)"
-                }
-            );
             let zones = repo.zones()?;
             let mut per: BTreeMap<&str, (u32, u32, u32)> = BTreeMap::new();
             for e in &p.events {
@@ -617,11 +760,44 @@ pub fn run(c: &ProfileCmd) -> Result<(), Error> {
                     Kind::Build => t.2 += 1,
                 }
             }
+            let (h, used, _) = load_hints(&repo, &[])?;
+            if json_on() {
+                put("file", jstr(repo.profile_file().display().to_string()));
+                put("recording", J::Bool(!p.disabled));
+                put("events", J::Num(p.events.len() as u64));
+                put(
+                    "zones",
+                    J::Arr(
+                        per.iter()
+                            .map(|(z, (r, e, b))| {
+                                J::Obj(vec![
+                                    ("zone", jstr(*z)),
+                                    ("label", jstr(zones.label(z))),
+                                    ("read", J::Num(u64::from(*r))),
+                                    ("edit", J::Num(u64::from(*e))),
+                                    ("build", J::Num(u64::from(*b))),
+                                ])
+                            })
+                            .collect(),
+                    ),
+                );
+                put("hints", J::Arr(used.iter().map(|u| jstr(u.display().to_string())).collect()));
+                put("role", h.role.map_or(J::Null, J::Str));
+                return Ok(());
+            }
+            println!("profile file: {} (local only, never uploaded)", repo.profile_file().display());
+            println!(
+                "recording: {}",
+                if p.disabled {
+                    "off (`vcs profile on` to resume)"
+                } else {
+                    "on (`vcs profile off` to stop and erase)"
+                }
+            );
             println!("{} event(s)", p.events.len());
             for (z, (r, e, b)) in per {
                 println!("  {:<24} read {r:>4}  edit {e:>4}  build {b:>4}", zones.label(z));
             }
-            let (h, used, _) = load_hints(&repo, &[])?;
             for u in used {
                 println!("hints: {}", u.display());
             }
@@ -631,15 +807,15 @@ pub fn run(c: &ProfileCmd) -> Result<(), Error> {
         }
         ProfileCmd::On => {
             repo.profile_set_enabled(true)?;
-            println!("profile recording is on");
+            say("profile recording is on");
         }
         ProfileCmd::Off => {
             repo.profile_set_enabled(false)?;
-            println!("profile recording is off and recorded events were erased; `--auto` now uses hints only");
+            say("profile recording is off and recorded events were erased; `--auto` now uses hints only");
         }
         ProfileCmd::Clear => {
             repo.profile_clear()?;
-            println!("profile events erased");
+            say("profile events erased");
         }
         ProfileCmd::Note { paths } => {
             let zones = repo.zones()?;
@@ -650,7 +826,7 @@ pub fn run(c: &ProfileCmd) -> Result<(), Error> {
                 hits.push(hit(&zones, &rel, is_dir));
             }
             let n = repo.profile_record(Kind::Read, now_ms(), &hits)?;
-            println!("recorded {n} event(s)");
+            say(&format!("recorded {n} event(s)"));
         }
         ProfileCmd::Record { paths, cmd } => {
             let zones = repo.zones()?;
@@ -695,10 +871,19 @@ pub fn run(c: &ProfileCmd) -> Result<(), Error> {
             let zones = repo.zones()?;
             let rr = repo.remote_refs()?;
             let mut n = 0;
+            let mut rows = Vec::new();
             for z in zones.names().filter(|z| !ws.subs.contains_key(*z)) {
                 let meta = rr
                     .head(z, vcs_repo::DEFAULT_BRANCH)
                     .is_some_and(|h| repo.store().contains(&h).unwrap_or(false));
+                if json_on() {
+                    rows.push(J::Obj(vec![
+                        ("zone", jstr(z)),
+                        ("label", jstr(zones.label(z))),
+                        ("metadata_local", J::Bool(meta)),
+                    ]));
+                    continue;
+                }
                 println!(
                     "{:<24} {}",
                     zones.label(z),
@@ -710,7 +895,9 @@ pub fn run(c: &ProfileCmd) -> Result<(), Error> {
                 );
                 n += 1;
             }
-            if n == 0 {
+            if json_on() {
+                put("skipped", J::Arr(rows));
+            } else if n == 0 {
                 println!("every zone is subscribed");
             } else {
                 println!("get one with `vcs profile fetch <zone>`");
@@ -752,15 +939,29 @@ pub fn run(c: &ProfileCmd) -> Result<(), Error> {
                 }
             }
             let mut hits = Vec::new();
+            let mut rows = Vec::new();
             for z in &want {
                 if repo.workspace()?.subs.contains_key(z) {
-                    println!("{}: already subscribed", defs.label(z));
+                    rows.push((z.clone(), "already-subscribed"));
+                    say(&format!("{}: already subscribed", defs.label(z)));
                     continue;
                 }
                 repo.fetch(&ct, Some(std::slice::from_ref(z)))?;
                 repo.zone_add_fetching(&ct, z, None)?;
-                println!("{}: fetched and subscribed", defs.label(z));
+                rows.push((z.clone(), "fetched"));
+                say(&format!("{}: fetched and subscribed", defs.label(z)));
                 hits.push((z.clone(), String::new()));
+            }
+            if json_on() {
+                DOC.with(|d| d.borrow_mut().retain(|(k, _)| *k != "message"));
+                put(
+                    "zones",
+                    J::Arr(
+                        rows.into_iter()
+                            .map(|(z, st)| J::Obj(vec![("zone", jstr(z)), ("status", jstr(st))]))
+                            .collect(),
+                    ),
+                );
             }
             let _ = repo.profile_record(Kind::Read, now_ms(), &hits);
             if *stats {

@@ -93,7 +93,9 @@ vcs profile skipped                     # list unsubscribed zones
 
 `--explain` prints, per zone, the terms of its score. `--dry-run` prints the plan and downloads no file contents
 (it still fetches commits and trees and reads manifests). `--stats` prints requests and bytes per stage (clone,
-metadata, planning, contents, sync). Text output only; `--json` is not implemented for these commands.
+metadata, planning, contents, sync). With the global `--json` flag (`vcs --json sync --auto`, `clone --auto`, `profile show|rank|skipped|fetch`) each command writes one
+line: `{"version":1,"command":"sync --auto","plan":{hot:[...],skipped:[...],notes:[...]},"stages":[...],"transfer":{...},"sync":[...]}`
+(only the members that apply; scores have 4 decimals; every zone carries `zone`, `label`, `bytes`, `why`, `reasons`).
 
 On-demand is explicit: nothing fetches a skipped zone behind your back. A command that needs a missing zone's
 files fails or sees nothing there; the fix is the one command above. (A transparent fetch-on-access hook is not

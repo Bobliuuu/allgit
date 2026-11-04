@@ -455,3 +455,75 @@ fn budgets_are_honoured_and_skips_are_explained() {
     )
     .contains("--budget-bytes"));
 }
+
+#[test]
+fn json_output_is_one_document_per_command() {
+    let t = tempfile::tempdir().unwrap();
+    let remote = format!("file://{}", t.path().join("remote").display());
+    publisher(t.path(), &remote);
+    let prof = t.path().join("p");
+    seed_profile(&prof);
+    let one_doc = |out: &str, command: &str| {
+        assert_eq!(out.trim_end().lines().count(), 1, "exactly one line: {out}");
+        assert!(out.starts_with(&format!("{{\"version\":1,\"command\":\"{command}\"")), "{out}");
+        assert!(out.trim_end().ends_with('}'), "{out}");
+    };
+    // clone --auto --dry-run: plan only
+    let out = ok(
+        t.path(),
+        &[
+            "--json",
+            "clone",
+            &remote,
+            "x",
+            "--auto-profile",
+            prof.to_str().unwrap(),
+            "--dry-run",
+            "--explain",
+            "--stats",
+        ],
+    );
+    one_doc(&out, "clone --auto");
+    for key in [
+        "\"hot\":[",
+        "\"skipped\":[",
+        "\"zone\":\"web\"",
+        "\"score\":",
+        "\"reasons\":[",
+        "\"stages\":[",
+        "\"transfer\":{",
+    ] {
+        assert!(out.contains(key), "{key} missing: {out}");
+    }
+    assert!(out.contains("\"zone\":\"billing\"") && out.contains("\"files\":"), "{out}");
+    // a real clone, then the other commands
+    let out = ok(
+        t.path(),
+        &["--json", "clone", &remote, "auto", "--auto-profile", prof.to_str().unwrap()],
+    );
+    one_doc(&out, "clone --auto");
+    assert!(out.contains("\"cloned_into\":"), "{out}");
+    let auto = t.path().join("auto");
+    let out = ok(&auto, &["--json", "profile", "show"]);
+    one_doc(&out, "profile");
+    assert!(
+        out.contains("\"recording\":true") && out.contains("\"zone\":\"web\"") && out.contains("\"edit\":"),
+        "{out}"
+    );
+    let out = ok(&auto, &["--json", "profile", "skipped"]);
+    one_doc(&out, "profile");
+    assert!(
+        out.contains("\"zone\":\"billing\"") && out.contains("\"metadata_local\":true"),
+        "{out}"
+    );
+    let out = ok(&auto, &["--json", "profile", "fetch", "billing"]);
+    one_doc(&out, "profile");
+    assert!(out.contains("\"status\":\"fetched\""), "{out}");
+    let out = ok(&auto, &["--json", "profile", "rank"]);
+    one_doc(&out, "profile");
+    let out = ok(&auto, &["--json", "sync", "--auto", "--stats"]);
+    one_doc(&out, "sync --auto");
+    assert!(out.contains("\"sync\":[") && out.contains("\"action\":\"up-to-date\""), "{out}");
+    // without --json nothing changed
+    assert!(ok(&auto, &["profile", "show"]).contains("recording: on"));
+}
