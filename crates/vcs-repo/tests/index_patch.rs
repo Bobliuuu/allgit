@@ -329,3 +329,57 @@ fn collision_check_that_skips_directories_agrees_with_the_obvious_rule() {
     let rep = r.fsck().unwrap();
     assert!(rep.problems.is_empty(), "{:?}", rep.problems);
 }
+
+/// `scan_tracked` walks the mapped AGI5 blocks (base merged with the edit log) instead of decoding
+/// the index; it must yield exactly what `tracked_files` does, in the same order.
+#[test]
+fn scan_tracked_matches_tracked_files_on_a_pristine_and_a_logged_index() {
+    let d = tempfile::tempdir().unwrap();
+    let root = d.path().join("r");
+    let r = Repo::init(&root).unwrap();
+    for k in 0..9000u32 {
+        let p = format!("d{:02}/f{k:05}.txt", k % 40);
+        fs::create_dir_all(r.worktree().join(&p).parent().unwrap()).unwrap();
+        fs::write(r.worktree().join(&p), format!("file {k}\n")).unwrap();
+    }
+    r.add(&s("")).unwrap();
+    r.commit("base", sig()).unwrap();
+    let scan = |r: &Repo| -> Vec<(String, vcs_objects::EntryMode, vcs_objects::ObjectId)> {
+        let parts = r
+            .scan_tracked(Vec::new, |t: &mut Vec<_>, p, e| t.push((p.to_owned(), e.mode, e.id)))
+            .unwrap();
+        assert!(parts.len() > 1, "the index should span several blocks");
+        parts.into_iter().flatten().collect()
+    };
+    assert!(fs::read(root.join(".vcs/index")).unwrap().starts_with(b"AGI5"));
+    assert_eq!(scan(&r), r.tracked_files().unwrap());
+    // a log next to the base: removals at both ends and in the middle, a new file, a changed one
+    for p in ["d00/f00000.txt", "d04/f04004.txt", "d39/f08999.txt"] {
+        r.rm(&s(p), true, false).unwrap();
+    }
+    fs::write(r.worktree().join("d10/new.txt"), "n\n").unwrap();
+    fs::write(r.worktree().join("a-first.txt"), "n\n").unwrap();
+    fs::write(r.worktree().join("zz-last.txt"), "n\n").unwrap();
+    fs::write(r.worktree().join("d11/f00011.txt"), "changed\n").unwrap();
+    r.add(&s("d10/new.txt")).unwrap();
+    r.add(&s("a-first.txt")).unwrap();
+    r.add(&s("zz-last.txt")).unwrap();
+    r.add(&s("d11/f00011.txt")).unwrap();
+    let want = r.tracked_files().unwrap();
+    assert_eq!(want.len(), 9000 - 3 + 3);
+    assert_eq!(scan(&r), want);
+    // a flipped byte in the mapped base is an error, never a short or wrong listing
+    drop(r);
+    let index = root.join(".vcs/index");
+    let mut bytes = fs::read(&index).unwrap();
+    let at = bytes.len() / 2;
+    bytes[at] ^= 0x40;
+    fs::write(&index, bytes).unwrap();
+    if let Ok(r) = Repo::discover(&root) {
+        if let Ok(parts) = r.scan_tracked(Vec::<String>::new, |t: &mut Vec<String>, p, _| t.push(p.to_owned())) {
+            let got: Vec<String> = parts.into_iter().flatten().collect();
+            let truth: Vec<String> = want.iter().map(|w| w.0.clone()).collect();
+            assert_eq!(got, truth, "a damaged index must be rejected or rebuilt, not mis-listed");
+        }
+    }
+}
