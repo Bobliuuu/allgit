@@ -571,24 +571,33 @@ class Chaos:
             self.sleep(self.a.audit_every)
 
     def casguard(self):
-        """Operator stand-in for a known gap: FsBackend's `.cas.lock` is create_new with no stale-owner
-        detection, so a SIGKILL while it is held (server or a gc/compact client) wedges every manifest write
-        (503 after 10 s) until the file is deleted by hand, restarts do not help. Holders keep it for ms, so
-        a lock older than 12 s is stale: remove it and record how long the outage lasted."""
+        """Observer only. FsBackend's `.cas.lock` is a kernel flock on a persistent file (#517): a SIGKILLed
+        holder releases it by itself, so there is no stale lock to repair. This used to unlink the file
+        when it was older than 12 s (the old create_new lock). Its mtime is only the last acquisition, so
+        it fired on a healthy lock; unlinking a flock file lets a waiter that holds the old inode and a
+        new locker that creates a fresh one both own the manifest, i.e. two concurrent CAS writers and
+        lost publishes. That harness bug produced the "last wins" mismatches of #502 (15 of 50 in the
+        original run, 19 of 78 in a rerun on main). Now it only records whether the lock is held by a
+        live process for more than 12 s."""
+        import fcntl
         lk = os.path.join(self.store, ".cas.lock")
+        held_since = None
         while not self.stop.is_set():
             self.sleep(2)
             try:
-                age = time.time() - os.path.getmtime(lk)
+                with open(lk, "rb") as f:
+                    try:
+                        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        fcntl.flock(f, fcntl.LOCK_UN)
+                        held_since = None
+                    except OSError:
+                        held_since = held_since or time.time()
+                        if time.time() - held_since > 12:
+                            self.stale_cas.append(round(time.time() - held_since, 1))
+                            self.note("CAS lock held by a live process for >12 s (not removed: flock)")
+                            held_since = None
             except OSError:
                 continue
-            if age > 12:
-                try:
-                    os.unlink(lk)
-                except OSError:
-                    continue
-                self.stale_cas.append(round(age, 1))
-                self.note(f"STALE .cas.lock removed by harness (age {age:.1f}s; manifest writes were failing 503 meanwhile)")
 
     def mixed(self):
         """kill -9 server (during pushes), kill -9 gc/compact, periodic audit: concurrently."""
