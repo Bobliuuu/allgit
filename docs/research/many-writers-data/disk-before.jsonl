@@ -1,0 +1,12 @@
+{"label": "disk-before", "backend": "disk", "mode": "zones", "N": 64, "pps": 288.3, "p50": 194.4, "p95": 304.2, "p99": 308.5, "conflicts": 0, "cpu_s": 0.17, "rss_mib": 20, "maxfd": 104, "manifest_b": "8770"}
+{"label": "disk-before", "backend": "disk", "mode": "zones", "N": 256, "pps": 182.3, "p50": 922.0, "p95": 2375.1, "p99": 2573.4, "conflicts": 0, "cpu_s": 0.94, "rss_mib": 56, "maxfd": 519, "manifest_b": "35231"}
+{"label": "disk-before", "backend": "disk", "mode": "zones", "N": 512, "pps": 133.8, "p50": 3049.3, "p95": 6360.6, "p99": 7191.9, "conflicts": 0, "cpu_s": 2.42, "rss_mib": 126, "maxfd": 1033, "manifest_b": "70675"}
+{"label": "disk-before", "backend": "disk", "mode": "zones", "N": 1024, "pps": 138.0, "p50": 5946.8, "p95": 8918.0, "p99": 13215.8, "conflicts": 0, "cpu_s": 8.0, "rss_mib": 340, "maxfd": 2055, "manifest_b": "141331"}
+{"label": "disk-before", "backend": "disk", "mode": "branches", "N": 64, "pps": 228.8, "p50": 282.4, "p95": 329.4, "p99": 331.5, "conflicts": 0, "cpu_s": 0.17, "rss_mib": 20, "maxfd": 137, "manifest_b": "8898"}
+{"label": "disk-before", "backend": "disk", "mode": "branches", "N": 256, "pps": 204.0, "p50": 835.4, "p95": 2182.6, "p99": 2345.6, "conflicts": 0, "cpu_s": 0.94, "rss_mib": 57, "maxfd": 520, "manifest_b": "35743"}
+{"label": "disk-before", "backend": "disk", "mode": "branches", "N": 512, "pps": 181.6, "p50": 2296.5, "p95": 3699.7, "p99": 4021.9, "conflicts": 0, "cpu_s": 2.45, "rss_mib": 129, "maxfd": 1033, "manifest_b": "67100"}
+{"label": "disk-before", "backend": "disk", "mode": "branches", "N": 1024, "pps": 134.9, "p50": 6180.4, "p95": 8707.7, "p99": 13663.2, "conflicts": 0, "cpu_s": 7.82, "rss_mib": 324, "maxfd": 2057, "manifest_b": "134172"}
+{"label": "disk-before", "backend": "disk", "mode": "same", "N": 64, "pps": 23.4, "p50": 20.2, "p95": 6872.5, "p99": 7984.1, "conflicts": 2750, "cpu_s": 1.53, "rss_mib": 29, "maxfd": 128, "manifest_b": "6200"}
+{"label": "disk-before", "backend": "disk", "mode": "same", "N": 256, "pps": 6.3, "p50": 206.3, "p95": 76254.7, "p99": 88183.7, "conflicts": 77639, "cpu_s": 65.61, "rss_mib": 300, "maxfd": 726, "manifest_b": "21656"}
+{"label": "disk-before", "backend": "disk", "mode": "same", "N": 512, "pps": 0, "p50": 0, "p95": 0, "p99": 0, "conflicts": 0, "cpu_s": 214.2, "rss_mib": 445, "maxfd": 1475, "manifest_b": "timeout 240s, 0 acked"}
+{"label": "disk-before", "backend": "disk", "mode": "same", "N": 1024, "pps": 0, "p50": 0, "p95": 0, "p99": 0, "conflicts": 0, "cpu_s": 205.28, "rss_mib": 406, "maxfd": 2538, "manifest_b": "timeout 240s, 0 acked"}
