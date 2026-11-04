@@ -309,6 +309,7 @@ pub(crate) fn children(o: &Object, out: &mut Vec<ObjectId>) {
             out.extend(op.parents.iter().copied());
             out.extend(op.view.branches.values().copied());
             out.extend(op.view.tags.iter().flat_map(|t| t.values().copied()));
+            out.extend(op.view.tags_delta.iter().flatten().filter_map(|(_, v)| *v));
         }
     }
 }

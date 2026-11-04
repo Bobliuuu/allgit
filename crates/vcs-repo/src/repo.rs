@@ -25,7 +25,12 @@ pub(crate) const FEATURE_LARGE_CHUNKED: &str = "large-chunked";
 /// Operations may omit the tag view when it equals the nearest earlier one that has it (see ops.rs).
 pub(crate) const FEATURE_OP_TAGS_DELTA: &str = "op-tags-delta";
 pub(crate) const FEATURE_REF_JOURNAL: &str = "ref-journal";
-const KNOWN_FEATURES: &[&str] = &[FEATURE_LARGE_CHUNKED, FEATURE_OP_TAGS_DELTA, FEATURE_REF_JOURNAL];
+const KNOWN_FEATURES: &[&str] = &[
+    FEATURE_LARGE_CHUNKED,
+    FEATURE_OP_TAGS_DELTA,
+    FEATURE_REF_JOURNAL,
+    crate::refsdelta::FEATURE,
+];
 pub(crate) const FORMAT_TEXT: &str = "all-git repository format 1\n";
 /// Checkout streams files of at least this many bytes chunk by chunk instead of reassembling them in memory.
 const STREAM_CHECKOUT_MIN: u64 = 8 << 20;
@@ -440,7 +445,7 @@ impl Repo {
         Zones::decode(&self.rd("zones")?)
     }
     pub fn refs(&self) -> Result<Refs> {
-        Refs::decode(&self.rd("refs")?)
+        self.load_refs()
     }
     pub fn workspace(&self) -> Result<Workspace> {
         Workspace::decode(&self.rd("workspace")?)

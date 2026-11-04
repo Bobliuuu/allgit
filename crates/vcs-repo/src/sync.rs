@@ -702,11 +702,11 @@ impl Repo {
         let mut refs = self.refs()?;
         let mut changed = false;
         for (z, n, id) in got {
-            if refs.tags.contains_key(&(z.clone(), n.clone())) {
+            if refs.tags.get_key(&(z.clone(), n.clone())).is_some() {
                 continue;
             }
             self.peel(&z, id)?; // reject a remote tag that is not a commit or tag of its zone
-            refs.tags.insert((z, n), id);
+            refs.tags.set((z, n), id);
             changed = true;
         }
         if changed {
