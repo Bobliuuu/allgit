@@ -140,7 +140,20 @@ pub struct S3Backend {
     bytes_read: AtomicU64,
     /// Server-clock anchor for `now_ms` (see gcops.rs).
     anchor: gcops::Anchor,
+    /// S3 Express One Zone directory bucket (name ends in `--x-s3`): virtual-hosted addressing, service
+    /// `s3express`, and per-session credentials from CreateSession (see `session`).
+    express: bool,
+    session: std::sync::Mutex<Option<Session>>,
 }
+
+/// CreateSession credentials of a directory bucket (valid 5 minutes; refreshed after [`SESSION_REFRESH`]).
+struct Session {
+    access_key: String,
+    secret_key: String,
+    token: String,
+    fetched: std::time::Instant,
+}
+const SESSION_REFRESH: Duration = Duration::from_secs(240);
 
 enum Resp {
     Ok {
@@ -176,7 +189,12 @@ impl S3Backend {
             ));
         }
         // The Host header omits the scheme's default port; sign exactly what is sent.
-        let host = rest.strip_suffix(if https { ":443" } else { ":80" }).unwrap_or(rest).to_owned();
+        let mut host = rest.strip_suffix(if https { ":443" } else { ":80" }).unwrap_or(rest).to_owned();
+        let express = cfg.bucket.ends_with("--x-s3");
+        if express {
+            // `s3://BUCKET--azid--x-s3?endpoint=https://s3express-azid.REGION.amazonaws.com`: the bucket is a host label
+            host = format!("{}.{host}", cfg.bucket);
+        }
         // Every request reuses pooled connections (a new TCP/TLS handshake per request was the
         // dominant fixed cost).
         let mk = |idle: usize| -> Result<ureq::Agent, BackendError> {
@@ -204,6 +222,8 @@ impl S3Backend {
             requests: AtomicU64::new(0),
             bytes_read: AtomicU64::new(0),
             anchor: Default::default(),
+            express,
+            session: std::sync::Mutex::new(None),
         })
     }
 
@@ -301,10 +321,10 @@ impl S3Backend {
     fn send(&self, method: &str, key: &str, query: &[(&str, String)], headers: &[(&str, &str)], body: &[u8]) -> Result<Resp, BackendError> {
         static TRACE: std::sync::OnceLock<Option<std::time::Instant>> = std::sync::OnceLock::new();
         let t0 = *TRACE.get_or_init(|| std::env::var_os("VCS_S3_TRACE").filter(|v| v != "0").map(|_| std::time::Instant::now()));
-        let Some(t0) = t0 else { return self.send_inner(method, key, query, headers, body) };
+        let Some(t0) = t0 else { return self.send_inner(method, key, query, headers, body, false) };
         let start = t0.elapsed();
         let s = std::time::Instant::now();
-        let r = self.send_inner(method, key, query, headers, body);
+        let r = self.send_inner(method, key, query, headers, body, false);
         let out = match &r {
             Ok(Resp::Ok { body, status, .. }) => format!("{status}/{}", body.len()),
             Ok(Resp::Status(c, _)) => c.to_string(),
@@ -315,36 +335,68 @@ impl S3Backend {
         r
     }
 
-    fn send_inner(&self, method: &str, key: &str, query: &[(&str, String)], headers: &[(&str, &str)], body: &[u8]) -> Result<Resp, BackendError> {
-        let mut path = format!("/{}", uri_encode(&self.cfg.bucket, true));
+    /// CreateSession for a directory bucket; the credentials are cached and renewed every [`SESSION_REFRESH`].
+    fn session_creds(&self) -> Result<(String, String, String), BackendError> {
+        let mut g = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(s) = g.as_ref().filter(|s| s.fetched.elapsed() < SESSION_REFRESH) {
+            return Ok((s.access_key.clone(), s.secret_key.clone(), s.token.clone()));
+        }
+        let body = match self.send_inner("GET", "", &[("session", String::new())], &[("x-amz-create-session-mode", "ReadWrite")], b"", true)? {
+            Resp::Ok { body, .. } => String::from_utf8_lossy(&body).into_owned(),
+            Resp::Status(c, m) => return Err(Self::unexpected("CreateSession", c, m)),
+        };
+        let one = |t: &str| tag_values(&body, t).into_iter().next();
+        let (Some(ak), Some(sk), Some(tok)) = (one("AccessKeyId"), one("SecretAccessKey"), one("SessionToken")) else {
+            return Err(BackendError::Other("CreateSession response without credentials".into()));
+        };
+        *g = Some(Session { access_key: ak.clone(), secret_key: sk.clone(), token: tok.clone(), fetched: std::time::Instant::now() });
+        Ok((ak, sk, tok))
+    }
+
+    fn send_inner(&self, method: &str, key: &str, query: &[(&str, String)], headers: &[(&str, &str)], body: &[u8], create_session: bool) -> Result<Resp, BackendError> {
+        let mut path = if self.express { String::new() } else { format!("/{}", uri_encode(&self.cfg.bucket, true)) };
         if !key.is_empty() {
             path.push('/');
             path.push_str(&uri_encode(key, false));
+        }
+        if path.is_empty() {
+            path.push('/');
         }
         let mut q: Vec<(String, String)> = query.iter().map(|(k, v)| (uri_encode(k, true), uri_encode(v, true))).collect();
         q.sort();
         let qs = q.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join("&");
 
+        // (access key, secret, token, token header, SigV4 service)
+        let (access_key, secret_key, token, token_header, service): (String, String, Option<String>, &str, &str) = match (self.express, create_session) {
+            (false, _) => (self.cfg.access_key.clone(), self.cfg.secret_key.clone(), self.cfg.session_token.clone(), "x-amz-security-token", "s3"),
+            (true, true) => (self.cfg.access_key.clone(), self.cfg.secret_key.clone(), self.cfg.session_token.clone(), "x-amz-security-token", "s3express"),
+            (true, false) => {
+                let (a, s, t) = self.session_creds()?;
+                (a, s, Some(t), "x-amz-s3session-token", "s3express")
+            }
+        };
         let amz_date = amz_timestamp();
         let date = &amz_date[..8];
         let payload_hash = hex(&Sha256::digest(body));
-        let signed = signed_header_set(&self.host, &amz_date, &payload_hash, self.cfg.session_token.as_deref(), headers);
+        let signed = signed_header_set(&self.host, &amz_date, &payload_hash, token.as_deref(), token_header, headers);
         let canon_headers: String = signed.iter().map(|(k, v)| format!("{k}:{v}\n")).collect();
         let signed_names = signed.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(";");
         let canon = format!("{method}\n{path}\n{qs}\n{canon_headers}\n{signed_names}\n{payload_hash}");
-        let scope = format!("{date}/{}/s3/aws4_request", self.cfg.region);
+        let scope = format!("{date}/{}/{service}/aws4_request", self.cfg.region);
         let sts = format!("AWS4-HMAC-SHA256\n{amz_date}\n{scope}\n{}", hex(&Sha256::digest(canon.as_bytes())));
-        let k = hmac(format!("AWS4{}", self.cfg.secret_key).as_bytes(), date.as_bytes());
+        let k = hmac(format!("AWS4{secret_key}").as_bytes(), date.as_bytes());
         let k = hmac(&k, self.cfg.region.as_bytes());
-        let k = hmac(&k, b"s3");
+        let k = hmac(&k, service.as_bytes());
         let k = hmac(&k, b"aws4_request");
         let sig = hex(&hmac(&k, sts.as_bytes()));
-        let auth = format!(
-            "AWS4-HMAC-SHA256 Credential={}/{scope}, SignedHeaders={signed_names}, Signature={sig}",
-            self.cfg.access_key
-        );
+        let auth = format!("AWS4-HMAC-SHA256 Credential={access_key}/{scope}, SignedHeaders={signed_names}, Signature={sig}");
 
-        let url = format!("{}{}{}{}", self.cfg.endpoint, path, if qs.is_empty() { "" } else { "?" }, qs);
+        let base = if self.express {
+            format!("{}://{}", if self.cfg.endpoint.starts_with("https://") { "https" } else { "http" }, self.host)
+        } else {
+            self.cfg.endpoint.clone()
+        };
+        let url = format!("{base}{path}{}{qs}", if qs.is_empty() { "" } else { "?" });
         // Idempotent requests are repeated once if a pooled connection turns out to be dead.
         let safe = matches!(method, "GET" | "HEAD" | "DELETE");
         let agent = &self.agent;
@@ -355,8 +407,8 @@ impl S3Backend {
                 .set("x-amz-date", &amz_date)
                 .set("x-amz-content-sha256", &payload_hash)
                 .set("authorization", &auth);
-            if let Some(t) = &self.cfg.session_token {
-                req = req.set("x-amz-security-token", t);
+            if let Some(t) = &token {
+                req = req.set(token_header, t);
             }
             for (k, v) in headers {
                 req = req.set(k, v);
@@ -628,8 +680,10 @@ impl Backend for S3Backend {
     }
     /// Remote GC support (gcops.rs): touch = server-side copy onto itself, ages from
     /// `LastModified`, clock = the server's `LastModified` of `gc/clock`, anchored.
+    /// Directory buckets reject the in-place CopyObject (`x-amz-metadata-directive: REPLACE`) that `touch` and the
+    /// server clock use ("Request must be signed with AWS Credentials", measured), so remote GC is not offered there.
     fn supports_gc(&self) -> bool {
-        true
+        !self.express
     }
     fn now_ms(&self) -> Result<u64, BackendError> {
         self.gc_now_ms()
@@ -680,6 +734,7 @@ fn signed_header_set(
     amz_date: &str,
     payload_hash: &str,
     token: Option<&str>,
+    token_header: &str,
     headers: &[(&str, &str)],
 ) -> Vec<(String, String)> {
     let mut signed: Vec<(String, String)> = vec![
@@ -688,7 +743,7 @@ fn signed_header_set(
         ("x-amz-date".into(), amz_date.to_owned()),
     ];
     if let Some(t) = token {
-        signed.push(("x-amz-security-token".into(), t.to_owned()));
+        signed.push((token_header.into(), t.to_owned()));
     }
     for (k, v) in headers {
         if *k == "range" || k.starts_with("x-amz-") {
@@ -789,6 +844,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn directory_bucket_is_virtual_hosted_and_has_no_gc() {
+        let c = S3Config::new("http://s3express-use1-az4.us-east-1.amazonaws.com", "b--use1-az4--x-s3", "k", "s");
+        let b = S3Backend::new_unchecked(c).unwrap();
+        assert!(b.express);
+        assert_eq!(b.host, "b--use1-az4--x-s3.s3express-use1-az4.us-east-1.amazonaws.com");
+        assert!(!b.supports_gc());
+        let g = S3Backend::new_unchecked(S3Config::new("http://127.0.0.1:9000", "plain", "k", "s")).unwrap();
+        assert!(!g.express && g.supports_gc() && g.host == "127.0.0.1:9000");
+    }
+
+    #[test]
     fn probe_marker_freshness() {
         let d = std::env::temp_dir().join(format!("vcs-probe-marker-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
@@ -812,13 +878,13 @@ mod tests {
     #[test]
     fn signed_headers_include_token_only_when_present() {
         let names = |t| {
-            signed_header_set("h", "d", "p", t, &[("range", "bytes=0-1")])
+            signed_header_set("h", "d", "p", t, "x-amz-security-token", &[("range", "bytes=0-1")])
                 .into_iter()
                 .map(|(k, _)| k)
                 .collect::<Vec<_>>()
         };
         assert!(!names(None).contains(&"x-amz-security-token".to_owned()));
-        let with = signed_header_set("h", "d", "p", Some("tok"), &[]);
+        let with = signed_header_set("h", "d", "p", Some("tok"), "x-amz-security-token", &[]);
         assert!(with.contains(&("x-amz-security-token".to_owned(), "tok".to_owned())));
         assert!(names(Some("tok")).windows(2).all(|w| w[0] <= w[1]), "sorted");
     }

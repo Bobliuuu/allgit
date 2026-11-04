@@ -1,0 +1,19 @@
+endpoint https://s3express-use1-az4.us-east-1.amazonaws.com trials 5 files 300 commits 50 (a local server, not a cloud)
+publish (initial, all commits)               median     68.09 ms  min     62.49  max     77.30  (n=5)
+  requests                                   median      6.00 req  min      6.00  max      6.00  (n=5)
+publish (one file on top)                    median     33.95 ms  min     33.53  max     35.68  (n=5)
+  requests                                   median      5.00 req  min      5.00  max      5.00  (n=5)
+clone (fresh client)                         median    121.52 ms  min    115.60  max    143.75  (n=5)
+  requests                                   median      7.00 req  min      7.00  max      7.00  (n=5)
+fetch (one new commit)                       median     33.46 ms  min     31.74  max     35.97  (n=5)
+  requests                                   median      5.00 req  min      5.00  max      5.00  (n=5)
+GET 1 KiB, pooled connection                 median      4.62 ms  min      4.26  max      6.78  (n=200)
+GET 1 KiB, new connection each time          median     15.01 ms  min     10.44  max     65.31  (n=200)
+connection setup share of a fresh-connection GET: 69% (p50 15.01 ms vs 4.62 ms pooled)
+PUT 1 KiB create-only, pooled                median      7.75 ms  min      6.52  max     51.61  (n=200)
+GET 1 KiB x1 threads: 213 req/s (400 requests in 1.87 s)
+GET 1 KiB x16 threads: 3341 req/s (6400 requests in 1.92 s)
+sha256 of 1 KiB body: 0.8 us (1233 MB/s) [232]
+sha256 of 1 MiB body: 870.1 us (1205 MB/s) [191]
+sha256 of 16 MiB body: 12917.6 us (1299 MB/s) [85]
+PUT 1 MiB create-only, pooled (includes body sha256) median     14.90 ms  min     11.97  max     19.70  (n=40)
