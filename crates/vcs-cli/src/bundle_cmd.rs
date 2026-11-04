@@ -18,12 +18,16 @@ pub enum BundleCmd {
         #[arg(long)]
         since: Option<String>,
     },
-    /// Check a bundle's hashes, structure and completeness (needs no repository). --quick checks only
-    /// the header, refs, lengths and prerequisites, in about a millisecond
+    /// Check a bundle's header, refs, lengths and prerequisites in about a millisecond (like
+    /// `git bundle verify`). --full also hashes the whole file and decodes every object
     Verify {
         file: PathBuf,
-        /// Skip hashing the pack and decoding objects (misses corruption inside the pack body)
+        /// Hash the whole file, decode every object and check the object graph (what `fetch` and
+        /// `clone` always do); the default does not read the pack body
         #[arg(long)]
+        full: bool,
+        /// The default now; accepted so existing scripts keep working
+        #[arg(long, hide = true, conflicts_with = "full")]
         quick: bool,
     },
 }
@@ -50,7 +54,8 @@ pub fn run(cmd: BundleCmd) -> Result<(), Error> {
             println!("wrote {}", file.display());
             describe(&info);
         }
-        BundleCmd::Verify { file, quick } => {
+        BundleCmd::Verify { file, full, quick: _ } => {
+            let quick = !full;
             let info = if quick {
                 bundle::verify_quick(&file)?
             } else {
@@ -70,7 +75,7 @@ pub fn run(cmd: BundleCmd) -> Result<(), Error> {
                 }
             }
             if quick {
-                println!("ok (quick: header, refs and lengths; pack contents not hashed)");
+                println!("ok (quick: header, refs and lengths; pack contents not hashed; --full hashes every object)");
             } else {
                 println!("ok");
             }

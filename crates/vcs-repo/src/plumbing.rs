@@ -29,6 +29,11 @@ impl Repo {
         visit: impl Fn(&mut T, &str, &crate::index::IndexEntry) + Sync,
     ) -> Result<Vec<T>> {
         let img = self.index_image()?;
+        // AGI5 (and AGI3): walk the mapped blocks directly, no 100k-entry decode into memory
+        if let Some(view) = self.index_view(&img)? {
+            let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
+            return view.par_scan(threads, &init, &visit);
+        }
         crate::index::Index::scan(&img.flat()?, init, visit)
     }
 
