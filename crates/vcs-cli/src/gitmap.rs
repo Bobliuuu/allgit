@@ -2148,7 +2148,8 @@ fn exec(s: &Step, json: bool) -> Result<(), Error> {
 
 fn add_tracked(paths: &[String]) -> Result<(), Error> {
     let (repo, cwd) = open()?;
-    let st = repo.status_auto(Default::default())?;
+    // only tracked changes are staged: no untracked-file walk
+    let st = repo.status_tracked_auto(Default::default())?;
     let filters: Vec<String> = paths.iter().map(|p| repo.rel_path(&cwd, p)).collect::<Result<_, _>>()?;
     let mut rel: Vec<String> = vec![];
     for z in &st.zones {
