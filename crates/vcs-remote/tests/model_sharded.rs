@@ -50,6 +50,16 @@ struct Flags {
     undecided_means_abort: bool,
     /// lower txid is never aborted by a higher one (it waits instead): avoids mutual aborts
     wound_wait: bool,
+    /// shard records carry the txids they applied; a re-run skips zones that already applied it
+    idempotent: bool,
+    /// per-shard bound on the applied list
+    cap: usize,
+    /// the checker may garbage-collect Committed decision records
+    gc_decisions: bool,
+    /// ... but only once EVERY zone of the transaction has finalized it
+    gc_needs_all_applied: bool,
+    /// entries with old == new (lock checks, read set) are prepared like writes
+    prepare_readonly: bool,
 }
 const GOOD: Flags = Flags {
     validate_reads: true,
@@ -58,13 +68,19 @@ const GOOD: Flags = Flags {
     reader_uses_decision: true,
     undecided_means_abort: true,
     wound_wait: true,
+    idempotent: true,
+    cap: 8,
+    gc_decisions: false,
+    gc_needs_all_applied: true,
+    prepare_readonly: true,
 };
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 struct Shard {
     ver: u32,
     head: u8,
     pend: Option<(usize, u8)>,
+    applied: Vec<usize>,
 }
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Dec {
@@ -76,6 +92,7 @@ struct Store {
     shards: [Shard; Z],
     dec: BTreeMap<usize, Dec>,
     order: Vec<usize>,
+    init: [u8; Z],
 }
 #[derive(Clone, Debug)]
 struct Spec {
@@ -120,7 +137,7 @@ struct State {
 }
 
 fn effective(store: &Store, z: usize, f: &Flags) -> u8 {
-    let s = store.shards[z];
+    let s = store.shards[z].clone();
     match s.pend {
         Some((t, n)) if f.reader_uses_decision && store.dec.get(&t) == Some(&Dec::Committed) => n,
         _ => s.head,
@@ -128,7 +145,7 @@ fn effective(store: &Store, z: usize, f: &Flags) -> u8 {
 }
 
 fn replay(store: &Store, specs: &[Spec], upto: usize) -> [u8; Z] {
-    let mut h = [0u8; Z];
+    let mut h = store.init;
     for t in &store.order[..upto] {
         let sp = specs.iter().find(|s| s.id == *t).unwrap();
         for (z, old, new) in &sp.ups {
@@ -143,10 +160,14 @@ fn replay(store: &Store, specs: &[Spec], upto: usize) -> [u8; Z] {
 }
 
 /// Apply a pending record that belongs to a decided transaction, or clear it.
-fn resolve(store: &mut Store, z: usize, _t: usize, n: u8, commit: bool) {
+fn resolve(store: &mut Store, z: usize, t: usize, n: u8, commit: bool, cap: usize) {
     let s = &mut store.shards[z];
     if commit {
         s.head = n;
+        s.applied.push(t);
+        if s.applied.len() > cap {
+            s.applied.remove(0);
+        }
     }
     s.pend = None;
     s.ver += 1;
@@ -173,20 +194,21 @@ fn writer_step(st: &mut State, i: usize, f: &Flags, recovery: bool) -> Option<()
         },
         Ph::Prep(k) => {
             let (z, old, new) = spec.ups[k];
-            let sh = st.store.shards[z];
+            let sh = st.store.shards[z].clone();
             match sh.pend {
+                _ if f.idempotent && sh.applied.contains(&me) => next_prep(k + 1),
                 Some((t, _)) if t == me => next_prep(k + 1),
                 Some((t, n)) if f.respect_foreign_pending => {
                     match st.store.dec.get(&t).copied() {
-                        Some(Dec::Committed) => resolve(&mut st.store, z, t, n, true),
-                        Some(Dec::Aborted) => resolve(&mut st.store, z, t, n, false),
+                        Some(Dec::Committed) => resolve(&mut st.store, z, t, n, true, f.cap),
+                        Some(Dec::Aborted) => resolve(&mut st.store, z, t, n, false, f.cap),
                         None if f.undecided_means_abort => {
                             if f.wound_wait && t < me && !recovery {
                                 return None;
                             }
                             st.store.dec.insert(t, Dec::Aborted);
                         }
-                        None => resolve(&mut st.store, z, t, n, true), // MUTATION: apply undecided
+                        None => resolve(&mut st.store, z, t, n, true, f.cap), // MUTATION: apply undecided
                     }
                     Ph::Prep(k)
                 }
@@ -194,6 +216,8 @@ fn writer_step(st: &mut State, i: usize, f: &Flags, recovery: bool) -> Option<()
                     if sh.head != old {
                         st.store.dec.entry(me).or_insert(Dec::Aborted);
                         Ph::Clean(0)
+                    } else if !f.prepare_readonly && old == new {
+                        next_prep(k + 1) // MUTATION: checked, not held
                     } else {
                         let s = &mut st.store.shards[z];
                         s.pend = Some((me, new));
@@ -204,6 +228,10 @@ fn writer_step(st: &mut State, i: usize, f: &Flags, recovery: bool) -> Option<()
             }
         }
         Ph::Decide => match st.store.dec.get(&me) {
+            None if f.idempotent && spec.ups.iter().all(|(z, _, _)| st.store.shards[*z].applied.contains(&me)) => {
+                // decision record already garbage-collected: the shards remember
+                Ph::Done(true)
+            }
             None => {
                 st.store.dec.insert(me, Dec::Committed);
                 st.store.order.push(me);
@@ -218,7 +246,7 @@ fn writer_step(st: &mut State, i: usize, f: &Flags, recovery: bool) -> Option<()
             } else {
                 let (z, _, new) = spec.ups[k];
                 if st.store.shards[z].pend == Some((me, new)) {
-                    resolve(&mut st.store, z, me, new, true);
+                    resolve(&mut st.store, z, me, new, true, f.cap);
                 }
                 Ph::Fin(k + 1)
             }
@@ -229,7 +257,7 @@ fn writer_step(st: &mut State, i: usize, f: &Flags, recovery: bool) -> Option<()
             } else {
                 let (z, _, new) = spec.ups[k];
                 if st.store.shards[z].pend == Some((me, new)) {
-                    resolve(&mut st.store, z, me, new, false);
+                    resolve(&mut st.store, z, me, new, false, f.cap);
                 }
                 Ph::Clean(k + 1)
             }
@@ -245,7 +273,7 @@ fn reader_step(st: &mut State, f: &Flags) {
         r.k_start = Some(st.store.order.len());
     }
     let z = r.idx;
-    let s = st.store.shards[z];
+    let s = st.store.shards[z].clone();
     // effective() needs an immutable store; recompute inline
     let eff = match s.pend {
         Some((t, n)) if f.reader_uses_decision && st.store.dec.get(&t) == Some(&Dec::Committed) => n,
@@ -279,6 +307,10 @@ fn reader_step(st: &mut State, f: &Flags) {
 }
 
 fn check(st: &State, specs: &[Spec], f: &Flags, ctx: &str) {
+    let mut o = st.store.order.clone();
+    o.sort();
+    o.dedup();
+    assert_eq!(o.len(), st.store.order.len(), "S-ONCE: a transaction was applied twice ({ctx})");
     let want = replay(&st.store, specs, st.store.order.len());
     let got: Vec<u8> = (0..Z)
         .map(|z| {
@@ -338,7 +370,7 @@ fn finish(mut st: State, specs: &[Spec], f: &Flags, stats: &mut Stats, ctx: &str
         let Ph::Done(ok) = w.ph else { unreachable!() };
         assert_eq!(
             ok,
-            st.store.dec.get(&w.spec.id) == Some(&Dec::Committed),
+            st.store.dec.get(&w.spec.id) == Some(&Dec::Committed) || st.store.order.contains(&w.spec.id),
             "S-OUTCOME: writer {i} ({ctx})"
         );
     }
@@ -399,6 +431,31 @@ fn explore(st: &State, specs: &[Spec], f: &Flags, stats: &mut Stats, trace: &mut
             trace.pop();
         }
     }
+    if f.gc_decisions {
+        for sp in specs {
+            let t = sp.id;
+            if st.store.dec.get(&t) != Some(&Dec::Committed) {
+                continue;
+            }
+            let zones: Vec<usize> = if f.gc_needs_all_applied {
+                sp.ups.iter().map(|u| u.0).collect()
+            } else {
+                vec![sp.ups[0].0] // MUTATION: first zone only
+            };
+            let done = zones.iter().all(|z| {
+                let s = &st.store.shards[*z];
+                s.pend.map(|p| p.0) != Some(t) && (s.applied.contains(&t) || f.cap == 0)
+            });
+            if done {
+                let mut g = st.clone();
+                g.store.dec.remove(&t);
+                trace.push(format!("GC{t}"));
+                check(&g, specs, f, &trace.join(","));
+                explore(&g, specs, f, stats, trace);
+                trace.pop();
+            }
+        }
+    }
     if let Some(r) = &st.r {
         if r.result.is_none() {
             let mut n = st.clone();
@@ -416,13 +473,18 @@ fn explore(st: &State, specs: &[Spec], f: &Flags, stats: &mut Stats, trace: &mut
 }
 
 fn run(specs: Vec<Spec>, with_reader: bool, f: Flags) -> Stats {
+    run_init(specs, with_reader, f, [0; Z])
+}
+fn run_init(specs: Vec<Spec>, with_reader: bool, f: Flags, init: [u8; Z]) -> Stats {
     let st = State {
         store: Store {
-            shards: [Shard {
+            init,
+            shards: std::array::from_fn(|i| Shard {
                 ver: 0,
-                head: 0,
+                head: init[i],
                 pend: None,
-            }; Z],
+                applied: vec![],
+            }),
             dec: BTreeMap::new(),
             order: vec![],
         },
@@ -561,4 +623,105 @@ fn mutation_reader_ignores_decision_record_gives_stale_read() {
         reader_uses_decision: false,
         ..GOOD
     });
+}
+
+// ---- #313 pieces: decision-record GC, per-shard applied ids, locks spanning zones ----
+
+fn revert(id: usize) -> Spec {
+    Spec {
+        id,
+        ups: vec![(0, 1, 0), (1, 1, 0)],
+    }
+}
+const GC: Flags = Flags {
+    gc_decisions: true,
+    ..GOOD
+};
+
+/// A transaction commits, its decision record is garbage-collected, a revert puts the heads back
+/// (ABA), and the first writer is re-run (crash or lost ack): the per-shard applied ids make the
+/// re-run a no-op. Faults: one crash or lost ack anywhere.
+#[test]
+fn decision_gc_with_applied_ids_is_exactly_once() {
+    let s = run(vec![multi(0, 1), revert(1)], false, GC);
+    println!("decision gc + applied ids: {} distinct states, {} terminal", s.nodes, s.leaves);
+    assert!(s.nodes > 300);
+}
+
+#[test]
+fn decision_gc_with_three_writers() {
+    let s = run(vec![multi(0, 1), revert(1), single(2, 1, 3)], false, GC);
+    println!("decision gc, three: {} distinct states", s.nodes);
+}
+
+/// Negative result: with no applied list (window 0) a garbage-collected decision lets a re-run
+/// either apply the transaction a second time (S-ONCE) or report a committed one as failed
+/// (S-OUTCOME) after a revert. This is why the applied list is per shard
+/// and why GC may only run after every zone has finalized.
+#[test]
+#[should_panic(expected = "S-")]
+fn mutation_no_applied_ids_double_applies_after_gc() {
+    run(vec![multi(0, 1), revert(1)], false, Flags { cap: 0, ..GC });
+}
+
+/// Deleting the decision after only the first zone finalized strands a pending record on the
+/// second zone, which a helper then aborts: the transaction is half applied.
+#[test]
+#[should_panic(expected = "S-ATOMIC")]
+fn mutation_gc_before_all_zones_finalized() {
+    run(
+        vec![multi(0, 1), single(1, 1, 2)],
+        false,
+        Flags {
+            gc_needs_all_applied: false,
+            ..GC
+        },
+    );
+}
+
+/// Locks spanning zones: the lock of the pair lives in zone 1 (value 1 = held by A, 2 = stolen or
+/// expired-and-taken by B); A's guarded push writes zone 0 and checks zone 1 (old == new). The
+/// check is part of the transaction: a steal can serialise before or after the push, never in
+/// between.
+fn guarded_push() -> Spec {
+    Spec {
+        id: 0,
+        ups: vec![(0, 0, 5), (1, 1, 1)],
+    }
+}
+fn steal() -> Spec {
+    Spec {
+        id: 1,
+        ups: vec![(1, 1, 2)],
+    }
+}
+
+#[test]
+fn guarded_push_vs_lock_steal_serialises() {
+    let s = run_init(vec![guarded_push(), steal()], true, GOOD, [0, 1]);
+    println!("guarded push vs steal: {} distinct states", s.nodes);
+    assert!(s.nodes > 500);
+}
+
+#[test]
+#[should_panic(expected = "S-ATOMIC")]
+fn mutation_lock_check_not_held_until_decision() {
+    run_init(
+        vec![guarded_push(), steal()],
+        false,
+        Flags {
+            prepare_readonly: false,
+            ..GOOD
+        },
+        [0, 1],
+    );
+}
+
+/// A lock acquired in two zones at once (a lock path set that spans zones) is a plain
+/// multi-zone transaction: two contenders, exactly one holds both halves.
+#[test]
+fn spanning_lock_acquire_is_all_or_nothing() {
+    let s = run(vec![multi(0, 1), multi(1, 2)], true, GC);
+    println!("spanning lock acquire: {} distinct states", s.nodes);
+    assert_eq!(s.fault_free_no_commit, 0);
 }
