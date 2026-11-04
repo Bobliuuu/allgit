@@ -20,14 +20,14 @@ Format (all versioned; see `crates/vcs-repo/src/index5.rs`, `indeximage.rs`):
 Measured on 100k files, macOS, release builds, median of 9-15 runs, loaded host (load 9-17), wall / CPU ms,
 base = origin/main, new = this branch:
 
-| op | base | new |
+| op | main | AGI5 |
 |---|---|---|
-| add one new file | 26 / 24 | 13 / 11 |
-| rm | 26 / 16 | 22 / 11 |
-| mv | 29 / 17 | 24 / 11 |
-| diff (1 edit) | 38 / 33 | 25 / 12 |
-| restore (revert) | 30 / 19 | 23 / 12 |
-| add dir, commit -a, add ., status, switch --detach | within noise (not slower) | |
+| add one new file | 26 / 24 | 12 / 10 |
+| rm | 24 / 16 | 19 / 10 |
+| mv | 26 / 16 | 19 / 10 |
+| diff (1 edit) | 38 / 33 (109 / 686 unsettled) | 23 / 9 |
+| restore (revert) | 26 / 16 | 19 / 10 |
+| add dir ("add -u"), commit "-a", add ., status clean, switch --detach | 42 / 44, 65 / 48, 272 / 1060, 37 / 33, 148 / 723 | 38 / 41, 54 / 43, 267 / 1121, 36 / 31, 136 / 675 (not slower) |
 
 `add .`, `switch --detach` and `commit -a` are bounded by the stat of 100k files and the full save, not by the
 index format. `vcs` has no `-a`/`-u` flags: `commit -a` is `add F && commit`, `add -u` is `add <dir>`.
