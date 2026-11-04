@@ -1,15 +1,12 @@
-//! `vcs watch`: journal changed paths for [`crate::fsmonitor::JournalMonitor`] (feature `watcher`).
+//! `vcs watch`: journal changed paths for [`vcs_repo::fsmonitor::JournalMonitor`] (crate `vcs-watchd`).
 //!
 //! Linux (inotify) is the tested backend. The macOS (FSEvents) backend is whatever the `notify`
 //! crate provides; it has not been run here. One watch is added per directory (non-recursive),
 //! so the daemon controls the set of watches: new directories are watched and scanned (files
 //! created before the watch existed are journaled), and any directory rename, event-queue
-//! overflow or `notify` error makes it write `O` and rebuild every watch. See `fsmonitor` for the
+//! overflow or `notify` error makes it write `O` and rebuild every watch. See `vcs_repo::fsmonitor` for the
 //! journal format and the barrier protocol.
 
-use crate::error::{Error, Result};
-use crate::fsmonitor::{DIR, JOURNAL, PID, PROBE_DIR};
-use crate::repo::Repo;
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
@@ -19,6 +16,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
 use std::time::Duration;
 use vcs_objects::names::META_DIR;
+use vcs_repo::error::{Error, Result};
+use vcs_repo::fsmonitor::{DIR, JOURNAL, PID, PROBE_DIR};
+use vcs_repo::Repo;
 
 const ROTATE_AT: u64 = 32 << 20;
 
@@ -56,7 +56,7 @@ pub fn run(repo: &Repo, stop: &AtomicBool) -> Result<()> {
 /// the work that wanted it.
 pub fn run_idle(repo: &Repo, stop: &AtomicBool, idle: Option<Duration>) -> Result<()> {
     let root = repo.worktree().to_path_buf();
-    let dir = repo.vcs.join(DIR);
+    let dir = repo.worktree().join(META_DIR).join(DIR);
     let probe = dir.join(PROBE_DIR);
     let _ = fs::remove_dir_all(&probe);
     fs::create_dir_all(&probe).map_err(werr)?;

@@ -14,6 +14,11 @@ path = "src/bin/git_shim.rs"
 required-features = ["git-shim"]
 
 [[bin]]
+name = "vcs-watchd"
+path = "src/bin/vcs_watchd.rs"
+required-features = ["watcher"]
+
+[[bin]]
 name = "git-remote-allgit"
 path = "src/bin/git_remote_allgit.rs"
 
@@ -25,6 +30,7 @@ vcs-store.workspace = true
 vcs-remote.workspace = true
 vcs-store-s3.workspace = true
 vcs-server.workspace = true
+vcs-watchd = { workspace = true, optional = true }
 clap.workspace = true
 clap_complete.workspace = true
 clap_mangen.workspace = true
@@ -40,7 +46,8 @@ git-shim = []
 # On by default (rustls, builds offline); use --no-default-features --features watcher for a TLS-free build.
 tls = ["vcs-store-s3/tls", "vcs-server/tls"]
 # `vcs watch`: inotify/FSEvents daemon that lets `status` skip unchanged files and the untracked walk.
-watcher = ["vcs-repo/watcher"]
+# The watcher lives in its own binary, `vcs-watchd`, so `vcs` itself does not link CoreServices on macOS.
+watcher = ["dep:vcs-watchd"]
 structural = ["vcs-repo/structural"]
 structural-python = ["vcs-repo/structural-python"]
 structural-typescript = ["vcs-repo/structural-typescript"]

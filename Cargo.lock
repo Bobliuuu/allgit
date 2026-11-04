@@ -1656,6 +1656,7 @@ dependencies = [
  "vcs-server",
  "vcs-store",
  "vcs-store-s3",
+ "vcs-watchd",
  "zstd",
 ]
 
@@ -1704,7 +1705,6 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "libc",
- "notify",
  "proptest",
  "sha2",
  "tempfile",
@@ -1714,6 +1714,7 @@ dependencies = [
  "vcs-objects",
  "vcs-remote",
  "vcs-store",
+ "vcs-watchd",
 ]
 
 [[package]]
@@ -1760,6 +1761,15 @@ dependencies = [
  "vcs-objects",
  "vcs-remote",
  "vcs-store",
+]
+
+[[package]]
+name = "vcs-watchd"
+version = "0.1.0"
+dependencies = [
+ "notify",
+ "vcs-objects",
+ "vcs-repo",
 ]
 
 [[package]]
