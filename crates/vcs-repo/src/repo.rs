@@ -2471,6 +2471,23 @@ impl Repo {
                 return Err(vcs_store::StoreError::NotFound(*id).into());
             }
         }
+        // A fresh materialization of a big tree into an empty worktree: clone a cached snapshot of
+        // it (copy-on-write) instead of writing every file; see `snapcache`.
+        let snap_want: Option<crate::snapcache::Want> = (crate::snapcache::enabled()
+            && old.is_empty()
+            && virt.is_empty()
+            && ws.sparse.is_empty()
+            && ix.entries.is_empty()
+            && changed.len() >= crate::snapcache::min_files())
+        .then(|| changed.iter().map(|p| (p.as_str(), new[*p].0, new[*p].1)).collect());
+        if let Some(want) = &snap_want {
+            if let Some(es) = crate::snapcache::try_restore(&self.common, &self.worktree, want) {
+                for ((p, _, _), e) in want.iter().zip(es) {
+                    ix.insert(p, e)?;
+                }
+                return Ok(());
+            }
+        }
         // deletions
         let mut dirs: BTreeSet<String> = BTreeSet::new();
         for p in old.keys().filter(|p| !new.contains_key(*p)) {
@@ -2556,6 +2573,9 @@ impl Repo {
         }
         // prune now-empty directories (never the worktree root)
         self.prune_dirs_fs(dirs);
+        if let Some(want) = &snap_want {
+            crate::snapcache::capture(&self.common, &self.worktree, want);
+        }
         Ok(())
     }
 

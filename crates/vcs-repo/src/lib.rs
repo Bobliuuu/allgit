@@ -47,6 +47,7 @@ pub mod repo;
 pub mod reset;
 pub mod revrange;
 pub mod shelve;
+mod snapcache;
 pub mod sparse;
 pub mod stash;
 pub mod sync;
