@@ -153,6 +153,23 @@ sketch ordering, depth 8, window 8, readers accept chains up to 50 and verify th
 rollback is `vcs repack --format v2`. Whether to make v4 the default for local packs, or to keep v3 blocks as the only
 space-saving format, is a product decision this data informs but does not make.
 
+## Decision: v4 default? (#319) No; v2 stays the default for new packs, v4 stays opt-in
+
+Measured with `scripts/storage/packfmt_bench.py` (medians, warm cache, macOS arm64 laptop at load 40+, so only ratios mean anything). Two real histories imported with `vcs import-git`: `.asdf` (1,763 commits, 23.6 MB stream) and a 964-commit repository of this project's own history (75 MB stream; many large benchmark/doc blobs, so it is friendlier to deltas than typical code). "repack" is the cost of rewriting the existing v2 pack into that format (the v2 row is a no-op, so it is not a write-cost baseline: the import itself, which writes v2 packs directly, took 0.54 s and about 1.2 s).
+
+| history | format | repack | pack bytes | `fsck` (reads every object) |
+|---|---|---|---|---|
+| asdf | v2 | (no-op) | 26.0 MB | 0.106 s |
+| asdf | v3 blocks | 0.18 s | 9.2 MB (2.8x smaller) | 0.212 s (2.0x slower) |
+| asdf | v4 deltas | 2.45 s | 3.4 MB (7.6x smaller) | 0.202 s (1.9x slower) |
+| project | v2 | (no-op) | 77.9 MB | 0.294 s |
+| project | v3 blocks | 0.66 s | 22.7 MB (3.4x smaller) | 0.347 s (1.2x slower) |
+| project | v4 deltas | 6.06 s | 6.9 MB (11.2x smaller) | 0.222 s (0.76x, faster: fewer bytes to read and inflate) |
+
+`log -p` and `log --stat` over the current branch touch only recent objects and were 8 to 17 ms for every format.
+
+Reading: v4 is smaller than v3 by 2.7x to 3.3x and scans about as fast as v3, but the rewrite is 9x to 14x slower than v3 (a delta search per object). Under "speed over storage" the write path (import, commit, publish, auto-repack at the tail of a command) must not pay that, so v4 is not the default; v3 stays the cheap size win for compaction. The explicit use is `vcs repack --format v4` (or `VCS_PACK_FORMAT=v4`) on an idle or cold repository. Not measured: cold disk reads, random single-object reads of deep chains (the lab gave 3.1x to 5.3x a v2 read for blobs at depth 8), concurrent readers.
+
 ## Not measured, caveats
 
 - Disk and cold-cache reads (everything above is in memory or warm page cache); remote ranged reads of deltas (v3 is local

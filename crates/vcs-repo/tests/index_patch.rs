@@ -273,3 +273,42 @@ fn adding_new_files_patches_the_index_and_still_refuses_case_collisions() {
     let rep = r.fsck().unwrap();
     assert!(rep.problems.is_empty(), "{:?}", rep.problems);
 }
+
+/// The case-collision check steps over whole directories instead of reading every entry; it must still
+/// find a clash with a directory, a root file, or a file inside a directory, wherever it sorts among
+/// blocks, and must not report one where none exists.
+#[test]
+fn collision_check_that_skips_directories_agrees_with_the_obvious_rule() {
+    let d = tempfile::tempdir().unwrap();
+    let r = Repo::init(&d.path().join("r")).unwrap();
+    for k in 0..9000u32 {
+        let p = format!("Dir{:02}/f{k:05}.txt", k % 30);
+        let abs = r.worktree().join(&p);
+        fs::create_dir_all(abs.parent().unwrap()).unwrap();
+        fs::write(abs, format!("file {k}\n")).unwrap();
+    }
+    for p in ["Mid.txt", "zeta.txt", "Alpha.txt"] {
+        fs::write(r.worktree().join(p), "r\n").unwrap();
+    }
+    r.add(&s("")).unwrap();
+    r.commit("base", sig()).unwrap();
+    let write = |p: &str| {
+        let abs = r.worktree().join(p);
+        fs::create_dir_all(abs.parent().unwrap()).unwrap();
+        fs::write(abs, "n\n").unwrap();
+    };
+    for bad in ["dir00/x", "DIR29/x", "dir15/x", "mid.TXT", "ZETA.txt", "alpha.txt", "Dir07/F00007.txt", "Dir29/F08999.TXT"] {
+        write(bad);
+        let e = r.add(&s(bad)).unwrap_err().to_string();
+        assert!(e.contains("differ only by case"), "{bad}: {e}");
+        assert!(!tracked(&r).contains(bad), "{bad}");
+    }
+    for good in ["Dir00/new.txt", "Dir29/zz.txt", "Dir30/x.txt", "Between.txt", "Dir15/f99999.txt", "zz.txt", "AAA.txt"] {
+        write(good);
+        assert_eq!(r.add(&s(good)).unwrap().staged, 1, "{good}");
+        assert!(tracked(&r).contains(good), "{good}");
+    }
+    r.commit("more", sig()).unwrap();
+    let rep = r.fsck().unwrap();
+    assert!(rep.problems.is_empty(), "{:?}", rep.problems);
+}

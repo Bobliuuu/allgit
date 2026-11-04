@@ -1,7 +1,7 @@
 //! Real-history merge replay (issue #108).
 //!
 //! `cargo run -p vcs-repo --release --features structural,structural-python,structural-typescript,structural-go \
-//!    --example replay -- <repo-dir> <branch> [--max N] [--tsv]`
+//!    --example replay -- <repo-dir> <branch> [--max N] [--tsv] [--dump-conflicts DIR]`
 //!
 //! For every merge commit (two parents, exactly one merge base) of `<branch>` in the root zone of an
 //! imported repository (`vcs import-git`), re-run the merge of its two parents with four engines and
@@ -82,6 +82,13 @@ fn main() {
     if let Some(i) = a.iter().position(|x| x == "--max") {
         max = a[i + 1].parse().expect("--max N");
     }
+    // --dump-conflicts DIR: write every text content conflict of the plain-text engine whose real merge
+    // result is a UTF-8 file as an eval case (base/ours/theirs/expected/path) for `vcs-assist-claude eval`.
+    let dump = a
+        .iter()
+        .position(|x| x == "--dump-conflicts")
+        .map(|i| std::path::PathBuf::from(&a[i + 1]));
+    let mut dumped = 0u64;
     let repo = Repo::discover(std::path::Path::new(&a[0])).expect("open repo");
     let log = repo.log(ROOT_ZONE, Some(&a[1]), usize::MAX).expect("log");
     let merges: Vec<_> = log.iter().filter(|(_, c)| c.parents.len() == 2).collect();
@@ -133,6 +140,42 @@ fn main() {
             let clean = tm.conflicts.is_empty();
             s.clean_merges += clean as u64;
             s.exact_merges += (clean && tm.entries == actual) as u64;
+            if let (0, Some(dir)) = (vi, &dump) {
+                for cf in &tm.conflicts {
+                    use vcs_merge::ConflictKind::{AddAdd, ModifyModify};
+                    let (Some(l), Some(r), Some(real)) = (cf.left, cf.right, actual.get(&cf.path)) else {
+                        continue;
+                    };
+                    if !matches!(cf.kind, AddAdd | ModifyModify) {
+                        continue;
+                    }
+                    let get = |id: &vcs_objects::ObjectId| vcs_store_get(store, id).and_then(|b| String::from_utf8(b).ok());
+                    let (Some(ours), Some(theirs), Some(expected)) = (get(&l), get(&r), get(&real.1)) else {
+                        continue;
+                    };
+                    let base = match cf.base {
+                        Some(b) => match get(&b) {
+                            Some(t) => Some(t),
+                            None => continue,
+                        },
+                        None => None,
+                    };
+                    if ours.contains('\0') || theirs.contains('\0') {
+                        continue;
+                    }
+                    let d = dir.join(format!("c{dumped:04}"));
+                    std::fs::create_dir_all(&d).expect("mkdir");
+                    let w = |n: &str, t: &str| std::fs::write(d.join(n), t).expect("write");
+                    w("ours", &ours);
+                    w("theirs", &theirs);
+                    w("expected", &expected);
+                    w("path", &format!("{}\n", cf.path));
+                    if let Some(b) = &base {
+                        w("base", b);
+                    }
+                    dumped += 1;
+                }
+            }
             for cf in &tm.conflicts {
                 s.langs.entry(lang_of(&cf.path)).or_default().conflicts += 1;
             }
@@ -150,6 +193,9 @@ fn main() {
                 }
             }
         }
+    }
+    if dump.is_some() {
+        eprintln!("dumped {dumped} conflict cases");
     }
     println!(
         "repo={} branch={} total_merge_commits={} sampled={} replayed={} skipped_not_single_base={}",

@@ -83,7 +83,7 @@ call, streaming, prompt caching, and cost accounting.
 
 ## Evaluation
 
-`vcs-assist-claude eval <dir> [--live] [--json]` scores the assistant on recorded conflicts. Each subdirectory of `<dir>`
+`vcs-assist-claude eval <dir> [--live [--record] | --mock xours|xtheirs|refuse] [--json]` scores the assistant on recorded conflicts. Each subdirectory of `<dir>`
 is one case: `ours`, `theirs`, `expected`, optional `base` (absent means add/add) and `path` (one line; decides the
 language), and for offline runs `response.txt`, the raw text the model returned. Cases run in name order.
 
@@ -100,6 +100,36 @@ Exact match is strict: a correct merge that differs from the reference in whites
 
 The fixtures in `crates/vcs-assist-claude/tests/fixtures/eval` are five hand-written Rust cases with hand-written
 responses; they test the harness, not the model. No quality numbers for any real model exist yet.
+
+### Recording live runs, mock providers, and a real-history corpus (issue #209)
+
+* `eval --live --record` writes the raw model text of every case to `response.txt` (also when validation rejects it), so
+  a paid live run can be re-scored offline and deterministically afterwards, and the recording can be committed or
+  diffed between prompts. The key never reaches the file (tested).
+* `eval --mock xours|xtheirs|refuse` runs a deterministic stand-in with no key and no network: `xours`/`xtheirs` keep
+  the stable parts of the line merge and take every conflicting region from one side (what `git merge -X ours|theirs`
+  does); `refuse` always declines. They go through the same extraction and validation as a model's text, so they give
+  a floor to compare a model against and exercise the whole harness.
+* A corpus of real conflicts comes from the replay harness (see [merge.md](merge.md#real-history-replay-issue-108)):
+  `REPLAY_ARGS="--dump-conflicts DIR" scripts/replay.sh <bare-clone> HEAD 300` writes one case per text conflict of the
+  plain-text engine, with the human-made merge as `expected`. It is not committed (the files belong to those projects).
+
+Measured, 2026-11-03, macOS arm64, build with the structural features: 77 real conflicts (flask 45, requests 6, gin 26;
+same revisions as the replay table) with the human merge as reference, no model involved.
+
+| provider | exact-match | passes validation | parse-valid | refused | invalid |
+|---|---|---|---|---|---|
+| mock `xours` | 23.4% (18/77) | 98.7% (76/77) | 97.3% (36/37) | 0 | 1 |
+| mock `xtheirs` | 26.0% (20/77) | 96.1% (74/77) | 94.6% (35/37) | 0 | 3 |
+| mock `refuse` | 0.0% | 0.0% | n/a | 77 | 0 |
+
+So a model has to beat roughly 25% exact-match to be better than blindly picking a side, and "parse-valid" is nearly
+saturated by the baselines (a side-picking merge of two parsing files usually parses), so it is a weak quality signal
+on its own. **Still not done: the live run and the model's own numbers.** No Anthropic API key was available (the only
+key available is an OpenAI one, for [`vcs-assist-openai`](assist-openai.md), whose binary has no `--record` or `--mock`
+yet). Handoff: `ANTHROPIC_API_KEY=... vcs-assist-claude eval <corpus> --live --record --json` on the 77 cases; with the
+cost scales with the corpus size (77 whole-file prompts; the OpenAI run above used about 15 K prompt tokens for 24 small cases), so set a budget first. Issue #209 stays open
+for that run.
 
 ## Tests
 

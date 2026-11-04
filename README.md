@@ -362,8 +362,8 @@ vcs --help
 ```
 
 Tagged releases publish Linux and macOS tarballs with checksums; see [docs/install.md](docs/install.md), which also
-covers Windows (compile-checked only) and the optional `git` shim (`--features git-shim`). HTTPS remotes need
-`--features tls`.
+covers Windows (compile-checked only) and the optional `git` shim (`--features git-shim`). HTTPS remotes are in the default build
+(`tls` feature).
 
 ## 🚀 Quickstart
 
@@ -490,6 +490,22 @@ workload study.
 memory (15 against 114 MiB), and for `switch_v1` git uses less CPU (0.87 against 1.13 s). git-lfs push, clone and
 fetch rows are not comparable in that run and are omitted; no claim is made about them. `git clone` of a local path
 hardlinks objects, so its clone row is not a transfer cost. The 256 MiB and 4096 MiB tables are in the same file.
+
+## 🚀 Recent performance work (merged)
+
+Each row names its PR. All were measured on a loaded macOS host (load 17 to 100), so treat wall times as noisy and
+CPU as more reliable; none of this is a general claim about other machines.
+
+| change | measured effect | PR |
+|---|---|---|
+| lazy tag table, peel memo (300,000 tags) | `log -n 1` 0.307 to 0.062 s, `status` 0.187 to 0.055 s, `tag` list 7.46 to 1.15 s | #481 |
+| gc reads each object once; `log --stat` skips diff text | `log --stat` 3789 to 1202 ms wall (0.59x git), gc wall 974 to 486 ms | #482 |
+| small p4-mapped ops no longer scale with index size | `add` 36 to 24 ms, revert 59 to 44 ms, delete 53 to 44 ms; p4 parity not reached | #486 |
+| bundle create forwards stored pack entries | bundle create CPU 2.2x git to 1.05-1.23x git | #496 |
+| in-place create and parallel first scan (knobs `VCS_CHECKOUT_ATOMIC`, `VCS_STATUS_THREADS`) | clone from bundle 1.3-1.6x faster, first status after clone 3.5-4.8x faster (100k files) | #495 |
+| materialized-tree snapshot cache (clonefile/FICLONE) | `worktree add` 8.6-9.6 s to 5.6-5.9 s at 100k files; Linux path untested | #497 |
+| HTTPS remotes on by default (`tls` feature) | no timing; builds offline | #469 |
+| lazy tags decision: pack v4 stays opt-in | v4 is 7.6x to 11.2x smaller than v2 but rewrite costs 9x to 14x v3 | #481 |
 
 ## 🔒 Security notes
 

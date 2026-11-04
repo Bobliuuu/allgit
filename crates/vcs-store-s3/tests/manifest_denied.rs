@@ -24,7 +24,26 @@ fn server(route: fn(&str) -> &'static str) -> String {
                         break;
                     }
                 }
-                let line = String::from_utf8_lossy(&data).lines().next().unwrap_or("").to_owned();
+                // drain the request body before answering: closing with unread data makes the kernel send
+                // an RST (notably on macOS), which the client sees as a transport error, not the status
+                let head = String::from_utf8_lossy(&data).into_owned();
+                let want = head
+                    .lines()
+                    .find_map(|l| {
+                        l.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .and_then(|v| v.trim().parse::<usize>().ok())
+                    })
+                    .unwrap_or(0);
+                let have = data.len() - head.find("\r\n\r\n").map_or(0, |i| i + 4);
+                let mut left = want.saturating_sub(have);
+                while left > 0 {
+                    match s.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => left = left.saturating_sub(n),
+                    }
+                }
+                let line = head.lines().next().unwrap_or("").to_owned();
                 let status = route(&line);
                 let body = if status.starts_with("200") && line.starts_with("POST") {
                     "<InitiateMultipartUploadResult><UploadId>u1</UploadId></InitiateMultipartUploadResult>"

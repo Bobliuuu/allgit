@@ -484,11 +484,14 @@ impl Repo {
         if !fsmonitor::state_exists(&self.vcs) {
             return None;
         }
-        Some(fsmonitor::fingerprint(
-            &self.rd("index").ok()?,
-            &self.rd("zones").ok()?,
-            &self.rd("workspace").ok()?,
-        ))
+        let ix = self.rd("index").ok()?;
+        Some(self.fingerprint_disk(&ix, &self.rd("zones").ok()?, &self.rd("workspace").ok()?))
+    }
+
+    /// [`fsmonitor::fingerprint`] of `ix_bytes`, which were just read from this worktree's index file.
+    pub(crate) fn fingerprint_disk(&self, ix_bytes: &[u8], zones: &[u8], workspace: &[u8]) -> [u8; 32] {
+        let d = fsmonitor::index_digest_cached(&self.vcs, ix_bytes);
+        fsmonitor::fingerprint_with(&d, ix_bytes.len(), zones, workspace)
     }
 
     /// Record that the index went from fingerprint `old` to `new_bytes` changing only entries in `touched`.
@@ -1298,7 +1301,7 @@ impl Repo {
     pub fn status_monitored(&self, opts: StatusOpts, mon: &dyn FsMonitor) -> Result<Status> {
         let ix_bytes = self.rd("index")?;
         let ix = Index::decode(&ix_bytes)?;
-        let fp = fsmonitor::fingerprint(&ix_bytes, &self.rd("zones")?, &self.rd("workspace")?);
+        let fp = self.fingerprint_disk(&ix_bytes, &self.rd("zones")?, &self.rd("workspace")?);
         let (prev, extra) = self.saved_state_for(fp);
         let ans = mon.changed_since(prev.as_ref().map(|s| s.token.as_str()));
         let (token, inc) = match (prev.as_ref(), ans) {
@@ -1322,7 +1325,7 @@ impl Repo {
         let fp_now = match self.rd("index") {
             Ok(b) if b == ix_bytes => fp,
             Ok(b) if Index::decode(&b).is_ok_and(|n| n.entries == ix.entries) => {
-                fsmonitor::fingerprint(&b, &self.rd("zones")?, &self.rd("workspace")?)
+                self.fingerprint_disk(&b, &self.rd("zones")?, &self.rd("workspace")?)
             }
             _ => return Ok(st),
         };
@@ -1355,6 +1358,11 @@ impl Repo {
         }
     }
 
+    /// True when a filesystem watcher is running for this repository (and monitoring is not disabled).
+    pub(crate) fn watcher_running(&self) -> bool {
+        std::env::var_os("VCS_NO_FSMONITOR").is_none() && fsmonitor::JournalMonitor::open(&self.vcs).is_some()
+    }
+
     /// Tracked paths that may differ from the index, from the monitor: the unstaged set saved with the
     /// state plus whatever changed since its token. `None` (do a full scan) without a running watcher, a
     /// state for this index, or a usable answer. Untracked files are not covered.
@@ -1363,7 +1371,7 @@ impl Repo {
             return None;
         }
         let mon = fsmonitor::JournalMonitor::open(&self.vcs)?;
-        let fp = fsmonitor::fingerprint(ix_bytes, &self.rd("zones").ok()?, &self.rd("workspace").ok()?);
+        let fp = self.fingerprint_disk(ix_bytes, &self.rd("zones").ok()?, &self.rd("workspace").ok()?);
         let (prev, extra) = self.saved_state_for(fp);
         let prev = prev?;
         let Changed::Paths { paths, .. } = mon.changed_since(Some(&prev.token)) else {
@@ -1502,12 +1510,15 @@ impl Repo {
         let mut st = Status::default();
         let single_zone = zones.names().count() <= 1;
         for (zone, branch) in &ws.subs {
-            let mine: Vec<(&String, &IndexEntry)> = ix
-                .entries
-                .iter()
-                .filter(|(p, _)| only.map_or(true, |o| o.contains(p.as_str())))
-                .filter(|(p, _)| (single_zone || zones.owner(p) == zone) && !ws.skips(zone, p))
-                .collect();
+            // Only a scan of the working tree needs the entry list; with the monitor's answer in hand
+            // building 100k references per command is pure overhead.
+            let mine = || -> Vec<(&String, &IndexEntry)> {
+                ix.entries
+                    .iter()
+                    .filter(|(p, _)| only.map_or(true, |o| o.contains(p.as_str())))
+                    .filter(|(p, _)| (single_zone || zones.owner(p) == zone) && !ws.skips(zone, p))
+                    .collect()
+            };
             // Subtree-skipping diff: directories whose cached or computed tree id equals HEAD's
             // are skipped; HEAD's trees are read only on paths that actually differ.
             let head_root = match self.current_head(zone, &ws, &refs) {
@@ -1530,7 +1541,7 @@ impl Repo {
                         .collect(),
                     Vec::new(),
                 ),
-                None => self.unstaged_changes(&mine, ix.written_ns)?,
+                None => self.unstaged_changes(&mine(), ix.written_ns)?,
             };
             racy_clean.extend(clean);
             st.zones.push(ZoneStatus {
@@ -1636,7 +1647,7 @@ impl Repo {
             }
             Ok((out, clean))
         };
-        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(16);
+        let threads = crate::writer_threads::status_threads();
         if threads <= 1 || list.len() < 2048 {
             return check(list);
         }
@@ -2460,6 +2471,23 @@ impl Repo {
                 return Err(vcs_store::StoreError::NotFound(*id).into());
             }
         }
+        // A fresh materialization of a big tree into an empty worktree: clone a cached snapshot of
+        // it (copy-on-write) instead of writing every file; see `snapcache`.
+        let snap_want: Option<crate::snapcache::Want> = (crate::snapcache::enabled()
+            && old.is_empty()
+            && virt.is_empty()
+            && ws.sparse.is_empty()
+            && ix.entries.is_empty()
+            && changed.len() >= crate::snapcache::min_files())
+        .then(|| changed.iter().map(|p| (p.as_str(), new[*p].0, new[*p].1)).collect());
+        if let Some(want) = &snap_want {
+            if let Some(es) = crate::snapcache::try_restore(&self.common, &self.worktree, want) {
+                for ((p, _, _), e) in want.iter().zip(es) {
+                    ix.insert(p, e)?;
+                }
+                return Ok(());
+            }
+        }
         // deletions
         let mut dirs: BTreeSet<String> = BTreeSet::new();
         for p in old.keys().filter(|p| !new.contains_key(*p)) {
@@ -2491,7 +2519,7 @@ impl Repo {
             };
             let m = if mode == EntryMode::Symlink {
                 io(&abs(), self.wfs.symlink(&data, p))?
-            } else if old.contains_key(p) {
+            } else if old.contains_key(p) || crate::writer_threads::atomic_only() {
                 io(&abs(), self.wfs.write(p, &data, mode))?
             } else {
                 // Not tracked before, and the preflight saw nothing there: create in place (never
@@ -2545,6 +2573,9 @@ impl Repo {
         }
         // prune now-empty directories (never the worktree root)
         self.prune_dirs_fs(dirs);
+        if let Some(want) = &snap_want {
+            crate::snapcache::capture(&self.common, &self.worktree, want);
+        }
         Ok(())
     }
 

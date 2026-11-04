@@ -249,6 +249,14 @@ impl Repo {
         }
     }
 
+    /// [`Self::carry_attrs_marker`] for an index patched at `touched` paths only: the rest of the file is
+    /// what the marker already vouched for, so nothing is scanned.
+    pub(crate) fn carry_attrs_marker_touched(&self, was_clean: bool, touched: &[String]) {
+        if was_clean && !touched.iter().any(|p| p.contains(ATTR_FILE)) {
+            self.note_index_holds_no_attrs();
+        }
+    }
+
     /// Attribute files of the tracked tree (those in the index plus a root one on disk).
     pub fn attrs(&self) -> Result<Attrs> {
         let mut bases: BTreeSet<String> = BTreeSet::new();
