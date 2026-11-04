@@ -31,6 +31,9 @@ use crate::repo::Repo;
 use vcs_objects::{ObjectId, Signature};
 
 pub(crate) const JOURNAL_FILE: &str = "oplog.journal";
+/// Exists while journal records have been appended without an `fdatasync` (deferred ref updates).
+/// `vcs-store` checks the same name in its object barrier.
+pub(crate) const DIRTY_MARKER: &str = "oplog.dirty";
 
 impl Repo {
     /// Durably replace `refs` (the fully synced way) after making any journalled state durable.
@@ -44,18 +47,56 @@ impl Repo {
     /// module docs. Caller holds the repository lock. Falls back to the fully synced protocol
     /// when the journal is unavailable.
     pub(crate) fn commit_refs_op(&self, refs: &Refs, description: &str, author: Option<Signature>) -> Result<ObjectId> {
-        if let Some(id) = self.try_journaled_op(refs, description, &author)? {
+        self.commit_refs_op_with(refs, description, author, true)
+    }
+
+    /// [`Repo::commit_refs_op`] for operations that only move refs (`branch`, `tag`, `branch -d`,
+    /// `switch -c`): unless `VCS_FSYNC_REFS=1` / `core.fsync = refs` asks for full durability, the
+    /// journal `fdatasync` is deferred (git's default: it does not fsync refs). The update is still an
+    /// atomic journal record plus renames; a process crash loses nothing, a power cut may lose the
+    /// most recent such updates but never corrupts. The next object-writing barrier, `gc` or
+    /// [`Repo::flush_refs`] makes them durable. See docs/durability.md.
+    pub(crate) fn commit_refs_op_lazy(&self, refs: &Refs, description: &str, author: Option<Signature>) -> Result<ObjectId> {
+        self.commit_refs_op_with(refs, description, author, fsync_refs())
+    }
+
+    fn commit_refs_op_with(&self, refs: &Refs, description: &str, author: Option<Signature>, durable: bool) -> Result<ObjectId> {
+        if let Some(id) = self.try_journaled_op(refs, description, &author, durable)? {
             return Ok(id);
         }
         self.write_refs(refs)?;
         self.record_op(description, author)
     }
+
+    /// Make every deferred ref update durable now (one `fdatasync` of the journal, only if some are
+    /// pending). Called by `gc`, and by embedders at clean shutdown.
+    pub fn flush_refs(&self) -> Result<()> {
+        self.journal_flush_lazy()
+    }
+}
+
+static FSYNC_REFS_OVERRIDE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Force full per-operation durability for ref-only operations (what `core.fsync = refs` does).
+pub fn set_fsync_refs(on: bool) {
+    FSYNC_REFS_OVERRIDE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Full per-op durability for ref-only operations? `VCS_FSYNC_REFS=1` or [`set_fsync_refs`].
+pub(crate) fn fsync_refs() -> bool {
+    use std::sync::OnceLock;
+    static ENV: OnceLock<bool> = OnceLock::new();
+    FSYNC_REFS_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed)
+        || *ENV.get_or_init(|| matches!(std::env::var("VCS_FSYNC_REFS").as_deref(), Ok("1" | "true" | "on" | "refs")))
 }
 
 #[cfg(not(unix))]
 impl Repo {
-    fn try_journaled_op(&self, _: &Refs, _: &str, _: &Option<Signature>) -> Result<Option<ObjectId>> {
+    fn try_journaled_op(&self, _: &Refs, _: &str, _: &Option<Signature>, _: bool) -> Result<Option<ObjectId>> {
         Ok(None)
+    }
+    fn journal_flush_lazy(&self) -> Result<()> {
+        Ok(())
     }
     pub(crate) fn journal_checkpoint(&self) -> Result<()> {
         Ok(())
@@ -304,7 +345,9 @@ mod imp {
             let f = io(&self.journal_path(), fs::OpenOptions::new().write(true).open(self.journal_path()))?;
             let base = h8(&[&fs::read(self.common.join("refs")).unwrap_or_default()]);
             io(&self.journal_path(), f.write_all_at(&header(new_gen(), boot, &base), 0))?;
-            io(&self.journal_path(), f.sync_data())
+            io(&self.journal_path(), f.sync_data())?;
+            let _ = fs::remove_file(self.common.join(DIRTY_MARKER));
+            Ok(())
         }
 
         /// Empty the journal after making its state durable. Caller holds the lock.
@@ -349,7 +392,26 @@ mod imp {
             let _ = self.lock();
         }
 
-        pub(super) fn try_journaled_op(&self, refs: &Refs, description: &str, author: &Option<Signature>) -> Result<Option<ObjectId>> {
+        /// Make deferred (lazy) journal records durable. The marker file tells other processes' object
+        /// barriers (`LocalStore::sync`) that there is something to flush.
+        pub(super) fn journal_flush_lazy(&self) -> Result<()> {
+            let marker = self.common.join(DIRTY_MARKER);
+            if fs::remove_file(&marker).is_ok() {
+                let jp = self.journal_path();
+                if let Ok(f) = fs::File::open(&jp) {
+                    io(&jp, f.sync_data())?;
+                }
+            }
+            Ok(())
+        }
+
+        pub(super) fn try_journaled_op(
+            &self,
+            refs: &Refs,
+            description: &str,
+            author: &Option<Signature>,
+            durable: bool,
+        ) -> Result<Option<ObjectId>> {
             let Some(boot) = boot_id() else { return Ok(None) };
             // A large tag set is stored once and omitted from unchanged operations (ops.rs `record_op`);
             // the journal record always carries the full view, so large sets take the synced path.
@@ -410,7 +472,14 @@ mod imp {
             let jp = self.journal_path();
             let f = io(&jp, fs::OpenOptions::new().write(true).open(&jp))?;
             io(&jp, f.write_all_at(&rec, tail as u64))?;
-            io(&jp, f.sync_data())?; // COMMIT POINT
+            if durable {
+                io(&jp, f.sync_data())?; // COMMIT POINT (durable)
+                let _ = fs::remove_file(self.common.join(DIRTY_MARKER)); // this sync also covered earlier deferred records
+            } else {
+                // Deferred: the record is in the page cache (a process crash cannot lose it); the next
+                // object barrier, gc or flush_refs fdatasyncs the journal. Marker first, then the data.
+                let _ = fs::File::create(self.common.join(DIRTY_MARKER));
+            }
             drop(f);
             self.crash_point()?; // committed, nothing applied yet
             write_cache_nosync(&self.common.join("refs"), &refs_bytes)?;

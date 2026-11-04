@@ -297,13 +297,30 @@ fn collision_check_that_skips_directories_agrees_with_the_obvious_rule() {
         fs::create_dir_all(abs.parent().unwrap()).unwrap();
         fs::write(abs, "n\n").unwrap();
     };
-    for bad in ["dir00/x", "DIR29/x", "dir15/x", "mid.TXT", "ZETA.txt", "alpha.txt", "Dir07/F00007.txt", "Dir29/F08999.TXT"] {
+    for bad in [
+        "dir00/x",
+        "DIR29/x",
+        "dir15/x",
+        "mid.TXT",
+        "ZETA.txt",
+        "alpha.txt",
+        "Dir07/F00007.txt",
+        "Dir29/F08999.TXT",
+    ] {
         write(bad);
         let e = r.add(&s(bad)).unwrap_err().to_string();
         assert!(e.contains("differ only by case"), "{bad}: {e}");
         assert!(!tracked(&r).contains(bad), "{bad}");
     }
-    for good in ["Dir00/new.txt", "Dir29/zz.txt", "Dir30/x.txt", "Between.txt", "Dir15/f99999.txt", "zz.txt", "AAA.txt"] {
+    for good in [
+        "Dir00/new.txt",
+        "Dir29/zz.txt",
+        "Dir30/x.txt",
+        "Between.txt",
+        "Dir15/f99999.txt",
+        "zz.txt",
+        "AAA.txt",
+    ] {
         write(good);
         assert_eq!(r.add(&s(good)).unwrap().staged, 1, "{good}");
         assert!(tracked(&r).contains(good), "{good}");

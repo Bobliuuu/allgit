@@ -988,6 +988,9 @@ fn need_remote(repo: &Repo) -> Result<String, Error> {
 }
 
 fn run(cli: Cli) -> Result<(), Error> {
+    if config::Config::load().ok().and_then(|c| c.get("core.fsync")).as_deref() == Some("refs") {
+        vcs_repo::set_fsync_refs(true);
+    }
     if let Cmd::More(m) = &cli.cmd {
         return cmds::dispatch(m, cli.json);
     }

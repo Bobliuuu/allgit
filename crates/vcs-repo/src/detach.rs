@@ -98,7 +98,7 @@ impl Repo {
             old: None,
             new: target,
         }])?;
-        self.commit_refs_op(&refs, &format!("create branch {zone}/{branch} at {}", target.short()), None)?;
+        self.commit_refs_op_lazy(&refs, &format!("create branch {zone}/{branch} at {}", target.short()), None)?;
         Ok(target)
     }
 
