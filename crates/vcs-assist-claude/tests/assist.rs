@@ -9,7 +9,7 @@ fn stdout_json(o: &std::process::Output) -> serde_json::Value {
 #[test]
 fn good_answer_becomes_protocol_response_and_request_is_well_formed() {
     let m = Mock::start(vec![ok_text(&resolved(GOOD))]);
-    let o = run(&m.url, &good_request(), &[]);
+    let o = run(&m.url, &good_request(), &[("VCS_ASSIST_PROMPT", "v1")]);
     assert!(o.status.success(), "{}", all_output(&o));
     let j = stdout_json(&o);
     assert_eq!(j["resolution"], GOOD);
@@ -42,7 +42,11 @@ fn model_comes_from_env() {
 #[test]
 fn add_add_has_no_base() {
     let m = Mock::start(vec![ok_text(&resolved("x = 3\n"))]);
-    let o = run(&m.url, &request("a.txt", None, "x = 1\n", "x = 2\n"), &[]);
+    let o = run(
+        &m.url,
+        &request("a.txt", None, "x = 1\n", "x = 2\n"),
+        &[("VCS_ASSIST_PROMPT", "v1")],
+    );
     assert!(o.status.success(), "{}", all_output(&o));
     let b: serde_json::Value = serde_json::from_str(&m.requests()[0].body).unwrap();
     assert!(b["messages"][0]["content"].as_str().unwrap().contains("added independently"));
@@ -314,4 +318,46 @@ fn prompt_injection_text_is_just_data_in_the_user_turn() {
 fn unparsable_resolution_is_rejected_when_a_parser_is_built_in() {
     // Hunks are preserved; only the conflict region is broken.
     rejected(&resolved(&GOOD.replace("    21\n", "    21 +\n")), "does not parse");
+}
+
+#[test]
+fn default_prompt_shows_only_the_conflicting_regions_and_assembles_hunk_answers() {
+    // A long unchanged middle is elided from the prompt but kept in the result.
+    let mid: String = (0..200).map(|i| format!("line {i}\n")).collect();
+    let (base, ours, theirs) = (
+        format!("top\n1\n{mid}end\n"),
+        format!("top\n10\n{mid}end\n"),
+        format!("top\n11\n{mid}end\n"),
+    );
+    let m = Mock::start(vec![ok_text("<explanation>both</explanation>\n<hunk id=\"1\">\n21\n</hunk>")]);
+    let o = run(&m.url, &request("a.txt", Some(&base), &ours, &theirs), &[]);
+    assert!(o.status.success(), "{}", all_output(&o));
+    assert_eq!(stdout_json(&o)["resolution"], format!("top\n21\n{mid}end\n"));
+    let b: serde_json::Value = serde_json::from_str(&m.requests()[0].body).unwrap();
+    let user = b["messages"][0]["content"].as_str().unwrap();
+    assert!(
+        user.contains("CONFLICT 1: OURS") && user.contains("unchanged lines omitted"),
+        "{user}"
+    );
+    assert!(!user.contains("line 100\n"), "the middle of the file must not be sent");
+    assert!(b["system"].as_str().unwrap().contains("<hunk"));
+}
+
+#[test]
+fn hunk_answer_with_wrong_count_is_rejected() {
+    let m = Mock::start(vec![ok_text("<hunk id=\"1\">\n21\n</hunk>\n<hunk id=\"2\">\nx\n</hunk>")]);
+    let o = run(&m.url, &good_request(), &[]);
+    assert!(!o.status.success() && o.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&o.stderr).contains("hunk"), "{}", all_output(&o));
+}
+
+#[test]
+fn big_file_with_small_conflict_is_not_refused_in_hunk_mode() {
+    let mid: String = (0..20_000).map(|i| format!("line number {i}\n")).collect();
+    let (base, ours, theirs) = (format!("1\n{mid}"), format!("10\n{mid}"), format!("11\n{mid}"));
+    assert!(base.len() + ours.len() + theirs.len() > 200 * 1024);
+    let m = Mock::start(vec![ok_text("<hunk id=\"1\">\n21\n</hunk>")]);
+    let o = run(&m.url, &request("a.txt", Some(&base), &ours, &theirs), &[]);
+    assert!(o.status.success(), "{}", all_output(&o));
+    assert_eq!(stdout_json(&o)["resolution"], format!("21\n{mid}"));
 }

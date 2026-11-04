@@ -4,7 +4,9 @@
 
 pub mod api;
 pub mod baseline;
+pub mod cli;
 pub mod eval;
+pub mod hunks;
 pub mod prompt;
 pub mod validate;
 
@@ -60,6 +62,24 @@ pub type Completer<'a> = dyn Fn(&str, &str, u32) -> Result<String, api::ApiError
 
 /// Turn a model text into an outcome (extraction plus all validation). Pure.
 pub fn judge(req: &Req, model_text: &str) -> Outcome {
+    // Hunk-mode answers (prompt v2) are first put together into the whole file.
+    let assembled;
+    let model_text = if !model_text.contains("<resolved_file>") && !model_text.contains("<refusal>") && model_text.contains("<hunk id=") {
+        match hunks::assemble(req, model_text) {
+            Ok(f) => {
+                let expl = model_text
+                    .split("<explanation>")
+                    .nth(1)
+                    .and_then(|e| e.split("</explanation>").next())
+                    .unwrap_or("");
+                assembled = format!("<explanation>{expl}</explanation>\n<resolved_file>\n{f}\n</resolved_file>");
+                &assembled
+            }
+            Err(e) => return Outcome::Failed(format!("hunk answer unusable: {e}")),
+        }
+    } else {
+        model_text
+    };
     match validate::extract(model_text, req) {
         Err(e) => Outcome::Failed(e),
         Ok(Answer::Refused(r)) => Outcome::Refused(if r.is_empty() { "the model declined".into() } else { r }),
@@ -76,19 +96,29 @@ pub fn judge(req: &Req, model_text: &str) -> Outcome {
 
 /// Size gate, prompt, call, judge.
 pub fn resolve(req: &Req, complete: &Completer) -> Outcome {
-    let total = req.base.as_ref().map_or(0, String::len) + req.ours.len() + req.theirs.len();
+    if req.ours.contains('\0') || req.theirs.contains('\0') {
+        return Outcome::Refused("binary content".into());
+    }
+    let (sys, user, hunk_mode) = prompt::build(req);
+    // Hunk mode sends only the conflicts and some context, so the limit applies to what is actually sent.
+    let total = if hunk_mode {
+        user.len()
+    } else {
+        req.base.as_ref().map_or(0, String::len) + req.ours.len() + req.theirs.len()
+    };
     if total > validate::MAX_INPUT_BYTES {
         return Outcome::Refused(format!(
             "file is too large to send ({total} bytes, limit {})",
             validate::MAX_INPUT_BYTES
         ));
     }
-    if req.ours.contains('\0') || req.theirs.contains('\0') {
-        return Outcome::Refused("binary content".into());
-    }
     let longest = req.ours.len().max(req.theirs.len());
-    let max_tokens = (longest / 2 + 2048).clamp(4096, 64_000) as u32;
-    match complete(prompt::SYSTEM, &prompt::user_message(req), max_tokens) {
+    let max_tokens = if hunk_mode {
+        16_000
+    } else {
+        (longest / 2 + 2048).clamp(4096, 64_000) as u32
+    };
+    match complete(sys, &user, max_tokens) {
         Ok(text) => judge(req, &text),
         Err(e) => Outcome::Failed(e.to_string()),
     }
