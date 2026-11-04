@@ -275,6 +275,9 @@ class Worker:
         weights = [("commit", 40), ("sync", 12), ("publish", 28), ("undo", 4), ("branch", 5), ("clone", 3)]
         if self.bin == "vcs":
             weights.append(("lock", 8))
+        only = os.environ.get("SOAK_OPS")   # e.g. SOAK_OPS=lock : targeted repro, only these ops
+        if only:
+            weights = [w for w in weights if w[0] in only.split(",")]
         names = [w[0] for w in weights]
         ws = [w[1] for w in weights]
         while time.time() < end:
@@ -758,16 +761,29 @@ def verify(a, store, cutoff=None, tag="verify", quick=False):
                     bad += 1
             except FileNotFoundError:
                 missing += 1
-    lw_bad = 0
+    lw_bad = lw_newer = 0
     if a.kind == "vcs":
+        # The body of art/uN.txt is the client's monotonic seq. A lock-cycle commit whose publish was not
+        # acked (6 rejections, or the reply lost to a server kill) can still land later through a plain
+        # publish, so a head NEWER than the last ack is expected (harness artifact, not a loss, see #502).
+        # Only older or missing content means an acked write was lost.
         for rel, r in last_wins.items():
             try:
-                if sha(open(os.path.join(vdir, rel), "rb").read()) != r["sha"]:
-                    lw_bad += 1
+                body = open(os.path.join(vdir, rel), "rb").read()
             except FileNotFoundError:
                 lw_bad += 1
+                continue
+            if sha(body) == r["sha"]:
+                continue
+            try:
+                got = int(body.strip())
+                acked = next(i for i in range(got + 1) if sha(f"{i}\n".encode()) == r["sha"])
+                lw_newer += got > acked
+                lw_bad += got <= acked
+            except (ValueError, StopIteration):
+                lw_bad += 1
     res.update(acked_files=total, acked_missing=missing, acked_wrong_content=bad,
-               last_wins_files=len(last_wins), last_wins_mismatch=lw_bad)
+               last_wins_files=len(last_wins), last_wins_mismatch=lw_bad, last_wins_newer_than_ack=lw_newer)
     if a.kind == "vcs":
         rc, out, err, dt = sh(["vcs", "fsck"], cwd=vdir, env=env, timeout=3600)
         res["fresh_clone_fsck"] = {"rc": rc, "out": out.strip()[-300:], "err": err.strip()[-300:], "s": round(dt, 1)}
