@@ -1,0 +1,11 @@
+Change 10 by alice@alice_ws on 2026/11/01 02:30:39
+
+	Odd names, keywords, utf16
+
+Affected files ...
+
+... //depot/proj/café.txt#1 add
+... //depot/proj/kw.txt#1 add
+... //depot/proj/u16.txt#1 add
+... //depot/proj/we%40ird%23na%25me%2A.txt#1 add
+

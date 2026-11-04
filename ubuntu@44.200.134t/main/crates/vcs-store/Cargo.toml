@@ -1,0 +1,18 @@
+[package]
+name = "vcs-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+vcs-objects.workspace = true
+thiserror.workspace = true
+blake3.workspace = true
+zstd = "0.13"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile.workspace = true
+proptest.workspace = true

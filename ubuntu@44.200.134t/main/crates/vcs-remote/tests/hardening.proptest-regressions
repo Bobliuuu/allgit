@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 84f6829df12ecbab1eb98be222f93779518436950ee802897a938f962c997d7f # shrinks to m = Manifest { generation: 72057594037927936, branches: {("a", "a"): ObjectId(000000000000), ("aaaa", "aa"): ObjectId(000000000000), ("aaaaa", "aaaaaa/a"): ObjectId(000000000000)}, snapshots: {"aa": ObjectId(000000000000), "aaaaaa": ObjectId(000000000000), "aaaaab": ObjectId(000000000000)}, applied: [ObjectId(000000000000), ObjectId(000000000000)], zones: {"aaa": "aaaaa/a", "aaaaa": "aaaaa"}, labels: {}, locks: {("aa", "aaaa/aaa"): Lock { holder: "h", token: 128, acquired_at: 1, expires_at: 2, reason: "r" }}, next_token: 129, time_hw: 9223372036854775808 }, seed = 9966836262175398390

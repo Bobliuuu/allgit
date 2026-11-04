@@ -1,0 +1,19 @@
+# Found by the model test (seed 6092). The rebase of b1 onto main stops on a conflict in
+# z1/f.txt; `rebase --abort` first went back to the stopped tip (main), whose tree has d/e.txt,
+# and deleted the user's UNTRACKED d/e.txt on the way. Abort must go straight to the original
+# head and leave untracked files alone.
+write d/e.txt 1
+add d
+commit
+branch root b2
+branch root b1
+write z1/f.txt 2
+add z1/f.txt
+commit
+checkout root b1
+write z1/f.txt 0
+delete d/e.txt
+add .
+write d/e.txt 0
+commit
+rebase root main

@@ -1,0 +1,5 @@
+{"exp":"env","env":"{\"host\":\"129-146-78-123\",\"kernel\":\"Linux 6.8.0-1046-nvidia\",\"cpu\":\"AMD EPYC 7J13 64-Core Processor\",\"cores\":30,\"loadavg\":\"8.00 15.73 18.31\",\"rustc\":\"\",\"date\":\"2026-10-31T23:27:02Z\"}"}
+{"exp":"tree_diff_cost","storage":"loose","files":5000,"commits":400,"path_depth":9,"ns_per_commit_diff_med":30509.1153,"ns_min":30487.8847,"ns_max":37050.6817,"tree_reads_per_diff_avg":4.1053,"commits_where_path_changed":15,"state":"warm page cache, hash verified on every read"}
+{"exp":"tree_diff_cost","storage":"packed(one pack)","files":5000,"commits":400,"path_depth":9,"ns_per_commit_diff_med":46347.5689,"ns_min":45683.9699,"ns_max":48399.5439,"tree_reads_per_diff_avg":4.1053,"commits_where_path_changed":15,"state":"warm page cache, hash verified on every read"}
+{"exp":"commit_read_cost","storage":"packed","ns_per_commit_read_med":10654.2525,"ns_max":11071.5825}
+{"exp":"repo_build","seconds":168.2183,"commits":400}

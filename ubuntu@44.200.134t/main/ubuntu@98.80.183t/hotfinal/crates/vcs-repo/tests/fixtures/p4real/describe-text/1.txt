@@ -1,0 +1,15 @@
+Change 1 by alice@alice_ws on 2026/11/01 02:30:38
+
+	Initial import of proj
+	with a second description line
+
+Affected files ...
+
+... //depot/proj/README.txt#1 add
+... //depot/proj/bin/run.sh#1 add
+... //depot/proj/data/blob.bin#1 add
+... //depot/proj/empty.txt#1 add
+... //depot/proj/link#1 add
+... //depot/proj/sp ace.txt#1 add
+... //depot/proj/src/main.c#1 add
+

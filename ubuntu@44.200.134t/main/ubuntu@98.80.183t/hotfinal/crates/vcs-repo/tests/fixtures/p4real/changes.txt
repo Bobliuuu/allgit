@@ -1,0 +1,45 @@
+Change 11 on 2026/11/01 by alice@alice_ws *pending*
+
+	pending work
+
+Change 10 on 2026/11/01 by alice@alice_ws
+
+	Odd names, keywords, utf16
+
+Change 9 on 2026/11/01 by alice@alice_ws
+
+	Remove util; re-add link as a regular file
+
+Change 8 on 2026/11/01 by bob@bob_ws
+
+	Executable readme, crlf file, binary tool
+
+Change 7 on 2026/11/01 by alice@alice_ws
+
+	Drop link, new blob, run.sh loses +x
+
+Change 6 on 2026/11/01 by alice@alice_ws
+
+	Integrate proj into rel
+
+Change 5 on 2026/11/01 by alice@alice_ws
+
+	Hello in proj
+
+Change 4 on 2026/11/01 by bob@bob_ws
+
+	Branch proj to rel
+
+Change 3 on 2026/11/01 by alice@alice_ws
+
+	Move util into lib
+
+Change 2 on 2026/11/01 by bob@bob_ws
+
+	Greet and add util
+
+Change 1 on 2026/11/01 by alice@alice_ws
+
+	Initial import of proj
+	with a second description line
+

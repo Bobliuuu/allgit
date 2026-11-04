@@ -1,0 +1,31 @@
+[package]
+name = "vcs-repo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+vcs-objects.workspace = true
+vcs-store.workspace = true
+vcs-remote.workspace = true
+vcs-merge.workspace = true
+thiserror.workspace = true
+blake3.workspace = true
+notify = { version = "6", default-features = false, features = ["macos_fsevent"], optional = true }
+unicode-normalization.workspace = true
+libc = "0.2"
+
+[dev-dependencies]
+tempfile.workspace = true
+proptest.workspace = true
+sha2 = "0.10"
+
+[features]
+default = []
+# `vcs watch`: a notify-based (inotify / FSEvents) daemon that journals changed paths for `status`.
+watcher = ["dep:notify"]
+# Use the structural Rust merge in merge and rebase (see vcs-merge).
+structural = ["vcs-merge/structural"]
+structural-python = ["vcs-merge/structural-python"]
+structural-typescript = ["vcs-merge/structural-typescript"]
+structural-go = ["vcs-merge/structural-go"]

@@ -1,0 +1,340 @@
+{
+ "span_s": 7241,
+ "ops": {
+  "add": {
+   "n_ok": 37259,
+   "n_expected_fail": 0,
+   "n_error": 342,
+   "per_s": 5.19,
+   "p50_ms": 472.4,
+   "p95_ms": 3521.0,
+   "p99_ms": 5221.0,
+   "max_ms": 11369.5
+  },
+  "branch_create": {
+   "n_ok": 4133,
+   "n_expected_fail": 0,
+   "n_error": 7,
+   "per_s": 0.57,
+   "p50_ms": 57.2,
+   "p95_ms": 595.8,
+   "p99_ms": 993.5,
+   "max_ms": 3440.1
+  },
+  "branch_delete": {
+   "n_ok": 2290,
+   "n_expected_fail": 0,
+   "n_error": 1850,
+   "per_s": 0.57,
+   "p50_ms": 31.1,
+   "p95_ms": 448.4,
+   "p99_ms": 868.3,
+   "max_ms": 2285.9
+  },
+  "branch_switch": {
+   "n_ok": 5748,
+   "n_expected_fail": 0,
+   "n_error": 2532,
+   "per_s": 1.14,
+   "p50_ms": 78.4,
+   "p95_ms": 950.5,
+   "p99_ms": 1670.9,
+   "max_ms": 3853.8
+  },
+  "clone_fresh": {
+   "n_ok": 2477,
+   "n_expected_fail": 0,
+   "n_error": 3,
+   "per_s": 0.34,
+   "p50_ms": 3025.2,
+   "p95_ms": 20921.4,
+   "p99_ms": 24890.6,
+   "max_ms": 28179.4
+  },
+  "clone_initial": {
+   "n_ok": 80,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.01,
+   "p50_ms": 206.1,
+   "p95_ms": 2190.9,
+   "p99_ms": 2482.7,
+   "max_ms": 2482.7
+  },
+  "commit": {
+   "n_ok": 14759,
+   "n_expected_fail": 0,
+   "n_error": 22083,
+   "per_s": 5.09,
+   "p50_ms": 338.8,
+   "p95_ms": 2677.1,
+   "p99_ms": 4655.4,
+   "max_ms": 17337.2
+  },
+  "fsck_clone": {
+   "n_ok": 772,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.11,
+   "p50_ms": 546.8,
+   "p95_ms": 1507.0,
+   "p99_ms": 1816.0,
+   "max_ms": 2246.9
+  },
+  "lock": {
+   "n_ok": 1349,
+   "n_expected_fail": 649,
+   "n_error": 4447,
+   "per_s": 0.89,
+   "p50_ms": 146.5,
+   "p95_ms": 1160.9,
+   "p99_ms": 2138.7,
+   "max_ms": 14804.8
+  },
+  "merge": {
+   "n_ok": 35328,
+   "n_expected_fail": 0,
+   "n_error": 56788,
+   "per_s": 12.72,
+   "p50_ms": 41.9,
+   "p95_ms": 1722.9,
+   "p99_ms": 16841.1,
+   "max_ms": 245671.9
+  },
+  "publish": {
+   "n_ok": 1164,
+   "n_expected_fail": 80671,
+   "n_error": 292,
+   "per_s": 11.34,
+   "p50_ms": 464.6,
+   "p95_ms": 2092.5,
+   "p99_ms": 3109.4,
+   "max_ms": 6275.0
+  },
+  "publish_auto": {
+   "n_ok": 451,
+   "n_expected_fail": 8340,
+   "n_error": 4298,
+   "per_s": 1.81,
+   "p50_ms": 459.7,
+   "p95_ms": 3907.9,
+   "p99_ms": 79395.5,
+   "max_ms": 269278.8
+  },
+  "publish_lock": {
+   "n_ok": 218,
+   "n_expected_fail": 2487,
+   "n_error": 497,
+   "per_s": 0.44,
+   "p50_ms": 370.8,
+   "p95_ms": 29034.5,
+   "p99_ms": 97343.4,
+   "max_ms": 106725.9
+  },
+  "stale_lock_removed": {
+   "n_ok": 0,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "max_ms": null
+  },
+  "sync": {
+   "n_ok": 99168,
+   "n_expected_fail": 0,
+   "n_error": 4713,
+   "per_s": 14.35,
+   "p50_ms": 188.1,
+   "p95_ms": 5341.7,
+   "p99_ms": 9158.6,
+   "max_ms": 81548.8
+  },
+  "undo": {
+   "n_ok": 1272,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.18,
+   "p50_ms": 355.7,
+   "p95_ms": 1941.2,
+   "p99_ms": 2879.2,
+   "max_ms": 6848.5
+  },
+  "unlock": {
+   "n_ok": 1281,
+   "n_expected_fail": 0,
+   "n_error": 68,
+   "per_s": 0.19,
+   "p50_ms": 118.7,
+   "p95_ms": 1128.6,
+   "p99_ms": 2184.0,
+   "max_ms": 13687.2
+  }
+ },
+ "errors": [
+  {
+   "op": "merge",
+   "msg": "error: a merge of origin/main into root/main is already in progress\n\nOptions:\n  vcs conflict list\n  vcs merge --abort",
+   "n": 45058
+  },
+  {
+   "op": "merge",
+   "msg": "error: zone \"zN\" has uncommitted changes (N staged, N unstaged); commit or revert them first",
+   "n": 10022
+  },
+  {
+   "op": "commit",
+   "msg": ".bin\n  art/fN.bin\n  art/fN.bin\n  art/fN.bin\n  art/fN.bin\n  art/fN.bin\n  art/fN.bin\n\nOptions:\n  vcs lock <path> --lease-secs <n>   take the l",
+   "n": 4926
+  },
+  {
+   "op": "lock",
+   "msg": "error: backend error: server returned N: Invalid: malformed remote manifest: limit exceeded: element count exceeds input",
+   "n": 4446
+  },
+  {
+   "op": "sync",
+   "msg": "error: untracked path \"zN/uN/fN.txt\" would be overwritten; move or remove it first",
+   "n": 4298
+  },
+  {
+   "op": "publish_auto",
+   "msg": "error: a merge of origin/main into root/main is already in progress\n\nOptions:\n  vcs conflict list\n  vcs merge --abort",
+   "n": 2892
+  },
+  {
+   "op": "commit",
+   "msg": "bin\n  art/fN.bin\n  art/fN.bin\n  art/fN.bin\n  art/fN.bin\n  art/fN.bin\n  art/fN.bin\n\nOptions:\n  vcs lock <path> --lease-secs <n>   take the lo",
+   "n": 2860
+  },
+  {
+   "op": "commit",
+   "msg": "error: cannot commit: merge of origin/main into root/main has N unresolved conflict(s):\n  art/fN.bin (modify/modify)\n  art/fN.bin (modify/mo",
+   "n": 2126
+  },
+  {
+   "op": "branch_switch",
+   "msg": "error: zone \"root\" is in the middle of a merge; resolve and commit, or `vcs merge --abort`",
+   "n": 1843
+  },
+  {
+   "op": "branch_delete",
+   "msg": "error: zone \"root\" is in the middle of a merge; resolve or `vcs merge --abort` first",
+   "n": 1843
+  },
+  {
+   "op": "merge",
+   "msg": "error: a merge of origin/main into zN/main is already in progress\n\nOptions:\n  vcs conflict list\n  vcs merge --abort",
+   "n": 1474
+  },
+  {
+   "op": "commit",
+   "msg": "error: cannot commit: merge of origin/main into root/main has N unresolved conflict(s):\n  art/fN.bin (modify/modify)\n\nOptions:\n  edit the fi",
+   "n": 1283
+  },
+  {
+   "op": "commit",
+   "msg": "in\n  art/fN.bin\n  art/fN.bin\n  art/fN.bin\n  art/fN.bin\n  art/fN.bin\n  art/fN.bin\n\nOptions:\n  vcs lock <path> --lease-secs <n>   take the loc",
+   "n": 1261
+  },
+  {
+   "op": "commit",
+   "msg": "n\n  art/fN.bin\n  art/fN.bin\n  art/fN.bin\n  art/fN.bin\n  art/fN.bin\n  art/fN.bin\n\nOptions:\n  vcs lock <path> --lease-secs <n>   take the lock",
+   "n": 1125
+  },
+  {
+   "op": "commit",
+   "msg": "igin/main into root/main has N unresolved conflict(s):\n  art/fN.bin (modify/modify)\n  art/fN.bin (modify/modify)\n  art/fN.bin (modify/modify",
+   "n": 993
+  },
+  {
+   "op": "commit",
+   "msg": "r: cannot commit: merge of origin/main into root/main has N unresolved conflict(s):\n  art/fN.bin (modify/modify)\n  art/fN.bin (modify/modify",
+   "n": 809
+  },
+  {
+   "op": "commit",
+   "msg": ".vcsattributes):\n  art/fN.bin\n  art/fN.bin\n  art/fN.bin\n  art/fN.bin\n  art/fN.bin\n\nOptions:\n  vcs lock <path> --lease-secs <n>   take the lo",
+   "n": 708
+  },
+  {
+   "op": "branch_switch",
+   "msg": "error: zone \"root\" has uncommitted changes (N staged, N unstaged); commit or revert them first",
+   "n": 675
+  },
+  {
+   "op": "commit",
+   "msg": "/fN.bin (modify/modify)\n  art/fN.bin (modify/modify)\n  art/fN.bin (modify/modify)\n  art/fN.bin (modify/modify)\n  art/fN.bin (modify/modify)\n",
+   "n": 630
+  },
+  {
+   "op": "commit",
+   "msg": "vcsattributes):\n  art/fN.bin\n  art/fN.bin\n  art/fN.bin\n  art/fN.bin\n  art/fN.bin\n\nOptions:\n  vcs lock <path> --lease-secs <n>   take the loc",
+   "n": 553
+  },
+  {
+   "op": "commit",
+   "msg": "nresolved conflict(s):\n  art/fN.bin (modify/modify)\n  art/fN.bin (modify/modify)\n  art/fN.bin (modify/modify)\n  art/fN.bin (modify/modify)\n ",
+   "n": 484
+  },
+  {
+   "op": "commit",
+   "msg": " lockable file(s) without a lock (see .vcsattributes):\n  art/fN.bin\n  art/fN.bin\n\nOptions:\n  vcs lock <path> --lease-secs <n>   take the loc",
+   "n": 473
+  },
+  {
+   "op": "commit",
+   "msg": "gin/main into root/main has N unresolved conflict(s):\n  art/fN.bin (modify/modify)\n  art/fN.bin (modify/modify)\n  art/fN.bin (modify/modify)",
+   "n": 418
+  },
+  {
+   "op": "publish_auto",
+   "msg": "error: zone \"zN\" has uncommitted changes (N staged, N unstaged); commit or revert them first",
+   "n": 406
+  },
+  {
+   "op": "commit",
+   "msg": "/fN.bin (modify/modify)\n  art/fN.bin (modify/modify)\n  art/fN.bin (modify/modify)\n  art/uN.txt (modify/modify)\n  art/uN.txt (delete/modify)\n",
+   "n": 397
+  }
+ ],
+ "resources": {
+  "rss_kb": {
+   "first_quartile_mean": 57421.2,
+   "last_quartile_mean": 116854.0,
+   "max": 185824.0,
+   "last": 141072.0
+  },
+  "cpu_pct": {
+   "first_quartile_mean": 46.5,
+   "last_quartile_mean": 20.6,
+   "max": 72.0,
+   "last": 0.2
+  },
+  "fds": {
+   "first_quartile_mean": 208.7,
+   "last_quartile_mean": 63.5,
+   "max": 417.0,
+   "last": 4.0
+  },
+  "threads": {
+   "first_quartile_mean": 208.0,
+   "last_quartile_mean": 62.6,
+   "max": 415.0,
+   "last": 4.0
+  },
+  "manifest_bytes": {
+   "first_quartile_mean": 28429.7,
+   "last_quartile_mean": 131455.7,
+   "max": 131662.0,
+   "last": 131623.0
+  },
+  "packs": {
+   "first_quartile_mean": 572.4,
+   "last_quartile_mean": 419.3,
+   "max": 834.0,
+   "last": 515.0
+  }
+ }
+}

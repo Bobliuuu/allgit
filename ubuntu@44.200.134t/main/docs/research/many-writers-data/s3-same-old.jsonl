@@ -1,0 +1,2 @@
+{"label": "s3-before", "backend": "s3", "mode": "same", "N": 64, "acked": 192, "pps": 1.4, "p50": 1076.1, "p95": 129053.2, "p99": 133239.9, "conflicts": 6026, "unknowns": 0, "cpu_s": 5.0, "rss_mib": 52, "maxfd": 181, "manifest_b": "6200", "metrics": "", "err": []}
+{"label": "s3-before", "backend": "s3", "mode": "same", "N": 256, "acked": 0, "pps": 0, "p50": 0, "p95": 0, "p99": 0, "conflicts": 0, "unknowns": 0, "cpu_s": 10.4, "rss_mib": 99, "maxfd": 571, "manifest_b": "1430", "metrics": "", "err": ["parse /home/ubuntu/lw/o.1.json", "parse /home/ubuntu/lw/o.2.json"]}

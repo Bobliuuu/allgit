@@ -1,0 +1,168 @@
+[0] own1                 git ok  calls= 1 bytes=    24 wall=1.37s cost=$0.000
+[0] own1                 vcs ok  calls= 1 bytes=  3395 wall=1.52s cost=$0.001
+[0] own2                 git ok  calls= 1 bytes=    20 wall=1.40s cost=$0.001
+[0] own2                 vcs ok  calls= 1 bytes=  3395 wall=1.39s cost=$0.002
+[0] own3                 git ok  calls= 1 bytes=     9 wall=1.41s cost=$0.003
+[0] own3                 vcs ok  calls= 1 bytes=  3395 wall=1.71s cost=$0.003
+[0] list                 git ok  calls= 6 bytes=   136 wall=4.96s cost=$0.005
+[0] list                 vcs ok  calls= 1 bytes=  3395 wall=1.82s cost=$0.006
+[0] purpose              git ok  calls= 3 bytes=   133 wall=2.78s cost=$0.006
+[0] purpose              vcs ok  calls= 3 bytes=  8856 wall=2.96s cost=$0.009
+[0] deps_direct          git ok  calls= 2 bytes=   193 wall=1.89s cost=$0.010
+[0] deps_direct          vcs ok  calls= 1 bytes=  5778 wall=1.68s cost=$0.011
+[0] build_cli            git ok  calls= 7 bytes=   795 wall=4.91s cost=$0.013
+[0] build_cli            vcs ok  calls= 1 bytes=  3395 wall=1.83s cost=$0.013
+[0] build_net            git ok  calls= 8 bytes=   371 wall=6.04s cost=$0.015
+[0] build_net            vcs ok  calls= 1 bytes=  3395 wall=1.31s cost=$0.016
+[0] dependents_direct    git BAD calls=14 bytes=   490 wall=12.85s cost=$0.021
+[0] dependents_direct    vcs ok  calls= 1 bytes=  3395 wall=2.26s cost=$0.022
+[0] dependents_trans     git BAD calls=14 bytes=  1479 wall=9.16s cost=$0.026
+[0] dependents_trans     vcs ok  calls= 1 bytes=  3395 wall=1.47s cost=$0.027
+[0] no_deps              git BAD calls=14 bytes=  1496 wall=11.07s cost=$0.032
+[0] no_deps              vcs ok  calls= 1 bytes=  3395 wall=1.25s cost=$0.033
+[0] owners               git ok  calls= 8 bytes=   230 wall=7.03s cost=$0.035
+[0] owners               vcs ok  calls= 1 bytes=  5528 wall=1.53s cost=$0.036
+[0] top_author           git ok  calls= 1 bytes=    52 wall=1.43s cost=$0.036
+[0] top_author           vcs ok  calls= 1 bytes=  7353 wall=1.74s cost=$0.038
+[0] commit_count         git ok  calls= 1 bytes=   163 wall=1.29s cost=$0.038
+[0] commit_count         vcs ok  calls= 1 bytes=  6991 wall=1.46s cost=$0.040
+[0] commit_files         git ok  calls= 2 bytes=    79 wall=2.82s cost=$0.040
+[0] commit_files         vcs BAD calls= 2 bytes=   110 wall=2.24s cost=$0.041
+[0] commit_zones         git ok  calls= 2 bytes=    86 wall=2.37s cost=$0.042
+[0] commit_zones         vcs ok  calls= 4 bytes= 17874 wall=3.77s cost=$0.046
+[0] latest_zones         git ok  calls= 8 bytes=   338 wall=6.27s cost=$0.047
+[0] latest_zones         vcs ok  calls= 4 bytes= 23237 wall=4.54s cost=$0.052
+[0] range_zone           git ok  calls= 2 bytes=   131 wall=2.78s cost=$0.053
+[0] range_zone           vcs BAD calls= 3 bytes=  9088 wall=3.92s cost=$0.057
+[0] find_func            git ok  calls= 6 bytes=   127 wall=5.59s cost=$0.058
+[0] find_func            vcs ok  calls=10 bytes= 44560 wall=6.61s cost=$0.068
+[0] find_const           git ok  calls= 4 bytes=   977 wall=3.95s cost=$0.070
+[0] find_const           vcs ok  calls= 9 bytes= 11154 wall=7.79s cost=$0.075
+[0] merge_a_zones        git ok  calls= 6 bytes=   556 wall=4.86s cost=$0.076
+[0] merge_a_zones        vcs BAD calls= 3 bytes=   140 wall=2.20s cost=$0.077
+[0] merge_a_files        git ok  calls= 6 bytes=   551 wall=4.43s cost=$0.079
+[0] merge_a_files        vcs ok  calls= 6 bytes= 18094 wall=5.73s cost=$0.083
+[0] merge_b_zones        git BAD calls= 6 bytes=   247 wall=5.05s cost=$0.085
+[0] merge_b_zones        vcs ok  calls=14 bytes= 10869 wall=12.27s cost=$0.095
+[0] merge_b_files        git ok  calls= 6 bytes=   501 wall=4.16s cost=$0.096
+[0] merge_b_files        vcs ok  calls= 2 bytes=    40 wall=1.69s cost=$0.097
+[1] own1                 git ok  calls= 1 bytes=    24 wall=1.30s cost=$0.097
+[1] own1                 vcs ok  calls= 1 bytes=  3395 wall=1.37s cost=$0.098
+[1] own2                 git ok  calls= 1 bytes=    20 wall=1.27s cost=$0.098
+[1] own2                 vcs ok  calls= 1 bytes=  3395 wall=1.24s cost=$0.099
+[1] own3                 git ok  calls= 1 bytes=     9 wall=1.28s cost=$0.099
+[1] own3                 vcs ok  calls= 1 bytes=  3395 wall=1.46s cost=$0.100
+[1] list                 git ok  calls= 7 bytes=   144 wall=5.57s cost=$0.102
+[1] list                 vcs ok  calls= 1 bytes=  3395 wall=1.41s cost=$0.102
+[1] purpose              git ok  calls= 4 bytes=   169 wall=2.21s cost=$0.103
+[1] purpose              vcs ok  calls= 2 bytes=  8709 wall=2.19s cost=$0.105
+[1] deps_direct          git ok  calls= 2 bytes=   193 wall=1.98s cost=$0.106
+[1] deps_direct          vcs ok  calls= 1 bytes=  5778 wall=1.48s cost=$0.107
+[1] build_cli            git ok  calls= 7 bytes=   795 wall=4.79s cost=$0.109
+[1] build_cli            vcs ok  calls= 3 bytes=  9057 wall=4.04s cost=$0.112
+[1] build_net            git ok  calls= 4 bytes=   392 wall=3.68s cost=$0.113
+[1] build_net            vcs ok  calls= 1 bytes=  5766 wall=1.25s cost=$0.114
+[1] dependents_direct    git BAD calls=14 bytes=   336 wall=13.49s cost=$0.119
+[1] dependents_direct    vcs ok  calls= 1 bytes=  3395 wall=1.31s cost=$0.120
+[1] dependents_trans     git BAD calls=14 bytes=   171 wall=13.27s cost=$0.125
+[1] dependents_trans     vcs ok  calls= 1 bytes=  3395 wall=2.64s cost=$0.126
+[1] no_deps              git BAD calls=11 bytes=  1007 wall=5.13s cost=$0.128
+[1] no_deps              vcs ok  calls= 1 bytes=  3395 wall=1.31s cost=$0.128
+[1] owners               git ok  calls= 5 bytes=   230 wall=4.18s cost=$0.130
+[1] owners               vcs ok  calls= 1 bytes=  5528 wall=1.38s cost=$0.131
+[1] top_author           git ok  calls= 1 bytes=    52 wall=1.45s cost=$0.131
+[1] top_author           vcs ok  calls= 1 bytes=  7353 wall=1.39s cost=$0.133
+[1] commit_count         git ok  calls= 1 bytes=   163 wall=1.15s cost=$0.133
+[1] commit_count         vcs ok  calls= 1 bytes=  6991 wall=1.34s cost=$0.135
+[1] commit_files         git ok  calls= 2 bytes=    79 wall=2.38s cost=$0.135
+[1] commit_files         vcs BAD calls= 1 bytes=    57 wall=1.48s cost=$0.136
+[1] commit_zones         git ok  calls= 2 bytes=    86 wall=2.42s cost=$0.136
+[1] commit_zones         vcs BAD calls= 2 bytes=   115 wall=2.05s cost=$0.137
+[1] latest_zones         git ok  calls= 1 bytes=    48 wall=1.47s cost=$0.137
+[1] latest_zones         vcs ok  calls= 1 bytes= 22529 wall=1.76s cost=$0.141
+[1] range_zone           git ok  calls= 6 bytes=   268 wall=5.61s cost=$0.143
+[1] range_zone           vcs BAD calls= 9 bytes= 17168 wall=11.48s cost=$0.160
+[1] find_func            git ok  calls= 2 bytes=    69 wall=2.34s cost=$0.161
+[1] find_func            vcs ok  calls= 6 bytes= 10868 wall=5.38s cost=$0.165
+[1] find_const           git ok  calls=10 bytes=  1582 wall=8.99s cost=$0.168
+[1] find_const           vcs ok  calls= 6 bytes= 27001 wall=5.45s cost=$0.175
+[1] merge_a_zones        git ok  calls=14 bytes=   706 wall=11.86s cost=$0.180
+[1] merge_a_zones        vcs BAD calls= 2 bytes=    40 wall=1.87s cost=$0.181
+[1] merge_a_files        git ok  calls= 6 bytes=   532 wall=4.32s cost=$0.182
+[1] merge_a_files        vcs ok  calls=14 bytes= 11233 wall=11.86s cost=$0.190
+[1] merge_b_zones        git BAD calls=14 bytes=   768 wall=11.10s cost=$0.195
+[1] merge_b_zones        vcs ok  calls= 2 bytes= 17834 wall=2.45s cost=$0.199
+[1] merge_b_files        git ok  calls= 6 bytes=   129 wall=5.14s cost=$0.201
+[1] merge_b_files        vcs ok  calls=12 bytes= 34093 wall=9.92s cost=$0.213
+[2] own1                 git ok  calls= 1 bytes=    24 wall=1.26s cost=$0.213
+[2] own1                 vcs ok  calls= 1 bytes=  3395 wall=2.00s cost=$0.214
+[2] own2                 git ok  calls= 1 bytes=    20 wall=1.26s cost=$0.214
+[2] own2                 vcs ok  calls= 1 bytes=  3395 wall=1.74s cost=$0.215
+[2] own3                 git ok  calls= 1 bytes=     9 wall=1.38s cost=$0.216
+[2] own3                 vcs ok  calls= 1 bytes=  3395 wall=1.13s cost=$0.216
+[2] list                 git ok  calls=10 bytes=   161 wall=8.17s cost=$0.219
+[2] list                 vcs ok  calls= 1 bytes=  3395 wall=1.42s cost=$0.219
+[2] purpose              git ok  calls= 4 bytes=   159 wall=3.80s cost=$0.220
+[2] purpose              vcs ok  calls= 3 bytes=  8856 wall=2.85s cost=$0.223
+[2] deps_direct          git ok  calls= 2 bytes=   193 wall=1.98s cost=$0.224
+[2] deps_direct          vcs BAD calls= 1 bytes=  5778 wall=1.28s cost=$0.225
+[2] build_cli            git ok  calls=11 bytes=   472 wall=8.95s cost=$0.228
+[2] build_cli            vcs ok  calls= 1 bytes=  3395 wall=2.14s cost=$0.229
+[2] build_net            git ok  calls= 4 bytes=   392 wall=3.72s cost=$0.230
+[2] build_net            vcs ok  calls= 1 bytes=  5766 wall=1.41s cost=$0.231
+[2] dependents_direct    git BAD calls=14 bytes=    72 wall=12.31s cost=$0.235
+[2] dependents_direct    vcs ok  calls= 1 bytes=  3395 wall=1.33s cost=$0.236
+[2] dependents_trans     git BAD calls=14 bytes=   317 wall=13.30s cost=$0.240
+[2] dependents_trans     vcs ok  calls= 1 bytes=  3395 wall=1.87s cost=$0.241
+[2] no_deps              git BAD calls=14 bytes=   636 wall=10.26s cost=$0.245
+[2] no_deps              vcs ok  calls= 1 bytes=  3395 wall=1.41s cost=$0.246
+[2] owners               git ok  calls= 5 bytes=   169 wall=4.67s cost=$0.247
+[2] owners               vcs ok  calls= 1 bytes=  5528 wall=1.60s cost=$0.248
+[2] top_author           git ok  calls= 1 bytes=    52 wall=1.23s cost=$0.248
+[2] top_author           vcs ok  calls= 1 bytes=  7353 wall=1.43s cost=$0.250
+[2] commit_count         git ok  calls= 1 bytes=   133 wall=1.37s cost=$0.250
+[2] commit_count         vcs ok  calls= 1 bytes=  6991 wall=1.26s cost=$0.252
+[2] commit_files         git ok  calls= 2 bytes=    79 wall=2.35s cost=$0.252
+[2] commit_files         vcs ok  calls= 6 bytes= 16154 wall=5.61s cost=$0.257
+[2] commit_zones         git ok  calls= 2 bytes=    87 wall=2.19s cost=$0.258
+[2] commit_zones         vcs ok  calls= 5 bytes= 21314 wall=4.76s cost=$0.263
+[2] latest_zones         git ok  calls= 3 bytes=   711 wall=3.02s cost=$0.264
+[2] latest_zones         vcs ok  calls= 1 bytes= 22529 wall=1.65s cost=$0.267
+[2] range_zone           git BAD calls= 3 bytes=   168 wall=6.03s cost=$0.268
+[2] range_zone           vcs BAD calls= 3 bytes=  9959 wall=6.05s cost=$0.272
+[2] find_func            git ok  calls= 2 bytes=    68 wall=2.21s cost=$0.272
+[2] find_func            vcs BAD calls=14 bytes=   890 wall=13.45s cost=$0.279
+[2] find_const           git ok  calls= 5 bytes=   831 wall=4.77s cost=$0.281
+[2] find_const           vcs BAD calls= 9 bytes= 16286 wall=7.36s cost=$0.286
+[2] merge_a_zones        git ok  calls=14 bytes=   844 wall=7.31s cost=$0.289
+[2] merge_a_zones        vcs ok  calls=10 bytes= 21722 wall=8.65s cost=$0.297
+[2] merge_a_files        git BAD calls= 3 bytes=   115 wall=2.56s cost=$0.297
+[2] merge_a_files        vcs BAD calls= 2 bytes=    50 wall=1.64s cost=$0.298
+[2] merge_b_zones        git BAD calls= 8 bytes=  1180 wall=7.30s cost=$0.300
+[2] merge_b_zones        vcs ok  calls= 2 bytes=    50 wall=1.64s cost=$0.301
+[2] merge_b_files        git ok  calls= 6 bytes=   494 wall=4.27s cost=$0.302
+[2] merge_b_files        vcs ok  calls=14 bytes=   700 wall=11.97s cost=$0.308
+{
+ "git": {
+  "episodes": 72,
+  "correct": 58,
+  "accuracy": 0.806,
+  "mean_calls": 5.5,
+  "mean_out_bytes": 341,
+  "mean_wall_secs": 4.749,
+  "mean_tool_secs": 0.4036,
+  "mean_tokens_in": 3125,
+  "cost_usd": 0.1111
+ },
+ "vcs": {
+  "episodes": 72,
+  "correct": 60,
+  "accuracy": 0.833,
+  "mean_calls": 3.15,
+  "mean_out_bytes": 8211,
+  "mean_wall_secs": 3.304,
+  "mean_tool_secs": 0.2867,
+  "mean_tokens_in": 6333,
+  "cost_usd": 0.1969
+ }
+}

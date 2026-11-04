@@ -1,0 +1,854 @@
+{
+  "compression_after_chunking": "zstd3 per unique chunk",
+  "dataset": {
+    "by_class": {
+      "large_binary": {
+        "blobs": 3,
+        "bytes": 403862246
+      }
+    },
+    "files_per_rev": [
+      1,
+      1,
+      1
+    ],
+    "logical_bytes_all_revisions": 403862246,
+    "logical_bytes_last_revision": 134654096,
+    "name": "synth_assets",
+    "revisions": 3,
+    "unique_blobs": 3,
+    "unique_bytes": 403862246
+  },
+  "experiment": "chunking",
+  "machine": {
+    "args": [
+      "crates/vcs-compress-lab/target/release/compress-lab",
+      "chunking",
+      "--name",
+      "synth_assets",
+      "--source",
+      "dirrevs:/home/ubuntu/rt/lab_data/synth_assets",
+      "--out",
+      "/home/ubuntu/rt/lab_out/synth_assets_chunking.json"
+    ],
+    "cpu": "AMD EPYC 7J13 64-Core Processor",
+    "crates": {
+      "blake3": "1",
+      "brotli": "9",
+      "fastcdc": "5",
+      "lz4_flex": "0.14",
+      "zstd": "0.14"
+    },
+    "kernel": "6.8.0-1046-nvidia",
+    "loadavg_at_start": "7.46 14.30 17.67 5/696 2842830",
+    "memtotal": "MemTotal:       226763280 kB",
+    "nproc": 30,
+    "zstd": "1.5.7"
+  },
+  "overhead_model": {
+    "index_entry_bytes": 44,
+    "manifest_entry_bytes": 36,
+    "manifest_hdr_bytes": 16
+  },
+  "source_spec": "dirrevs:/home/ubuntu/rt/lab_data/synth_assets",
+  "strategies": [
+    {
+      "analysis_secs": 0.574392972,
+      "avg_chunk_bytes": 134620748.66666666,
+      "by_class": {
+        "large_binary": {
+          "chunks": 3,
+          "comp": 403871525,
+          "raw": 403862246
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 3651.6420986765393,
+      "chunk_pass_peak_rss_delta_KiB": 4,
+      "cross_revision_dedup_gain_comp_pct": 0.0,
+      "index_bytes_model": 132,
+      "index_memory_bytes_model": 180,
+      "logical_bytes_all_revisions": 403862246,
+      "manifest_bytes_model": 0,
+      "multi_chunk_files": 0,
+      "per_revision": [
+        {
+          "logical": 134554054,
+          "new_comp": 134557145,
+          "new_raw": 134554054,
+          "standalone_unique_comp": 134557145,
+          "standalone_unique_raw": 134554054
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 134657190,
+          "new_raw": 134654096,
+          "standalone_unique_comp": 134657190,
+          "standalone_unique_raw": 134654096
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 134657190,
+          "new_raw": 134654096,
+          "standalone_unique_comp": 134657190,
+          "standalone_unique_raw": 134654096
+        }
+      ],
+      "physical_over_logical": 1.0000233025000311,
+      "physical_total_model": 403871657,
+      "strategy": "whole",
+      "sum_of_per_revision_standalone_unique_comp": 403871525,
+      "sum_of_per_revision_standalone_unique_raw": 403862246,
+      "unique_chunks": 3,
+      "unique_comp_bytes_zstd3": 403871525,
+      "unique_raw_bytes": 403862246,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 3,
+        "unique_comp": 403871525,
+        "unique_raw": 403862246
+      }
+    },
+    {
+      "analysis_secs": 0.659366695,
+      "avg_chunk_bytes": 4095.8887440069007,
+      "by_class": {
+        "large_binary": {
+          "chunks": 49849,
+          "comp": 204674448,
+          "raw": 204175958
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 2391.310200193401,
+      "chunk_pass_peak_rss_delta_KiB": 260,
+      "cross_revision_dedup_gain_comp_pct": 49.44415717082896,
+      "index_bytes_model": 2193356,
+      "index_memory_bytes_model": 1794636,
+      "logical_bytes_all_revisions": 403862246,
+      "manifest_bytes_model": 3549684,
+      "multi_chunk_files": 3,
+      "per_revision": [
+        {
+          "logical": 134554054,
+          "new_comp": 134882564,
+          "new_raw": 134554054,
+          "standalone_unique_comp": 134882564,
+          "standalone_unique_raw": 134554054
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 69327906,
+          "new_raw": 69159056,
+          "standalone_unique_comp": 134982846,
+          "standalone_unique_raw": 134654096
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 463978,
+          "new_raw": 462848,
+          "standalone_unique_comp": 134982846,
+          "standalone_unique_raw": 134654096
+        }
+      ],
+      "physical_over_logical": 0.5210130188797097,
+      "physical_total_model": 210417488,
+      "strategy": "fixed4K",
+      "sum_of_per_revision_standalone_unique_comp": 404848256,
+      "sum_of_per_revision_standalone_unique_raw": 403862246,
+      "unique_chunks": 49849,
+      "unique_comp_bytes_zstd3": 204674448,
+      "unique_raw_bytes": 204175958,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 49849,
+        "unique_comp": 204674448,
+        "unique_raw": 204175958
+      }
+    },
+    {
+      "analysis_secs": 0.361209294,
+      "avg_chunk_bytes": 16382.897785622594,
+      "by_class": {
+        "large_binary": {
+          "chunks": 12464,
+          "comp": 204321078,
+          "raw": 204196438
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 3523.699034534868,
+      "chunk_pass_peak_rss_delta_KiB": 0,
+      "cross_revision_dedup_gain_comp_pct": 49.43908664033007,
+      "index_bytes_model": 548416,
+      "index_memory_bytes_model": 448776,
+      "logical_bytes_all_revisions": 403862246,
+      "manifest_bytes_model": 887484,
+      "multi_chunk_files": 3,
+      "per_revision": [
+        {
+          "logical": 134554054,
+          "new_comp": 134636184,
+          "new_raw": 134554054,
+          "standalone_unique_comp": 134636184,
+          "standalone_unique_raw": 134554054
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 69209468,
+          "new_raw": 69167248,
+          "standalone_unique_comp": 134736286,
+          "standalone_unique_raw": 134654096
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 475426,
+          "new_raw": 475136,
+          "standalone_unique_comp": 134736286,
+          "standalone_unique_raw": 134654096
+        }
+      ],
+      "physical_over_logical": 0.5094731682346956,
+      "physical_total_model": 205756978,
+      "strategy": "fixed16K",
+      "sum_of_per_revision_standalone_unique_comp": 404108756,
+      "sum_of_per_revision_standalone_unique_raw": 403862246,
+      "unique_chunks": 12464,
+      "unique_comp_bytes_zstd3": 204321078,
+      "unique_raw_bytes": 204196438,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 12464,
+        "unique_comp": 204321078,
+        "unique_raw": 204196438
+      }
+    },
+    {
+      "analysis_secs": 0.245246126,
+      "avg_chunk_bytes": 65510.57536882617,
+      "by_class": {
+        "large_binary": {
+          "chunks": 3118,
+          "comp": 204293154,
+          "raw": 204261974
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 3547.5620712963605,
+      "chunk_pass_peak_rss_delta_KiB": 12,
+      "cross_revision_dedup_gain_comp_pct": 49.422858840291504,
+      "index_bytes_model": 137192,
+      "index_memory_bytes_model": 112320,
+      "logical_bytes_all_revisions": 403862246,
+      "manifest_bytes_model": 221952,
+      "multi_chunk_files": 3,
+      "per_revision": [
+        {
+          "logical": 134554054,
+          "new_comp": 134574594,
+          "new_raw": 134554054,
+          "standalone_unique_comp": 134574594,
+          "standalone_unique_raw": 134554054
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 69194192,
+          "new_raw": 69183632,
+          "standalone_unique_comp": 134674646,
+          "standalone_unique_raw": 134654096
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 524368,
+          "new_raw": 524288,
+          "standalone_unique_comp": 134674646,
+          "standalone_unique_raw": 134654096
+        }
+      ],
+      "physical_over_logical": 0.5067378791331736,
+      "physical_total_model": 204652298,
+      "strategy": "fixed64K",
+      "sum_of_per_revision_standalone_unique_comp": 403923886,
+      "sum_of_per_revision_standalone_unique_raw": 403862246,
+      "unique_chunks": 3118,
+      "unique_comp_bytes_zstd3": 204293154,
+      "unique_raw_bytes": 204261974,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 3118,
+        "unique_comp": 204293154,
+        "unique_raw": 204261974
+      }
+    },
+    {
+      "analysis_secs": 0.712578239,
+      "avg_chunk_bytes": 5039.561936895184,
+      "by_class": {
+        "large_binary": {
+          "chunks": 26971,
+          "comp": 136191735,
+          "raw": 135922025
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 1016.546184362913,
+      "chunk_pass_peak_rss_delta_KiB": 64,
+      "cross_revision_dedup_gain_comp_pct": 66.34454988300611,
+      "index_bytes_model": 1186724,
+      "index_memory_bytes_model": 971028,
+      "logical_bytes_all_revisions": 403862246,
+      "manifest_bytes_model": 2888976,
+      "multi_chunk_files": 3,
+      "per_revision": [
+        {
+          "logical": 134554054,
+          "new_comp": 134821444,
+          "new_raw": 134554054,
+          "standalone_unique_comp": 134821444,
+          "standalone_unique_raw": 134554054
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 892221,
+          "new_raw": 890771,
+          "standalone_unique_comp": 134921686,
+          "standalone_unique_raw": 134654096
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 478070,
+          "new_raw": 477200,
+          "standalone_unique_comp": 134921596,
+          "standalone_unique_raw": 134654096
+        }
+      ],
+      "physical_over_logical": 0.34731504712128997,
+      "physical_total_model": 140267435,
+      "strategy": "fastcdc4K",
+      "sum_of_per_revision_standalone_unique_comp": 404664726,
+      "sum_of_per_revision_standalone_unique_raw": 403862246,
+      "unique_chunks": 26971,
+      "unique_comp_bytes_zstd3": 136191735,
+      "unique_raw_bytes": 135922025,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 26971,
+        "unique_comp": 136191735,
+        "unique_raw": 135922025
+      }
+    },
+    {
+      "analysis_secs": 0.48002922,
+      "avg_chunk_bytes": 20370.68161764706,
+      "by_class": {
+        "large_binary": {
+          "chunks": 6800,
+          "comp": 138588635,
+          "raw": 138520635
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 1331.2431510300703,
+      "chunk_pass_peak_rss_delta_KiB": 0,
+      "cross_revision_dedup_gain_comp_pct": 65.70112879466585,
+      "index_bytes_model": 299200,
+      "index_memory_bytes_model": 244872,
+      "logical_bytes_all_revisions": 403862246,
+      "manifest_bytes_model": 718428,
+      "multi_chunk_files": 3,
+      "per_revision": [
+        {
+          "logical": 134554054,
+          "new_comp": 134620524,
+          "new_raw": 134554054,
+          "standalone_unique_comp": 134620524,
+          "standalone_unique_raw": 134554054
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 3456158,
+          "new_raw": 3454878,
+          "standalone_unique_comp": 134720616,
+          "standalone_unique_raw": 134654096
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 511953,
+          "new_raw": 511703,
+          "standalone_unique_comp": 134720656,
+          "standalone_unique_raw": 134654096
+        }
+      ],
+      "physical_over_logical": 0.3456779245465792,
+      "physical_total_model": 139606263,
+      "strategy": "fastcdc16K",
+      "sum_of_per_revision_standalone_unique_comp": 404061796,
+      "sum_of_per_revision_standalone_unique_raw": 403862246,
+      "unique_chunks": 6800,
+      "unique_comp_bytes_zstd3": 138588635,
+      "unique_raw_bytes": 138520635,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 6800,
+        "unique_comp": 138588635,
+        "unique_raw": 138520635
+      }
+    },
+    {
+      "analysis_secs": 0.365718709,
+      "avg_chunk_bytes": 81085.28382109331,
+      "by_class": {
+        "large_binary": {
+          "chunks": 1811,
+          "comp": 146866620,
+          "raw": 146845449
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 1423.9072277948305,
+      "chunk_pass_peak_rss_delta_KiB": 0,
+      "cross_revision_dedup_gain_comp_pct": 63.63977816431803,
+      "index_bytes_model": 79684,
+      "index_memory_bytes_model": 65268,
+      "logical_bytes_all_revisions": 403862246,
+      "manifest_bytes_model": 182136,
+      "multi_chunk_files": 3,
+      "per_revision": [
+        {
+          "logical": 134554054,
+          "new_comp": 134573664,
+          "new_raw": 134554054,
+          "standalone_unique_comp": 134573664,
+          "standalone_unique_raw": 134554054
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 11724187,
+          "new_raw": 11722716,
+          "standalone_unique_comp": 134673718,
+          "standalone_unique_raw": 134654096
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 568769,
+          "new_raw": 568679,
+          "standalone_unique_comp": 134673751,
+          "standalone_unique_raw": 134654096
+        }
+      ],
+      "physical_over_logical": 0.36430352541544575,
+      "physical_total_model": 147128440,
+      "strategy": "fastcdc64K",
+      "sum_of_per_revision_standalone_unique_comp": 403921133,
+      "sum_of_per_revision_standalone_unique_raw": 403862246,
+      "unique_chunks": 1811,
+      "unique_comp_bytes_zstd3": 146866620,
+      "unique_raw_bytes": 146845449,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 1811,
+        "unique_comp": 146866620,
+        "unique_raw": 146845449
+      }
+    },
+    {
+      "analysis_secs": 0.349251131,
+      "avg_chunk_bytes": 345442.4085603113,
+      "by_class": {
+        "large_binary": {
+          "chunks": 514,
+          "comp": 177566865,
+          "raw": 177557398
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 1479.2937190866153,
+      "chunk_pass_peak_rss_delta_KiB": 0,
+      "cross_revision_dedup_gain_comp_pct": 56.035203902504726,
+      "index_bytes_model": 22616,
+      "index_memory_bytes_model": 18576,
+      "logical_bytes_all_revisions": 403862246,
+      "manifest_bytes_model": 43572,
+      "multi_chunk_files": 3,
+      "per_revision": [
+        {
+          "logical": 134554054,
+          "new_comp": 134561369,
+          "new_raw": 134554054,
+          "standalone_unique_comp": 134561369,
+          "standalone_unique_raw": 134554054
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 41583453,
+          "new_raw": 41581367,
+          "standalone_unique_comp": 134661414,
+          "standalone_unique_raw": 134654096
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 1422043,
+          "new_raw": 1421977,
+          "standalone_unique_comp": 134661417,
+          "standalone_unique_raw": 134654096
+        }
+      ],
+      "physical_over_logical": 0.4398357478554705,
+      "physical_total_model": 177633053,
+      "strategy": "fastcdc256K",
+      "sum_of_per_revision_standalone_unique_comp": 403884200,
+      "sum_of_per_revision_standalone_unique_raw": 403862246,
+      "unique_chunks": 514,
+      "unique_comp_bytes_zstd3": 177566865,
+      "unique_raw_bytes": 177557398,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 514,
+        "unique_comp": 177566865,
+        "unique_raw": 177557398
+      }
+    },
+    {
+      "analysis_secs": 1.817585161,
+      "avg_chunk_bytes": 5001.428702682837,
+      "by_class": {
+        "large_binary": {
+          "chunks": 27210,
+          "comp": 136360975,
+          "raw": 136088875
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 274.35801662984977,
+      "chunk_pass_peak_rss_delta_KiB": 0,
+      "cross_revision_dedup_gain_comp_pct": 66.30332632225459,
+      "index_bytes_model": 1197240,
+      "index_memory_bytes_model": 979632,
+      "logical_bytes_all_revisions": 403862246,
+      "manifest_bytes_model": 2914860,
+      "multi_chunk_files": 3,
+      "per_revision": [
+        {
+          "logical": 134554054,
+          "new_comp": 134823844,
+          "new_raw": 134554054,
+          "standalone_unique_comp": 134823844,
+          "standalone_unique_raw": 134554054
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 1072768,
+          "new_raw": 1071308,
+          "standalone_unique_comp": 134924106,
+          "standalone_unique_raw": 134654096
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 464363,
+          "new_raw": 463513,
+          "standalone_unique_comp": 134923966,
+          "standalone_unique_raw": 134654096
+        }
+      ],
+      "physical_over_logical": 0.34782423064125684,
+      "physical_total_model": 140473075,
+      "strategy": "rabin4K",
+      "sum_of_per_revision_standalone_unique_comp": 404671916,
+      "sum_of_per_revision_standalone_unique_raw": 403862246,
+      "unique_chunks": 27210,
+      "unique_comp_bytes_zstd3": 136360975,
+      "unique_raw_bytes": 136088875,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 27210,
+        "unique_comp": 136360975,
+        "unique_raw": 136088875
+      }
+    },
+    {
+      "analysis_secs": 1.541111677,
+      "avg_chunk_bytes": 20434.22909944265,
+      "by_class": {
+        "large_binary": {
+          "chunks": 6818,
+          "comp": 139388754,
+          "raw": 139320574
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 292.3932597738121,
+      "chunk_pass_peak_rss_delta_KiB": 0,
+      "cross_revision_dedup_gain_comp_pct": 65.50317044264433,
+      "index_bytes_model": 299992,
+      "index_memory_bytes_model": 245520,
+      "logical_bytes_all_revisions": 403862246,
+      "manifest_bytes_model": 720984,
+      "multi_chunk_files": 3,
+      "per_revision": [
+        {
+          "logical": 134554054,
+          "new_comp": 134620794,
+          "new_raw": 134554054,
+          "standalone_unique_comp": 134620794,
+          "standalone_unique_raw": 134554054
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 4301089,
+          "new_raw": 4299849,
+          "standalone_unique_comp": 134720866,
+          "standalone_unique_raw": 134654096
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 466871,
+          "new_raw": 466671,
+          "standalone_unique_comp": 134720846,
+          "standalone_unique_raw": 134654096
+        }
+      ],
+      "physical_over_logical": 0.34766738260550356,
+      "physical_total_model": 140409730,
+      "strategy": "rabin16K",
+      "sum_of_per_revision_standalone_unique_comp": 404062506,
+      "sum_of_per_revision_standalone_unique_raw": 403862246,
+      "unique_chunks": 6818,
+      "unique_comp_bytes_zstd3": 139388754,
+      "unique_raw_bytes": 139320574,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 6818,
+        "unique_comp": 139388754,
+        "unique_raw": 139320574
+      }
+    },
+    {
+      "analysis_secs": 1.442657738,
+      "avg_chunk_bytes": 82350.2972972973,
+      "by_class": {
+        "large_binary": {
+          "chunks": 1813,
+          "comp": 149321977,
+          "raw": 149301089
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 298.3246609828628,
+      "chunk_pass_peak_rss_delta_KiB": 0,
+      "cross_revision_dedup_gain_comp_pct": 63.03181823784859,
+      "index_bytes_model": 79772,
+      "index_memory_bytes_model": 65340,
+      "logical_bytes_all_revisions": 403862246,
+      "manifest_bytes_model": 182604,
+      "multi_chunk_files": 3,
+      "per_revision": [
+        {
+          "logical": 134554054,
+          "new_comp": 134573389,
+          "new_raw": 134554054,
+          "standalone_unique_comp": 134573389,
+          "standalone_unique_raw": 134554054
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 14268717,
+          "new_raw": 14267235,
+          "standalone_unique_comp": 134673441,
+          "standalone_unique_raw": 134654096
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 479871,
+          "new_raw": 479800,
+          "standalone_unique_comp": 134673433,
+          "standalone_unique_raw": 134654096
+        }
+      ],
+      "physical_over_logical": 0.3703845914827107,
+      "physical_total_model": 149584353,
+      "strategy": "rabin64K",
+      "sum_of_per_revision_standalone_unique_comp": 403920263,
+      "sum_of_per_revision_standalone_unique_raw": 403862246,
+      "unique_chunks": 1813,
+      "unique_comp_bytes_zstd3": 149321977,
+      "unique_raw_bytes": 149301089,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 1813,
+        "unique_comp": 149321977,
+        "unique_raw": 149301089
+      }
+    },
+    {
+      "analysis_secs": 0.463575074,
+      "avg_chunk_bytes": 20370.68161764706,
+      "by_class": {
+        "large_binary": {
+          "chunks": 6800,
+          "comp": 138588635,
+          "raw": 138520635
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 1336.441759256919,
+      "chunk_pass_peak_rss_delta_KiB": 0,
+      "cross_revision_dedup_gain_comp_pct": 65.70112879466585,
+      "index_bytes_model": 299200,
+      "index_memory_bytes_model": 244872,
+      "logical_bytes_all_revisions": 403862246,
+      "manifest_bytes_model": 718428,
+      "multi_chunk_files": 3,
+      "per_revision": [
+        {
+          "logical": 134554054,
+          "new_comp": 134620524,
+          "new_raw": 134554054,
+          "standalone_unique_comp": 134620524,
+          "standalone_unique_raw": 134554054
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 3456158,
+          "new_raw": 3454878,
+          "standalone_unique_comp": 134720616,
+          "standalone_unique_raw": 134654096
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 511953,
+          "new_raw": 511703,
+          "standalone_unique_comp": 134720656,
+          "standalone_unique_raw": 134654096
+        }
+      ],
+      "physical_over_logical": 0.3456779245465792,
+      "physical_total_model": 139606263,
+      "strategy": "hybrid_size<=64K->fastcdc16K",
+      "sum_of_per_revision_standalone_unique_comp": 404061796,
+      "sum_of_per_revision_standalone_unique_raw": 403862246,
+      "unique_chunks": 6800,
+      "unique_comp_bytes_zstd3": 138588635,
+      "unique_raw_bytes": 138520635,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 6800,
+        "unique_comp": 138588635,
+        "unique_raw": 138520635
+      }
+    },
+    {
+      "analysis_secs": 0.376916046,
+      "avg_chunk_bytes": 81085.28382109331,
+      "by_class": {
+        "large_binary": {
+          "chunks": 1811,
+          "comp": 146866620,
+          "raw": 146845449
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 1482.2104702132606,
+      "chunk_pass_peak_rss_delta_KiB": 0,
+      "cross_revision_dedup_gain_comp_pct": 63.63977816431803,
+      "index_bytes_model": 79684,
+      "index_memory_bytes_model": 65268,
+      "logical_bytes_all_revisions": 403862246,
+      "manifest_bytes_model": 182136,
+      "multi_chunk_files": 3,
+      "per_revision": [
+        {
+          "logical": 134554054,
+          "new_comp": 134573664,
+          "new_raw": 134554054,
+          "standalone_unique_comp": 134573664,
+          "standalone_unique_raw": 134554054
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 11724187,
+          "new_raw": 11722716,
+          "standalone_unique_comp": 134673718,
+          "standalone_unique_raw": 134654096
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 568769,
+          "new_raw": 568679,
+          "standalone_unique_comp": 134673751,
+          "standalone_unique_raw": 134654096
+        }
+      ],
+      "physical_over_logical": 0.36430352541544575,
+      "physical_total_model": 147128440,
+      "strategy": "hybrid_size<=256K->fastcdc64K",
+      "sum_of_per_revision_standalone_unique_comp": 403921133,
+      "sum_of_per_revision_standalone_unique_raw": 403862246,
+      "unique_chunks": 1811,
+      "unique_comp_bytes_zstd3": 146866620,
+      "unique_raw_bytes": 146845449,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 1811,
+        "unique_comp": 146866620,
+        "unique_raw": 146845449
+      }
+    },
+    {
+      "analysis_secs": 0.357598267,
+      "avg_chunk_bytes": 81085.28382109331,
+      "by_class": {
+        "large_binary": {
+          "chunks": 1811,
+          "comp": 146866620,
+          "raw": 146845449
+        }
+      },
+      "chunk_hash_MBps_median_1thread": 1478.3430986980343,
+      "chunk_pass_peak_rss_delta_KiB": 0,
+      "cross_revision_dedup_gain_comp_pct": 63.63977816431803,
+      "index_bytes_model": 79684,
+      "index_memory_bytes_model": 65268,
+      "logical_bytes_all_revisions": 403862246,
+      "manifest_bytes_model": 182136,
+      "multi_chunk_files": 3,
+      "per_revision": [
+        {
+          "logical": 134554054,
+          "new_comp": 134573664,
+          "new_raw": 134554054,
+          "standalone_unique_comp": 134573664,
+          "standalone_unique_raw": 134554054
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 11724187,
+          "new_raw": 11722716,
+          "standalone_unique_comp": 134673718,
+          "standalone_unique_raw": 134654096
+        },
+        {
+          "logical": 134654096,
+          "new_comp": 568769,
+          "new_raw": 568679,
+          "standalone_unique_comp": 134673751,
+          "standalone_unique_raw": 134654096
+        }
+      ],
+      "physical_over_logical": 0.36430352541544575,
+      "physical_total_model": 147128440,
+      "strategy": "hybrid_type(text,smallbin whole; largebin cdc64K; model cdc256K)",
+      "sum_of_per_revision_standalone_unique_comp": 403921133,
+      "sum_of_per_revision_standalone_unique_raw": 403862246,
+      "unique_chunks": 1811,
+      "unique_comp_bytes_zstd3": 146866620,
+      "unique_raw_bytes": 146845449,
+      "zoned_stores": {
+        "extra_comp_vs_global_bytes": 0,
+        "extra_index_bytes_model": 0,
+        "unique_chunks": 1811,
+        "unique_comp": 146866620,
+        "unique_raw": 146845449
+      }
+    }
+  ]
+}

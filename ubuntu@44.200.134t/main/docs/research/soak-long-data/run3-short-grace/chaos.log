@@ -1,0 +1,186 @@
+1793751195.6 kill -9 server #1 (client publish/sync/clone processes in flight: 52)
+1793751196.0 server restarted
+1793751256.7 gc#1 compact KILLED -9 after 0.25s 
+1793751263.7 AUDIT after gc kill #1 (compact): bad=0 {"why": "after gc kill #1 (compact)", "t": 1793751263.7026322, "bad": 0, "acked_files": 470, "acked_missing": 0, "acked_wrong_content": 0, "clone_rc": 0, "clone_s": 6.09, "fsck_rc": 0}
+1793751284.6 kill -9 server #2 (client publish/sync/clone processes in flight: 135)
+1793751285.5 server restarted
+1793751293.9 gc#2 sweep KILLED -9 after 0.19s DESTRUCTIVE: deleting unreachable objects older than 30s on /home/ubuntu/soak/long/store
+1793751300.5 AUDIT after gc kill #2 (sweep): bad=0 {"why": "after gc kill #2 (sweep)", "t": 1793751300.4589343, "bad": 0, "acked_files": 521, "acked_missing": 0, "acked_wrong_content": 0, "clone_rc": 0, "clone_s": 5.61, "fsck_rc": 0}
+1793751330.8 STALE gc/lock removed by harness (was: vcs-auto-compact pid 155308 1793772751530)
+1793751330.8 gc#3 compact finished rc=1 in 0.23s error: remote compaction: another gc holds gc/lock until 1793772751530 (backend clock, unix ms)
+1793751348.6 kill -9 server #3 (client publish/sync/clone processes in flight: 139)
+1793751349.3 server restarted
+1793751361.2 STALE gc/lock removed by harness (was: vcs-auto-compact pid 733723 1793772950743)
+1793751361.3 gc#4 sweep finished rc=1 in 0.46s error: remote gc: another gc holds gc/lock until 1793772950743 (backend clock, unix ms)
+1793751382.8 kill -9 server #4 (client publish/sync/clone processes in flight: 97)
+1793751383.3 server restarted
+1793751392.0 gc#5 compact KILLED -9 after 0.60s 
+1793751397.2 AUDIT after gc kill #5 (compact): bad=0 {"why": "after gc kill #5 (compact)", "t": 1793751397.2075584, "bad": 0, "acked_files": 682, "acked_missing": 0, "acked_wrong_content": 0, "clone_rc": 0, "clone_s": 4.2, "fsck_rc": 0}
+1793751421.5 kill -9 server #5 (client publish/sync/clone processes in flight: 118)
+1793751422.5 server restarted
+1793751427.4 STALE gc/lock removed by harness (was: vcs-compact pid 842590 1793772991352)
+1793751427.4 gc#6 sweep finished rc=1 in 0.13s error: remote gc: another gc holds gc/lock until 1793772991352 (backend clock, unix ms)
+1793751457.6 STALE gc/lock removed by harness (was: vcs-auto-compact pid 942444 1793773034254)
+1793751457.6 gc#7 compact finished rc=1 in 0.23s error: remote compaction: another gc holds gc/lock until 1793773034254 (backend clock, unix ms)
+1793751463.7 kill -9 server #6 (client publish/sync/clone processes in flight: 83)
+1793751464.6 server restarted
+1793751487.9 STALE gc/lock removed by harness (was: vcs-auto-compact pid 1014330 1793773066648)
+1793751487.9 gc#8 sweep finished rc=1 in 0.26s error: remote gc: another gc holds gc/lock until 1793773066648 (backend clock, unix ms)
+1793751520.9 gc#9 compact finished rc=0 in 3.03s k-6d4e976d5028f0bebd478067caec169731b4995d6a3d6526ec8e86754a6e49b8 | read 4859 object(s) (315 duplicate(s) dropped), wrote 4544; 1319 request(s), 2967896 byte(s) read and 1667546 written on the remote
+1793751551.6 gc#10 sweep KILLED -9 after 0.62s DESTRUCTIVE: deleting unreachable objects older than 30s on /home/ubuntu/soak/long/store
+1793751562.6 AUDIT after gc kill #10 (sweep): bad=0 {"why": "after gc kill #10 (sweep)", "t": 1793751562.567575, "bad": 0, "acked_files": 1024, "acked_missing": 0, "acked_wrong_content": 0, "clone_rc": 0, "clone_s": 8.78, "fsck_rc": 0}
+1793751579.9 kill -9 server #7 (client publish/sync/clone processes in flight: 134)
+1793751581.2 server restarted
+1793751593.1 STALE gc/lock removed by harness (was: vcs-gc pid 1206531 1793773151001)
+1793751593.1 gc#11 compact finished rc=1 in 0.36s error: remote compaction: another gc holds gc/lock until 1793773151001 (backend clock, unix ms)
+1793751615.7 kill -9 server #8 (client publish/sync/clone processes in flight: 106)
+1793751616.3 server restarted
+1793751623.4 STALE gc/lock removed by harness (was: vcs-auto-compact pid 1346495 1793773208165)
+1793751623.4 gc#12 sweep finished rc=1 in 0.22s error: remote gc: another gc holds gc/lock until 1793773208165 (backend clock, unix ms)
+1793751628.7 STALE .cas.lock removed by harness (age 12.8s; manifest writes were failing 503 meanwhile)
+1793751653.6 gc#13 compact KILLED -9 after 0.17s 
+1793751659.4 kill -9 server #9 (client publish/sync/clone processes in flight: 136)
+1793751660.0 server restarted
+1793751662.6 AUDIT after gc kill #13 (compact): bad=0 {"why": "after gc kill #13 (compact)", "t": 1793751662.5733125, "bad": 0, "acked_files": 1240, "acked_missing": 0, "acked_wrong_content": 0, "clone_rc": 0, "clone_s": 6.65, "fsck_rc": 0}
+1793751692.8 gc#14 sweep KILLED -9 after 0.21s DESTRUCTIVE: deleting unreachable objects older than 30s on /home/ubuntu/soak/long/store
+1793751704.2 AUDIT after gc kill #14 (sweep): bad=0 {"why": "after gc kill #14 (sweep)", "t": 1793751704.1625047, "bad": 0, "acked_files": 1354, "acked_missing": 0, "acked_wrong_content": 0, "clone_rc": 0, "clone_s": 8.35, "fsck_rc": 0}
+1793751734.5 STALE gc/lock removed by harness (was: vcs-auto-compact pid 1510265 1793773274083)
+1793751734.5 gc#15 compact finished rc=1 in 0.36s error: remote compaction: another gc holds gc/lock until 1793773274083 (backend clock, unix ms)
+1793751747.8 AUDIT periodic: bad=0 {"why": "periodic", "t": 1793751747.78222, "bad": 0, "acked_files": 1460, "acked_missing": 0, "acked_wrong_content": 0, "clone_rc": 0, "clone_s": 8.5, "fsck_rc": 0}
+1793751763.6 kill -9 server #10 (client publish/sync/clone processes in flight: 143)
+1793751764.4 server restarted
+1793751764.7 STALE gc/lock removed by harness (was: vcs-auto-compact pid 1680328 1793773345862)
+1793751764.7 gc#16 sweep finished rc=1 in 0.22s error: remote gc: another gc holds gc/lock until 1793773345862 (backend clock, unix ms)
+1793751795.0 STALE gc/lock removed by harness (was: vcs-auto-compact pid 1768041 1793773381866)
+1793751795.0 gc#17 compact finished rc=1 in 0.21s error: remote compaction: another gc holds gc/lock until 1793773381866 (backend clock, unix ms)
+1793751834.1 gc#18 sweep finished rc=0 in 9.04s 35a48630a4905b8b69e69b14419f |   rewrote pack packs/pack-8f6853ad8e2a75add5b5f90997c1abab9873cd218d3c32ba6323c703ba2197ef -> packs/pack-9202ac8d58e7957db8bf02baed6bb713d82ffb1a185b215ca17c3730c2229811
+1793751852.1 kill -9 server #11 (client publish/sync/clone processes in flight: 125)
+1793751852.5 server restarted
+1793751865.0 STALE gc/lock removed by harness (was: vcs-auto-compact pid 1895022 1793773435269)
+1793751865.0 gc#19 compact finished rc=1 in 0.72s error: remote compaction: another gc holds gc/lock until 1793773435269 (backend clock, unix ms)
+1793751888.1 kill -9 server #12 (client publish/sync/clone processes in flight: 144)
+1793751889.1 server restarted
+1793751895.6 STALE gc/lock removed by harness (was: vcs-auto-compact pid 1992966 1793773479428)
+1793751895.6 gc#20 sweep finished rc=1 in 0.36s error: remote gc: another gc holds gc/lock until 1793773479428 (backend clock, unix ms)
+1793751929.4 gc#21 compact finished rc=0 in 3.75s -b0c7bfbb79540574c3dcc3b177f60b2256d3ea6a6a9ed3ac989562c4ad2f09c5 | read 11713 object(s) (2627 duplicate(s) dropped), wrote 9086; 734 request(s), 4450065 byte(s) read and 2492767 written on the remote
+1793751957.8 kill -9 server #13 (client publish/sync/clone processes in flight: 142)
+1793751958.7 server restarted
+1793751960.2 gc#22 sweep KILLED -9 after 0.85s DESTRUCTIVE: deleting unreachable objects older than 30s on /home/ubuntu/soak/long/store
+1793751973.1 AUDIT after gc kill #22 (sweep): bad=0 {"why": "after gc kill #22 (sweep)", "t": 1793751973.1299667, "bad": 0, "acked_files": 1954, "acked_missing": 0, "acked_wrong_content": 0, "clone_rc": 0, "clone_s": 9.57, "fsck_rc": 0}
+1793752003.7 STALE gc/lock removed by harness (was: vcs-gc pid 2170219 1793773559389)
+1793752003.7 gc#23 compact finished rc=1 in 0.61s error: remote compaction: another gc holds gc/lock until 1793773559389 (backend clock, unix ms)
+1793752029.8 kill -9 server #14 (client publish/sync/clone processes in flight: 156)
+1793752030.8 server restarted
+1793752042.4 gc#24 sweep finished rc=0 in 8.64s 9279700f322a6e688cc558bd1bcd |   rewrote pack packs/pack-eb9918916d591595acc743f9801784a2514ba28973cd1f3d5d9d828af6fa73a4 -> packs/pack-a7d813813e3d833601f3a8c9db1247b0cd31b4b98bde925263de701ee6de019f
+1793752074.2 gc#25 compact finished rc=0 in 1.82s ack-da2d7aa89354e6dd432abc1b6ac065d986fedc4b6b047165759269bda8fb7446 | read 1776 object(s) (183 duplicate(s) dropped), wrote 1593; 195 request(s), 1204209 byte(s) read and 410155 written on the remote
+1793752083.2 kill -9 server #15 (client publish/sync/clone processes in flight: 122)
+1793752084.2 server restarted
+1793752096.8 STALE .cas.lock removed by harness (age 13.6s; manifest writes were failing 503 meanwhile)
+1793752107.4 gc#26 sweep KILLED -9 after 2.93s DESTRUCTIVE: deleting unreachable objects older than 30s on /home/ubuntu/soak/long/store
+1793752124.0 AUDIT after gc kill #26 (sweep): bad=0 {"why": "after gc kill #26 (sweep)", "t": 1793752123.969326, "bad": 0, "acked_files": 2151, "acked_missing": 0, "acked_wrong_content": 0, "clone_rc": 0, "clone_s": 12.36, "fsck_rc": 0}
+1793752154.3 STALE gc/lock removed by harness (was: vcs-gc pid 2440660 1793773704600)
+1793752154.3 gc#27 compact finished rc=1 in 0.28s error: remote compaction: another gc holds gc/lock until 1793773704600 (backend clock, unix ms)
+1793752185.1 gc#28 sweep KILLED -9 after 0.82s DESTRUCTIVE: deleting unreachable objects older than 30s on /home/ubuntu/soak/long/store
+1793752193.3 kill -9 server #16 (client publish/sync/clone processes in flight: 154)
+1793752195.2 server restarted
+1793752213.5 AUDIT after gc kill #28 (sweep): bad=0 {"why": "after gc kill #28 (sweep)", "t": 1793752213.4858165, "bad": 0, "acked_files": 2294, "acked_missing": 0, "acked_wrong_content": 0, "clone_rc": 0, "clone_s": 23.57, "fsck_rc": 0}
+1793752236.2 kill -9 server #17 (client publish/sync/clone processes in flight: 182)
+1793752237.5 server restarted
+1793752244.0 gc#29 compact KILLED -9 after 0.46s 
+1793752266.2 AUDIT after gc kill #29 (compact): bad=0 {"why": "after gc kill #29 (compact)", "t": 1793752266.210112, "bad": 0, "acked_files": 2378, "acked_missing": 0, "acked_wrong_content": 0, "clone_rc": 0, "clone_s": 17.69, "fsck_rc": 0}
+1793752296.4 STALE gc/lock removed by harness (was: vcs-gc pid 2581831 1793773784256)
+1793752296.5 gc#30 sweep finished rc=1 in 0.17s error: remote gc: another gc holds gc/lock until 1793773784256 (backend clock, unix ms)
+1793752326.8 STALE gc/lock removed by harness (was: vcs-auto-compact pid 2754128 1793773910604)
+1793752326.8 gc#31 compact finished rc=1 in 0.31s error: remote compaction: another gc holds gc/lock until 1793773910604 (backend clock, unix ms)
+1793752336.3 kill -9 server #18 (client publish/sync/clone processes in flight: 145)
+1793752336.8 server restarted
+1793752358.1 gc#32 sweep KILLED -9 after 1.27s DESTRUCTIVE: deleting unreachable objects older than 30s on /home/ubuntu/soak/long/store
+1793752386.5 AUDIT periodic: bad=1 {"why": "periodic", "t": 1793752386.5323713, "bad": 1, "acked_files": null, "acked_missing": null, "acked_wrong_content": null, "clone_rc": 1, "clone_s": 0.77, "fsck_rc": null}
+1793752404.1 AUDIT after gc kill #32 (sweep): bad=0 {"why": "after gc kill #32 (sweep)", "t": 1793752404.085741, "bad": 0, "acked_files": 2486, "acked_missing": 0, "acked_wrong_content": 0, "clone_rc": 0, "clone_s": 14.85, "fsck_rc": 0}
+1793752427.5 kill -9 server #19 (client publish/sync/clone processes in flight: 145)
+1793752429.7 server restarted
+1793752435.2 STALE gc/lock removed by harness (was: vcs-gc pid 2817398 1793773956803)
+1793752435.2 gc#33 compact finished rc=1 in 1.08s error: remote compaction: another gc holds gc/lock until 1793773956803 (backend clock, unix ms)
+1793752465.9 gc#34 sweep KILLED -9 after 0.70s DESTRUCTIVE: deleting unreachable objects older than 30s on /home/ubuntu/soak/long/store
+1793752492.5 AUDIT after gc kill #34 (sweep): bad=0 {"why": "after gc kill #34 (sweep)", "t": 1793752492.5263946, "bad": 0, "acked_files": 2639, "acked_missing": 0, "acked_wrong_content": 0, "clone_rc": 0, "clone_s": 17.28, "fsck_rc": 0}
+1793752523.1 STALE gc/lock removed by harness (was: vcs-auto-compact pid 2933735 1793774060700)
+1793752523.2 gc#35 compact finished rc=1 in 0.51s error: remote compaction: another gc holds gc/lock until 1793774060700 (backend clock, unix ms)
+1793752539.0 kill -9 server #20 (client publish/sync/clone processes in flight: 117)
+1793752540.3 server restarted
+1793752559.6 gc#36 sweep finished rc=0 in 6.43s 16681ebd8fb2806143315c50d670 |   rewrote pack packs/pack-1a6ac1fb32e1de697e5c5fcfe0c2ad3da8dfd2005f0a7054ce7060e69312999b -> packs/pack-0c509c18587cc37da0060424d7e3c6ac10e49279700f322a6e688cc558bd1bcd
+1793752591.5 gc#37 compact KILLED -9 after 1.50s 
+1793752622.8 kill -9 server #21 (client publish/sync/clone processes in flight: 109)
+1793752624.1 server restarted
+1793752640.0 AUDIT after gc kill #37 (compact): bad=1 {"why": "after gc kill #37 (compact)", "t": 1793752640.0363677, "bad": 1, "acked_files": null, "acked_missing": null, "acked_wrong_content": null, "clone_rc": 1, "clone_s": 8.1, "fsck_rc": null}
+1793752670.9 STALE gc/lock removed by harness (was: vcs-compact pid 3108374 1793774189990)
+1793752670.9 gc#38 sweep finished rc=1 in 0.32s error: remote gc: another gc holds gc/lock until 1793774189990 (backend clock, unix ms)
+1793752703.7 gc#39 compact finished rc=0 in 2.79s ck-0de5ad7899dc9c4e1befb5bafde79cd9bbedcb7cfa1ef1f13a4619d58bbc774e | read 6604 object(s) (421 duplicate(s) dropped), wrote 6183; 482 request(s), 2820505 byte(s) read and 1222572 written on the remote
+1793752735.4 gc#40 sweep finished rc=1 in 1.27s error: remote gc: remote is damaged, refusing to collect: b57d693ee0419621eccaa1d9ac5f2f03954fad6c5f358e4292d0d92c0b6358ee is referenced but missing
+1793752739.5 kill -9 server #22 (client publish/sync/clone processes in flight: 133)
+1793752740.2 server restarted
+1793752767.0 gc#41 compact finished rc=0 in 1.42s packs/pack-871c49303c8e08310ca53597b89b0a49fd291bb77084483ab56ce849897fa0c0 | read 308 object(s) (0 duplicate(s) dropped), wrote 308; 50 request(s), 722886 byte(s) read and 76199 written on the remote
+1793752797.8 gc#42 sweep finished rc=1 in 0.70s error: remote gc: remote is damaged, refusing to collect: c4621c99c1e5505ca9b08a996991f5eceedba0d851fd66ebbcaa263ed42d0960 is referenced but missing
+1793752829.8 gc#43 compact KILLED -9 after 1.82s 
+1793752833.8 kill -9 server #23 (client publish/sync/clone processes in flight: 154)
+1793752835.8 server restarted
+1793752891.8 kill -9 server #24 (client publish/sync/clone processes in flight: 160)
+1793752893.0 server restarted
+1793752895.7 AUDIT after gc kill #43 (compact): bad=1 {"why": "after gc kill #43 (compact)", "t": 1793752895.7304945, "bad": 1, "acked_files": null, "acked_missing": null, "acked_wrong_content": null, "clone_rc": 1, "clone_s": 6.44, "fsck_rc": null}
+1793752926.0 gc#44 sweep KILLED -9 after 0.16s DESTRUCTIVE: deleting unreachable objects older than 30s on /home/ubuntu/soak/long/store
+1793752972.6 AUDIT after gc kill #44 (sweep): bad=1 {"why": "after gc kill #44 (sweep)", "t": 1793752972.5672548, "bad": 1, "acked_files": null, "acked_missing": null, "acked_wrong_content": null, "clone_rc": 1, "clone_s": 4.86, "fsck_rc": null}
+1793752983.6 kill -9 server #25 (client publish/sync/clone processes in flight: 116)
+1793752984.6 server restarted
+1793753003.4 STALE gc/lock removed by harness (was: vcs-compact pid 3437038 1793774427996)
+1793753003.4 gc#45 compact finished rc=1 in 0.45s error: remote compaction: another gc holds gc/lock until 1793774427996 (backend clock, unix ms)
+1793753030.2 kill -9 server #26 (client publish/sync/clone processes in flight: 125)
+1793753030.7 server restarted
+1793753034.4 gc#46 sweep KILLED -9 after 1.06s DESTRUCTIVE: deleting unreachable objects older than 30s on /home/ubuntu/soak/long/store
+1793753042.2 AUDIT periodic: bad=1 {"why": "periodic", "t": 1793753042.2102988, "bad": 1, "acked_files": null, "acked_missing": null, "acked_wrong_content": null, "clone_rc": 1, "clone_s": 3.88, "fsck_rc": null}
+1793753042.9 STALE .cas.lock removed by harness (age 12.8s; manifest writes were failing 503 meanwhile)
+1793753066.1 kill -9 server #27 (client publish/sync/clone processes in flight: 142)
+1793753066.8 server restarted
+1793753087.0 AUDIT after gc kill #46 (sweep): bad=1 {"why": "after gc kill #46 (sweep)", "t": 1793753086.9925919, "bad": 1, "acked_files": null, "acked_missing": null, "acked_wrong_content": null, "clone_rc": 1, "clone_s": 6.29, "fsck_rc": null}
+1793753117.6 gc#47 compact KILLED -9 after 0.57s 
+1793753119.6 kill -9 server #28 (client publish/sync/clone processes in flight: 140)
+1793753121.0 server restarted
+1793753130.9 STALE .cas.lock removed by harness (age 12.3s; manifest writes were failing 503 meanwhile)
+1793753158.4 kill -9 server #29 (client publish/sync/clone processes in flight: 142)
+1793753159.3 server restarted
+1793753176.6 AUDIT after gc kill #47 (compact): bad=1 {"why": "after gc kill #47 (compact)", "t": 1793753176.5626166, "bad": 1, "acked_files": null, "acked_missing": null, "acked_wrong_content": null, "clone_rc": 1, "clone_s": 6.81, "fsck_rc": null}
+1793753206.9 STALE gc/lock removed by harness (was: vcs-gc pid 3725014 1793774633363)
+1793753206.9 gc#48 sweep finished rc=1 in 0.06s error: remote gc: another gc holds gc/lock until 1793774633363 (backend clock, unix ms)
+1793753237.8 gc#49 compact KILLED -9 after 0.98s 
+1793753239.3 kill -9 server #30 (client publish/sync/clone processes in flight: 135)
+1793753240.5 server restarted
+1793753291.3 AUDIT after gc kill #49 (compact): bad=1 {"why": "after gc kill #49 (compact)", "t": 1793753291.2610507, "bad": 1, "acked_files": null, "acked_missing": null, "acked_wrong_content": null, "clone_rc": 1, "clone_s": 5.34, "fsck_rc": null}
+1793753321.7 gc#50 sweep KILLED -9 after 0.37s DESTRUCTIVE: deleting unreachable objects older than 30s on /home/ubuntu/soak/long/store
+1793753348.5 kill -9 server #31 (client publish/sync/clone processes in flight: 125)
+1793753349.3 server restarted
+1793753367.8 AUDIT after gc kill #50 (sweep): bad=1 {"why": "after gc kill #50 (sweep)", "t": 1793753367.7941043, "bad": 1, "acked_files": null, "acked_missing": null, "acked_wrong_content": null, "clone_rc": 1, "clone_s": 5.13, "fsck_rc": null}
+1793753398.6 STALE gc/lock removed by harness (was: vcs-compact pid 4004128 1793774836866)
+1793753398.6 gc#51 compact finished rc=1 in 0.49s error: remote compaction: another gc holds gc/lock until 1793774836866 (backend clock, unix ms)
+1793753412.1 kill -9 server #32 (client publish/sync/clone processes in flight: 134)
+1793753413.5 server restarted
+1793753428.8 gc#52 sweep KILLED -9 after 0.24s DESTRUCTIVE: deleting unreachable objects older than 30s on /home/ubuntu/soak/long/store
+1793753489.7 AUDIT after gc kill #52 (sweep): bad=1 {"why": "after gc kill #52 (sweep)", "t": 1793753489.730763, "bad": 1, "acked_files": null, "acked_missing": null, "acked_wrong_content": null, "clone_rc": 1, "clone_s": 7.17, "fsck_rc": null}
+1793753520.1 gc#53 compact KILLED -9 after 0.31s 
+1793753530.1 kill -9 server #33 (client publish/sync/clone processes in flight: 125)
+1793753531.0 server restarted
+1793753543.4 STALE .cas.lock removed by harness (age 12.8s; manifest writes were failing 503 meanwhile)
+1793753569.9 AUDIT after gc kill #53 (compact): bad=1 {"why": "after gc kill #53 (compact)", "t": 1793753569.9052587, "bad": 1, "acked_files": null, "acked_missing": null, "acked_wrong_content": null, "clone_rc": 1, "clone_s": 4.48, "fsck_rc": null}
+1793753582.1 kill -9 server #34 (client publish/sync/clone processes in flight: 114)
+1793753582.9 server restarted
+1793753600.4 STALE gc/lock removed by harness (was: vcs-auto-compact pid 79699 1793775015012)
+1793753600.4 gc#54 sweep finished rc=1 in 0.38s error: remote gc: another gc holds gc/lock until 1793775015012 (backend clock, unix ms)
+1793753630.6 gc#55 compact KILLED -9 after 0.20s 
+1793753665.1 AUDIT after gc kill #55 (compact): bad=1 {"why": "after gc kill #55 (compact)", "t": 1793753665.0943758, "bad": 1, "acked_files": null, "acked_missing": null, "acked_wrong_content": null, "clone_rc": 1, "clone_s": 4.47, "fsck_rc": null}
+1793753666.1 kill -9 server #35 (client publish/sync/clone processes in flight: 133)
+1793753666.9 server restarted
+1793753676.0 AUDIT periodic: bad=1 {"why": "periodic", "t": 1793753675.9619353, "bad": 1, "acked_files": null, "acked_missing": null, "acked_wrong_content": null, "clone_rc": 1, "clone_s": 7.23, "fsck_rc": null}
+1793753695.6 gc#56 sweep KILLED -9 after 0.33s DESTRUCTIVE: deleting unreachable objects older than 30s on /home/ubuntu/soak/long/store
+1793753734.9 kill -9 server #36 (client publish/sync/clone processes in flight: 131)
+1793753736.0 server restarted
+1793753747.3 AUDIT after gc kill #56 (sweep): bad=1 {"why": "after gc kill #56 (sweep)", "t": 1793753747.2807322, "bad": 1, "acked_files": null, "acked_missing": null, "acked_wrong_content": null, "clone_rc": 1, "clone_s": 8.35, "fsck_rc": null}
+1793753778.4 STALE gc/lock removed by harness (was: vcs-compact pid 394454 1793775230424)
+1793753778.4 gc#57 compact finished rc=1 in 0.54s error: remote compaction: another gc holds gc/lock until 1793775230424 (backend clock, unix ms)
+1793753809.6 gc#58 sweep KILLED -9 after 1.15s DESTRUCTIVE: deleting unreachable objects older than 30s on /home/ubuntu/soak/long/store

@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 532" width="900" height="532" role="img" aria-labelledby="t d">
+<title id="t">vcs git and vcs p4 front-ends</title><desc id="d">Animation: git and p4 command lines are rewritten to native vcs commands in the same process.</desc>
+<style>
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px}
+.m{font-size:11px}.t{font-size:18px;font-weight:700}.h{font-weight:700}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+.mid{text-anchor:middle}.end{text-anchor:end}
+.panel{stroke-width:1.2}.A,.B,.C,.kD{stroke-width:1.5}.kH{stroke-width:1.8}.kX{stroke-width:1.5}
+.ln{stroke-width:1.5;fill:none}.dash{stroke-dasharray:5 4}
+.ar{stroke-width:1.8;fill:none;marker-end:url(#ah)}
+text{fill:#1f2328}.m{fill:#59636e}
+.bg{fill:#ffffff}.sH{stroke:#bf8700}.sL{stroke:#8c959f}
+.panel{fill:#f6f8fa;stroke:#d0d7de}
+.kA{fill:#ddf4ff;stroke:#0969da}.kB{fill:#dafbe1;stroke:#1a7f37}.kC{fill:#fff1e5;stroke:#bc4c00}.kD{fill:#fbefff;stroke:#8250df}
+.kH{fill:#fff8c5;stroke:#bf8700}.kX{fill:#ffebe9;stroke:#cf222e}
+.ln,.ar{stroke:#8c959f}.fl{fill:#8c959f}
+.dotA{fill:#0969da}.dotB{fill:#1a7f37}.dotC{fill:#bc4c00}.dotD{fill:#8250df}.dotH{fill:#bf8700}.dotX{fill:#cf222e}
+.tA{fill:#0969da}.tB{fill:#1a7f37}.tC{fill:#bc4c00}.tX{fill:#cf222e}
+@media (prefers-color-scheme:dark){text{fill:#e6edf3}.m{fill:#9198a1}
+.bg{fill:#0d1117}.sH{stroke:#d29922}.sL{stroke:#6e7681}
+.panel{fill:#161b22;stroke:#30363d}
+.kA{fill:#0c2d6b;stroke:#58a6ff}.kB{fill:#0f2d1a;stroke:#3fb950}.kC{fill:#3d1f0a;stroke:#f0883e}.kD{fill:#2d1a52;stroke:#bc8cff}
+.kH{fill:#3a2d00;stroke:#d29922}.kX{fill:#4c1417;stroke:#ff7b72}
+.ln,.ar{stroke:#6e7681}.fl{fill:#6e7681}
+.dotA{fill:#58a6ff}.dotB{fill:#3fb950}.dotC{fill:#f0883e}.dotD{fill:#bc8cff}.dotH{fill:#d29922}.dotX{fill:#ff7b72}
+.tA{fill:#58a6ff}.tB{fill:#3fb950}.tC{fill:#f0883e}.tX{fill:#ff7b72}}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="fl"/></marker></defs>
+<rect width="900" height="532" rx="10" class="bg"/>
+<text x="24" y="32" class="t">vcs git and vcs p4: the front-ends rewrite to native vcs</text>
+<text x="24" y="50" class="m">Argument rewrite inside one process: no git binary, no libgit2, no p4 binary, no server of either kind</text>
+<rect x="24" y="70" width="852" height="290" rx="10" class="panel"/>
+<text x="40" y="92" class="h">You type</text>
+<text x="410" y="92" class="h">Front-end</text>
+<text x="560" y="92" class="h">Runs (same process)</text>
+<rect x="40" y="106" width="300" height="36" rx="8" class="kA"/>
+<text x="52" y="129" class="mono">vcs git log --oneline -5</text>
+<rect x="560" y="106" width="300" height="36" rx="8" class="kD"/>
+<text x="572" y="129" class="mono">vcs log -n 5 --oneline</text>
+<path d="M344,124 L388,124" class="ar"/>
+<path d="M520,124 L556,124" class="ar"/>
+<rect x="40" y="156" width="300" height="36" rx="8" class="kA"/>
+<text x="52" y="179" class="mono">vcs git checkout -b topic</text>
+<rect x="560" y="156" width="300" height="36" rx="8" class="kD"/>
+<text x="572" y="179" class="mono">vcs switch -c topic</text>
+<path d="M344,174 L388,174" class="ar"/>
+<path d="M520,174 L556,174" class="ar"/>
+<rect x="40" y="206" width="300" height="36" rx="8" class="kA"/>
+<text x="52" y="229" class="mono">vcs git push</text>
+<rect x="560" y="206" width="300" height="36" rx="8" class="kD"/>
+<text x="572" y="229" class="mono">vcs publish</text>
+<path d="M344,224 L388,224" class="ar"/>
+<path d="M520,224 L556,224" class="ar"/>
+<rect x="40" y="256" width="300" height="36" rx="8" class="kB"/>
+<text x="52" y="279" class="mono">vcs p4 sync</text>
+<rect x="560" y="256" width="300" height="36" rx="8" class="kD"/>
+<text x="572" y="279" class="mono">vcs sync</text>
+<path d="M344,274 L388,274" class="ar"/>
+<path d="M520,274 L556,274" class="ar"/>
+<rect x="40" y="306" width="300" height="36" rx="8" class="kB"/>
+<text x="52" y="329" class="mono">vcs p4 edit src/main.c</text>
+<rect x="560" y="306" width="300" height="36" rx="8" class="kD"/>
+<text x="572" y="329" class="mono">no-op: edits are found by content</text>
+<path d="M344,324 L388,324" class="ar"/>
+<path d="M520,324 L556,324" class="ar"/>
+<rect x="392" y="106" width="124" height="236" rx="8" class="kH"/>
+<text x="454" y="200" class="h mid">parse git /</text>
+<text x="454" y="216" class="h mid">p4 arguments</text>
+<text x="454" y="238" class="m mid">rewrite to a</text>
+<text x="454" y="252" class="m mid">native command</text>
+<text x="454" y="278" class="m mid">p4: p4map.rs</text>
+<circle r="6" class="dotH" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0.0000;0.0500;0.0510;0.1690;0.1700;1.0000" values="0;0;1;1;0;0"/><animateMotion dur="12s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.0500;0.1700;1" calcMode="linear" path="M344,124 L556,124"/></circle>
+<circle r="6" class="dotH" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0.0000;0.1700;0.1710;0.2890;0.2900;1.0000" values="0;0;1;1;0;0"/><animateMotion dur="12s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.1700;0.2900;1" calcMode="linear" path="M344,174 L556,174"/></circle>
+<circle r="6" class="dotH" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0.0000;0.2900;0.2910;0.4090;0.4100;1.0000" values="0;0;1;1;0;0"/><animateMotion dur="12s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.2900;0.4100;1" calcMode="linear" path="M344,224 L556,224"/></circle>
+<circle r="6" class="dotH" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0.0000;0.4100;0.4110;0.5290;0.5300;1.0000" values="0;0;1;1;0;0"/><animateMotion dur="12s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.4100;0.5300;1" calcMode="linear" path="M344,274 L556,274"/></circle>
+<circle r="6" class="dotH" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0.0000;0.5300;0.5310;0.6490;0.6500;1.0000" values="0;0;1;1;0;0"/><animateMotion dur="12s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.5300;0.6500;1" calcMode="linear" path="M344,324 L556,324"/></circle>
+<rect x="24" y="374" width="420" height="140" rx="10" class="panel"/>
+<text x="40" y="396" class="h">What never runs</text>
+<rect x="40" y="408" width="176" height="30" rx="8" class="kX"/>
+<text x="128" y="428" class="m mid">git binary</text>
+<rect x="230" y="408" width="176" height="30" rx="8" class="kX"/>
+<text x="318" y="428" class="m mid">libgit2</text>
+<rect x="40" y="448" width="176" height="30" rx="8" class="kX"/>
+<text x="128" y="468" class="m mid">p4 binary or server</text>
+<rect x="230" y="448" width="176" height="30" rx="8" class="kX"/>
+<text x="318" y="468" class="m mid">git server</text>
+<text x="40" y="500" class="m">A test checks the core crates have no git or p4 dependencies.</text>
+<rect x="456" y="374" width="420" height="140" rx="10" class="panel"/>
+<text x="472" y="396" class="h">When vcs has no equivalent</text>
+<rect x="472" y="408" width="388" height="34" rx="8" class="kX"/>
+<text x="484" y="430" class="mono">git &lt;cmd&gt;: no vcs equivalent (...)</text>
+<text x="472" y="462" class="m">It stops and names the native way to get there.</text>
+<text x="472" y="478" class="m">Close-but-different results print a note on stderr</text>
+<text x="472" y="494" class="m">(silence with VCS_GIT_QUIET=1). vcs p4 --explain prints</text>
+<text x="472" y="508" class="m">the translation and runs nothing.</text>
+</svg>
+

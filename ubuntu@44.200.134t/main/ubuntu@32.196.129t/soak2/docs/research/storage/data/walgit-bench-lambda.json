@@ -1,0 +1,99 @@
+{
+ "source": "https://github.com/tobi/walgit @ 80e9a20b29e29aefd16a4dae6f8e274cce85cca5 (2026-09-12), accessed 2026-10-31",
+ "machine": "lambda-final: AMD EPYC 7J13, 30 cores, kernel 6.8.0-1046-nvidia, rustc 1.97.1 (walgit rust-toolchain.toml), release profile, git 2.34.1 on PATH (walgit recommends >= 2.47)",
+ "load": "box not idle: load average 23 at start of the benches (other jobs of this study ran alongside the first runs)",
+ "trials": 3,
+ "cold_warm": "in-process, local filesystem, no object store involved",
+ "refs500k_ms": {
+  "cold_refs_parse": [
+   416,
+   555,
+   429
+  ],
+  "push0_apply_ref_txn": [
+   6,
+   7,
+   8
+  ],
+  "push0_refs_arc_after": [
+   57,
+   115,
+   61
+  ],
+  "push1_apply_ref_txn": [
+   3,
+   386,
+   2
+  ],
+  "push2_apply_ref_txn": [
+   60,
+   76,
+   35
+  ],
+  "update_packed_ref": [
+   37,
+   267,
+   21
+  ],
+  "delete_packed_ref": [
+   751,
+   424,
+   356
+  ]
+ },
+ "bench_fetch_engines": {
+  "repo": "git.git bare, HEAD 50fe5cc63f9cd6e89b87a2c9ccf96a444f4cfdb7, 422883 objects, 1 pack (repack -adf w10 d50) + bitmap + commit-graph chain",
+  "diff_fetch_want_HEAD_have_HEAD~50": {
+   "git_ms": [
+    249,
+    199,
+    198
+   ],
+   "git_objects": 845,
+   "git_bytes": [
+    262997,
+    262997,
+    271784
+   ],
+   "gix_ms": [
+    977,
+    959,
+    966
+   ],
+   "gix_objects": 2059,
+   "gix_bytes": 11320456
+  },
+  "full_clone": {
+   "git_ms": [
+    5438,
+    6604,
+    5319
+   ],
+   "git_objects": 410043,
+   "git_bytes": [
+    130045477,
+    130068913,
+    130045289
+   ],
+   "gix_ms": [
+    3171,
+    2904,
+    1958
+   ],
+   "gix_objects": 410043,
+   "gix_bytes": 136370423
+  }
+ },
+ "gix_scale_300k": {
+  "result": "passed",
+  "wall_s": 132.7,
+  "max_rss_kb_of_cargo_process_tree": 672212,
+  "note": "time -v wraps cargo test, RSS is the max of any process in the tree"
+ },
+ "test_suites_passed": {
+  "walgit-store contract memory": "1/1",
+  "walgit-wal": "8+5+1+1+28 (all ok)",
+  "walgit-git (release)": "all ok, 3 ignored benches",
+  "walgit-server sim (release)": "19/19"
+ }
+}
