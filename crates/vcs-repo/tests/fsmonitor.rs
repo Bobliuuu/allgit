@@ -320,6 +320,35 @@ fn clean_tree_trusts_the_monitor_and_events_reveal_changes() {
     assert_same(&r, &m, "revert");
 }
 
+/// A quiet `status` is answered from the saved state without decoding the index. The staged half
+/// comes from the snapshot saved with it, so it must follow the index (fingerprint) and HEAD.
+#[test]
+fn quiet_status_answers_from_saved_staged_snapshot() {
+    let (_d, r) = base();
+    let m = MockMonitor::new();
+    w(&r, "top.txt", "staged edit");
+    m.event("top.txt");
+    r.add(&["top.txt".to_string()]).unwrap();
+    assert_same(&r, &m, "staged, computed");
+    for i in 0..3 {
+        assert_same(&r, &m, &format!("staged, quiet {i}"));
+    }
+    assert_eq!(r.status_monitored(opts(), &m).unwrap().zones[0].staged.len(), 1);
+    r.commit(
+        "c2",
+        vcs_objects::Signature {
+            name: "T".into(),
+            email: "t@x".into(),
+            timestamp: 2,
+        },
+    )
+    .unwrap();
+    assert_same(&r, &m, "after commit");
+    assert!(r.status_monitored(opts(), &m).unwrap().zones[0].staged.is_empty());
+    // an old binary's state (no snapshot) is simply recomputed
+    assert_same(&r, &m, "quiet after commit");
+}
+
 /// An index rewrite that changes only known entries (a patched `rm --cached`, a `commit` storing cache
 /// trees) keeps the saved state usable: an unreported change elsewhere is still not looked for, which is
 /// how the test tells a trusted state from a full scan. The touched path itself is re-checked.
