@@ -60,6 +60,10 @@ impl Lazy {
             base: OnceLock::new(),
         }
     }
+    /// No base file: the repository is in delta mode but had no tags at the last compaction.
+    fn no_base(&self) -> bool {
+        self.count == 0
+    }
     fn bytes(&self) -> &Arc<[u8]> {
         self.base.get_or_init(|| {
             let p = self.dir.join(base_name(&self.id));
@@ -152,7 +156,11 @@ impl Tags {
     fn map(&self) -> &TagMap {
         self.map.get_or_init(|| {
             if let Some(l) = &self.lazy {
-                let mut m = Self::parse(l.bytes()).expect("tag section validated at load");
+                let mut m = if l.no_base() {
+                    TagMap::new()
+                } else {
+                    Self::parse(l.bytes()).expect("tag section validated at load")
+                };
                 for (k, v) in l.logops.iter().chain(&self.pending) {
                     match v {
                         Some(id) => m.insert(k.clone(), *id),
@@ -191,7 +199,7 @@ impl Tags {
             if let Some((_, v)) = l.logops.iter().rev().find(|(k, _)| k == key) {
                 return *v;
             }
-            return scan(l.bytes(), key);
+            return if l.no_base() { None } else { scan(l.bytes(), key) };
         }
         match &self.raw {
             Some(raw) => scan(raw, key),
