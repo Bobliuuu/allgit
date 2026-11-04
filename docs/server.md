@@ -140,10 +140,13 @@ restricted principal:
 
 **What cannot be hidden (threat model).**
 
-* The manifest is served to everyone who can read at all: it names every zone, branch, tag, lock, zone prefix and the
-  head object ids of the zones a token may not read. Zone existence and head ids are therefore public to any
-  authenticated token. Hiding them would need a per-principal filtered manifest, which would break the compare-and-swap
-  publish of write tokens; not done.
+* **A read-only token under a read policy gets a filtered manifest**: the branches, tags, locks, zone prefixes and labels of zones it
+  may not read are removed (so it cannot learn their names or head ids from it), and snapshots and the applied-transaction list
+  are dropped, because those name every zone's heads. Ranged reads of `manifest` are cut from the filtered bytes. This is safe
+  because a read-only token never publishes. A **write** token (with `deny-read`/`allow-read` rules) still gets the stored manifest
+  byte for byte, because its compare-and-swap publish needs the exact bytes and the exact version tag: it names every zone, branch, tag,
+  lock, zone prefix and the head object ids of the zones it may not read, so zone existence and head ids are public to
+  any write token. Admins always get the real manifest. (Tests: `readpolicy.rs`.)
 * Snapshot, transaction and operation objects, and objects not yet reachable from any zone (uploaded but not published),
   are in no zone set and are readable by id. Their ids are not listable by restricted tokens, and a 256-bit id cannot be
   guessed, but a snapshot object read by id names the head commits of all zones it covers.
@@ -230,7 +233,7 @@ Idle cost is one relaxed atomic load per request when no failure has been record
 ## Not done (known gaps)
 
 Path-level read rules (impossible on content-addressed
-objects, see Read policy); a filtered manifest per principal; a rate-limit class for lock ops; create-only audit objects (#127, the chained log is the chosen design); lease expiry times are still computed by the client (the
+objects, see Read policy); a filtered manifest for write tokens (read-only tokens have one); a rate-limit class for lock ops; create-only audit objects (#127, the chained log is the chosen design); lease expiry times are still computed by the client (the
 server bounds only `time_hw`); one request per connection and one thread per connection (bounded by `max_connections`);
 OIDC; Windows signal reload.
 
