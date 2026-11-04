@@ -101,6 +101,33 @@ impl S3Config {
 /// range fetches and uploads use several at once).
 const POOL: usize = 16;
 
+/// Objects at least this large go up as a multipart upload (see `put_multipart`). Only on `https://` endpoints (real
+/// services); `VCS_S3_MULTIPART_MB` overrides in MiB, 0 disables.
+fn multipart_threshold() -> u64 {
+    static V: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *V.get_or_init(|| match std::env::var("VCS_S3_MULTIPART_MB").ok().and_then(|v| v.trim().parse::<u64>().ok()) {
+        Some(0) => u64::MAX,
+        Some(mb) => mb << 20,
+        None => 16 << 20,
+    })
+}
+
+/// Part size: 8 MiB (S3 minimum 5 MiB), larger only when the object would need more than 10,000 parts.
+fn multipart_part_size(len: u64) -> u64 {
+    (8u64 << 20).max(len.div_ceil(10_000))
+}
+
+/// How long a passed provider probe is trusted (see [`S3Backend::connect`]).
+const PROBE_TTL: Duration = Duration::from_secs(24 * 3600);
+
+fn probe_marker_fresh(m: &std::path::Path) -> bool {
+    std::fs::metadata(m)
+        .and_then(|md| md.modified())
+        .ok()
+        .and_then(|t| SystemTime::now().duration_since(t).ok())
+        .is_some_and(|age| age < PROBE_TTL)
+}
+
 pub struct S3Backend {
     cfg: S3Config,
     host: String,
@@ -183,8 +210,37 @@ impl S3Backend {
     /// Build a client and verify the provider honours conditional writes; otherwise refuse.
     pub fn connect(cfg: S3Config) -> Result<Self, BackendError> {
         let b = Self::new_unchecked(cfg)?;
+        let marker = b.probe_marker();
+        if marker.as_ref().is_some_and(|m| probe_marker_fresh(m)) {
+            return Ok(b);
+        }
         b.probe()?;
+        if let Some(m) = marker {
+            if let Some(d) = m.parent() {
+                let _ = std::fs::create_dir_all(d);
+            }
+            let _ = std::fs::write(&m, b"ok");
+        }
         Ok(b)
+    }
+
+    /// The probe is five sequential requests (about 120 ms to real S3) and what it learns is a property of the
+    /// provider, not of the repository, so a pass is remembered per (https endpoint, region, bucket) for
+    /// [`PROBE_TTL`] in the client cache directory. Only for `https://` endpoints (real services; a local
+    /// test double can change behaviour under the same address). `VCS_S3_PROBE=always` probes every time. A failed probe is never remembered.
+    fn probe_marker(&self) -> Option<std::path::PathBuf> {
+        if !self.cfg.endpoint.starts_with("https://") || std::env::var("VCS_S3_PROBE").is_ok_and(|v| v == "always") {
+            return None;
+        }
+        let root: std::path::PathBuf = match std::env::var_os("VCS_CACHE_DIR").filter(|v| !v.is_empty()) {
+            Some(d) => d.into(),
+            None => match std::env::var_os("XDG_CACHE_HOME").filter(|v| !v.is_empty()) {
+                Some(x) => std::path::PathBuf::from(x).join("vcs"),
+                None => std::path::PathBuf::from(std::env::var_os("HOME")?).join(".cache/vcs"),
+            },
+        };
+        let h = hex(&Sha256::digest(format!("{}\n{}\n{}", self.cfg.endpoint, self.cfg.region, self.cfg.bucket).as_bytes()));
+        Some(root.join("s3-probe").join(&h[..32]))
     }
 
     /// Number of HTTP requests issued so far.
@@ -240,7 +296,26 @@ impl S3Backend {
         result
     }
 
+    /// `VCS_S3_TRACE=1`: one stderr line per request (`t_ms method key range ms status/bytes`), for measuring
+    /// round trips; off by default (one cached env lookup).
     fn send(&self, method: &str, key: &str, query: &[(&str, String)], headers: &[(&str, &str)], body: &[u8]) -> Result<Resp, BackendError> {
+        static TRACE: std::sync::OnceLock<Option<std::time::Instant>> = std::sync::OnceLock::new();
+        let t0 = *TRACE.get_or_init(|| std::env::var_os("VCS_S3_TRACE").filter(|v| v != "0").map(|_| std::time::Instant::now()));
+        let Some(t0) = t0 else { return self.send_inner(method, key, query, headers, body) };
+        let start = t0.elapsed();
+        let s = std::time::Instant::now();
+        let r = self.send_inner(method, key, query, headers, body);
+        let out = match &r {
+            Ok(Resp::Ok { body, status, .. }) => format!("{status}/{}", body.len()),
+            Ok(Resp::Status(c, _)) => c.to_string(),
+            Err(_) => "err".into(),
+        };
+        let range = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("range")).map(|(_, v)| *v).unwrap_or("-");
+        eprintln!("s3trace {:>7.1} {method} {key} {range} {:.1}ms {out} {:?}", start.as_secs_f64() * 1e3, s.elapsed().as_secs_f64() * 1e3, std::thread::current().id());
+        r
+    }
+
+    fn send_inner(&self, method: &str, key: &str, query: &[(&str, String)], headers: &[(&str, &str)], body: &[u8]) -> Result<Resp, BackendError> {
         let mut path = format!("/{}", uri_encode(&self.cfg.bucket, true));
         if !key.is_empty() {
             path.push('/');
@@ -287,7 +362,7 @@ impl S3Backend {
                 req = req.set(k, v);
             }
             self.requests.fetch_add(1, Ordering::Relaxed);
-            if method == "PUT" {
+            if method == "PUT" || method == "POST" {
                 req.send_bytes(body)
             } else {
                 req.call()
@@ -326,6 +401,86 @@ impl S3Backend {
                 }
             }
             Err(ureq::Error::Transport(t)) => Err(BackendError::Unavailable(format!("{method} {key}: {t}"))),
+        }
+    }
+
+    /// Create-only upload of a large object as a multipart upload with parts on up to [`POOL`] connections.
+    /// Measured from a c6i.4xlarge in the bucket's region: one stream moves about 95 MB/s in either direction,
+    /// 16 parallel parts about 510 MB/s (docs/research/real-s3.md), so a 48 MiB pack drops from ~500 to ~120 ms.
+    /// The create-only guarantee is `If-None-Match: *` on CompleteMultipartUpload (S3 honours it; a provider that
+    /// does not is refused by the connect probe only for plain PUT, so multipart is skipped unless the endpoint
+    /// is https, i.e. a real service). Any failure aborts the upload so no parts are left billed.
+    fn put_multipart(&self, k: &str, data: &[u8]) -> Result<bool, BackendError> {
+        let part = multipart_part_size(data.len() as u64) as usize;
+        let parts: Vec<&[u8]> = data.chunks(part).collect();
+        let created = match self.send("POST", k, &[("uploads", String::new())], &[], b"")? {
+            Resp::Ok { body, .. } => String::from_utf8_lossy(&body).into_owned(),
+            Resp::Status(c, m) => return Err(Self::unexpected("create multipart upload", c, m)),
+        };
+        let Some(upload_id) = tag_values(&created, "UploadId").into_iter().next() else {
+            return Err(BackendError::Other("CreateMultipartUpload returned no UploadId".into()));
+        };
+        let abort = || {
+            let _ = self.send("DELETE", k, &[("uploadId", upload_id.clone())], &[], b"");
+        };
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let etags: std::sync::Mutex<Vec<Option<String>>> = std::sync::Mutex::new(vec![None; parts.len()]);
+        let failed: std::sync::Mutex<Option<BackendError>> = std::sync::Mutex::new(None);
+        std::thread::scope(|sc| {
+            for _ in 0..POOL.min(parts.len()) {
+                sc.spawn(|| loop {
+                    if failed.lock().unwrap().is_some() {
+                        break;
+                    }
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(chunk) = parts.get(i) else { break };
+                    let q = [("partNumber", (i + 1).to_string()), ("uploadId", upload_id.clone())];
+                    let r = match self.send("PUT", k, &q, &[], chunk) {
+                        Ok(Resp::Ok { etag: Some(e), .. }) => Ok(e),
+                        Ok(Resp::Ok { .. }) => Err(BackendError::Other("UploadPart without ETag".into())),
+                        Ok(Resp::Status(c, m)) => Err(Self::unexpected("upload part", c, m)),
+                        Err(e) => Err(e),
+                    };
+                    match r {
+                        Ok(e) => etags.lock().unwrap()[i] = Some(e),
+                        Err(e) => {
+                            failed.lock().unwrap().get_or_insert(e);
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+        if let Some(e) = failed.into_inner().unwrap() {
+            abort();
+            return Err(e);
+        }
+        let mut xml = String::from("<CompleteMultipartUpload>");
+        for (i, e) in etags.into_inner().unwrap().into_iter().enumerate() {
+            let e = e.expect("every part uploaded");
+            xml.push_str(&format!("<Part><PartNumber>{}</PartNumber><ETag>{}</ETag></Part>", i + 1, e.replace('"', "&quot;")));
+        }
+        xml.push_str("</CompleteMultipartUpload>");
+        let done = self.send("POST", k, &[("uploadId", upload_id.clone())], &[("if-none-match", "*")], xml.as_bytes());
+        match done {
+            // S3 can answer 200 and put the failure in the body
+            Ok(Resp::Ok { body, .. }) if String::from_utf8_lossy(&body).contains("<Error>") => {
+                abort();
+                Err(BackendError::Unavailable(format!("CompleteMultipartUpload {k}: error in 200 body")))
+            }
+            Ok(Resp::Ok { .. }) => Ok(true),
+            Ok(Resp::Status(412 | 409, _)) => {
+                abort();
+                Ok(false)
+            }
+            Ok(Resp::Status(c, m)) => {
+                abort();
+                Err(Self::unexpected("complete multipart upload", c, m))
+            }
+            Err(e) => {
+                abort();
+                Err(e)
+            }
         }
     }
 
@@ -398,6 +553,9 @@ impl Backend for S3Backend {
 
     fn put_if_absent(&self, key: &str, data: &[u8]) -> Result<bool, BackendError> {
         let k = self.full_key(key)?;
+        if data.len() as u64 >= multipart_threshold() && self.cfg.endpoint.starts_with("https://") {
+            return self.put_multipart(&k, data);
+        }
         match self.send("PUT", &k, &[], &[("if-none-match", "*")], data)? {
             Resp::Ok { .. } => Ok(true),
             Resp::Status(412 | 409, _) => Ok(false),
@@ -629,6 +787,20 @@ fn amz_timestamp() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn probe_marker_freshness() {
+        let d = std::env::temp_dir().join(format!("vcs-probe-marker-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let m = d.join("m");
+        assert!(!probe_marker_fresh(&m), "missing marker is not fresh");
+        std::fs::write(&m, b"ok").unwrap();
+        assert!(probe_marker_fresh(&m));
+        let old = std::fs::File::options().write(true).open(&m).unwrap();
+        old.set_modified(SystemTime::now() - PROBE_TTL - Duration::from_secs(5)).unwrap();
+        assert!(!probe_marker_fresh(&m), "expired marker is not fresh");
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     #[test]
     fn timestamp_shape() {
