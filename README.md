@@ -157,6 +157,15 @@ requests and 3.6 s. Real `SlowDown` (503) was not triggered (3,900 req/s from on
 **Many pushers on one repository.** Every publish contends on one manifest key. Group commit in `vcs-server` merges disjoint
 publishes. At 512 writers: 27.3 to 69.7 publishes/s, p95 37.2 to 8.5 s, requests per publish 67.8 to 5.3.
 
+**Hundreds of writers on real S3 (us-east-1, c6i.4xlarge, one run per cell).** The old server did one conditional manifest PUT per
+push, so disjoint writers capped at **19 to 22 pushes/s at any of 64 to 1024 writers** (p99 up to 54 s). A batch commit (one PUT carries
+every write that queued during the previous one) gives **215 to 350 pushes/s at 256 to 1024 writers, p99 1.3 to 7.4 s**; soak with 177
+server `kill -9`: 2,254 acked files, none lost. **One hot branch is still a retry storm** (6.7 pushes/s at 256 writers, tail 110 s);
+use branches or zones per writer. SlowDown counts, replicas and git/walgit at this scale were not run.
+[many-writers-s3](docs/research/many-writers-s3.md).
+
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/charts/many-writers-scaling-dark.svg"><img src="docs/img/charts/many-writers-scaling-light.svg" alt="Pushes per second and p99 at 64 to 1024 writers, before and after batch commit, real S3 and local disk" width="900"></picture></p>
+
 <p align="center"><img src="docs/img/group-commit.svg" alt="Animation: many publishers, one merged manifest write" width="900"></p>
 
 <p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/charts/group-commit-dark.svg"><img src="docs/img/charts/group-commit-light.svg" alt="Group commit off vs on at 64 and 512 writers" width="820"></picture></p>
@@ -200,7 +209,7 @@ faster in wall time, but makes 71 requests instead of 28 and loses to `git pull`
 **Other limits, stated.** Refs are one file read whole: fine to about 100k refs; 1M tags cost seconds per command (the lazy tag table in PR #481 helps
 once merged; the delta log is not built). `vcs-server` uses a thread per connection (256 default cap). First `status` after importing a
 300,000-file wide tree took 22 s. Direct-to-store publishers (S3 without a server) get no group commit: keep fewer than 8 per
-repository. Real S3 `SlowDown` was only simulated in-process. Not run: 10M files, 1M-commit history, remote GC concurrent with
+repository. Real S3 `SlowDown` counts under load were not captured (throughput on real S3 was measured). Not run: 10M files, 1M-commit history, remote GC concurrent with
 pushes at scale. Full list: [scalability](docs/scalability.md#not-run).
 
 
