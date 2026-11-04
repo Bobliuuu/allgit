@@ -1726,6 +1726,7 @@ dependencies = [
  "rustls",
  "tempfile",
  "thiserror",
+ "time",
  "unicode-normalization",
  "ureq",
  "vcs-objects",
