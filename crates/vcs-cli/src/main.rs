@@ -13,6 +13,7 @@ mod bisect;
 mod bundle_cmd;
 mod cmds;
 mod config;
+mod daemon;
 mod describe;
 mod difftool;
 mod everyday;
@@ -77,6 +78,20 @@ fn run_assist(repo: &Repo, cmd: &str, secs: u64) -> Result<(), Error> {
         );
     }
     Ok(())
+}
+
+/// `vcs daemon` actions.
+#[derive(Subcommand, Clone, Debug, PartialEq)]
+pub enum DaemonCmd {
+    /// Start the daemon for this repository (it exits by itself after VCS_DAEMON_IDLE seconds, default 300)
+    Start,
+    /// Stop this repository's daemon
+    Stop,
+    /// Say whether this repository's daemon is running
+    Status,
+    /// Run the daemon in the foreground (what `start` launches)
+    #[command(hide = true)]
+    Run,
 }
 
 #[derive(Parser, Clone)]
@@ -167,6 +182,9 @@ enum Cmd {
     Config(ConfigCmd),
     /// Show staged, unstaged and untracked changes per zone
     Status,
+    /// Resident per-repository daemon that runs small commands without process start (opt-in; docs/daemon.md)
+    #[command(subcommand)]
+    Daemon(DaemonCmd),
     /// Watch the working tree and journal changed paths so `status` can skip a full scan (runs until killed)
     Watch {
         /// Stop after this many seconds without a `status` asking for the journal (set when a command starts the watcher itself)
@@ -907,11 +925,14 @@ fn watchd_path() -> Option<PathBuf> {
     p.is_file().then_some(p)
 }
 
+/// Set by `vcs watch` so opening the repo there does not also autostart a second watcher.
+static WATCH_CMD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn open() -> Result<(Repo, PathBuf), Error> {
     let cwd = std::env::current_dir().map_err(|source| Error::Io { path: ".".into(), source })?;
     let repo = Repo::discover(&cwd)?;
     // Big repositories get a background watcher so `status`, `diff` and friends can skip the full scan.
-    if std::env::args_os().nth(1).is_none_or(|a| a != "watch") {
+    if !WATCH_CMD.load(std::sync::atomic::Ordering::Relaxed) {
         if let Some(watchd) = watchd_path() {
             repo.autostart_watcher(&watchd);
         }
@@ -1151,7 +1172,19 @@ fn run(cli: Cli) -> Result<(), Error> {
             }
             maybe_auto_repack(&repo);
         }
+        Cmd::Daemon(d) => {
+            WATCH_CMD.store(true, std::sync::atomic::Ordering::Relaxed);
+            let (repo, _) = open()?;
+            let root = repo.worktree().to_path_buf();
+            match d {
+                DaemonCmd::Start => daemon::start(&root)?,
+                DaemonCmd::Stop => daemon::stop(&root)?,
+                DaemonCmd::Status => daemon::daemon_status(&root)?,
+                DaemonCmd::Run => daemon::run_server(&root)?,
+            }
+        }
         Cmd::Watch { idle_exit } => {
+            WATCH_CMD.store(true, std::sync::atomic::Ordering::Relaxed);
             let (_repo, _) = open()?;
             let Some(watchd) = watchd_path() else {
                 return Err(Error::Msg(
@@ -2533,6 +2566,16 @@ fn run_lazy(cli: Cli) -> Result<(), Error> {
 fn main() -> ExitCode {
     let _ = ROOT_ZONE;
     let argv = gitmap::argv_for_shim();
+    // Thin client: hand small commands to a running per-repo daemon (docs/daemon.md); anything it
+    // does not take runs below, in this process.
+    if let Some(code) = daemon::try_client(&argv) {
+        return ExitCode::from(code as u8);
+    }
+    ExitCode::from(real_main(argv) as u8)
+}
+
+/// The whole command, in this process. Also what the daemon's forked request children run.
+pub(crate) fn real_main(argv: Vec<std::ffi::OsString>) -> i32 {
     let cli = match quick::parse(&argv) {
         Some(c) => c,
         None => Cli::parse_from(argv),
@@ -2546,7 +2589,7 @@ fn main() -> ExitCode {
     if let Some(dir) = &cli.chdir {
         if let Err(e) = std::env::set_current_dir(dir) {
             eprintln!("error: cannot change to directory {}: {e}", dir.display());
-            return ExitCode::FAILURE;
+            return 1;
         }
     }
     let refresh = lockable_cmd::refresh_target(&cli.cmd);
@@ -2555,10 +2598,10 @@ fn main() -> ExitCode {
         lockable_cmd::refresh(&d);
     }
     match res {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(()) => 0,
         Err(e) => {
             eprintln!("error: {e}");
-            ExitCode::FAILURE
+            1
         }
     }
 }
