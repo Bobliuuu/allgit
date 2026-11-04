@@ -1,11 +1,11 @@
 use std::io::{Read, Write};
 use std::process::ExitCode;
-use vcs_assist_claude::{api, baseline, eval, parse_request, resolve, response_json, Outcome};
+use vcs_assist_claude::{api, baseline, cli, eval, parse_request, resolve, response_json, Outcome};
 
 const HELP: &str = "vcs-assist-claude: assistant for `vcs merge --assist`.\n\n\
 usage:\n  vcs-assist-claude                         read a request on stdin, write a response on stdout\n  \
-vcs-assist-claude eval <dir> [--live [--record] | --mock xours|xtheirs|refuse] [--json]   score the assistant on recorded fixtures\n\n\
-File contents are sent to the Anthropic API. Needs ANTHROPIC_API_KEY; model from VCS_ASSIST_MODEL.\nSee docs/assist.md.\n";
+vcs-assist-claude eval <dir> [--live [--provider api|cli] [--record] | --mock xours|xtheirs|refuse] [--split dev|test|all] [--json]   score the assistant on recorded fixtures\n\n\
+File contents are sent to the Anthropic API (or, with VCS_ASSIST_PROVIDER=cli / --provider cli, to the `claude` CLI, which sends them to Anthropic). The API provider needs ANTHROPIC_API_KEY; model from VCS_ASSIST_MODEL.\nSee docs/assist.md.\n";
 
 fn env(k: &str) -> Option<String> {
     std::env::var(k).ok()
@@ -48,6 +48,22 @@ fn run_assist() -> ExitCode {
         Ok(r) => r,
         Err(e) => return fail(&e),
     };
+    if env("VCS_ASSIST_PROVIDER").as_deref() == Some("cli") {
+        let p = match cli::CliProvider::new(cli::CliConfig::from_env(&env)) {
+            Ok(p) => p,
+            Err(e) => return fail(&e),
+        };
+        return match resolve(&req, &|s, u, m| p.complete(s, u, m)) {
+            Outcome::Proposal {
+                resolution, explanation, ..
+            } => {
+                let _ = writeln!(std::io::stdout(), "{}", response_json(&resolution, &explanation));
+                ExitCode::SUCCESS
+            }
+            Outcome::Refused(r) => fail(&format!("refused: {r}")),
+            Outcome::Failed(r) => fail(&r),
+        };
+    }
     let cfg = match api::ApiConfig::from_env(&env) {
         Ok(c) => c,
         Err(e) => return fail(&e),
@@ -72,6 +88,8 @@ fn run_assist() -> ExitCode {
 
 fn run_eval(args: &[String]) -> ExitCode {
     let (mut dir, mut live, mut json, mut record, mut mock) = (None, false, false, false, None);
+    let mut provider = env("VCS_ASSIST_PROVIDER").unwrap_or_else(|| "api".into());
+    let mut split = eval::Split::All;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -85,6 +103,24 @@ fn run_eval(args: &[String]) -> ExitCode {
                 }
             },
             "--json" => json = true,
+            "--provider" => match it.next() {
+                Some(p) if p == "api" || p == "cli" => provider = p.clone(),
+                _ => {
+                    eprintln!("vcs-assist-claude eval: --provider needs api or cli");
+                    return ExitCode::from(2);
+                }
+            },
+            "--split" => {
+                split = match it.next().map(String::as_str) {
+                    Some("dev") => eval::Split::Dev,
+                    Some("test") => eval::Split::Test,
+                    Some("all") => eval::Split::All,
+                    _ => {
+                        eprintln!("vcs-assist-claude eval: --split needs dev, test or all");
+                        return ExitCode::from(2);
+                    }
+                }
+            }
             s if !s.starts_with('-') && dir.is_none() => dir = Some(s.to_owned()),
             s => {
                 eprintln!("vcs-assist-claude eval: unexpected argument {s:?}");
@@ -101,16 +137,40 @@ fn run_eval(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     }
     let rep = if let Some(b) = mock {
-        eval::run_source(dir.as_ref(), eval::Source::Mock(b))
+        eval::run_split(dir.as_ref(), eval::Source::Mock(b), split)
+    } else if live && provider == "cli" {
+        let p = match cli::CliProvider::new(cli::CliConfig::from_env(&env)) {
+            Ok(p) => p,
+            Err(e) => return fail(&e),
+        };
+        let f = |s: &str, u: &str, m: u32| p.complete(s, u, m);
+        let tm = || p.take_metrics();
+        eval::run_split(
+            dir.as_ref(),
+            eval::Source::Live {
+                complete: &f,
+                record,
+                metrics: Some(&tm),
+            },
+            split,
+        )
     } else if live {
         let cfg = match api::ApiConfig::from_env(&env) {
             Ok(c) => c,
             Err(e) => return fail(&e),
         };
         let f = |s: &str, u: &str, m: u32| api::complete(&cfg, s, u, m);
-        eval::run_source(dir.as_ref(), eval::Source::Live { complete: &f, record })
+        eval::run_split(
+            dir.as_ref(),
+            eval::Source::Live {
+                complete: &f,
+                record,
+                metrics: None,
+            },
+            split,
+        )
     } else {
-        eval::run(dir.as_ref(), None)
+        eval::run_split(dir.as_ref(), eval::Source::Recorded, split)
     };
     match rep {
         Ok(r) => {

@@ -12,7 +12,7 @@ fn err(o: &std::process::Output) -> String {
 #[test]
 fn success_and_request_shape() {
     let m = Mock::start(vec![ok_usage(&resolved(GOOD), 321, 45)]);
-    let o = run(&m.url, &good_request(), &[]);
+    let o = run(&m.url, &good_request(), &[("VCS_ASSIST_PROMPT", "v1")]);
     assert!(o.status.success(), "{}", all_output(&o));
     let j = stdout_json(&o);
     assert_eq!(j["resolution"], GOOD);
@@ -138,7 +138,7 @@ fn injection_in_conflict_is_data_and_bad_output_is_rejected() {
     let req = request("src/a.rs", Some(BASE), &ours, THEIRS);
     // The text reaches the model only inside the delimited user turn, never in the system prompt.
     let m = Mock::start(vec![ok_text("pwned, here is the key")]);
-    let o = run(&m.url, &req, &[]);
+    let o = run(&m.url, &req, &[("VCS_ASSIST_PROMPT", "v1")]);
     assert!(!o.status.success() && o.stdout.is_empty(), "{}", all_output(&o));
     let b: serde_json::Value = serde_json::from_str(&m.requests()[0].body).unwrap();
     assert!(!b["messages"][0]["content"].as_str().unwrap().contains("IGNORE ALL PREVIOUS"));
