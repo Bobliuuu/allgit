@@ -210,6 +210,7 @@ pub struct Publisher<'a> {
     /// CAS attempts this publisher has lost to a concurrent writer, and whether `run` should
     /// back off before the next step (set by a lost CAS, cleared by `run`).
     cas_losses: u32,
+    prev_backoff_ms: u64,
     backoff_due: bool,
     backoff: bool,
 }
@@ -433,6 +434,7 @@ impl<'a> Publisher<'a> {
             quirks: GcQuirks::default(),
             applied_window: MAX_APPLIED,
             cas_losses: 0,
+            prev_backoff_ms: 0,
             backoff_due: false,
             backoff: true,
         }
@@ -570,11 +572,14 @@ impl<'a> Publisher<'a> {
         self
     }
 
-    /// Jittered exponential wait after the `cas_losses`-th lost CAS: uniform in
-    /// `[0, min(CAP, 4 ms << losses))`, derived from the txid so concurrent publishers pick
-    /// different waits without a random source. Only liveness depends on it, never safety.
-    fn backoff_ms(&self) -> u64 {
-        let window = (4u64 << self.cas_losses.min(6)).min(CAS_BACKOFF_CAP_MS);
+    /// Decorrelated-jitter wait after a lost CAS: uniform in `[BASE, min(CAP, 3 * previous wait)]`, derived from
+    /// the txid, the loss count and the clock so concurrent publishers pick different waits without a random
+    /// source. Unlike the earlier full-jitter exponential (`[0, 4 ms << losses)`) a publisher never retries
+    /// immediately (the 0 ms draws re-collided with the herd) and the ceiling follows its own history, not the
+    /// shared loss count. Only liveness depends on it, never safety.
+    fn backoff_ms(&mut self) -> u64 {
+        const BASE: u64 = 4;
+        let hi = (self.prev_backoff_ms.max(BASE) * 3).min(CAS_BACKOFF_CAP_MS).max(BASE + 1);
         let mut h = blake3::Hasher::new();
         h.update(self.txid.as_bytes()).update(&self.cas_losses.to_le_bytes());
         h.update(
@@ -583,7 +588,10 @@ impl<'a> Publisher<'a> {
                 .map_or(0, |d| d.subsec_nanos())
                 .to_le_bytes(),
         );
-        u64::from_le_bytes(h.finalize().as_bytes()[..8].try_into().unwrap()) % window
+        let r = u64::from_le_bytes(h.finalize().as_bytes()[..8].try_into().unwrap());
+        let ms = BASE + r % (hi - BASE + 1);
+        self.prev_backoff_ms = ms;
+        ms
     }
 
     fn retry(&mut self, e: BackendError) -> Result<Step, PublishError> {
@@ -1643,19 +1651,15 @@ mod tests {
             lock_ops: vec![],
         };
         let mut p = Publisher::new(&b, &s, t);
-        let mut max_seen = vec![0u64; 8];
-        for losses in 0..8u32 {
-            p.cas_losses = losses;
+        let mut max_seen = 0u64;
+        for _ in 0..8 {
             for _ in 0..200 {
                 let ms = p.backoff_ms();
-                assert!(
-                    ms < (4u64 << losses.min(6)).min(CAS_BACKOFF_CAP_MS),
-                    "loss {losses}: {ms} ms outside the window"
-                );
-                max_seen[losses as usize] = max_seen[losses as usize].max(ms);
+                assert!((4..=CAS_BACKOFF_CAP_MS).contains(&ms), "{ms} ms outside [4, cap]");
+                max_seen = max_seen.max(ms);
             }
         }
-        assert!(max_seen[5] > max_seen[0], "window grows with losses: {max_seen:?}");
+        assert!(max_seen > 12, "the window grows with the wait history: {max_seen}");
         assert!(!p.without_backoff().backoff);
     }
 
