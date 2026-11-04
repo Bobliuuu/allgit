@@ -5,6 +5,22 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 
+/// Flags that make a nested `cargo build` land next to the test's own `vcs` binary: the same target
+/// directory and profile (`cargo test --release` would otherwise build a debug server elsewhere).
+fn nested_build_flags(vcs: &Path) -> Vec<String> {
+    let mut f = Vec::new();
+    if let (Some(prof), Some(target)) = (vcs.parent(), vcs.parent().and_then(|p| p.parent())) {
+        f.push("--target-dir".to_owned());
+        f.push(target.display().to_string());
+        match prof.file_name().and_then(|n| n.to_str()) {
+            Some("debug") | None => {}
+            Some("release") => f.push("--release".into()),
+            Some(other) => f.extend(["--profile".to_owned(), other.to_owned()]),
+        }
+    }
+    f
+}
+
 fn server_bin() -> PathBuf {
     let vcs = PathBuf::from(env!("CARGO_BIN_EXE_vcs"));
     let p = vcs.with_file_name(if cfg!(windows) { "vcs-server.exe" } else { "vcs-server" });
@@ -13,6 +29,7 @@ fn server_bin() -> PathBuf {
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
         let st = Command::new(cargo)
             .args(["build", "-p", "vcs-server", "--bin", "vcs-server"])
+            .args(nested_build_flags(&vcs))
             .status()
             .unwrap();
         assert!(st.success() && p.exists(), "could not build vcs-server");
