@@ -50,6 +50,13 @@ pub trait ObjectStore: Send + Sync {
     /// `sync()` after their last `put` and **before** writing any ref, index or manifest that
     /// names the object.
     fn put(&self, obj: &Object) -> Result<ObjectId, StoreError>;
+
+    /// The canonical encoding of an object (`get(id)?.encode()`), hash-verified. Stores that keep the
+    /// encoded bytes return them as they are, so callers that only forward the bytes (bundle, pack
+    /// building) skip a decode and a re-encode.
+    fn get_encoded(&self, id: &ObjectId) -> Result<Vec<u8>, StoreError> {
+        Ok(self.get(id)?.encode())
+    }
     /// Durability barrier: when this returns, every object `put` so far is complete and
     /// durable under its final name. Cheap no-op when nothing is pending.
     fn sync(&self) -> Result<(), StoreError> {
@@ -167,7 +174,7 @@ pub trait ObjectStore: Send + Sync {
     }
 }
 
-fn decode_verified(id: &ObjectId, bytes: &[u8]) -> Result<Object, StoreError> {
+fn check_hash(id: &ObjectId, bytes: &[u8]) -> Result<(), StoreError> {
     let actual = vcs_objects::id_of_encoded(bytes);
     if &actual != id {
         return Err(StoreError::Corrupt {
@@ -175,7 +182,18 @@ fn decode_verified(id: &ObjectId, bytes: &[u8]) -> Result<Object, StoreError> {
             reason: format!("hash mismatch (content hashes to {actual})"),
         });
     }
+    Ok(())
+}
+
+fn decode_verified(id: &ObjectId, bytes: &[u8]) -> Result<Object, StoreError> {
+    check_hash(id, bytes)?;
     Ok(Object::decode(bytes)?)
+}
+
+/// `bytes` after the hash check.
+fn encoded_verified(id: &ObjectId, bytes: Vec<u8>) -> Result<Vec<u8>, StoreError> {
+    check_hash(id, &bytes)?;
+    Ok(bytes)
 }
 
 /// Test backend.
@@ -279,7 +297,7 @@ fn pack_min() -> usize {
 pub struct LocalStore {
     dir: PathBuf,
     /// id -> tmp file written but not yet published.
-    pending: Mutex<HashMap<ObjectId, Pend>>,
+    pending: RwLock<HashMap<ObjectId, Pend>>,
     /// Bytes held by `Pend::Mem` entries (bounded by [`PEND_MEM_CAP`]).
     pend_mem: AtomicU64,
     /// Memory budget for pending objects; [`PEND_MEM_CAP`] unless a test lowers it.
@@ -454,7 +472,7 @@ impl LocalStore {
         io(&dir, fs::create_dir_all(dir.join("tmp")))?;
         Ok(Self {
             dir,
-            pending: Mutex::new(HashMap::new()),
+            pending: RwLock::new(HashMap::new()),
             pend_mem: AtomicU64::new(0),
             pend_cap: AtomicU64::new(PEND_MEM_CAP),
             #[cfg(unix)]
@@ -646,7 +664,7 @@ impl LocalStore {
             res?;
         }
         self.crash_if(SweepCrash::BeforeLooseRemoval)?;
-        let pending: BTreeSet<ObjectId> = self.pending.lock().unwrap().keys().copied().collect();
+        let pending: BTreeSet<ObjectId> = self.pending.read().unwrap().keys().copied().collect();
         for id in doomed.iter().filter(|i| !pending.contains(i)) {
             let p = self.path_of(id);
             if io(&p, remove_if_present(&p))? {
@@ -674,7 +692,7 @@ impl LocalStore {
         #[allow(unused_mut)]
         let mut pending: BTreeSet<PathBuf> = self
             .pending
-            .lock()
+            .read()
             .unwrap()
             .values()
             .filter_map(|p| if let Pend::File(f) = p { Some(f.clone()) } else { None })
@@ -866,7 +884,7 @@ impl LocalStore {
         // one older than `touch_after` gets its modification time refreshed ("touch on dedup"), so
         // GC's age check sees a re-adopted orphan as young (docs/gc.md). Younger ones are left
         // alone, which keeps the common "just wrote it" dedup free of write I/O.
-        if self.pending.lock().unwrap().contains_key(&id) {
+        if self.pending.read().unwrap().contains_key(&id) {
             return Ok(());
         }
         let loose = self.path_of(&id);
@@ -904,7 +922,7 @@ impl LocalStore {
             // the memory budget or the spill file, and `sync` publishes them as loose files (renaming a
             // 2 MiB file is cheaper than re-reading and re-writing it into a pack).
             let tmp = self.write_tmp(&id, head, tail)?;
-            let mut p = self.pending.lock().unwrap();
+            let mut p = self.pending.write().unwrap();
             if let std::collections::hash_map::Entry::Vacant(v) = p.entry(id) {
                 v.insert(Pend::File(tmp));
             } else {
@@ -917,7 +935,7 @@ impl LocalStore {
             v.extend_from_slice(head);
             v.extend_from_slice(tail);
             self.pend_mem.fetch_add(len, Ordering::Relaxed);
-            self.pending.lock().unwrap().insert(id, Pend::Mem(v));
+            self.pending.write().unwrap().insert(id, Pend::Mem(v));
             return Ok(());
         }
         #[cfg(unix)]
@@ -927,13 +945,13 @@ impl LocalStore {
             let off = sp.len.fetch_add(len, Ordering::Relaxed);
             io(&sp.path, sp.file.write_all_at(head, off))?;
             io(&sp.path, sp.file.write_all_at(tail, off + head.len() as u64))?;
-            self.pending.lock().unwrap().insert(id, Pend::Spill { off, len });
+            self.pending.write().unwrap().insert(id, Pend::Spill { off, len });
             Ok(())
         }
         #[cfg(not(unix))]
         {
             let tmp = self.write_tmp(&id, head, tail)?;
-            self.pending.lock().unwrap().insert(id, Pend::File(tmp));
+            self.pending.write().unwrap().insert(id, Pend::File(tmp));
             Ok(())
         }
     }
@@ -1062,7 +1080,7 @@ impl LocalStore {
 
 impl ObjectStore for LocalStore {
     fn get(&self, id: &ObjectId) -> Result<Object, StoreError> {
-        let pending = match self.pending.lock().unwrap().get(id) {
+        let pending = match self.pending.read().unwrap().get(id) {
             Some(Pend::Mem(v)) => return decode_verified(id, v),
             Some(Pend::File(f)) => Some(f.clone()),
             #[cfg(unix)]
@@ -1092,6 +1110,33 @@ impl ObjectStore for LocalStore {
         }
     }
 
+    fn get_encoded(&self, id: &ObjectId) -> Result<Vec<u8>, StoreError> {
+        let pending = match self.pending.read().unwrap().get(id) {
+            Some(Pend::Mem(v)) => return encoded_verified(id, v.clone()),
+            Some(Pend::File(f)) => Some(f.clone()),
+            #[cfg(unix)]
+            Some(Pend::Spill { off, len }) => {
+                let (off, len) = (*off, *len);
+                return encoded_verified(id, self.read_spill(off, len)?);
+            }
+            None => None,
+        };
+        if pending.is_none() {
+            if let Ok(Some(b)) = self.packed(id) {
+                return encoded_verified(id, b);
+            }
+        }
+        let p = pending.unwrap_or_else(|| self.path_of(id));
+        match fs::read(&p) {
+            Ok(b) => encoded_verified(id, b),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => match self.packed(id)? {
+                Some(b) => encoded_verified(id, b),
+                None => Err(StoreError::NotFound(*id)),
+            },
+            Err(source) => Err(StoreError::Io { path: p, source }),
+        }
+    }
+
     fn put(&self, obj: &Object) -> Result<ObjectId, StoreError> {
         let enc = obj.encode();
         let id = vcs_objects::id_of_encoded(&enc);
@@ -1112,7 +1157,7 @@ impl ObjectStore for LocalStore {
 
     fn sync(&self) -> Result<(), StoreError> {
         // Held for the whole barrier so readers never observe "neither pending nor published".
-        let mut pending = self.pending.lock().unwrap();
+        let mut pending = self.pending.write().unwrap();
         if pending.is_empty() {
             return Ok(());
         }
@@ -1207,11 +1252,11 @@ impl ObjectStore for LocalStore {
     }
 
     fn contains(&self, id: &ObjectId) -> Result<bool, StoreError> {
-        Ok(self.pending.lock().unwrap().contains_key(id) || self.in_pack(id) || self.path_of(id).exists())
+        Ok(self.pending.read().unwrap().contains_key(id) || self.in_pack(id) || self.path_of(id).exists())
     }
 
     fn contains_hint(&self, id: &ObjectId) -> Result<bool, StoreError> {
-        if self.pending.lock().unwrap().contains_key(id) || self.in_pack(id) {
+        if self.pending.read().unwrap().contains_key(id) || self.in_pack(id) {
             return Ok(true);
         }
         Ok(self.fan_at_open()[id.as_bytes()[0] as usize].load(Ordering::Relaxed) && self.path_of(id).exists())
@@ -1219,7 +1264,7 @@ impl ObjectStore for LocalStore {
 
     fn modified(&self, id: &ObjectId) -> Result<Option<std::time::SystemTime>, StoreError> {
         // Written but not yet published objects are, by definition, brand new.
-        if self.pending.lock().unwrap().contains_key(id) {
+        if self.pending.read().unwrap().contains_key(id) {
             return Ok(Some(std::time::SystemTime::now()));
         }
         let p = self.path_of(id);

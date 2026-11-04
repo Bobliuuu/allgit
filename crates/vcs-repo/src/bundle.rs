@@ -525,15 +525,18 @@ impl Repo {
             level.dedup();
             level.retain(|id| !have.contains(id) && !objs.contains_key(id));
             let fetch = |id: &ObjectId| -> Result<(ObjectId, Vec<u8>, Vec<ObjectId>)> {
-                let o = self.store.get(id).map_err(|e| match e {
+                let enc = self.store.get_encoded(id).map_err(|e| match e {
                     vcs_store::StoreError::NotFound(i) => Error::Msg(format!(
                         "cannot bundle: object {i} is not in this repository (a sparse clone must fetch it first)"
                     )),
                     e => e.into(),
                 })?;
                 let mut kids = Vec::new();
-                children(&o, &mut kids);
-                Ok((*id, o.encode(), kids))
+                // a blob (first byte = its kind) has no children: no need to decode its content
+                if enc.first() != Some(&(vcs_objects::Kind::Blob as u8)) {
+                    children(&Object::decode(&enc).map_err(vcs_store::StoreError::from)?, &mut kids);
+                }
+                Ok((*id, enc, kids))
             };
             let threads = if level.len() < 256 {
                 1
