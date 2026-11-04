@@ -10,6 +10,7 @@ mod compact;
 pub mod delta;
 pub mod layout;
 pub mod pack;
+pub mod proclock;
 pub use compact::LocalCompaction;
 use pack::Pack;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
