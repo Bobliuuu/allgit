@@ -113,6 +113,9 @@ pub struct Repo {
 pub(crate) struct Counters {
     content_reads: AtomicU64,
     tree_puts: AtomicU64,
+    /// Pack listing and indexes of the remote, loaded once per process by the `--auto` planning steps (manifest reads and
+    /// zone contents) so each of them does not list the packs again. Only used after a manifest was read in this process.
+    pub(crate) packs: vcs_remote::packfetch::PackCatalog,
 }
 
 /// A snapshot of [`Repo`]'s work counters.

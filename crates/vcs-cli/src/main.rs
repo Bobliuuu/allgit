@@ -2566,6 +2566,7 @@ fn publish_auto_merge(
 fn run_lazy(cli: Cli) -> Result<(), Error> {
     let mut fetched = std::collections::BTreeSet::new();
     let pre = zoneprofile_cmd::before(&cli.cmd);
+    zoneprofile_cmd::ensure_access(&cli.cmd);
     loop {
         match run(cli.clone()) {
             Err(Error::Store(vcs_store::StoreError::NotFound(id))) if fetched.insert(id) => {
