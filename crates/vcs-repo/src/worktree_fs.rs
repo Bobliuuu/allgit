@@ -52,6 +52,24 @@ pub struct DirEnt {
 pub struct StatCursor {
     #[cfg(unix)]
     dir: Option<(String, Option<fs::File>)>,
+    /// Stats seen in the current directory; after [`BULK_AFTER`] of them the rest of the directory is
+    /// read with one `getattrlistbulk` (macOS), kept here for the following lookups.
+    #[cfg(target_os = "macos")]
+    seen: u32,
+    #[cfg(target_os = "macos")]
+    bulk: Option<std::collections::HashMap<Box<[u8]>, FsStat>>,
+}
+
+/// A directory is read in bulk once this many of its files were stat-ed one by one: fewer than that
+/// (a status that only re-checks a handful of changed files) is cheaper with `fstatat` per file.
+#[cfg(target_os = "macos")]
+const BULK_AFTER: u32 = 8;
+
+/// `VCS_BULKSTAT=0` turns the bulk path off (A/B measurements, or a filesystem that misbehaves).
+#[cfg(target_os = "macos")]
+fn bulk_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VCS_BULKSTAT").is_none_or(|v| v != "0"))
 }
 
 pub trait WorktreeFs: Send + Sync {
@@ -256,6 +274,23 @@ impl WorktreeFs for RealFs {
                     .as_ref()
                     .and_then(|r| open_dir_at(r, d));
                 cur.dir = Some((d.to_owned(), f));
+                #[cfg(target_os = "macos")]
+                {
+                    cur.seen = 0;
+                    cur.bulk = None;
+                }
+            }
+            #[cfg(target_os = "macos")]
+            if let Some((_, Some(fd))) = &cur.dir {
+                use std::os::unix::io::AsRawFd;
+                cur.seen += 1;
+                if cur.seen > BULK_AFTER && cur.bulk.is_none() && bulk_enabled() {
+                    // `Some(empty)` when unsupported, so a failing filesystem is asked once per directory
+                    cur.bulk = Some(crate::bulkstat::stat_dir(fd.as_raw_fd()).unwrap_or_default());
+                }
+                if let Some(st) = cur.bulk.as_ref().and_then(|b| b.get(name.as_bytes())) {
+                    return Ok(*st);
+                }
             }
             if let Some((_, Some(fd))) = &cur.dir {
                 if let Some(r) = stat_at(fd, name) {
@@ -848,6 +883,43 @@ mod tests {
                 (Ok(m), Ok(g)) => assert_eq!(stat_of(&m), g, "{p}"),
                 (Err(a), Err(b)) => assert_eq!(a.kind(), b.kind(), "{p}"),
                 (a, b) => panic!("{p}: std {a:?} vs fast {b:?}"),
+            }
+        }
+    }
+
+    /// The bulk (`getattrlistbulk`) path and the fallback must agree with `symlink_metadata` for every kind of
+    /// entry, in directories big enough to trigger the bulk read and small enough not to.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn stat_seq_bulk_matches_std() {
+        let d = tempfile::tempdir().unwrap();
+        let fs_ = RealFs::new(d.path().to_path_buf());
+        let mut paths = Vec::new();
+        for i in 0..40 {
+            let p = format!("big/f{i:03}.txt");
+            fs_.write(&p, &vec![b'x'; i * 37], if i % 5 == 0 { EntryMode::Executable } else { EntryMode::File }).unwrap();
+            paths.push(p);
+        }
+        for p in ["big/\u{e9}t\u{e9}.txt", "big/with space", "big/empty"] {
+            fs_.write(p, if p.ends_with("empty") { b"" } else { b"data" }, EntryMode::File).unwrap();
+            paths.push(p.to_string());
+        }
+        fs_.symlink(b"f000.txt", "big/link").unwrap();
+        fs_.create_dir_all("big/sub").unwrap();
+        fs_.write("small/a", b"a", EntryMode::File).unwrap();
+        fs_.write("small/b", b"bb", EntryMode::File).unwrap();
+        paths.extend(["big/link", "big/sub", "big/missing", "small/a", "small/b", "small/none", "big/f000.txt/x"].map(String::from));
+        paths.sort();
+        let mut cur = StatCursor::default();
+        for round in 0..2 {
+            for p in &paths {
+                let want = fs::symlink_metadata(d.path().join(p));
+                let got = fs_.stat_seq(&mut cur, p);
+                match (want, got) {
+                    (Ok(m), Ok(g)) => assert_eq!(stat_of(&m), g, "{p} round {round}"),
+                    (Err(a), Err(b)) => assert_eq!(a.kind(), b.kind(), "{p}"),
+                    (a, b) => panic!("{p}: std {a:?} vs stat_seq {b:?}"),
+                }
             }
         }
     }
