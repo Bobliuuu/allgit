@@ -97,7 +97,7 @@ impl Repo {
         let _l = self.lock()?;
         let mut refs = self.refs()?;
         let key = (zone.clone(), name.to_owned());
-        if refs.tags.contains_key(&key) {
+        if refs.tags.get_key(&key).is_some() {
             return msg(format!("tag {zone}/{name} already exists; delete it first with `vcs tag -d`"));
         }
         let commit = self.resolve_rev(&zone, rev.unwrap_or("HEAD"))?;
@@ -117,7 +117,7 @@ impl Repo {
                 }))?
             }
         };
-        refs.tags.insert(key, target);
+        refs.tags.set(key, target);
         self.store.sync()?;
         let kind = if target == commit { "" } else { " (annotated)" };
         self.commit_refs_op_lazy(&refs, &format!("tag create {zone}/{name}{kind} at {}", commit.short()), None)?;
@@ -130,9 +130,11 @@ impl Repo {
         let zone = self.known_zone(zone)?;
         let _l = self.lock()?;
         let mut refs = self.refs()?;
-        let Some(id) = refs.tags.remove(&(zone.clone(), name.to_owned())) else {
+        let key = (zone.clone(), name.to_owned());
+        let Some(id) = refs.tags.get_key(&key) else {
             return msg(format!("no such tag {zone}/{name}"));
         };
+        refs.tags.unset(&key);
         let (commit, _) = self.peel(&zone, id)?;
         self.commit_refs_op_lazy(&refs, &format!("tag delete {zone}/{name} (was {})", commit.short()), None)?;
         Ok(commit)

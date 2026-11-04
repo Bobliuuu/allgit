@@ -425,6 +425,12 @@ impl LockOp {
     }
 }
 
+/// One change to the tag table in an operation: key and new target (`None` = deleted).
+pub type TagChange = ((String, String), Option<ObjectId>);
+
+/// Marks a tag-delta section in an operation (a count no real tag table can have).
+const TAGS_DELTA_MARK: u64 = u64::MAX;
+
 /// Local state captured by an [`Operation`]: every local branch head and the workspace
 /// subscriptions (zone -> checked-out branch). Remote-tracking refs are deliberately absent.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -436,6 +442,10 @@ pub struct OpView {
     /// (zone, tag name) -> tag target. `None` in operations recorded before tags were part of the
     /// view (restoring those leaves tags alone); `Some` otherwise, even when empty.
     pub tags: Option<BTreeMap<(String, String), ObjectId>>,
+    /// Instead of `tags`: the changes (`None` = deleted) relative to the tag view in effect after the first
+    /// parent, strictly sorted by key. Only written by repositories with the `refs-delta` feature; `tags` is
+    /// then `None`. See `docs/scalability.md`.
+    pub tags_delta: Option<Vec<TagChange>>,
 }
 
 /// One entry of the operation log (distinct from the commit DAG): the local view after a
@@ -566,7 +576,16 @@ impl Object {
                 o.author.encode(&mut w);
                 w.str(&o.description);
                 // appended last so operations without a tag view keep their exact bytes
-                if let Some(tags) = &o.view.tags {
+                if let Some(d) = &o.view.tags_delta {
+                    w.varint(TAGS_DELTA_MARK).varint(d.len() as u64);
+                    for ((z, n), id) in d {
+                        w.str(z).str(n);
+                        match id {
+                            Some(id) => w.u8(1).id(id),
+                            None => w.u8(0),
+                        };
+                    }
+                } else if let Some(tags) = &o.view.tags {
                     w.varint(tags.len() as u64);
                     for ((z, n), id) in tags {
                         w.str(z).str(n).id(id);
@@ -765,7 +784,32 @@ impl Object {
                 }
                 let author = Signature::decode(&mut r)?;
                 let description = r.str(MAX_MESSAGE)?;
-                let tags = if r.remaining() > 0 {
+                let mut tags_delta = None;
+                let tags = if r.remaining() > 0 && r.peek_varint()? == TAGS_DELTA_MARK {
+                    r.varint()?;
+                    let nt = r.count(2 + 2 + 1)?;
+                    let mut d = Vec::with_capacity(nt.min(4096));
+                    let mut prev: Option<(String, String)> = None;
+                    for _ in 0..nt {
+                        let z = r.str(64)?;
+                        names::validate_zone_name(&z).map_err(|_| DecodeError::Invalid("zone name"))?;
+                        let n = r.str(200)?;
+                        names::validate_branch_name(&n).map_err(|_| DecodeError::Invalid("tag name"))?;
+                        let key = (z, n);
+                        if prev.as_ref().is_some_and(|p| *p >= key) {
+                            return Err(DecodeError::Invalid("operation tag delta not strictly sorted"));
+                        }
+                        prev = Some(key.clone());
+                        let id = match r.u8()? {
+                            0 => None,
+                            1 => Some(r.id()?),
+                            _ => return Err(DecodeError::Invalid("tag delta flag")),
+                        };
+                        d.push((key, id));
+                    }
+                    tags_delta = Some(d);
+                    None
+                } else if r.remaining() > 0 {
                     let nt = r.count(2 + 2 + 32)?;
                     let mut tags = BTreeMap::new();
                     let mut prev: Option<(String, String)> = None;
@@ -787,7 +831,12 @@ impl Object {
                 };
                 Object::Operation(Operation {
                     parents,
-                    view: OpView { branches, workspace, tags },
+                    view: OpView {
+                        branches,
+                        workspace,
+                        tags,
+                        tags_delta,
+                    },
                     description,
                     author,
                 })
@@ -1123,6 +1172,7 @@ mod tests {
                     branches: bs.into_iter().map(|(k, v)| (k, ObjectId::from_bytes(v))).collect(),
                     workspace: ws,
                     tags: None,
+                    tags_delta: None,
                 },
                 description: d,
                 author: Signature {
