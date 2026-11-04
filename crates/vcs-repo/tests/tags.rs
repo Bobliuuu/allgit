@@ -136,6 +136,21 @@ fn show_prints_metadata_and_first_parent_diff() {
 }
 
 #[test]
+fn show_meta_is_show_without_the_diff() {
+    let (_d, r) = setup();
+    commit(&r, "f", "a\nb\n", "first", 1);
+    let c2 = commit(&r, "f", "a\nB\n", "second", 2);
+    r.tag_create("root", "v2", Some("HEAD"), Some(("rel", sig(3), vec![]))).unwrap();
+    for rev in ["HEAD", "HEAD~1", "v2"] {
+        let (full, meta) = (r.show("root", rev).unwrap(), r.show_meta("root", rev).unwrap());
+        assert_eq!((full.id, &full.commit, &full.tag), (meta.id, &meta.commit, &meta.tag));
+        assert!(!full.diff.is_empty() && meta.diff.is_empty());
+    }
+    assert_eq!(r.show_meta("root", "HEAD").unwrap().id, c2);
+    assert!(r.show_meta("root", "nope").is_err());
+}
+
+#[test]
 fn show_uses_repo_paths_in_a_zone() {
     let (_d, r) = setup();
     r.create_zone("engine", "engine").unwrap();

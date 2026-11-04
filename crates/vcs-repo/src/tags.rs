@@ -67,6 +67,21 @@ impl Repo {
         }
     }
 
+    /// [`Repo::peel`] with a per-call memo: many tags usually share a target, and each peel reads an object.
+    pub(crate) fn peel_memo(
+        &self,
+        zone: &str,
+        id: ObjectId,
+        memo: &mut std::collections::HashMap<ObjectId, (ObjectId, Option<AnnotatedTag>)>,
+    ) -> Result<(ObjectId, Option<AnnotatedTag>)> {
+        if let Some(h) = memo.get(&id) {
+            return Ok(h.clone());
+        }
+        let r = self.peel(zone, id)?;
+        memo.insert(id, r.clone());
+        Ok(r)
+    }
+
     /// Create a tag in `zone` at `rev` (default: the zone's current head). With `annotation`
     /// `(message, tagger, signature)` an annotated tag object is stored; otherwise the ref points
     /// straight at the commit. Refuses an existing name. Returns the commit tagged.
@@ -128,9 +143,10 @@ impl Repo {
         let zone = self.known_zone(zone)?;
         let refs = self.refs()?;
         let mut out = Vec::new();
+        let mut memo = std::collections::HashMap::new();
         for ((a, n), id) in &refs.tags {
             if *a == zone {
-                let (commit, annotation) = self.peel(&zone, *id)?;
+                let (commit, annotation) = self.peel_memo(&zone, *id, &mut memo)?;
                 out.push(TagInfo {
                     name: n.clone(),
                     commit,
@@ -222,9 +238,10 @@ impl Repo {
             roots.extend(refs.detached(zone));
             // fetched but not yet merged commits are addressable by id prefix too
             roots.extend(self.remote_refs()?.branches_of(zone).into_iter().map(|(_, h)| h));
+            let mut memo = std::collections::HashMap::new();
             for ((a, _), id) in &refs.tags {
                 if a == zone {
-                    roots.push(self.peel(zone, *id)?.0);
+                    roots.push(self.peel_memo(zone, *id, &mut memo)?.0);
                 }
             }
             let mut seen = BTreeSet::new();
@@ -251,6 +268,16 @@ impl Repo {
 
     /// Commit metadata and its diff against the first parent.
     pub fn show(&self, zone: &str, rev: &str) -> Result<ShowReport> {
+        self.show_inner(zone, rev, true)
+    }
+
+    /// [`Repo::show`] without the unified diff (`diff` is empty): for renderers that build their own
+    /// listing (`--stat`, `--name-only`, ...) and would only discard it.
+    pub fn show_meta(&self, zone: &str, rev: &str) -> Result<ShowReport> {
+        self.show_inner(zone, rev, false)
+    }
+
+    fn show_inner(&self, zone: &str, rev: &str, with_diff: bool) -> Result<ShowReport> {
         let zone = self.known_zone(zone)?;
         let id = self.resolve_rev(&zone, rev)?;
         let tag = {
@@ -261,6 +288,14 @@ impl Repo {
             }
         };
         let commit = self.commit_obj(&id)?;
+        if !with_diff {
+            return Ok(ShowReport {
+                id,
+                commit,
+                tag,
+                diff: String::new(),
+            });
+        }
         let prefix = self.zones()?.path_of(&zone).unwrap_or("").to_owned();
         let parent = match commit.parents.first() {
             Some(p) => Some(self.commit_obj(p)?),

@@ -212,6 +212,29 @@ pub fn encode_payload_at(fmt: PackFormat, enc: &[u8], level: i32) -> Vec<u8> {
     }
 }
 
+/// The object kind byte (first byte of the encoded object) of a v2 entry payload, without
+/// decoding the whole entry: read straight from a raw entry, or from the first zstd block.
+pub fn payload_kind(payload: &[u8]) -> Option<u8> {
+    use zstd::zstd_safe::{DCtx, InBuffer, OutBuffer, ResetDirective};
+    thread_local! {
+        // one decompression context per thread: creating one per object costs more than the decode
+        static DCTX: std::cell::RefCell<DCtx<'static>> = std::cell::RefCell::new(DCtx::create());
+    }
+    match payload.split_first()? {
+        (&CODEC_RAW, rest) => rest.first().copied(),
+        (&CODEC_ZSTD, rest) => DCTX.with(|c| {
+            let mut c = c.borrow_mut();
+            c.reset(ResetDirective::SessionOnly).ok()?;
+            let mut one = [0u8; 1];
+            let mut out = OutBuffer::around(&mut one[..]);
+            let mut inp = InBuffer::around(rest);
+            c.decompress_stream(&mut out, &mut inp).ok()?;
+            (out.pos() == 1).then_some(one[0])
+        }),
+        _ => None,
+    }
+}
+
 /// Recover the encoded object from an entry payload of a pack of `version`. The caller still
 /// checks that the result hashes to the expected id.
 pub fn decode_payload(version: u8, payload: &[u8]) -> Result<std::borrow::Cow<'_, [u8]>, String> {
@@ -342,7 +365,7 @@ enum Src {
         file: fs::File,
         len: u64,
         /// Entries of one first-byte bucket, read the first time a lookup lands in it.
-        buckets: std::sync::Mutex<Vec<Option<std::sync::Arc<Vec<u8>>>>>,
+        buckets: Vec<std::sync::OnceLock<Vec<u8>>>,
     },
 }
 
@@ -420,7 +443,7 @@ impl PackIndex {
                     src: Src::File {
                         file: f,
                         len,
-                        buckets: std::sync::Mutex::new(vec![None; 256]),
+                        buckets: (0..256).map(|_| std::sync::OnceLock::new()).collect(),
                     },
                     version,
                     count,
@@ -567,19 +590,16 @@ impl PackIndex {
             #[cfg(unix)]
             Src::File { file, buckets, .. } => {
                 let first = id.as_bytes()[0] as usize;
-                let cached = buckets.lock().unwrap()[first].clone();
-                let ents = match cached {
+                // lock-free after the first lookup in a bucket (concurrent readers must not queue here)
+                let ents = match buckets[first].get() {
                     Some(e) => e,
                     None => {
-                        let e = std::sync::Arc::new(
-                            pread_exact(file, (self.base + lo * IDX_ENTRY) as u64, (hi - lo) * IDX_ENTRY)
-                                .map_err(|e| format!("index read: {e}"))?,
-                        );
-                        buckets.lock().unwrap()[first] = Some(e.clone());
-                        e
+                        let e = pread_exact(file, (self.base + lo * IDX_ENTRY) as u64, (hi - lo) * IDX_ENTRY)
+                            .map_err(|e| format!("index read: {e}"))?;
+                        buckets[first].get_or_init(|| e)
                     }
                 };
-                self.search(&ents, id)
+                self.search(ents, id)
             }
             #[cfg(not(unix))]
             Src::File { .. } => unreachable!("file-backed indexes exist on unix only"),
@@ -920,6 +940,20 @@ impl Pack {
         decode_payload(self.idx.version, &buf)
             .map(|c| Some(c.into_owned()))
             .map_err(corrupt)
+    }
+    /// The raw v2 entry payload (codec byte + body) of `id`, exactly as stored; `None` when the
+    /// object is not here or this is not a v2 pack. Not hash-checked: the consumer verifies.
+    pub fn read_payload_v2(&self, id: &ObjectId) -> Result<Option<Vec<u8>>, StoreError> {
+        if self.idx.version != 2 {
+            return Ok(None);
+        }
+        let corrupt = |reason: String| StoreError::Corrupt { id: *id, reason };
+        let Some((off, len)) = self.idx.lookup(id).map_err(corrupt)? else {
+            return Ok(None);
+        };
+        self.read_range(off, len as u64)?
+            .map(Some)
+            .ok_or_else(|| StoreError::Corrupt { id: *id, reason: "pack truncated".into() })
     }
     pub fn modified(&self) -> Option<std::time::SystemTime> {
         fs::metadata(&self.pack_path).ok()?.modified().ok()

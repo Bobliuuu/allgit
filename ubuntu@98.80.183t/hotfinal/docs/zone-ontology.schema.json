@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "vcs.zone-ontology/1",
+  "title": "vcs zone ontology v1",
+  "description": "Output of `vcs zone describe --json` ($defs.describe) and `vcs zone graph --json` ($defs.graph). Every value is derived from repository state; null means the repository does not say. Consumers must ignore unknown keys.",
+  "$defs": {
+    "nullableString": { "type": ["string", "null"] },
+    "stringArray": { "type": "array", "items": { "type": "string" } },
+    "describe": {
+      "type": "object",
+      "required": ["version", "command", "schema", "zones", "owner_of", "transactions", "notes"],
+      "properties": {
+        "version": { "type": "integer" },
+        "command": { "enum": ["zone-describe"] },
+        "schema": { "enum": ["vcs.zone-ontology/1"] },
+        "zones": { "type": "array", "items": { "$ref": "#/$defs/zone" } },
+        "owner_of": { "type": "array", "items": { "$ref": "#/$defs/ownerOf" } },
+        "transactions": { "type": "array", "items": { "$ref": "#/$defs/transaction" } },
+        "notes": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "ownerOf": {
+      "type": "object",
+      "required": ["path", "zone", "id", "zone_path", "relative"],
+      "properties": {
+        "path": { "type": "string" }, "zone": { "type": "string" }, "id": { "type": "string" },
+        "zone_path": { "type": "string" }, "relative": { "type": "string" }
+      }
+    },
+    "zone": {
+      "type": "object",
+      "required": ["id", "name", "path", "is_root", "kind", "purpose", "owners", "path_ownership", "dependencies", "subscription", "branches", "history", "locks"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "path": { "type": "string", "description": "Repo-relative prefix; empty for the root zone" },
+        "is_root": { "type": "boolean" },
+        "kind": { "type": ["string", "null"], "description": "Manifest ecosystem found at the zone root: cargo, npm, go, python, maven" },
+        "purpose": {
+          "type": ["object", "null"],
+          "required": ["text", "source"],
+          "properties": { "text": { "type": "string" }, "source": { "type": "string", "description": "Repo path of the file the text was read from" } }
+        },
+        "owners": {
+          "type": "object",
+          "required": ["codeowners", "codeowners_file", "top_authors", "author_window_commits"],
+          "properties": {
+            "codeowners": { "$ref": "#/$defs/stringArray" },
+            "codeowners_file": { "$ref": "#/$defs/nullableString" },
+            "top_authors": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["name", "email", "commits"],
+                "properties": { "name": { "type": "string" }, "email": { "type": "string" }, "commits": { "type": "integer" } }
+              }
+            },
+            "author_window_commits": { "type": "integer" }
+          }
+        },
+        "path_ownership": {
+          "type": "object",
+          "required": ["prefix", "owns_rest_of_repo", "excluded_prefixes", "tracked_files"],
+          "properties": {
+            "prefix": { "type": "string" },
+            "owns_rest_of_repo": { "type": "boolean" },
+            "excluded_prefixes": { "$ref": "#/$defs/stringArray" },
+            "tracked_files": { "type": "integer" }
+          }
+        },
+        "dependencies": {
+          "type": "object",
+          "required": ["depends_on", "depended_on_by"],
+          "properties": {
+            "depends_on": { "type": "array", "items": { "$ref": "#/$defs/depRef" } },
+            "depended_on_by": { "type": "array", "items": { "$ref": "#/$defs/depRef" } }
+          }
+        },
+        "subscription": {
+          "type": "object",
+          "required": ["subscribed", "branch", "sparse_paths"],
+          "properties": {
+            "subscribed": { "type": "boolean" },
+            "branch": { "$ref": "#/$defs/nullableString" },
+            "sparse_paths": { "type": ["array", "null"], "items": { "type": "string" } }
+          }
+        },
+        "branches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "head", "checked_out"],
+            "properties": { "name": { "type": "string" }, "head": { "type": "string" }, "checked_out": { "type": "boolean" } }
+          }
+        },
+        "history": {
+          "type": "object",
+          "required": ["branch", "head", "count", "recent"],
+          "properties": {
+            "branch": { "$ref": "#/$defs/nullableString" },
+            "head": { "$ref": "#/$defs/nullableString" },
+            "count": {
+              "type": ["object", "null"],
+              "required": ["commits", "capped"],
+              "properties": { "commits": { "type": "integer" }, "capped": { "type": "boolean" } }
+            },
+            "recent": { "type": "array", "items": { "$ref": "#/$defs/commit" } }
+          }
+        },
+        "locks": {
+          "type": "object",
+          "required": ["held_locally"],
+          "properties": {
+            "held_locally": {
+              "type": "array",
+              "items": { "type": "object", "required": ["path", "expires_ms"], "properties": { "path": { "type": "string" }, "expires_ms": { "type": "integer" } } }
+            }
+          }
+        }
+      }
+    },
+    "depRef": {
+      "type": "object",
+      "required": ["zone", "id", "reasons"],
+      "properties": { "zone": { "type": "string" }, "id": { "type": "string" }, "reasons": { "$ref": "#/$defs/stringArray" } }
+    },
+    "commit": {
+      "type": "object",
+      "required": ["id", "change_id", "author", "email", "timestamp", "subject", "parents", "files_changed", "files", "files_truncated"],
+      "properties": {
+        "id": { "type": "string" }, "change_id": { "type": "string" }, "author": { "type": "string" }, "email": { "type": "string" },
+        "timestamp": { "type": "integer" }, "subject": { "type": "string" }, "parents": { "$ref": "#/$defs/stringArray" },
+        "files_changed": { "type": "integer" }, "files_truncated": { "type": "boolean" },
+        "files": {
+          "type": "array",
+          "items": { "type": "object", "required": ["path", "kind"], "properties": { "path": { "type": "string", "description": "Zone-relative" }, "kind": { "enum": ["added", "modified", "deleted"] } } }
+        }
+      }
+    },
+    "transaction": {
+      "type": "object",
+      "required": ["id", "description", "author", "timestamp", "current", "zones_touched", "branch_moves", "subscription_changes"],
+      "properties": {
+        "id": { "type": "string" }, "description": { "type": "string" }, "author": { "type": "string" }, "timestamp": { "type": "integer" },
+        "current": { "type": "boolean" },
+        "zones_touched": { "$ref": "#/$defs/stringArray" },
+        "branch_moves": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["zone", "id", "branch", "from", "to"],
+            "properties": { "zone": { "type": "string" }, "id": { "type": "string" }, "branch": { "type": "string" }, "from": { "$ref": "#/$defs/nullableString" }, "to": { "$ref": "#/$defs/nullableString" } }
+          }
+        },
+        "subscription_changes": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "graph": {
+      "type": "object",
+      "required": ["version", "command", "schema", "nodes", "edges", "cycles", "path_index", "imports_scanned", "notes"],
+      "properties": {
+        "version": { "type": "integer" },
+        "command": { "enum": ["zone-graph"] },
+        "schema": { "enum": ["vcs.zone-ontology/1"] },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "path", "subscribed", "depends_on", "depends_on_transitive", "dependents", "dependents_transitive"],
+            "properties": {
+              "id": { "type": "string" }, "name": { "type": "string" }, "path": { "type": "string" }, "subscribed": { "type": "boolean" },
+              "depends_on": { "$ref": "#/$defs/stringArray" }, "depends_on_transitive": { "$ref": "#/$defs/stringArray" },
+              "dependents": { "$ref": "#/$defs/stringArray" }, "dependents_transitive": { "$ref": "#/$defs/stringArray" }
+            }
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["from", "to", "kind", "reasons"],
+            "properties": { "from": { "type": "string" }, "to": { "type": "string" }, "kind": { "enum": ["depends_on"] }, "reasons": { "$ref": "#/$defs/stringArray" } }
+          }
+        },
+        "cycles": { "type": "array", "items": { "$ref": "#/$defs/stringArray" } },
+        "path_index": {
+          "type": "array",
+          "items": { "type": "object", "required": ["prefix", "zone"], "properties": { "prefix": { "type": "string" }, "zone": { "type": "string" } } }
+        },
+        "imports_scanned": { "type": "boolean" },
+        "notes": { "$ref": "#/$defs/stringArray" }
+      }
+    }
+  }
+}

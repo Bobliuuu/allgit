@@ -94,3 +94,55 @@ fn eval_errors_are_clean() {
     let o = bin().args(["eval"]).output().unwrap();
     assert_eq!(o.status.code(), Some(2));
 }
+
+#[test]
+fn mock_providers_score_without_key_or_network() {
+    let run = |m: &str| {
+        let o = bin().args(["eval", fixtures(), "--mock", m, "--json"]).output().unwrap();
+        assert!(o.status.success(), "{}", all_output(&o));
+        serde_json::from_slice::<serde_json::Value>(&o.stdout).unwrap()
+    };
+    let r = run("refuse");
+    assert_eq!(r["cases"], 5);
+    assert_eq!(r["refused"], 5);
+    assert_eq!(r["exact"], 0);
+    // Taking one side of every conflicting region is deterministic, and never reports "no response".
+    let (a, b) = (run("xours"), run("xours"));
+    assert_eq!(a, b);
+    assert_eq!(a["no_response"], 0);
+    let o = bin().args(["eval", fixtures(), "--mock", "nope"]).output().unwrap();
+    assert_eq!(o.status.code(), Some(2));
+}
+
+#[test]
+fn live_eval_records_raw_responses_for_offline_replay() {
+    let m = Mock::start(vec![ok_text(&resolved(GOOD))]);
+    let d = tempfile::tempdir().unwrap();
+    let c = d.path().join("case1");
+    std::fs::create_dir(&c).unwrap();
+    for (f, v) in [
+        ("base", BASE),
+        ("ours", OURS),
+        ("theirs", THEIRS),
+        ("expected", GOOD),
+        ("path", "src/a.rs\n"),
+    ] {
+        std::fs::write(c.join(f), v).unwrap();
+    }
+    let dir = d.path().to_str().unwrap();
+    let o = bin()
+        .env("ANTHROPIC_API_KEY", KEY)
+        .env("VCS_ASSIST_API_URL", &m.url)
+        .args(["eval", dir, "--live", "--record"])
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", all_output(&o));
+    let rec = std::fs::read_to_string(c.join("response.txt")).unwrap();
+    assert!(rec.contains("<resolved_file>") && !rec.contains(KEY), "{rec}");
+    // The recorded copy reproduces the live verdict offline (no key, no server).
+    let off = bin().args(["eval", dir]).output().unwrap();
+    assert!(String::from_utf8_lossy(&off.stdout).contains("exact-match: 100.0% (1/1)"));
+    // --record without --live is a usage error.
+    let bad = bin().args(["eval", dir, "--record"]).output().unwrap();
+    assert_eq!(bad.status.code(), Some(2));
+}

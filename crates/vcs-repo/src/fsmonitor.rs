@@ -379,14 +379,87 @@ impl FsMonitor for MockMonitor {
     }
 }
 
+/// Digest of the index bytes, the part of a fingerprint that costs time (7 MB at 100k files).
+pub(crate) fn index_digest(index: &[u8]) -> [u8; 32] {
+    *blake3::hash(index).as_bytes()
+}
+
 /// Fingerprint binding a saved state to the exact index, zone layout and subscriptions.
 pub(crate) fn fingerprint(index: &[u8], zones: &[u8], workspace: &[u8]) -> [u8; 32] {
+    fingerprint_with(&index_digest(index), index.len(), zones, workspace)
+}
+
+/// [`fingerprint`] from the index's digest and length, so a remembered digest skips hashing the file.
+pub(crate) fn fingerprint_with(digest: &[u8; 32], index_len: usize, zones: &[u8], workspace: &[u8]) -> [u8; 32] {
     let mut h = blake3::Hasher::new();
-    for part in [index, zones, workspace] {
+    h.update(&(index_len as u64).to_le_bytes());
+    h.update(digest);
+    for part in [zones, workspace] {
         h.update(&(part.len() as u64).to_le_bytes());
         h.update(part);
     }
     *h.finalize().as_bytes()
+}
+
+const DIGEST_CACHE: &str = "ixdigest";
+
+/// Identity of the index file in place (inode, length, mtime, ctime); a rewrite is a rename of a new
+/// file, so any change to the index changes it.
+fn index_identity(vcs: &Path) -> Option<[u8; 32]> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let m = fs::metadata(vcs.join("index")).ok()?;
+        let mut k = [0u8; 32];
+        k[..8].copy_from_slice(&m.ino().to_le_bytes());
+        k[8..16].copy_from_slice(&m.size().to_le_bytes());
+        k[16..24].copy_from_slice(&((m.mtime() as i128 * 1_000_000_000 + m.mtime_nsec() as i128) as u64).to_le_bytes());
+        k[24..].copy_from_slice(&((m.ctime() as i128 * 1_000_000_000 + m.ctime_nsec() as i128) as u64).to_le_bytes());
+        Some(k)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = vcs;
+        None
+    }
+}
+
+/// Remember `digest` as the digest of the index file now in place (best effort).
+pub(crate) fn remember_index_digest(vcs: &Path, digest: &[u8; 32]) {
+    let Some(id) = index_identity(vcs) else { return };
+    let dir = vcs.join(DIR);
+    if !dir.is_dir() {
+        return;
+    }
+    let mut b = id.to_vec();
+    b.extend_from_slice(digest);
+    let _ = crate::meta::write_cache_nosync(&dir.join(DIGEST_CACHE), &b);
+}
+
+/// Digest of `index` (the bytes just read from `vcs/index`): remembered per file identity, hashed
+/// only when the file is not the one last seen. The identity is taken before and after the read of
+/// the cache, and the bytes' length must match, so a file replaced meanwhile is never trusted.
+pub(crate) fn index_digest_cached(vcs: &Path, index: &[u8]) -> [u8; 32] {
+    let Some(id) = index_identity(vcs) else { return index_digest(index) };
+    if let Ok(c) = fs::read(vcs.join(DIR).join(DIGEST_CACHE)) {
+        if c.len() == 64 && c[..32] == id && u64::from_le_bytes(id[8..16].try_into().expect("8 bytes")) == index.len() as u64 {
+            let mut d = [0u8; 32];
+            d.copy_from_slice(&c[32..]);
+            if index_identity(vcs) == Some(id) {
+                return d;
+            }
+        }
+    }
+    let d = index_digest(index);
+    if index_identity(vcs) == Some(id) {
+        let mut b = id.to_vec();
+        b.extend_from_slice(&d);
+        let dir = vcs.join(DIR);
+        if dir.is_dir() {
+            let _ = crate::meta::write_cache_nosync(&dir.join(DIGEST_CACHE), &b);
+        }
+    }
+    d
 }
 
 /// Index files at least this big (about 14,000 entries) are worth a watcher: below it a full
@@ -512,4 +585,34 @@ pub(crate) fn follow_rebinds(vcs: &Path, from: &[u8; 32], to: &[u8; 32]) -> Opti
         cur = next.to_owned();
     }
     None
+}
+
+#[cfg(test)]
+mod digest_cache_tests {
+    use super::*;
+
+    #[test]
+    fn remembered_digest_matches_the_bytes_and_follows_rewrites() {
+        let d = tempfile::tempdir().unwrap();
+        let vcs = d.path();
+        fs::create_dir_all(vcs.join(DIR)).unwrap();
+        let (a, b) = (vec![1u8; 4096], vec![2u8; 4096]); // same length, different content
+        fs::write(vcs.join("index"), &a).unwrap();
+        assert_eq!(index_digest_cached(vcs, &a), index_digest(&a));
+        assert_eq!(index_digest_cached(vcs, &a), index_digest(&a)); // served from the cache
+        // a rewrite (new file renamed over the old) of the same length is not mistaken for the old one
+        let tmp = vcs.join("index.tmp");
+        fs::write(&tmp, &b).unwrap();
+        fs::rename(&tmp, vcs.join("index")).unwrap();
+        assert_eq!(index_digest_cached(vcs, &b), index_digest(&b));
+        // a digest remembered by the writer is the one served
+        remember_index_digest(vcs, &index_digest(&b));
+        assert_eq!(index_digest_cached(vcs, &b), index_digest(&b));
+        // fingerprints with and without the cache agree
+        assert_eq!(
+            fingerprint_with(&index_digest_cached(vcs, &b), b.len(), b"z", b"w"),
+            fingerprint(&b, b"z", b"w")
+        );
+        assert_ne!(fingerprint(&a, b"z", b"w"), fingerprint(&b, b"z", b"w"));
+    }
 }

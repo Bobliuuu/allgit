@@ -344,3 +344,38 @@ fn commit_all(r: &Repo, m: &str) {
     r.add(&["".into()]).unwrap();
     r.commit(m, sig()).unwrap();
 }
+
+#[test]
+fn stored_transaction_pins_what_it_names_and_a_sweep_agrees_with_a_plan() {
+    // The plan and the sweep share what they read about each object (kind, children); the answers must
+    // match a plain plan, a transaction must still be a root, and a dangling reference still counts as missing.
+    let d = tempfile::tempdir().unwrap();
+    let r = Repo::init(&d.path().join("r")).unwrap();
+    commit(&r, "a", "one");
+    let pinned = orphan(&r, b"only a transaction names this");
+    let dangling = vcs_objects::Object::Blob(b"never stored".to_vec()).id();
+    let tx = vcs_objects::Transaction {
+        updates: vec![vcs_objects::RefUpdate {
+            zone: "root".into(),
+            branch: "main".into(),
+            old: Some(dangling),
+            new: pinned,
+        }],
+        author: sig(),
+        message: "tx".into(),
+        lock_ops: vec![],
+    };
+    r.store().put(&Object::Transaction(tx)).unwrap();
+    let garbage = orphan(&r, b"nothing names this");
+    r.store().sync().unwrap();
+    let rep = r.gc_plan_at(later(), 14 * DAY).unwrap();
+    assert_eq!(rep.missing_referenced, 1);
+    assert!(rep.would_delete.iter().any(|x| x.0 == garbage));
+    assert!(!rep.would_delete.iter().any(|x| x.0 == pinned));
+    let run = r.gc_sweep_at(later(), opts()).unwrap();
+    assert_eq!(run.plan.missing_referenced, rep.missing_referenced);
+    assert_eq!(run.plan.reachable, rep.reachable);
+    assert_eq!(run.deleted.iter().map(|x| x.0).collect::<Vec<_>>(), vec![garbage]);
+    assert!(r.store().contains(&pinned).unwrap() && !r.store().contains(&garbage).unwrap());
+    fsck_ok(&r);
+}

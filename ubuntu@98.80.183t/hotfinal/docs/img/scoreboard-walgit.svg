@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300 360" width="1300" height="360" role="img" aria-label="vcs vs walgit (remote workflows and walgit CLI)">
+<style>:root{--bg:#fff;--fg:#1b1f24;--mut:#57606a;--win:#1a7f37;--tie:#9a6700;--loss:#cf222e;--nm:#6e7781;--mis:#8250df;--pill:#f6f8fa}@media (prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--mut:#9da7b3;--win:#3fb950;--tie:#d29922;--loss:#ff7b72;--nm:#8b949e;--mis:#bc8cff;--pill:#161b22}}text{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;fill:var(--fg)}.t{font:600 18px system-ui,sans-serif}.s{font:12px system-ui,sans-serif;fill:var(--mut)}.bg{fill:var(--bg)}.WIN{fill:var(--win)}.TIE{fill:var(--tie)}.LOSS{fill:var(--loss)}.NM{fill:var(--nm)}.MIS{fill:var(--mis)}.r{fill:var(--mut)}</style>
+<rect width="1300" height="360" fill="#ffffff" class="bg"/>
+<text x="20" y="30" class="t" fill="#1b1f24">vcs vs walgit (remote workflows and walgit CLI)</text>
+<text x="20" y="50" class="s" fill="#57606a">ratio = vcs/reference wall; reused from walgit-full-boxc (vcs build 84f3fa2)</text>
+<rect x="20" y="66" width="12" height="12" rx="3" class="WIN" fill="#1a7f37"/><text x="38" y="77" fill="#1b1f24">WIN 20</text>
+<rect x="107" y="66" width="12" height="12" rx="3" class="TIE" fill="#9a6700"/><text x="125" y="77" fill="#1b1f24">TIE 4</text>
+<rect x="194" y="66" width="12" height="12" rx="3" class="LOSS" fill="#cf222e"/><text x="212" y="77" fill="#1b1f24">LOSS 0</text>
+<rect x="290" y="66" width="12" height="12" rx="3" class="NM" fill="#6e7781"/><text x="308" y="77" fill="#1b1f24">NOT-MEASURED 8</text>
+<rect x="458" y="66" width="12" height="12" rx="3" class="MIS" fill="#8250df"/><text x="476" y="77" fill="#1b1f24">MISSING 0</text>
+<rect x="20" y="100" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="36" y="111" fill="#1b1f24">fetch of 1 commit, warm [git file://]</text>
+<text x="412" y="111" text-anchor="end" class="r" fill="#57606a">0.62x</text>
+<rect x="440" y="100" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="456" y="111" fill="#1b1f24">full clone after maintenance, warm [git…</text>
+<text x="832" y="111" text-anchor="end" class="r" fill="#57606a">0.44x</text>
+<rect x="860" y="100" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="876" y="111" fill="#1b1f24">full clone after maintenance, warm [wal…</text>
+<text x="1252" y="111" text-anchor="end" class="r" fill="#57606a">0.43x</text>
+<rect x="20" y="120" width="10" height="14" rx="2" class="TIE" fill="#9a6700"/>
+<text x="36" y="131" fill="#1b1f24">full clone, warm [walgit]</text>
+<text x="412" y="131" text-anchor="end" class="r" fill="#57606a">0.62x</text>
+<rect x="440" y="120" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="456" y="131" fill="#1b1f24">fetch no-op, cold [git file://]</text>
+<text x="832" y="131" text-anchor="end" class="r" fill="#57606a">0.67x</text>
+<rect x="860" y="120" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="876" y="131" fill="#1b1f24">fetch no-op, cold [walgit]</text>
+<text x="1252" y="131" text-anchor="end" class="r" fill="#57606a">0.33x</text>
+<rect x="20" y="140" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="36" y="151" fill="#1b1f24">fetch no-op, warm [git file://]</text>
+<text x="412" y="151" text-anchor="end" class="r" fill="#57606a">0.37x</text>
+<rect x="440" y="140" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="456" y="151" fill="#1b1f24">fetch no-op, warm [walgit]</text>
+<text x="832" y="151" text-anchor="end" class="r" fill="#57606a">0.28x</text>
+<rect x="860" y="140" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="876" y="151" fill="#1b1f24">fetch of 1 commit after maintenance, wa…</text>
+<text x="1252" y="151" text-anchor="end" class="r" fill="#57606a">0.75x</text>
+<rect x="20" y="160" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="36" y="171" fill="#1b1f24">fetch of 1 commit after maintenance, wa…</text>
+<text x="412" y="171" text-anchor="end" class="r" fill="#57606a">0.83x</text>
+<rect x="440" y="160" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="456" y="171" fill="#1b1f24">fetch of 1 commit, cold [git file://]</text>
+<text x="832" y="171" text-anchor="end" class="r" fill="#57606a">0.31x</text>
+<rect x="860" y="160" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="876" y="171" fill="#1b1f24">fetch of 1 commit, cold [walgit]</text>
+<text x="1252" y="171" text-anchor="end" class="r" fill="#57606a">0.19x</text>
+<rect x="20" y="180" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="36" y="191" fill="#1b1f24">fetch of 1 commit, warm [walgit]</text>
+<text x="412" y="191" text-anchor="end" class="r" fill="#57606a">0.76x</text>
+<rect x="440" y="180" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="456" y="191" fill="#1b1f24">full clone, cold [git file://]</text>
+<text x="832" y="191" text-anchor="end" class="r" fill="#57606a">0.34x</text>
+<rect x="860" y="180" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="876" y="191" fill="#1b1f24">full clone, cold [walgit]</text>
+<text x="1252" y="191" text-anchor="end" class="r" fill="#57606a">0.34x</text>
+<rect x="20" y="200" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="36" y="211" fill="#1b1f24">full clone, warm [git file://]</text>
+<text x="412" y="211" text-anchor="end" class="r" fill="#57606a">0.54x</text>
+<rect x="440" y="200" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="456" y="211" fill="#1b1f24">initial push (100k files) [git file://]</text>
+<text x="832" y="211" text-anchor="end" class="r" fill="#57606a">0.12x</text>
+<rect x="860" y="200" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="876" y="211" fill="#1b1f24">initial push (100k files) [walgit]</text>
+<text x="1252" y="211" text-anchor="end" class="r" fill="#57606a">0.09x</text>
+<rect x="20" y="220" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="36" y="231" fill="#1b1f24">partial/zone clone, cold [git file://]</text>
+<text x="412" y="231" text-anchor="end" class="r" fill="#57606a">0.29x</text>
+<rect x="440" y="220" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="456" y="231" fill="#1b1f24">partial/zone clone, cold [walgit]</text>
+<text x="832" y="231" text-anchor="end" class="r" fill="#57606a">0.27x</text>
+<rect x="860" y="220" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="876" y="231" fill="#1b1f24">partial/zone clone, warm [git file://]</text>
+<text x="1252" y="231" text-anchor="end" class="r" fill="#57606a">0.33x</text>
+<rect x="20" y="240" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="36" y="251" fill="#1b1f24">partial/zone clone, warm [walgit]</text>
+<text x="412" y="251" text-anchor="end" class="r" fill="#57606a">0.49x</text>
+<rect x="440" y="240" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="456" y="251" fill="#1b1f24">push of 1 changed file [git file://]</text>
+<text x="832" y="251" text-anchor="end" class="r" fill="#57606a">0.87x</text>
+<rect x="860" y="240" width="10" height="14" rx="2" class="WIN" fill="#1a7f37"/>
+<text x="876" y="251" fill="#1b1f24">push of 1 changed file [walgit]</text>
+<text x="1252" y="251" text-anchor="end" class="r" fill="#57606a">0.40x</text>
+<rect x="20" y="260" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
+<text x="36" y="271" fill="#1b1f24">walgit compact (force, base) [walgit]</text>
+<text x="412" y="271" text-anchor="end" class="r" fill="#57606a">0.03x</text>
+<rect x="440" y="260" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
+<text x="456" y="271" fill="#1b1f24">walgit config ...</text>
+<text x="832" y="271" text-anchor="end" class="r" fill="#57606a"></text>
+<rect x="860" y="260" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
+<text x="876" y="271" fill="#1b1f24">walgit import ...</text>
+<text x="1252" y="271" text-anchor="end" class="r" fill="#57606a"></text>
+<rect x="20" y="280" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
+<text x="36" y="291" fill="#1b1f24">walgit mirror ...</text>
+<text x="412" y="291" text-anchor="end" class="r" fill="#57606a"></text>
+<rect x="440" y="280" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
+<text x="456" y="291" fill="#1b1f24">walgit repo create/list/info/policy/set…</text>
+<text x="832" y="291" text-anchor="end" class="r" fill="#57606a"></text>
+<rect x="860" y="280" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
+<text x="876" y="291" fill="#1b1f24">walgit serve</text>
+<text x="1252" y="291" text-anchor="end" class="r" fill="#57606a"></text>
+<rect x="20" y="300" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
+<text x="36" y="311" fill="#1b1f24">walgit synth ...</text>
+<text x="412" y="311" text-anchor="end" class="r" fill="#57606a"></text>
+<rect x="440" y="300" width="10" height="14" rx="2" class="NM" fill="#6e7781"/>
+<text x="456" y="311" fill="#1b1f24">walgit wal ...</text>
+<text x="832" y="311" text-anchor="end" class="r" fill="#57606a"></text>
+</svg>

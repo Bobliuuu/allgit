@@ -33,11 +33,11 @@ libc = "0.2"
 tempfile.workspace = true
 
 [features]
-default = ["watcher"]
+default = ["watcher", "tls"]
 # A `git`-named binary that runs `vcs git <args>` (docs/git-to-vcs.md). Off by default.
 git-shim = []
 # https:// for s3:// endpoints and for vcs-server remotes (rustls, certificate verification always on).
-# Off by default: the default build has no TLS dependencies and builds offline.
+# On by default (rustls, builds offline); use --no-default-features --features watcher for a TLS-free build.
 tls = ["vcs-store-s3/tls", "vcs-server/tls"]
 # `vcs watch`: inotify/FSEvents daemon that lets `status` skip unchanged files and the untracked walk.
 watcher = ["vcs-repo/watcher"]
