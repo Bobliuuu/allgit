@@ -364,7 +364,7 @@ mod imp {
                 view: OpView {
                     branches: refs.branches.clone(),
                     workspace: ws.subs,
-                    tags: Some(refs.tags.clone()),
+                    tags: Some(refs.tags.clone().into_map()),
                 },
                 description: description.lines().next().unwrap_or("").to_owned(),
                 author: author.clone().unwrap_or_else(crate::ops::env_signature),
