@@ -54,8 +54,35 @@ fn bundle_create_verify_clone_and_incremental_fetch() {
     assert!(fail(root, &["clone", b2.to_str().unwrap(), "d"]).contains("incremental"));
     // a corrupted file is refused
     let mut bytes = std::fs::read(&b2).unwrap();
-    let n = bytes.len() / 2;
+    let n = bytes.len() - 32 - 40; // inside the pack, past the header
     bytes[n] ^= 1;
     std::fs::write(&b2, bytes).unwrap();
-    assert!(fail(root, &["bundle", "verify", b2.to_str().unwrap()]).contains("hash mismatch"));
+    let b2s = b2.to_str().unwrap();
+    assert!(fail(root, &["bundle", "verify", "--full", b2s]).contains("hash mismatch"));
+    // the default verify is the cheap one (documented gap: it does not read the pack body) ...
+    let out = ok(root, &["bundle", "verify", b2s]);
+    assert!(out.contains("quick") && out.contains("--full"), "{out}");
+    assert!(ok(root, &["bundle", "verify", "--quick", b2s]).contains("quick"));
+    // ... but the receiver always hashes everything, so the corrupt bundle is never applied
+    assert!(fail(&c, &["fetch", b2s]).contains("hash mismatch"));
+}
+
+#[test]
+fn full_and_quick_agree_on_a_good_bundle_and_conflict_as_flags() {
+    let d = tempfile::tempdir().unwrap();
+    let root = d.path();
+    ok(root, &["init", "a"]);
+    let a = root.join("a");
+    std::fs::write(a.join("f"), "x").unwrap();
+    ok(&a, &["add", "."]);
+    ok(&a, &["commit", "-m", "one"]);
+    let b = root.join("g.bundle");
+    let bs = b.to_str().unwrap();
+    ok(&a, &["bundle", "create", bs]);
+    let q = ok(root, &["bundle", "verify", bs]);
+    let f = ok(root, &["bundle", "verify", "--full", bs]);
+    let head = |s: &str| s.lines().take_while(|l| !l.starts_with("ok")).collect::<Vec<_>>().join("\n");
+    assert_eq!(head(&q), head(&f));
+    assert!(f.trim_end().ends_with("ok"), "{f}");
+    fail(root, &["bundle", "verify", "--full", "--quick", bs]);
 }

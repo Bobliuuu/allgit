@@ -147,3 +147,50 @@ fn ls_files_depth_one_lists_the_top_tree_only() {
         .status
         .success());
 }
+
+/// `ls-files --rev` must equal the index listing and the `--json` path, including names where
+/// tree order is not path order
+/// (`a/x` is stored before `a.b` in a tree but sorts after it as a path) and with several zones.
+#[test]
+fn ls_files_rev_stream_matches_the_index_and_the_json_list() {
+    let t = tempfile::tempdir().unwrap();
+    ok(t.path(), &["init", "r"]);
+    let d = t.path().join("r");
+    ok(&d, &["zone", "create", "engine", "--path", "engine"]);
+    for p in [
+        "a/x",
+        "a.b",
+        "a-c",
+        "a/y/z",
+        "a/y.w",
+        "b",
+        "engine/core.rs",
+        "engine/e/f",
+        "engine/e.g",
+        "z/1",
+        "z0",
+    ] {
+        let f = d.join(p);
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(f, format!("{p}\n")).unwrap();
+    }
+    ok(&d, &["add", "."]);
+    ok(&d, &["commit", "-m", "tricky"]);
+    for extra in [&[][..], &["-s"][..], &["a"][..], &["-s", "engine"][..], &["a/y", "z"][..]] {
+        let mut idx = vec!["ls-files"];
+        idx.extend_from_slice(extra);
+        let mut rev = vec!["ls-files", "--rev", "HEAD"];
+        rev.extend_from_slice(extra);
+        assert_eq!(ok(&d, &rev), ok(&d, &idx), "{extra:?}");
+    }
+    let v = js(&d, &["ls-files", "--rev", "HEAD"]);
+    let from_json: Vec<String> = v["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap().to_owned())
+        .collect();
+    let text = ok(&d, &["ls-files", "--rev", "HEAD"]);
+    assert_eq!(text.lines().map(str::to_owned).collect::<Vec<_>>(), from_json);
+    assert!(from_json.windows(2).all(|w| w[0] < w[1]), "{from_json:?}");
+}
