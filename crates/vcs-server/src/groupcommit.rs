@@ -105,6 +105,15 @@ impl Chain {
         }
     }
 
+    /// Drop the links that start at any of `tags` (the batch committer's virtual intermediate versions).
+    pub fn forget(&mut self, tags: &[String]) {
+        let set: std::collections::HashSet<&String> = tags.iter().collect();
+        for t in tags {
+            self.links.remove(t);
+        }
+        self.order.retain(|t| !set.contains(t));
+    }
+
     /// Reconcile `n`, a write based on version `base_tag`, with the current version `cur` (tag `cur_tag`).
     /// Returns the manifest to validate and store instead, or `None` when the write cannot be merged.
     pub fn merge(&self, base_tag: &str, cur_tag: &str, cur: &Manifest, n: &Manifest) -> Option<Manifest> {

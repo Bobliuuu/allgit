@@ -153,6 +153,10 @@ struct Shared {
     /// The decoded form of the manifest version in `manifest_cache` when this process wrote it.
     manifest_parsed: Mutex<Option<(String, Arc<Manifest>)>>,
     merged_writes: AtomicU64,
+    /// Manifest writes waiting for the next batch commit (flat combining, see `manifest_combine`).
+    batch_q: Mutex<Vec<BatchItem>>,
+    batches: AtomicU64,
+    batched_writes: AtomicU64,
     limiter: Option<Limiter>,
     fail_throttle: Option<crate::ratelimit::FailThrottle>,
     per_ip: Mutex<std::collections::HashMap<std::net::IpAddr, usize>>,
@@ -246,6 +250,9 @@ impl Server {
             manifest_write: Mutex::new(Default::default()),
             manifest_parsed: Mutex::new(None),
             merged_writes: AtomicU64::new(0),
+            batch_q: Mutex::new(Vec::new()),
+            batches: AtomicU64::new(0),
+            batched_writes: AtomicU64::new(0),
             cfg,
             active: AtomicUsize::new(0),
             inflight_body: AtomicUsize::new(0),
@@ -369,6 +376,13 @@ impl Server {
         Handle(self.shared.clone())
     }
     /// Manifest writes whose `If-Match` was stale and that the server reconciled instead of answering 412.
+    /// (batch commits, writes they carried): writes / batches is the mean batch size.
+    pub fn batch_stats(&self) -> (u64, u64) {
+        (
+            self.shared.batches.load(Ordering::Relaxed),
+            self.shared.batched_writes.load(Ordering::Relaxed),
+        )
+    }
     pub fn merged_writes(&self) -> u64 {
         self.shared.merged_writes.load(Ordering::Relaxed)
     }
@@ -1189,6 +1203,197 @@ fn object_delete(sh: &Shared, who: &Principal, key: &str) -> Response {
     }
 }
 
+struct BatchItem {
+    body: Vec<u8>,
+    if_match: Option<String>,
+    who: Principal,
+    tx: std::sync::mpsc::Sender<(Response, Extra)>,
+}
+
+/// Flat-combining group commit for manifest writes. Every writer enqueues its write; whoever then takes the
+/// manifest lock becomes the leader, drains the queue, folds every write into ONE manifest (each validated
+/// against the result of the ones before it, stale ones reconciled by the same rules as `groupcommit`), stores it
+/// with ONE compare-and-swap and answers everyone. Under load the batch is whatever queued up during the previous
+/// store round trip, so a slow store (S3, ~50 ms per PUT) carries many writes per request instead of one; with a
+/// single writer the batch is 1 and nothing waits (no timer window). A write that cannot be folded in (conflict,
+/// invalid, unknown base) gets exactly the answer it got before (412 or 4xx) and the client retries as before.
+fn manifest_combine(sh: &Shared, req: &Request, who: &Principal, if_match: Option<String>, extra: &mut Extra) -> Response {
+    let (tx, rx) = std::sync::mpsc::channel();
+    sh.batch_q.lock().unwrap_or_else(|e| e.into_inner()).push(BatchItem {
+        body: req.body.clone(),
+        if_match,
+        who: who.clone(),
+        tx,
+    });
+    loop {
+        if let Ok((r, e)) = rx.try_recv() {
+            *extra = e;
+            return r;
+        }
+        let guard = match sh.manifest_write.try_lock() {
+            Ok(g) => Some(g),
+            Err(std::sync::TryLockError::Poisoned(p)) => Some(p.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => None,
+        };
+        match guard {
+            Some(mut chain) => {
+                if let Ok((r, e)) = rx.try_recv() {
+                    *extra = e;
+                    return r;
+                }
+                let items = std::mem::take(&mut *sh.batch_q.lock().unwrap_or_else(|e| e.into_inner()));
+                if !items.is_empty() {
+                    run_batch(sh, &mut chain, items);
+                }
+            }
+            None => {
+                if let Ok((r, e)) = rx.recv_timeout(Duration::from_millis(2)) {
+                    *extra = e;
+                    return r;
+                }
+            }
+        }
+    }
+}
+
+fn run_batch(sh: &Shared, chain: &mut crate::groupcommit::Chain, items: Vec<BatchItem>) {
+    let key = manifest::KEY;
+    let n = items.len();
+    let mut out: Vec<Option<(Response, Extra)>> = (0..n).map(|_| None).collect();
+    let finish = |items: Vec<BatchItem>, out: Vec<Option<(Response, Extra)>>| {
+        for (it, o) in items.into_iter().zip(out) {
+            let _ = it
+                .tx
+                .send(o.unwrap_or_else(|| (text(500, "internal: no batch result"), Extra::default())));
+        }
+    };
+    // The version this batch builds on: the one this process knows, else read it.
+    let known = sh.manifest_cache.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let (t0, bytes0) = match known {
+        Some(k) => k,
+        None => match sh.backend.get(key) {
+            Ok(Some(v)) => {
+                sh.manifest_remember(&v.tag, Some(&v.data));
+                (v.tag, Arc::new(v.data))
+            }
+            Ok(None) => {
+                for o in out.iter_mut() {
+                    *o = Some((Response::new(412, ""), Extra::default()));
+                }
+                return finish(items, out);
+            }
+            Err(e) => {
+                for o in out.iter_mut() {
+                    *o = Some((backend_err(e.clone()), Extra::default()));
+                }
+                return finish(items, out);
+            }
+        },
+    };
+    let cur0: Arc<Manifest> = match sh.manifest_parsed(&t0) {
+        Some(m) => m,
+        None => match Manifest::decode(&bytes0) {
+            Ok(m) => Arc::new(m),
+            Err(e) => {
+                for o in out.iter_mut() {
+                    *o = Some((text(500, &format!("stored manifest invalid: {e}")), Extra::default()));
+                }
+                return finish(items, out);
+            }
+        },
+    };
+    let vcfg = sh.validator.read().unwrap_or_else(|e| e.into_inner()).clone();
+    let mut acc = cur0.clone();
+    let mut acc_tag = t0.clone();
+    let mut virt: Vec<String> = Vec::new();
+    let mut accepted: Vec<(usize, Vec<Rewrite>)> = Vec::new();
+    for (i, it) in items.iter().enumerate() {
+        let mut ex = Extra::default();
+        let decoded = match Manifest::decode(&it.body) {
+            Ok(m) => m,
+            Err(e) => {
+                out[i] = Some((text(422, &format!("Invalid: {e}")), ex));
+                continue;
+            }
+        };
+        let mut new = if it.if_match.as_deref() == Some(acc_tag.as_str()) {
+            decoded
+        } else {
+            let merged = it.if_match.as_deref().and_then(|b| chain.merge(b, &acc_tag, &acc, &decoded));
+            match merged {
+                Some(m) => {
+                    sh.merged_writes.fetch_add(1, Ordering::Relaxed);
+                    m
+                }
+                None => {
+                    out[i] = Some((Response::new(412, ""), ex));
+                    continue;
+                }
+            }
+        };
+        if sh.cfg.audit.is_some() {
+            ex.policy = Some(vcfg.policy.hash());
+        }
+        let mut rw = Vec::new();
+        if let Err(r) = validate_and_report(sh.backend.as_ref(), &acc, &mut new, &it.who, (sh.cfg.clock)(), &vcfg, Some(&mut rw)) {
+            if matches!(r, Reject::LockedBy { .. } | Reject::LockRequired { .. }) {
+                sh.metrics.lock_conflicts.fetch_add(1, Ordering::Relaxed);
+            }
+            ex.reason = Some(match &r {
+                Reject::Forbidden(_) => "policy",
+                Reject::LockedBy { .. } => "lock",
+                Reject::LockRequired { .. } => "lock-required",
+                Reject::Invalid(_) => "invalid",
+                Reject::Unavailable(_) => "unavailable",
+            });
+            out[i] = Some((reject_response(r), ex));
+            continue;
+        }
+        ex.vtime = Some(new.time_hw);
+        let next_tag = format!("batch{}:{}", i, t0);
+        chain.record(&acc_tag, &acc, &next_tag, &new);
+        virt.push(acc_tag.clone());
+        acc = Arc::new(new);
+        acc_tag = next_tag;
+        out[i] = Some((Response::new(200, ""), ex));
+        accepted.push((i, rw));
+    }
+    // drop the virtual links; the real one (t0 -> stored tag) is recorded below on success
+    virt.push(acc_tag.clone());
+    chain.forget(&virt);
+    if accepted.is_empty() {
+        return finish(items, out);
+    }
+    let body = acc.encode();
+    match sh.backend.put_if_match(key, &body, &t0) {
+        Ok(Some(t)) => {
+            sh.batches.fetch_add(1, Ordering::Relaxed);
+            sh.batched_writes.fetch_add(accepted.len() as u64, Ordering::Relaxed);
+            chain.record(&t0, &cur0, &t, &acc);
+            sh.manifest_remember(&t, Some(&body));
+            *sh.manifest_parsed.lock().unwrap_or_else(|e| e.into_inner()) = Some((t.clone(), acc.clone()));
+            for (i, rw) in &accepted {
+                audit_rewrites(sh, &items[*i].who, rw);
+                if let Some((r, _)) = out[*i].as_mut() {
+                    *r = Response::new(200, "").with("ETag", etag(&t));
+                }
+            }
+        }
+        res => {
+            sh.manifest_remember("", None);
+            for (i, _) in &accepted {
+                if let Some((r, _)) = out[*i].as_mut() {
+                    *r = match &res {
+                        Ok(_) => Response::new(412, ""),
+                        Err(e) => backend_err(e.clone()),
+                    };
+                }
+            }
+        }
+    }
+    finish(items, out)
+}
+
 fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str, extra: &mut Extra) -> Response {
     if who.role < Role::Write {
         return text(403, "Forbidden: read-only principal");
@@ -1219,6 +1424,9 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str, extra: &mu
         }
     }
     let is_manifest = key == manifest::KEY;
+    if is_manifest && !if_none && sh.cfg.group_commit {
+        return manifest_combine(sh, req, who, if_match, extra);
+    }
     let mut if_match = if_match;
     // One manifest write at a time per process: concurrent clients queue here instead of losing the swap.
     let mut chain_guard = if is_manifest && !if_none {
