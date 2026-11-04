@@ -16,6 +16,10 @@ use vcs_repo::{Error, Repo, SyncAction, ROOT_ZONE};
 pub const HINTS_FILE: &str = ".vcs-profile-hints.toml";
 /// New zones a `--auto` run adds when neither a flag nor the hints say otherwise.
 pub const DEFAULT_MAX_ZONES: usize = 8;
+/// Newest commits per zone the co-change miner reads, and how far apart (seconds) two commits with one author and message may be.
+const COCHANGE_COMMITS: usize = 300;
+const COCHANGE_WINDOW_S: u64 = 120;
+const COCHANGE_MAX_GROUP: usize = 8;
 
 #[derive(Args, Clone, Default)]
 pub struct BudgetArgs {
@@ -320,6 +324,8 @@ fn compute(repo: &Repo, backend: Option<&dyn Backend>, o: &Opts) -> Result<Compu
     for (from, to) in inv.deps.edges.keys() {
         graph.add(from, to);
     }
+    // co-change from the commits every zone already has locally (no request): zones committed together by one author with one message
+    graph.cochange = zp::mine_cochange(&repo.cochange_records(COCHANGE_COMMITS)?, COCHANGE_WINDOW_S, COCHANGE_MAX_GROUP);
     let ranked = zp::rank(&profile, &hints, &graph, &names, &params);
     let ws = repo.workspace()?;
     let mut always: BTreeSet<String> = ws.subs.keys().cloned().collect();
@@ -473,28 +479,34 @@ fn fetch_metadata(repo: &Repo, backend: &dyn Backend) -> Result<Vec<String>, Err
 /// skipped list (never dropped silently).
 fn apply(repo: &Repo, backend: &dyn Backend, c: &mut Computed) -> Result<(), Error> {
     let rr = repo.remote_refs()?;
-    let mut keep = Vec::new();
-    for h in std::mem::take(&mut c.plan.hot) {
-        if repo.workspace()?.subs.contains_key(&h.zone) {
-            keep.push(h);
-            continue;
-        }
-        if rr.head(&h.zone, vcs_repo::DEFAULT_BRANCH).is_none() {
+    let hot = std::mem::take(&mut c.plan.hot);
+    let subscribed = repo.workspace()?.subs;
+    let names: Vec<String> = hot
+        .iter()
+        .filter(|h| !subscribed.contains_key(&h.zone) && rr.head(&h.zone, vcs_repo::DEFAULT_BRANCH).is_some())
+        .map(|h| h.zone.clone())
+        .collect();
+    // One download for all chosen zones; the order of `hot` (hottest first) is kept.
+    let mut results: BTreeMap<String, Result<(), Error>> = repo.zones_add_fetching(backend, &names).into_iter().collect();
+    for h in hot {
+        if subscribed.contains_key(&h.zone) {
+            c.plan.hot.push(h);
+        } else if rr.head(&h.zone, vcs_repo::DEFAULT_BRANCH).is_none() {
             c.plan.skipped.push(zp::Choice {
                 why: "no `main` branch on the remote".into(),
                 ..h
             });
-            continue;
-        }
-        match repo.zone_add_fetching(backend, &h.zone, None) {
-            Ok(()) => keep.push(h),
-            Err(e) => c.plan.skipped.push(zp::Choice {
-                why: format!("could not add: {e}"),
-                ..h
-            }),
+        } else {
+            match results.remove(&h.zone) {
+                Some(Ok(())) => c.plan.hot.push(h),
+                Some(Err(e)) => c.plan.skipped.push(zp::Choice {
+                    why: format!("could not add: {e}"),
+                    ..h
+                }),
+                None => unreachable!("one result per zone"),
+            }
         }
     }
-    c.plan.hot = keep;
     Ok(())
 }
 
@@ -631,6 +643,7 @@ fn sync_inner(a: &SyncAuto) -> Result<(), Error> {
         extra: a.auto_profile.clone(),
     };
     let mut st = Stages::new(a.stats, &ct);
+    mark_auto(&repo);
     let idx = vcs_remote::IdxCacheBackend::new(&ct, repo.profile_state_dir().join("remote-idx"));
     let ct2: &dyn Backend = &idx;
     fetch_metadata(&repo, ct2)?;
@@ -713,6 +726,9 @@ fn clone_auto_inner(url: &str, dir: &Path, stats: bool, explain: bool, dry_run: 
     let mut st = Stages::new(stats, &ct);
     let repo = Repo::clone_from(&ct, &url, &dest, Some(&[ROOT_ZONE.to_owned()]))?;
     st.mark("clone of the root zone");
+    if !dry_run {
+        mark_auto(&repo);
+    }
     let idx = vcs_remote::IdxCacheBackend::new(&ct, repo.profile_state_dir().join("remote-idx"));
     let ct2: &dyn Backend = &idx;
     fetch_metadata(&repo, ct2)?;
@@ -970,6 +986,109 @@ fn run_inner(c: &ProfileCmd) -> Result<(), Error> {
         }
     }
     Ok(())
+}
+
+// ------------------------------------------------------------------ fetch on access
+
+/// File in the common dir that says this repository was set up or synced with `--auto`: only then is an
+/// unsubscribed zone "skipped" (a deliberate `clone --zone` is left alone).
+const AUTO_MARKER: &str = "profile-auto";
+
+fn mark_auto(repo: &Repo) {
+    let _ = std::fs::write(repo.profile_state_dir().join(AUTO_MARKER), b"1\n");
+}
+
+fn autofetch_off() -> bool {
+    crate::config::Config::load().ok().and_then(|c| c.get("profile.autofetch")).is_some_and(|v| matches!(v.as_str(), "off" | "false" | "0"))
+}
+
+/// Zones a command is about to need file contents of: `zone checkout Z`, and the zone that owns each path named by
+/// `add/rm/restore/mv/blame`. Pure, so it is unit tested: `owner` maps a repo-relative path to its zone.
+fn zones_needed(cmd: &Cmd, rel: &dyn Fn(&str) -> Option<String>, owner: &dyn Fn(&str) -> String, resolve: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut path = |p: &str| {
+        if let Some(r) = rel(p) {
+            let z = owner(&r);
+            if z != ROOT_ZONE && !out.contains(&z) {
+                out.push(z);
+            }
+        }
+    };
+    match cmd {
+        Cmd::Add { paths, .. } | Cmd::Rm { paths, .. } | Cmd::Restore { paths, .. } => paths.iter().for_each(|p| path(p)),
+        Cmd::Mv { src, dst, .. } => {
+            path(src);
+            path(dst);
+        }
+        Cmd::Blame { path: p, .. } => path(p),
+        Cmd::Zone(ZoneCmd::Checkout { zone, .. }) => {
+            if let Some(z) = resolve(zone) {
+                if z != ROOT_ZONE && !out.contains(&z) {
+                    out.push(z);
+                }
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+/// Transparent fetch-on-access: before a command runs, a zone it names (or whose path it names) that `--auto` skipped is fetched
+/// and subscribed, with a line on stderr saying so. Best effort and quiet when there is nothing to do: a failure prints a warning
+/// and the command then runs (and fails) as it would have. Off with `VCS_AUTOFETCH=off` or `vcs config set profile.autofetch off`.
+/// Returns the zone ids fetched. Contents of a skipped zone that a read command (`show`, `log -p`, `diff`) needs are fetched one
+/// object at a time by the missing-object path in `run_lazy`, which does not subscribe the zone.
+pub fn ensure_access(cmd: &Cmd) -> Vec<String> {
+    if autofetch_off() {
+        return vec![];
+    }
+    let probe = matches!(
+        cmd,
+        Cmd::Add { .. } | Cmd::Rm { .. } | Cmd::Restore { .. } | Cmd::Mv { .. } | Cmd::Blame { .. } | Cmd::Zone(ZoneCmd::Checkout { .. })
+    );
+    if !probe {
+        return vec![];
+    }
+    let Ok((repo, cwd)) = open() else { return vec![] };
+    if !repo.profile_state_dir().join(AUTO_MARKER).exists() {
+        return vec![];
+    }
+    match ensure_access_inner(&repo, &cwd, cmd) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("warning: could not fetch a skipped zone on access: {e}");
+            vec![]
+        }
+    }
+}
+
+fn ensure_access_inner(repo: &Repo, cwd: &Path, cmd: &Cmd) -> Result<Vec<String>, Error> {
+    let zones = repo.zones()?;
+    let want = zones_needed(
+        cmd,
+        &|p| repo.rel_path(cwd, p).ok(),
+        &|r| zones.owner(r).to_owned(),
+        &|n| zones.resolve(n),
+    );
+    let ws = repo.workspace()?;
+    let rr = repo.remote_refs()?;
+    let want: Vec<String> = want
+        .into_iter()
+        .filter(|z| !ws.subs.contains_key(z) && rr.head(z, vcs_repo::DEFAULT_BRANCH).is_some())
+        .collect();
+    if want.is_empty() {
+        return Ok(vec![]);
+    }
+    let backend = remote::open_memo(&need_remote(repo)?, false)?;
+    let mut done = Vec::new();
+    for z in want {
+        eprintln!("zone {} was skipped by --auto; fetching it now (`vcs profile skipped` lists the others)", zones.label(&z));
+        repo.fetch(&backend, Some(std::slice::from_ref(&z)))?;
+        repo.zone_add_fetching(&backend, &z, None)?;
+        let _ = repo.profile_record(Kind::Read, now_ms(), &[(z.clone(), String::new())]);
+        done.push(z);
+    }
+    Ok(done)
 }
 
 // ------------------------------------------------------------------ automatic recording

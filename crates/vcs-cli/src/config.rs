@@ -29,6 +29,11 @@ pub const KEYS: &[(&str, &str, &str)] = &[
         "VCS_MERGE_RENAMES",
         "on/off: detect renames in merge/rebase (default off)",
     ),
+    (
+        "profile.autofetch",
+        "VCS_AUTOFETCH",
+        "on/off: fetch a zone that `--auto` skipped when a command names it or a path in it (default on; docs/zone-profile.md)",
+    ),
     ("log.default-format", "VCS_LOG_FORMAT", "full or oneline (default full)"),
     (
         "remote.default",

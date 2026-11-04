@@ -99,7 +99,25 @@ Reading, with the tie rule:
 
 * Real network latency or bandwidth; real S3; an https remote; concurrent clients.
 * git request counts; git wire bytes (only on-disk growth).
-* Hit rate on real usage. Memory use. The profile file's effect on commands other than `status`.
+* Hit rate on real usage by people with a recording profile (the commit-history proxy is in [zone-profile-hitrate.md](zone-profile-hitrate.md)). Memory use. The profile file's effect on commands other than `status`.
 * Larger monorepos than 100k files or smaller packs than the ones here: `--auto` requests grow with the number of zones whose manifests are read
   and with the pack count; on a 12-zone, 2,400-file test the full clone needed 4 to 7 requests and `--auto` 31 (see `crates/vcs-cli/tests/zoneprofile.rs`, bytes were
   lower, requests higher).
+
+## Update (#465 follow-ups): fewer planning requests
+
+A/B with the same repository and server, local 50 zones x 100 files (5,051 files), persona profile as above, debug-optimized binaries,
+`clone --auto-profile --stats` (requests / bytes downloaded):
+
+| stage | before | after |
+|---|---|---|
+| root zone | 6 / 497 KB | 6 / 497 KB |
+| commits and trees of all zones | 4 / 265 KB | 4 / 265 KB |
+| planning (manifests, sizes) | 22 / 1.0 KB | 14 / 0.8 KB |
+| contents of the 7 chosen zones | 21 / 1.26 MB | 6 / 1.26 MB |
+| **total** | **53 / 2.03 MB** | **30 / 2.03 MB** |
+
+Cause: every planning read and every zone's contents built its own pack catalog (one listing request each, plus per-pack checks), and the
+contents were downloaded zone by zone. Now one catalog serves the process and `Repo::zones_add_fetching` fetches the files of all chosen zones in
+one batch. `profile fetch z02` is unchanged at 4 requests / 183 KB. Bytes are equal. The remaining planning requests are one ranged read per
+manifest blob (they sit far apart in the pack) in up to three dependency rounds. One run each, loopback server: request counts are exact, wall time was not measured.

@@ -741,6 +741,42 @@ impl Repo {
         self.zone_add(&z, branch)
     }
 
+    /// [`Self::zone_add_fetching`] for several zones with ONE download: the missing file blobs of every zone are collected first and
+    /// fetched in a single batch over the process-wide pack catalog (one listing, parallel ranged reads across zones), then each zone
+    /// is subscribed. Returns one result per zone, in order; a zone that cannot be added (no head, a path in the way) fails alone.
+    /// If the shared batch itself fails, each zone is retried on its own so the error lands on the zone that causes it.
+    pub fn zones_add_fetching(&self, backend: &dyn Backend, zones: &[String]) -> Vec<(String, Result<()>)> {
+        use vcs_store::ObjectStore;
+        let mut files = BTreeSet::new();
+        let mut collect = || -> Result<()> {
+            let ws = self.workspace()?;
+            let defs = self.zones()?;
+            let (refs, rr) = (self.refs()?, self.remote_refs()?);
+            for z in zones {
+                let z = self.resolve_zone(z)?;
+                let head = refs.head(&z, crate::meta::DEFAULT_BRANCH).or(rr.head(&z, crate::meta::DEFAULT_BRANCH));
+                if let Some(h) = head.filter(|h| self.store.contains(h).unwrap_or(false)) {
+                    let root = self.commit_obj(&h)?.root;
+                    self.collect_missing_files(root, defs.path_of(&z).unwrap_or(""), ws.sparse.get(&z), &mut files)?;
+                }
+            }
+            Ok(())
+        };
+        let idx = vcs_remote::IdxCacheBackend::new(backend, self.common.join("remote-idx"));
+        let batched = collect().and_then(|()| self.prefetch_ids_with(&idx, &self.counters.packs, std::mem::take(&mut files)).map(|_| ()));
+        zones
+            .iter()
+            .map(|z| {
+                let r = if batched.is_ok() {
+                    self.resolve_zone(z).and_then(|id| self.zone_add(&id, None))
+                } else {
+                    self.zone_add_fetching(backend, z, None)
+                };
+                (z.clone(), r)
+            })
+            .collect()
+    }
+
     /// Download, in one batch, every file blob (and chunk of a chunked file) reachable from the
     /// tree `root` that is not already stored. Trees must be present (fetch stores them eagerly).
     /// Returns how many objects were fetched. Every object is hash-verified before it is stored.

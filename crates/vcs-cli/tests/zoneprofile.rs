@@ -527,3 +527,47 @@ fn json_output_is_one_document_per_command() {
     // without --json nothing changed
     assert!(ok(&auto, &["profile", "show"]).contains("recording: on"));
 }
+
+#[test]
+fn a_command_that_names_a_skipped_zone_fetches_it_transparently() {
+    let t = tempfile::tempdir().unwrap();
+    let remote = format!("file://{}", t.path().join("remote").display());
+    publisher(t.path(), &remote);
+    let prof = t.path().join("p");
+    seed_profile(&prof);
+    ok(t.path(), &["clone", &remote, "c", "--auto-profile", prof.to_str().unwrap()]);
+    let c = t.path().join("c");
+    assert!(!c.join("crates/billing").exists() && !c.join("crates/legacy").exists());
+
+    // opt out: nothing is fetched behind your back (the command just fails as before)
+    let o = Command::new(env!("CARGO_BIN_EXE_vcs"))
+        .args(["restore", "crates/legacy/src/f0.rs"])
+        .current_dir(&c)
+        .env("VCS_AUTOFETCH", "off")
+        .env("VCS_NO_CACHE", "1")
+        .output()
+        .unwrap();
+    assert!(!c.join("crates/legacy/src/f0.rs").exists(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(ok(&c, &["profile", "skipped"]).contains("legacy"));
+
+    // a path inside the skipped zone: fetched, subscribed, then the command runs
+    let o = vcs(&c, &["blame", "crates/billing/src/f1.rs"]);
+    let err = String::from_utf8_lossy(&o.stderr); // blame itself refuses the binary test file; the fetch comes first
+    assert!(err.contains("billing was skipped by --auto; fetching it now"), "{err}");
+    assert_eq!(std::fs::read(c.join("crates/billing/src/f1.rs")).unwrap(), noise(4 * 100 + 1, 6000));
+    assert!(!ok(&c, &["profile", "skipped"]).contains("billing"));
+
+    // `zone checkout` names a zone
+    let o = vcs(&c, &["zone", "checkout", "legacy", "main"]);
+    assert!(String::from_utf8_lossy(&o.stderr).contains("legacy was skipped by --auto"), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(c.join("crates/legacy/src/f0.rs").exists());
+    // once subscribed it is silent
+    let o = vcs(&c, &["blame", "crates/legacy/src/f1.rs"]);
+    assert!(!String::from_utf8_lossy(&o.stderr).contains("skipped by --auto"));
+    ok(&c, &["fsck"]);
+
+    // a repository that never used --auto is left alone: an unsubscribed zone there is a choice
+    ok(t.path(), &["clone", &remote, "plain", "--zone", "root"]);
+    let o = vcs(&t.path().join("plain"), &["blame", "crates/docs/src/f0.rs"]);
+    assert!(!String::from_utf8_lossy(&o.stderr).contains("skipped by --auto"));
+}
