@@ -315,6 +315,12 @@ pub struct LocalStore {
     #[cfg(unix)]
     spill: Mutex<Option<std::sync::Arc<SpillFile>>>,
     seq: AtomicU64,
+    /// id -> (put order, is_blob) of every pending loose candidate. `sync` publishes non-blobs in put
+    /// order (children are always put before their parents), so a crash mid-barrier can never leave a
+    /// tree/commit visible under its final name while an object it names is still missing.
+    order: Mutex<HashMap<ObjectId, (u64, bool)>>,
+    /// Test hook: fail `sync` after this many non-blob renames, as a kill -9 mid-barrier would.
+    rename_crash_after: Mutex<Option<usize>>,
     packs: RwLock<Vec<Pack>>,
     /// `packs` holds the pack directory's contents. Loaded on first use: a command that only reads
     /// refs (`branch`, `tag`, `stash list`) never opens a pack index.
@@ -488,6 +494,8 @@ impl LocalStore {
             #[cfg(unix)]
             spill: Mutex::new(None),
             seq: AtomicU64::new(0),
+            order: Mutex::new(HashMap::new()),
+            rename_crash_after: Mutex::new(None),
             packs: RwLock::new(Vec::new()),
             packs_ready: std::sync::atomic::AtomicBool::new(false),
             touch_after: DEFAULT_TOUCH_AFTER,
@@ -526,6 +534,10 @@ impl LocalStore {
         self.touch_after
     }
     #[doc(hidden)]
+    #[doc(hidden)]
+    pub fn set_rename_crash_after(&self, n: Option<usize>) {
+        *self.rename_crash_after.lock().unwrap() = n;
+    }
     pub fn set_sweep_crash(&self, c: Option<SweepCrash>) {
         *self.sweep_crash.lock().unwrap() = c;
     }
@@ -927,6 +939,14 @@ impl LocalStore {
             return Ok(());
         }
         let len = (head.len() + tail.len()) as u64;
+        {
+            let kind = head.first().or(tail.first()).copied();
+            let n = self.seq.fetch_add(1, Ordering::Relaxed);
+            self.order
+                .lock()
+                .unwrap()
+                .insert(id, (n, kind == Some(vcs_objects::Kind::Blob as u8)));
+        }
         if len >= BIG_OBJECT {
             // Big objects (chunks of large files) go straight to their own temporary file: no copy through
             // the memory budget or the spill file, and `sync` publishes them as loose files (renaming a
@@ -1213,6 +1233,7 @@ impl ObjectStore for LocalStore {
             #[cfg(unix)]
             self.end_spill();
             if pending.is_empty() {
+                self.order.lock().unwrap().clear();
                 return Ok(());
             }
             // big objects written to their own files are published as loose files below
@@ -1260,6 +1281,15 @@ impl ObjectStore for LocalStore {
         // 2. publish under final names (data is already durable, so a visible name is complete).
         let mut dirs = BTreeSet::new();
         let mut moves = Vec::with_capacity(pending.len());
+        let mut ord_of: HashMap<&PathBuf, (u64, bool)> = HashMap::new();
+        {
+            let ord = self.order.lock().unwrap();
+            for (id, p) in pending.iter() {
+                if let (Pend::File(f), Some(o)) = (p, ord.get(id)) {
+                    ord_of.insert(f, *o);
+                }
+            }
+        }
         for (id, tmp) in pending
             .iter()
             .filter_map(|(i, p)| if let Pend::File(f) = p { Some((i, f)) } else { None })
@@ -1274,8 +1304,35 @@ impl ObjectStore for LocalStore {
             }
             moves.push((tmp, dest));
         }
-        // rename over an existing identical object is atomic and harmless (another writer won).
-        par_try_each(&moves, |(tmp, dest)| io(dest, fs::rename(tmp, dest)))?;
+        // Crash safety: blobs have no links, so they are renamed first (in parallel). Everything else
+        // (trees, commits, transactions, ...) follows one by one in put order, children before
+        // parents, so a kill -9 between renames leaves only complete subgraphs under final names. A
+        // half-published batch must never contain a tree whose child is missing: a later `put` of the
+        // same tree would dedup against it and silently build a corrupt commit on top.
+        // Renaming over an existing identical object is atomic and harmless (another writer won).
+        {
+            let mut keyed: Vec<(bool, u64, &(&PathBuf, PathBuf))> = moves
+                .iter()
+                .map(|m| {
+                    let (n, blob) = ord_of.get(&m.0).copied().unwrap_or((u64::MAX, false));
+                    (!blob, n, m)
+                })
+                .collect();
+            keyed.sort_by_key(|k| (k.0, k.1));
+            let split = keyed.partition_point(|k| !k.0);
+            let blobs: Vec<&(&PathBuf, PathBuf)> = keyed[..split].iter().map(|k| k.2).collect();
+            par_try_each(&blobs, |m| io(&m.1, fs::rename(m.0, &m.1)))?;
+            let crash = *self.rename_crash_after.lock().unwrap();
+            for (n, k) in keyed[split..].iter().enumerate() {
+                if crash == Some(n) {
+                    return Err(StoreError::Io {
+                        path: k.2 .1.clone(),
+                        source: std::io::Error::other("simulated crash mid-barrier"),
+                    });
+                }
+                io(&k.2 .1, fs::rename(k.2 .0, &k.2 .1))?;
+            }
+        }
         // 3. directory entries (renames, new fan-out dirs) durable before anything refers to them.
         // The object dir is always flushed (a fan-out dir may have been created by anyone, and its
         // entry must be durable before a ref names the object). tmp/ only lost entries: a surviving
@@ -1291,6 +1348,7 @@ impl ObjectStore for LocalStore {
             io(&self.dir, hardware_flush(&f))?;
         }
         pending.clear();
+        self.order.lock().unwrap().clear();
         self.pend_mem.store(0, Ordering::Relaxed);
         Ok(())
     }
@@ -1430,6 +1488,35 @@ mod tests {
         assert!(r.is_err());
         par_sync_each(&[] as &[u8], |_| Ok(())).unwrap();
         par_sync_each(&[1u8], |_| Ok(())).unwrap();
+    }
+
+    /// A kill -9 between the renames of one small barrier must never leave a tree under its final name
+    /// while a child it names is missing (a later put would dedup against it and build on a hole).
+    #[test]
+    fn crash_mid_barrier_never_publishes_a_parent_before_its_children() {
+        use vcs_objects::{EntryMode, Tree, TreeEntry};
+        for crash_at in 0..3 {
+            let d = tempfile::tempdir().unwrap();
+            let s = LocalStore::open(d.path()).unwrap();
+            let blob = s.put_blob(b"leaf").unwrap();
+            let mut ids = vec![blob];
+            let mut child = blob;
+            for depth in 0..3 {
+                let mode = if depth == 0 { EntryMode::File } else { EntryMode::Directory };
+                let t = Tree::new(vec![TreeEntry { name: format!("e{depth}"), mode, id: child }]).unwrap();
+                child = s.put(&Object::Tree(t)).unwrap();
+                ids.push(child);
+            }
+            s.set_rename_crash_after(Some(crash_at));
+            assert!(s.sync().is_err());
+            // reopen: what is visible must be closed under "names"
+            let s2 = LocalStore::open(d.path()).unwrap();
+            for (i, id) in ids.iter().enumerate() {
+                if s2.contains(id).unwrap() && i > 0 {
+                    assert!(s2.contains(&ids[i - 1]).unwrap(), "crash_at {crash_at}: object {i} visible without its child");
+                }
+            }
+        }
     }
 
     #[test]
