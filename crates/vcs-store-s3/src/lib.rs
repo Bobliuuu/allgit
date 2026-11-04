@@ -146,6 +146,11 @@ pub struct S3Backend {
     /// `s3express`, and per-session credentials from CreateSession (see `session`).
     express: bool,
     session: std::sync::Mutex<Option<Session>>,
+    /// Set by the probe when the provider creates a missing key on `PUT If-Match` instead of answering 404/412 (seen on a
+    /// MinIO 2025-05 build; AWS S3 answers 404). `put_if_match` then looks the key up first, so a CAS on a missing key still
+    /// fails. Not atomic against a concurrent create of that key, which only matters for keys that are deleted and recreated
+    /// (the manifest never is). Unknown (false) when a passed probe is remembered for an https endpoint.
+    cas_creates_missing: std::sync::atomic::AtomicBool,
 }
 
 /// CreateSession credentials of a directory bucket (valid 5 minutes; refreshed after [`SESSION_REFRESH`]).
@@ -226,6 +231,7 @@ impl S3Backend {
             anchor: Default::default(),
             express,
             session: std::sync::Mutex::new(None),
+            cas_creates_missing: Default::default(),
         })
     }
 
@@ -311,9 +317,20 @@ impl S3Backend {
                 Resp::Status(c, m) => return Err(fail(c, m)),
             }
             match put(&[("if-match", etag.as_str())])? {
-                Resp::Ok { .. } => Ok(()),
-                Resp::Status(c, m) => Err(fail(c, m)),
+                Resp::Ok { .. } => {}
+                Resp::Status(c, m) => return Err(fail(c, m)),
             }
+            // a CAS on a key that does not exist must fail; some providers create it instead
+            let missing = format!("{}.vcs-probe/{}", self.cfg.prefix, nonce());
+            match self.send("PUT", &missing, &[], &[("if-match", "\"00000000000000000000000000000000\"")], b"probe")? {
+                Resp::Status(404 | 412 | 409, _) => {}
+                Resp::Ok { .. } => {
+                    self.cas_creates_missing.store(true, std::sync::atomic::Ordering::Relaxed);
+                    let _ = self.send("DELETE", &missing, &[], &[], b"");
+                }
+                Resp::Status(c, m) => return Err(fail(c, m)),
+            }
+            Ok(())
         })();
         // best-effort cleanup regardless of outcome
         let _ = self.send("DELETE", &key, &[], &[], b"");
@@ -693,6 +710,9 @@ impl Backend for S3Backend {
         let k = self.full_key(key)?;
         if tag.contains(['\r', '\n']) {
             return Err(BackendError::Other("invalid tag".into()));
+        }
+        if self.cas_creates_missing.load(std::sync::atomic::Ordering::Relaxed) && !self.exists(key)? {
+            return Ok(None);
         }
         match self.send("PUT", &k, &[], &[("if-match", tag)], data)? {
             Resp::Ok { etag, .. } => etag.map(Some).ok_or_else(|| BackendError::Other("PUT without ETag".into())),

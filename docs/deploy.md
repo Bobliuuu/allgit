@@ -106,10 +106,15 @@ sudo install -m 0755 target/release/vcs-server /usr/local/bin/vcs-server
 sudo install -d -o vcs -g vcs /var/lib/vcs/data
 sudo install -d /etc/vcs && sudo install -m 0640 -g vcs deploy/tokens.example /etc/vcs/tokens   # then edit
 sudo install -m 0644 deploy/policy.example /etc/vcs/policy                                       # then edit
+head -c 24 /dev/urandom | base64 | tr -d '=+/' | sudo install -m 0640 -g vcs /dev/stdin /etc/vcs/metrics-token   # >= 16 chars; the unit reads it
 sudo install -m 0644 deploy/vcs-server.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now vcs-server
 curl -s http://127.0.0.1:8480/readyz       # ready
 ```
+
+The unit needs `/bin/kill` for `ExecReload` (package `procps`; present on any normal host, missing from minimal container images) and
+the `/etc/vcs/metrics-token` file (the server refuses to start with a token under 16 characters; drop `--metrics-token` from
+`ExecStart` if you do not scrape metrics). Both were found by running it, see "Verified" below.
 
 For S3 put `AWS_ACCESS_KEY_ID=` / `AWS_SECRET_ACCESS_KEY=` in `/etc/vcs/server.env` (mode 0600) and swap `--root` for
 `--backend` in the unit.
@@ -122,8 +127,57 @@ docker run -d --name vcs -p 127.0.0.1:8480:8480 -v vcs-data:/data \
   -v $PWD/tokens:/etc/vcs/tokens:ro vcs-server
 ```
 
-The image runs as an unprivileged user and listens on 0.0.0.0 inside the container; publish the port on loopback or a
-private interface only. (The Dockerfile and unit file were written for this document but not built or started in CI.)
+The image runs as an unprivileged user (uid 10001) and listens on 0.0.0.0 inside the container; publish the port on loopback or a
+private interface only. `.dockerignore` keeps `target*`, `.git`, `fuzz` and `docs/img` out of the build context.
+
+## Verified: Docker image, systemd unit, MinIO (issue #216)
+
+Run on a Mac with Docker Desktop 28.4 (linux/arm64), nothing outside the machine. Reproduce with the commands below; the tests
+that take part are `crates/vcs-cli/tests/server_e2e.rs::cli_workflow_against_an_external_server` (the full CLI workflow: init, publish,
+clone, locks, a refused publish, fetch, sync, 401/403 checks, token never in `.vcs/`) and
+`crates/vcs-server/tests/external.rs` (`conformance` and `conformance_gc` over HTTP). Both are skipped unless
+`VCS_TEST_SERVER_URL` points at a running server whose tokens file lists `alice` and `bob` (write), `rita` (read) and `root`
+(admin) with the tokens `tok-alice`, `tok-bob`, `tok-rita`, `tok-root` (`vcs-server hash-token tok-alice` gives the hash).
+
+| Check | Result |
+|---|---|
+| `docker build -f deploy/Dockerfile .` | builds from a clean cache; image 140 MB (debian bookworm-slim + one 2.5 MB static-ish binary) |
+| container, directory backend (`--root /data`, volume) | runs as uid 10001; `HEALTHCHECK` goes `healthy` (it uses `/readyz`); e2e workflow, `conformance`, `conformance_gc`: pass |
+| container, S3 backend against MinIO (`--backend 's3://vcs-test/PREFIX?endpoint=http://host.docker.internal:9000'`, keys in `AWS_*`) | starts (the conditional-write probe passes); e2e workflow and `conformance_gc`: pass; `conformance`: pass after the fix below |
+| systemd unit on a Debian 12 host with systemd as PID 1 (a privileged container, binary taken from the image) | `systemd-analyze verify` clean; `Type=notify` reaches `active` (READY=1 received); main process runs as `vcs`; `/readyz` 200; e2e and conformance pass through it; `systemctl reload` keeps it active; `systemctl stop` logs `draining`, `shutdown complete` and ends `Result=success`, exit status 0, in 0.15 s |
+
+Problems found by doing this and fixed here: the unit's `ExecReload=/bin/kill` fails on a host without `procps`; the unit's
+`--metrics-token @/etc/vcs/metrics-token` file was never created by the instructions (the server then exits 2 with
+`--metrics-token must be at least 16 characters`); no `.dockerignore` (the build context copied a checked-in `target-main/`).
+Not tested: a real VM boot, SELinux/AppArmor profiles, `--features tls` in the image (the Dockerfile builds the default
+plain-HTTP server), a bare-metal systemd's cgroup limits (the sandbox directives `ProtectSystem=strict`, `SystemCallFilter`,
+`MemoryDenyWriteExecute` did apply inside the container host and the server ran under them).
+
+```sh
+docker build -f deploy/Dockerfile -t vcs-server .
+# tokens: alice/bob write, rita read, root admin, tokens tok-<name>
+for n in alice bob rita root; do echo "$n $( [ $n = rita ] && echo read || { [ $n = root ] && echo admin || echo write; } ) * $(docker run --rm vcs-server hash-token tok-$n)"; done > /tmp/tokens
+docker run -d --name vcs-fs -p 127.0.0.1:8480:8480 -v /tmp/tokens:/etc/vcs/tokens:ro vcs-server
+VCS_TEST_SERVER_URL=http://127.0.0.1:8480 cargo test -p vcs-cli --test server_e2e external   # empty remote first
+VCS_TEST_SERVER_URL=http://127.0.0.1:8480 cargo test -p vcs-server --test external
+```
+
+### MinIO (the #232 leftover) and what it showed
+
+MinIO no longer publishes `minio/minio` on Docker Hub or Quay. The run used `bitnamilegacy/minio:latest` (MinIO
+`DEVELOPMENT.2025-05-24T17-08-30Z`, root credential `minioadmin`) with `VCS_TEST_S3_ENDPOINT=http://127.0.0.1:9000`:
+
+* `-p vcs-store-s3 --test gc_s3`: `s3_conformance_gc` and the sweeper scenario pass (the #232 item).
+* `-p vcs-store-s3 --test s3`: 17 of 17 pass after two fixes. (1) **This MinIO creates a missing key on `PUT If-Match: <anything>`**
+  (AWS answers 404), which broke `conformance` ("CAS on missing key fails"). `S3Backend::connect` now probes for it and, only for
+  such a provider, `put_if_match` looks the key up first. That is not atomic against a concurrent create of the same key, which is
+  harmless for the manifest (it is never deleted and recreated); stale-ETag CAS on an existing key is atomic and was always right.
+  (2) Two assertions in `minio_publish_fetch_and_sparse_request_counts` had gone stale (full fetch makes fewer requests than a
+  sparse one now, and test blobs compress); they compare bytes only.
+* `-p vcs-store-s3 --test manifest_denied`: `bucket_policy_denies_manifest_writes_on_a_real_s3_server` **fails on MinIO**: the root
+  credential is not subject to bucket policy, so the probe correctly reports `Allowed`. The self-check did its job; to test the
+  policy on MinIO give the server a non-root user. Still verified on RustFS 1.0.4 only.
+* `-p vcs-cli --test server_e2e` with the S3 variable set: directory, S3 and external-server workflows pass.
 
 ## TLS, audit log, rate limit
 
@@ -140,7 +194,7 @@ vcs remote set https://vcs.example.com:8480
 Certificates are always verified. After renewing the certificate files run `systemctl reload vcs-server` (add
 `ExecReload=/bin/kill -HUP $MAINPID` to the unit) or `kill -HUP`; no restart, no dropped connections. For mutual TLS add
 `--tls-client-ca <pem>` on the server and set `remote.sslcert`/`remote.sslkey` on clients; the token is still required.
-Do not tell users the link is encrypted unless it is: with the default CLI build an `https://` remote is refused.
+Do not tell users the link is encrypted unless it is: a CLI built with `--no-default-features` refuses an `https://` remote (it says so) instead of silently using plain HTTP.
 Audit log (`--audit-log`, `--audit-key`) and rate limiting (`--rate-limit <burst>,<per-sec>`, `--max-connections`) are
 documented in [server.md](server.md); add them to `ExecStart` as needed.
 
@@ -203,5 +257,5 @@ count towards the breaker.
 `VCS_TEST_S3_ENDPOINT=http://127.0.0.1:9000 cargo test -p vcs-cli --test server_e2e` runs the CLI workflow against
 `vcs-server --backend s3://...` (and `-p vcs-store-s3 --test s3` runs the backend conformance suite). Credentials default
 to `minioadmin`/`minioadmin`; override with `VCS_TEST_S3_ACCESS_KEY`/`VCS_TEST_S3_SECRET_KEY`. MinIO's public binaries are
-no longer distributed, so any S3-compatible server that honours conditional writes works, e.g.
+no longer distributed as binaries or as the `minio/minio` image (see "Verified" for a working image), so any S3-compatible server that honours conditional writes works, e.g.
 `pip install 'moto[server]' && moto_server -p 9000` (this is what the maintainers' CI box used; the bucket is created by the test).

@@ -224,13 +224,15 @@ fn minio_publish_fetch_and_sparse_request_counts() {
     assert!(dst.contains(&eng).unwrap());
     assert!(!dst.contains(&assets).unwrap());
 
-    // full fetch of everything costs strictly more requests and bytes than the sparse one
+    // full fetch of everything costs strictly more bytes than the sparse one. Request counts are printed, not asserted: the
+    // full fetch batches objects into ranged reads and can make fewer requests than the sparse one (it used to be strictly more).
     let (r1, b1) = (remote.requests(), remote.bytes_read());
     let full = MemoryStore::new();
     fetch_heads(&remote, &full, None).unwrap();
     assert!(full.contains(&assets).unwrap());
-    assert!(remote.requests() - r1 > sparse_reqs);
-    assert!(remote.bytes_read() - b1 > 400_000);
+    eprintln!("sparse {sparse_reqs} requests, full {}", remote.requests() - r1);
+    // (the generated blobs compress now, so the old absolute 400 KB bound no longer holds)
+    assert!(remote.bytes_read() - b1 > sparse_bytes);
 
     // subscribing later fetches only what is missing
     fetch_heads(&remote, &dst, Some(&["assets".to_string()])).unwrap();

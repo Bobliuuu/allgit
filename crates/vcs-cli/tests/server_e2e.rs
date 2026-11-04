@@ -238,3 +238,16 @@ fn cli_workflow_against_vcs_server_on_s3() {
     );
     scenario(t.path(), &srv.url);
 }
+
+/// A server somebody else started (the Docker image, a systemd host: docs/deploy.md "Verified").
+/// `VCS_TEST_SERVER_URL` must point at an EMPTY remote whose tokens file lists alice, bob (write), rita
+/// (read) and root (admin) with the tokens `tok-<name>`. Not run otherwise.
+#[test]
+fn cli_workflow_against_an_external_server() {
+    let Ok(url) = std::env::var("VCS_TEST_SERVER_URL") else {
+        eprintln!("skipping: VCS_TEST_SERVER_URL not set (see docs/deploy.md)");
+        return;
+    };
+    let t = tempfile::tempdir().unwrap();
+    scenario(t.path(), &url);
+}

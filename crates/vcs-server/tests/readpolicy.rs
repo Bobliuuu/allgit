@@ -1,6 +1,6 @@
 //! Zone-level read policy (`allow-read` / `deny-read`): what a restricted token can and cannot read,
 //! including requests crafted to get around the check. Residual leakage is asserted too, so the
-//! documentation in docs/server.md stays honest (manifest and ids stay visible).
+//! documentation in docs/server.md stays honest (a write token still sees the whole manifest; a read-only token sees a filtered one).
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -242,11 +242,44 @@ fn new_history_and_policy_reload() {
 }
 
 #[test]
-fn residual_leakage_is_what_the_docs_say() {
+fn read_only_token_gets_a_manifest_without_the_zones_it_may_not_read() {
     let f = setup("allow-read rita art **\n");
     let rita = cl(&f, "t-rita");
-    // the manifest names every zone and head: ids of denied zones are visible, content is not
     let m = Manifest::decode(&rita.get("manifest").unwrap().unwrap().data).unwrap();
+    assert_eq!(m.head("art", "main"), Some(f.art_commit));
+    assert_eq!(m.head("code", "main"), None, "head id of a denied zone must not be served");
+    assert!(m.zones.contains_key("art") && !m.zones.contains_key("code"));
+    assert!(m.snapshots.is_empty() && m.applied.is_empty());
+    // a range of the manifest is cut from the filtered bytes, not the stored ones
+    let full = rita.get("manifest").unwrap().unwrap().data;
+    let part = rita.get_range("manifest", 0, 16).unwrap().unwrap();
+    assert_eq!(&part[..], &full[..16.min(full.len())]);
+    let (code, body) = raw(&f, "t-rita", "GET", "/v1/o/manifest?offset=0&len=100000");
+    assert_eq!(code, 200);
+    assert!(!body.contains(&f.code_commit.to_hex()), "denied head id in a ranged read");
+    assert!(!String::from_utf8_lossy(&full).contains(&f.code_commit.to_hex()));
+    // admins and the stored manifest are untouched
+    let stored = f.mem.get("manifest").unwrap().unwrap().data;
+    assert_eq!(cl(&f, "t-root").get("manifest").unwrap().unwrap().data, stored);
+}
+
+#[test]
+fn a_writer_under_a_read_policy_still_gets_the_exact_manifest() {
+    // a writer needs the stored bytes for its compare-and-swap; hiding zones from it is not possible (docs/server.md)
+    let f = setup("deny-read * code **\n");
+    let stored = f.mem.get("manifest").unwrap().unwrap().data;
+    assert_eq!(cl(&f, "t-alice").get("manifest").unwrap().unwrap().data, stored);
+    let m = Manifest::decode(&cl(&f, "t-rita").get("manifest").unwrap().unwrap().data).unwrap();
+    assert_eq!(m.head("code", "main"), None);
+    assert!(m.head("art", "main").is_some());
+}
+
+#[test]
+fn residual_leakage_is_what_the_docs_say() {
+    let f = setup("deny-read * code **\n");
+    // a write token must see the real manifest: ids of denied zones are visible, content is not
+    let alice = cl(&f, "t-alice");
+    let m = Manifest::decode(&alice.get("manifest").unwrap().unwrap().data).unwrap();
     assert_eq!(m.head("code", "main"), Some(f.code_commit));
-    assert!(rita.get(&object_key(&f.code_commit)).unwrap().is_none());
+    assert!(alice.get(&object_key(&f.code_commit)).unwrap().is_none());
 }
