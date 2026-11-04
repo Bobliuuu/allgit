@@ -215,3 +215,146 @@ fn reloaded_certificate_serves_new_connections() {
     assert!(c2().whoami().is_ok(), "new certificate is served after reload");
     assert!(c1().whoami().is_err(), "old certificate is gone");
 }
+
+// ---- certificate revocation and subject-to-principal mapping ----
+
+fn ca_with_crl_sign(name: &str) -> Ca {
+    let mut p = CertificateParams::new(vec![]).unwrap();
+    p.distinguished_name.push(rcgen::DnType::CommonName, name);
+    p.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    p.key_usages = vec![rcgen::KeyUsagePurpose::KeyCertSign, rcgen::KeyUsagePurpose::CrlSign];
+    let key = KeyPair::generate().unwrap();
+    Ca {
+        cert: p.self_signed(&key).unwrap(),
+        key,
+    }
+}
+
+/// A client leaf with subject CN `cn` and serial `serial`.
+fn client_leaf(ca: &Ca, cn: &str, serial: u64) -> Cert {
+    let mut p = CertificateParams::new(vec![]).unwrap();
+    p.distinguished_name.push(rcgen::DnType::CommonName, cn);
+    p.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+    p.serial_number = Some(rcgen::SerialNumber::from(serial));
+    let key = KeyPair::generate().unwrap();
+    let c = p.signed_by(&key, &ca.cert, &ca.key).unwrap();
+    Cert {
+        cert_pem: c.pem(),
+        key_pem: key.serialize_pem(),
+    }
+}
+
+fn crl_pem(ca: &Ca, revoked: &[u64]) -> String {
+    let now = time::OffsetDateTime::now_utc();
+    let params = rcgen::CertificateRevocationListParams {
+        this_update: now - time::Duration::hours(1),
+        next_update: now + time::Duration::days(30),
+        crl_number: rcgen::SerialNumber::from(1u64),
+        issuing_distribution_point: None,
+        revoked_certs: revoked
+            .iter()
+            .map(|s| rcgen::RevokedCertParams {
+                serial_number: rcgen::SerialNumber::from(*s),
+                revocation_time: now - time::Duration::minutes(5),
+                reason_code: Some(rcgen::RevocationReason::KeyCompromise),
+                invalidity_date: None,
+            })
+            .collect(),
+        key_identifier_method: rcgen::KeyIdMethod::Sha256,
+    };
+    params.signed_by(&ca.cert, &ca.key).unwrap().pem().unwrap()
+}
+
+#[test]
+fn revoked_client_certificate_is_refused_and_a_reload_applies_a_new_crl() {
+    let ca = ca_with_crl_sign("crl ca");
+    let server = leaf(&ca, &["localhost"], false);
+    let good = client_leaf(&ca, "alice", 1001);
+    let bad = client_leaf(&ca, "alice", 1002);
+    let ca_pem = ca.cert.pem();
+    let build = |crl: &str| {
+        vcs_server::tls::server_config_mtls_crl(
+            server.cert_pem.as_bytes(),
+            server.key_pem.as_bytes(),
+            ca_pem.as_bytes(),
+            crl.as_bytes(),
+        )
+        .unwrap()
+    };
+    let (srv, port) = start_cfg(build(&crl_pem(&ca, &[1002])));
+    let url = format!("https://localhost:{port}");
+    let with = |c: &Cert| {
+        HttpBackend::with_tls(
+            &url,
+            "t-alice",
+            Some(ca_pem.as_bytes()),
+            Some((c.cert_pem.as_bytes(), c.key_pem.as_bytes())),
+        )
+        .unwrap()
+    };
+    assert_eq!(with(&good).whoami().unwrap(), "alice write *");
+    assert!(with(&bad).whoami().is_err(), "revoked certificate must not connect");
+    // SIGHUP path: a CRL that also lists the good certificate takes effect for new connections
+    srv.reload_tls(build(&crl_pem(&ca, &[1001, 1002])));
+    assert!(with(&good).whoami().is_err());
+    // junk in the CRL file is a configuration error, not "no revocation"
+    assert!(vcs_server::tls::server_config_mtls_crl(
+        server.cert_pem.as_bytes(),
+        server.key_pem.as_bytes(),
+        ca_pem.as_bytes(),
+        b"not a crl"
+    )
+    .is_err());
+}
+
+#[test]
+fn client_certificate_subject_must_map_to_the_token_principal() {
+    let ca = make_ca("map ca");
+    let server = leaf(&ca, &["localhost"], false);
+    let alice = client_leaf(&ca, "alice-laptop", 7);
+    let mallory = client_leaf(&ca, "mallory-laptop", 8);
+    let nameless = {
+        // a certificate with two CNs is ambiguous and never maps
+        let mut p = CertificateParams::new(vec![]).unwrap();
+        p.distinguished_name.push(rcgen::DnType::CommonName, "alice-laptop");
+        p.distinguished_name.push(rcgen::DnType::CommonName, "other");
+        p.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+        let key = KeyPair::generate().unwrap();
+        let c = p.signed_by(&key, &ca.cert, &ca.key).unwrap();
+        Cert {
+            cert_pem: c.pem(),
+            key_pem: key.serialize_pem(),
+        }
+    };
+    let ca_pem = ca.cert.pem();
+    let mut cfg = Config::new(TokenTable::from_entries(vec![(
+        "t-alice",
+        Principal {
+            name: "alice".into(),
+            role: Role::Write,
+            zones: None::<BTreeSet<String>>,
+        },
+    )]));
+    cfg.tls = Some(vcs_server::tls::server_config_mtls(server.cert_pem.as_bytes(), server.key_pem.as_bytes(), ca_pem.as_bytes()).unwrap());
+    cfg.client_cert_map = Some(Arc::new(
+        vcs_server::certmap::ClientCertMap::parse("alice-laptop alice\nmallory-laptop mallory\n").unwrap(),
+    ));
+    cfg.header_timeout = Duration::from_secs(2);
+    let srv = Server::start(Arc::new(MemBackend::new()), cfg, "127.0.0.1:0").unwrap();
+    let url = format!("https://localhost:{}", srv.local_addr().port());
+    let with = |c: &Cert| {
+        HttpBackend::with_tls(
+            &url,
+            "t-alice",
+            Some(ca_pem.as_bytes()),
+            Some((c.cert_pem.as_bytes(), c.key_pem.as_bytes())),
+        )
+        .unwrap()
+    };
+    assert_eq!(with(&alice).whoami().unwrap(), "alice write *");
+    // mallory's certificate is valid and mapped, but not to the principal that owns this token
+    let e = with(&mallory).whoami().unwrap_err().to_string();
+    assert!(e.contains("403"), "{e}");
+    let e = with(&nameless).whoami().unwrap_err().to_string();
+    assert!(e.contains("403"), "{e}");
+}

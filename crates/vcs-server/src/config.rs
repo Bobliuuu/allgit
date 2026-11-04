@@ -23,6 +23,8 @@ pub const KEYS: &[&str] = &[
     "tls-cert",
     "tls-key",
     "tls-client-ca",
+    "tls-client-crl",
+    "tls-client-map",
     "log-format",
     "log-level",
     "shutdown-grace",
