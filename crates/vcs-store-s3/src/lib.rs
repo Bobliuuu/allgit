@@ -101,14 +101,14 @@ impl S3Config {
 /// range fetches and uploads use several at once).
 const POOL: usize = 16;
 
-/// Objects at least this large go up as a multipart upload (see `put_multipart`). Only on `https://` endpoints (real
-/// services); `VCS_S3_MULTIPART_MB` overrides in MiB, 0 disables.
+/// Objects at least this large go up as a multipart upload (see `put_multipart`). OFF by default: the upload logic is
+/// covered by no test against a real service yet (the measurement run lost its credentials before it could be
+/// validated). `VCS_S3_MULTIPART_MB=16` enables it from 16 MiB up, `https://` endpoints only; 0 or unset disables.
 fn multipart_threshold() -> u64 {
     static V: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *V.get_or_init(|| match std::env::var("VCS_S3_MULTIPART_MB").ok().and_then(|v| v.trim().parse::<u64>().ok()) {
-        Some(0) => u64::MAX,
+        Some(0) | None => u64::MAX,
         Some(mb) => mb << 20,
-        None => 16 << 20,
     })
 }
 
