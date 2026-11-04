@@ -92,6 +92,20 @@ backend) and pack tests (old orphan pack deleted, young one kept, pack with a li
 Still not covered: readers (fetch/clone) slower than the grace period
 can lose objects of a replaced head; clock-rate skew (A1 is assumed, not tested); real S3.
 
+## Reachability cache for the mark (issue #509, local gc)
+
+`.vcs/gc-reach` (`"AGRB"`, version 1, blake3-checked, written after every destructive local sweep that found no missing
+object) holds the sorted list of every object the sweep scanned, a bitmap over it of the reachable ones (closed under
+children), a bitmap of the Transaction objects, and the roots of that mark. The next gc whose roots are a superset of the
+stored roots takes `closure(roots) = marked + closure(new roots)`: only objects created since the last sweep are read
+(the mark and the transaction scan used to read and decompress every object). If an old root is gone (a deleted
+branch, an index entry that changed) the cache is not used and the full mark runs and rewrites it, so it can never make
+gc delete a reachable object; it can only fall back. A missing, truncated, wrong-version or corrupt file is ignored.
+`Repo::set_reach_cache(false)` disables it (tests compare both). 100,000 commits / 293k objects, `vcs gc` CPU:
+17.9 s -> 0.48 s (wall 48 s -> 1.6 s) on the second gc. Not done: per-root bitmaps (so that a removed root also
+reuses the cache), clone/fetch negotiation (there is no have/want walk in this protocol: fetch compares manifests and
+packs, nothing walks history, so there is nothing for a bitmap to replace), server-side `gc --remote` mark.
+
 ## Roots
 
 Local (`Repo::gc_plan`, all covered by tests unless noted):
