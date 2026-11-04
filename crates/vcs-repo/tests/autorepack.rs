@@ -80,10 +80,10 @@ fn packs_only_old_loose_objects_and_keeps_everything_readable() {
 fn a_held_lock_skips_the_repack() {
     let (_d, r) = repo_with(10);
     let lock = r.worktree().join(".vcs/lock");
-    fs::write(&lock, "pid 1\n").unwrap();
+    let held = vcs_store::proclock::try_lock(&lock).unwrap().unwrap();
     let later = SystemTime::now() + Duration::from_secs(7200);
     assert_eq!(r.auto_repack_at(later, 0, Duration::ZERO, true).unwrap(), None);
     assert!(loose(&r) > 0);
-    fs::remove_file(&lock).unwrap();
+    drop(held);
     assert!(r.auto_repack_at(later, 0, Duration::ZERO, true).unwrap().unwrap() > 0);
 }

@@ -2,11 +2,11 @@ use crate::backend::{validate_key, Backend, BackendError, Versioned};
 use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Directory-backed authoritative backend (a shared filesystem or a local "remote").
-/// Create-only uses `hard_link` (atomic, fails if target exists). CAS is serialized by an
-/// `O_EXCL` lock file; the version tag is the BLAKE3 of the content (so ABA with identical
+/// Create-only uses `hard_link` (atomic, fails if target exists). CAS is serialized by a kernel
+/// `flock` on `.cas.lock` (released on process death); the version tag is the BLAKE3 of the content (so ABA with identical
 /// content is harmless: the swap would be a no-op change of state).
 pub struct FsBackend {
     root: PathBuf,
@@ -42,28 +42,15 @@ impl FsBackend {
         f.sync_all().map_err(err)?;
         Ok(p)
     }
-    fn lock(&self) -> Result<LockFile, BackendError> {
+    /// Crash-safe CAS lock: kernel `flock` on a persistent `.cas.lock` (see `vcs_store::proclock`).
+    /// A SIGKILLed holder releases it automatically; the file is never removed.
+    fn lock(&self) -> Result<vcs_store::proclock::ProcLock, BackendError> {
         let p = self.root.join(".cas.lock");
-        let start = Instant::now();
-        loop {
-            match fs::OpenOptions::new().write(true).create_new(true).open(&p) {
-                Ok(_) => return Ok(LockFile(p)),
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if start.elapsed() > Duration::from_secs(10) {
-                        return Err(BackendError::Unavailable("CAS lock busy (stale .cas.lock?)".into()));
-                    }
-                    std::thread::sleep(Duration::from_millis(2));
-                }
-                Err(e) => return Err(err(e)),
-            }
+        match vcs_store::proclock::lock_timeout(&p, Duration::from_secs(10)) {
+            Ok(Some(l)) => Ok(l),
+            Ok(None) => Err(BackendError::Unavailable("CAS lock busy (held by a live process)".into())),
+            Err(e) => Err(err(e)),
         }
-    }
-}
-
-struct LockFile(PathBuf);
-impl Drop for LockFile {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
     }
 }
 
@@ -158,6 +145,14 @@ impl Backend for FsBackend {
     }
     fn supports_gc(&self) -> bool {
         true
+    }
+    fn local_flock(&self, name: &str) -> Result<crate::backend::LocalFlock, BackendError> {
+        use crate::backend::LocalFlock;
+        match vcs_store::proclock::try_lock(&self.root.join(format!(".{name}.flock"))) {
+            Ok(Some(l)) => Ok(LocalFlock::Acquired(Box::new(l))),
+            Ok(None) => Ok(LocalFlock::Held),
+            Err(e) => Err(err(e)),
+        }
     }
     fn now_ms(&self) -> Result<u64, BackendError> {
         Ok(ms(std::time::SystemTime::now()))

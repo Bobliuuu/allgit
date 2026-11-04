@@ -12,9 +12,7 @@ pub enum Error {
     Io { path: PathBuf, source: std::io::Error },
     #[error("not inside a vcs repository (no .vcs directory found)")]
     NotARepo,
-    #[error(
-        "repository lock held: {0}\nAnother vcs process is running, or one crashed. If you are sure none is running, delete that file."
-    )]
+    #[error("repository lock held: {0}\nAnother live vcs process holds it (a crashed process releases it automatically).")]
     Locked(PathBuf),
     #[error("repository state corrupt: {0}")]
     Corrupt(String),

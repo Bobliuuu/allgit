@@ -435,7 +435,9 @@ mod keep_tests {
             vec!["a".into(), "b/c".into(), "d/e/f".into()],
             vec!["a/b".into(), "a".into()],
         ];
-        let paths = ["a", "a/b", "ab", "a/bc", "b", "b/c", "b/c/d", "b/cd", "d/e", "d/e/f", "d/e/f/g", "d/e/fg", "x/y"];
+        let paths = [
+            "a", "a/b", "ab", "a/bc", "b", "b/c", "b/c/d", "b/cd", "d/e", "d/e/f", "d/e/f/g", "d/e/fg", "x/y",
+        ];
         for only in &sets {
             let k = Keep::new(only);
             for p in paths {
