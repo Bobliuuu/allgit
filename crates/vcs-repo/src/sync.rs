@@ -814,7 +814,9 @@ impl Repo {
 
     /// Download `files` (and the chunks of chunked ones) that are not stored, in batches.
     pub(crate) fn prefetch_ids(&self, backend: &dyn Backend, files: BTreeSet<ObjectId>) -> Result<usize> {
-        self.prefetch_ids_with(backend, &PackCatalog::new(), files)
+        // Pack indexes never change: a repeated call (one per zone) reads them from disk, not the remote.
+        let idx_cache = vcs_remote::IdxCacheBackend::new(backend, self.common.join("remote-idx"));
+        self.prefetch_ids_with(&idx_cache, &PackCatalog::new(), files)
     }
 
     /// [`Self::prefetch_ids`] with a shared pack catalog. Packs are read by parallel ranged GETs;
@@ -869,6 +871,11 @@ impl Repo {
     pub fn sync(&self, backend: &dyn Backend) -> Result<SyncReport> {
         let _l = self.lock()?;
         self.fetch_locked(backend, None)?;
+        // One catalog and the on-disk index cache for every zone of this sync: the pack indexes
+        // (the bulk of the transfer when few files changed) are read once, not once per zone.
+        let idx_cache = vcs_remote::IdxCacheBackend::new(backend, self.common.join("remote-idx"));
+        let backend: &dyn Backend = &idx_cache;
+        let cat = PackCatalog::new();
         let defs = self.zones()?;
         let mut ws = self.workspace()?;
         let mut refs = self.refs()?;
@@ -909,7 +916,7 @@ impl Repo {
                                 want.insert(*id);
                             }
                         }
-                        self.prefetch_ids(backend, want)?;
+                        self.prefetch_ids_with(backend, &cat, want)?;
                         self.transition_diff(&zone, &defs, &diff, &mut ix)?;
                         verified.extend(clean.into_iter().filter(|p| !diff.old.contains_key(p) && !diff.new.contains_key(p)));
                         // The index equalled the old tree, so the directories read on the way give

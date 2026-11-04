@@ -98,3 +98,41 @@ fn torn_or_empty_manifest_cache_is_ignored_by_fetch() {
         );
     }
 }
+
+#[test]
+fn sync_reads_each_pack_index_once_however_many_zones_changed() {
+    let d = tempfile::tempdir().unwrap();
+    let o = Repo::init(&d.path().join("origin")).unwrap();
+    let mem = MemBackend::new();
+    let zones: Vec<String> = (0..6).map(|i| format!("z{i}")).collect();
+    for z in &zones {
+        o.create_zone(z, z).unwrap();
+        fs::create_dir_all(o.worktree().join(z)).unwrap();
+    }
+    let touch = |n: usize| {
+        for z in &zones {
+            for i in 0..8 {
+                fs::write(o.worktree().join(z).join(format!("f{i}")), format!("{z} round {n} file {i}")).unwrap();
+            }
+        }
+        o.add(&["".into()]).unwrap();
+        o.commit(&format!("r{n}"), sig()).unwrap();
+        o.publish(&mem, None, sig()).unwrap();
+    };
+    touch(0);
+    let c = Repo::clone_from(&mem, "mem", &d.path().join("clone"), None).unwrap();
+    touch(1);
+    let log = LoggingBackend::new(&mem);
+    let rep = c.sync(&log).unwrap();
+    let moved = rep
+        .actions
+        .iter()
+        .filter(|(_, _, a)| matches!(a, vcs_repo::SyncAction::FastForwarded { .. }))
+        .count();
+    assert!(moved >= zones.len(), "every zone moved: {:?}", rep.actions);
+    let gets = idx_gets(&log.calls());
+    let mut uniq = gets.clone();
+    uniq.sort();
+    uniq.dedup();
+    assert_eq!(gets.len(), uniq.len(), "no pack index is downloaded twice in one sync: {gets:?}");
+}
