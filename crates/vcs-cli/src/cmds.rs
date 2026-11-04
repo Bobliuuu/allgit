@@ -63,8 +63,14 @@ pub fn dispatch(cmd: &More, json: bool) -> Result<(), Error> {
         More::DiffTree(a) => crate::histcmds::diff_tree(a, json),
         More::Reset(a) => crate::everyday::reset(a),
         More::Clean(a) => crate::everyday::clean(a),
-        More::Profile(c) => crate::zoneprofile_cmd::run(c),
-        More::Pull(a) => crate::zoneprofile_cmd::sync(a),
+        More::Profile(c) => {
+            crate::zoneprofile_cmd::set_json(json);
+            crate::zoneprofile_cmd::run(c)
+        }
+        More::Pull(a) => {
+            crate::zoneprofile_cmd::set_json(json && a.auto);
+            crate::zoneprofile_cmd::sync(a)
+        }
         More::Git(a) => crate::gitmap::run(&a.args, json),
     }
 }
