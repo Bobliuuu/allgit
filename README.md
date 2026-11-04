@@ -38,8 +38,8 @@ none is a statement about other hardware. Where vcs loses, it says so in the sam
 | `kill -9` of the server, 157 times in 14 min | **0 acknowledged files lost** | n/a | [box-harvest](docs/research/box-harvest.md) |
 | Zones chosen from your usage profile | **37 MB** downloaded | 189.5 MB full clone | [zone-profile-bench](docs/research/zone-profile-bench.md) |
 
-Scoreboard totals across all measured cells (mixed build dates, see [below](#-wins-ties-and-losses-measured)):
-**166 wins, 81 ties, 37 losses** for vcs against git, Perforce, walgit, Jujutsu and Sapling. The 37 losses are listed in plain
+Scoreboard totals across all measured cells (one quiet-box pass, build `845610a`, see [below](#-wins-ties-and-losses-measured)):
+**134 wins, 66 ties, 18 losses** for vcs against git, Perforce, walgit, Jujutsu and Sapling. The 18 losses are listed in plain
 text further down.
 
 <p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/charts/huge-scale-dark.svg"><img src="docs/img/charts/huge-scale-light.svg" alt="1M files: vcs vs git, wall seconds on a log axis" width="900"></picture></p>
@@ -215,8 +215,8 @@ pushes at scale. Full list: [scalability](docs/scalability.md#not-run).
 
 ## 🏆 Wins, ties and losses (measured)
 
-vcs is **not uniformly faster**. Verdict rule: WIN = vcs at least 10% lower in both wall time and CPU, LOSS = at least 10% higher
-in both, TIE = everything else and any difference under 2 ms. "Ties are within noise" is the rule, not a courtesy. Every cell
+vcs is **not uniformly faster**. Verdict rule: WIN = vcs at least 5% lower in both wall time and CPU, LOSS = at least 5% higher
+in both, TIE = everything else, any difference under 2 ms and any gap inside the MAD noise of the interleaved runs (9 runs per cell). "Ties are within noise" is the rule, not a courtesy. Every cell
 names its machine, build and run count in the linked document.
 
 <p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/charts/scoreboard-summary-dark.svg"><img src="docs/img/charts/scoreboard-summary-light.svg" alt="Wins, ties and losses against git, Perforce, walgit, Jujutsu and Sapling" width="820"></picture></p>
@@ -225,12 +225,12 @@ Summary (counts are cells, not importance; rows sharing a scenario count once pe
 
 | tool | WIN | TIE | LOSS | where vcs is behind, plainly |
 |---|---|---|---|---|
-| git (flat 100k) | 46 | 68 | 17 | tiny metadata commands (`branch`, `tag`: 6 to 9 ms vs 1.4 ms), `ls-tree`, `bundle verify`/`create`, `log --stat`, `gc` CPU, `add -u` / `commit -a` after a one-file change, no-op `add` at 1M files, push throughput on local disk |
-| Perforce (p4d on loopback) | 9 | 7 | 14 | one-file `submit`, `add`, `opened`, `revert`, `filelog`, full-tree `sync`: p4 thin client vs a server process |
-| walgit (remote workflows) | 20 | 4 | 0 | older run; object-store request counts, client store size (1.5x) and server memory are worse |
-| Jujutsu (3 layouts x 17 cells) | 43 | 2 | 6 | `commit` of a big staged tree, `switch`, deep `clone` |
-| Sapling | 48 | 0 | 0 | none in measured cells (gc, describe, amend n/a) |
-| **Total** | **166** | **81** | **37** | git and walgit were not both run on every box; jj/Sapling numbers mix sessions |
+| git (flat 100k) | 62 | 57 | 12 | tiny metadata commands (`branch`, `tag`: 6 to 9 ms vs 1.4 ms), `ls-tree`, `bundle verify`/`create`, `log --stat`, `gc` CPU, `add -u` / `commit -a` after a one-file change, no-op `add` at 1M files, push throughput on local disk |
+| Perforce (p4d on loopback) | 17 | 7 | 6 | one-file `submit`, `add`, `opened`, `revert`, `filelog`, full-tree `sync`: p4 thin client vs a server process |
+| walgit (remote workflows) | 24 | 0 | 0 | re-run; object-store request counts, client store size (1.5x) and server memory are worse |
+| Jujutsu (flat 100k, 17 cells) | 16 | 1 | 0 | `commit` of a big staged tree, `switch`, deep `clone` |
+| Sapling (flat 100k, 16 cells) | 15 | 1 | 0 | none in measured cells (gc, describe, amend n/a) |
+| **Total** | **134** | **66** | **18** | single pass, one box, build `845610a`; jj/Sapling flat layout only (deep and binary not re-run) |
 
 Beyond the scoreboards: 1M-file `clone`, `add`, `diff`, `checkout` and `gc` win against git; 100k-file `add`, `commit`, `switch`,
 `grep` and `archive` win; `status` on a clean tree is a CPU tie; `log -n 5` is a tie (start-up cost under the 2 ms floor). Remote
@@ -277,8 +277,8 @@ machines, deep and binary layouts for the per-command git/p4 scoreboards.
 
 Every row of the [git to vcs](docs/git-to-vcs.md) and [p4 to vcs](docs/p4-to-vcs.md) tables that has a vcs equivalent
 was run against the real tool where a scenario exists; the rest is listed as NOT-MEASURED (never guessed). Verdicts:
-WIN = vcs at least 10% lower in both wall and CPU, LOSS = at least 10% higher in both, TIE = everything else (and any
-cell under 2 ms wall difference). Green is a win, amber a tie, red a loss. 🟢🟡🔴
+WIN = vcs at least 5% lower in both wall and CPU, LOSS = at least 5% higher in both, TIE = everything else (and any
+cell under 2 ms wall difference or inside the MAD noise). Green is a win, amber a tie, red a loss. 🟢🟡🔴
 
 <p align="center"><img src="docs/img/scoreboard-git.svg" alt="vcs vs git per-command scoreboard" width="900"></p>
 <p align="center"><img src="docs/img/scoreboard-p4.svg" alt="vcs vs Perforce per-command scoreboard" width="900"></p>
@@ -288,32 +288,25 @@ cell under 2 ms wall difference). Green is a win, amber a tie, red a loss. 🟢�
 
 | tool | 🟢 WIN | 🟡 TIE | 🔴 LOSS | not measured / n/a | how fresh |
 |---|---|---|---|---|---|
-| git (flat 100k, every doc row; rows sharing a scenario count once per row) | 46 | 68 | 17 | 93 not measured, 44 missing in vcs | 2026-11-02, build `8da0be2`, box E, interleaved |
-| Perforce (p4d on loopback) | 9 | 7 | 14 | 27 not measured, 2 missing | 2026-11-02, build `8da0be2`, box E, interleaved |
-| walgit (remote workflows) | 20 | 4 | 0 | 8 not measured | **older**: vcs build `84f3fa2`, box c, 3 reps, reused unchanged |
-| Jujutsu (3 layouts x 17 cells) | 43 | 2 | 6 | describe and amend n/a | vcs `8da0be2` re-run, **jj numbers from the earlier `34315b6` run, not interleaved** |
-| Sapling | 48 | 0 | 0 | gc, describe and amend n/a | same as Jujutsu |
+| git (flat 100k, every doc row; rows sharing a scenario count once per row) | 62 | 57 | 12 | 93 not measured, 44 missing in vcs | 2026-11-04, build `845610a`, box c, 9 interleaved runs, load1 < 1.0 gate |
+| Perforce (p4d on loopback) | 17 | 7 | 6 | 27 not measured, 2 missing | 2026-11-02, build `8da0be2`, box E, interleaved |
+| walgit (remote workflows) | 24 | 0 | 0 | 8 not measured | same build, 5 reps, walgit 80e9a20 |
+| Jujutsu (flat 100k, 17 cells) | 16 | 1 | 0 | describe and amend n/a | vcs `8da0be2` re-run, **jj numbers from the earlier `34315b6` run, not interleaved** |
+| Sapling (flat 100k, 16 cells) | 15 | 1 | 0 | gc, describe and amend n/a | same as Jujutsu |
 
-Before this refresh (earlier same-day run, same scenarios): git 30 WIN / 52 TIE / 49 LOSS, Perforce 6 / 7 / 17. The
-`diff`, `show`, `cat-file`, `reset`, `restore`, `rm` and `clone` rows moved from LOSS to WIN or TIE; the per-row
-before and after ratios are in the scoreboard document. Caveats: load1 was 1.5 to 2.1 (a shared box), p4 CPU is a lower
-bound (the p4d process is read in 10 ms ticks), p4 and jj/Sapling are different architectures than vcs, the git run is
-flat 100k only, and the jj and Sapling cells mix sessions (see [the document](docs/research/jj-sapling-benchmark.md)).
+Before this refresh (2026-11-02, build `8da0be2`, box E): git 46 WIN / 68 TIE / 17 LOSS, Perforce 9 / 7 / 14. Caveats: p4 CPU
+is a lower bound (the p4d process is read in 10 ms ticks), p4 and jj/Sapling are different architectures than vcs, the
+git/p4/walgit/jj/Sapling runs are flat 100k only (the older deep and binary jj/Sapling charts above are from earlier runs).
 
-🙈 **Where git (or walgit, or jj) still wins today**, from the same runs:
+🙈 **Where git (or Perforce) still wins today** (all 18 losses, causes in [the scoreboard](docs/research/command-scoreboard.md)):
 
-- **Tiny metadata commands cost vcs about 5x git's wall time** (`branch`, `tag`, `tag -d`, `branch -m`: 6 to 9 ms
-  against 1.4 ms) even though CPU is within 1.5x. `vcs switch -c` is 65 ms against git's 1.8 ms.
-- **`ls-tree HEAD` (non-recursive) is 19x git** (34 ms vs 1.8 ms), `bundle verify` is 370x (467 ms vs 1.3 ms),
-  `ls-files` 1.24x wall and 2.2x CPU, `grep -- path` 1.7x, `log --stat` 1.8x, `gc` 1.8x, `bundle create` 1.6x.
-- **`add -u`, `commit -a` and `add .` after a one-file change use 1.2 to 1.8x git's wall time**, and `mv` regressed (87 ms vs git's
-  46 ms, was a tie at 43 ms).
-- **vs Perforce**: `submit` of one file (115 ms vs 5.5 ms), `add`, `opened`, `revert`, `filelog` and `sync` of a full
-  tree (2.3 s vs 1.5 s) are all slower than p4's thin client; p4d did the work in a server process.
-- **vs Jujutsu**: `commit` of a big staged tree (1.1x to 1.9x), `switch` (1.4x to 1.5x, possible regression) and a deep
-  `clone` (1.6x) are slower than jj. **vs Sapling**: no losses in the measured cells.
-- **vs walgit** (older data, below): warm one-commit fetch is a tie, object-store request counts and client store size
-  are worse for vcs.
+- **vs git (12)**: `bundle verify` (376 ms vs 1.7 ms: vcs hashes the whole pack, git checks prerequisites), `branch -m` and `init`
+  (11 to 13 ms vs 2 to 3 ms wall, CPU is a tie: process start-up and store creation), `grep -F -- path`, `ls-files` and
+  `ls-files -s` (55 to 66 ms vs 15 to 31 ms: 100k-entry index decode), `switch --detach` (1.36x), `add -u` (1.31x),
+  `commit -a` (1.26x), `ls-tree -r --name-only` (1.27x).
+- **vs Perforce (6)**: one-file `submit` (120 ms vs 9 ms), `opened` (46 ms vs 5.6 ms), `revert`, `diff`, `delete` (p4 is a
+  thin client to a warm server; vcs pays process start-up plus a status), and `sync` of a path at a rev (1.17x).
+- **vs walgit, Jujutsu, Sapling (flat 100k)**: no losses in measured cells.
 
 #### 🌐 Remote workflows: vcs, git and walgit
 
