@@ -23,6 +23,37 @@ def load1():
     return float(open("/proc/loadavg").read().split()[0])
 
 
+QUIET = float(os.environ.get("BENCH_MAX_LOAD1", "1.0"))
+QUIET_WAITS = []  # (seconds waited, load1 at release) per gate that had to wait; reported in meta
+
+
+def wait_quiet(limit=600):
+    """Gate before every timed phase: block until load1 < BENCH_MAX_LOAD1 (default 1.0); record forced releases."""
+    t0 = time.time()
+    while load1() >= QUIET and time.time() - t0 < limit:
+        time.sleep(2)
+    w = time.time() - t0
+    if w > 0:
+        QUIET_WAITS.append((round(w, 1), load1()))
+    return load1()
+
+
+def tool_versions(build_sha=None):
+    """Versions of every tool involved; absent tools are recorded as null, never guessed."""
+    def v(argv, env=None):
+        try:
+            r = subprocess.run(argv, capture_output=True, text=True, timeout=20, env=env)
+            return (r.stdout + r.stderr).strip().splitlines()[-1] if (r.stdout + r.stderr).strip() else None
+        except Exception:
+            return None
+    wg = os.environ.get("WALGIT_BIN", "walgit")
+    out = {"git_version": v(["git", "--version"]), "p4_version": v(["p4", "-V"]), "p4d_version": v(["p4d", "-V"]),
+           "jj_version": v(["jj", "--version"]), "sapling_version": v(["sl", "--version"]),
+           "walgit_version": v([wg, "--version"]), "walgit_commit": os.environ.get("WALGIT_COMMIT"),
+           "build_sha": build_sha or os.environ.get("BUILD_SHA"), "kernel": os.uname().release}
+    return out
+
+
 def files(root):
     out = []
     for d, ds, names in os.walk(root):
@@ -324,7 +355,7 @@ def run(a):
     res = {"meta": {"git": subprocess.run(["git", "--version"], capture_output=True, text=True).stdout.strip(),
                     "vcs": subprocess.run([env.vcs, "--version"], capture_output=True, text=True).stdout.strip(),
                     "n": env.state["n"], "layout": "flat", "host": os.uname().nodename, "cores": os.cpu_count(),
-                    "load1_start": load1(), "start": time.strftime("%FT%TZ", time.gmtime()), "groups": groups},
+                    "load1_start": load1(), "quiet_gate": QUIET, "tools": tool_versions(), "start": time.strftime("%FT%TZ", time.gmtime()), "groups": groups},
            "cells": {}}
     if "remote" in groups:  # sync both repos to the remote (earlier groups and the p4 phase moved local main)
         sh("git fetch -q origin; git reset -q --hard origin/main; git clean -fdq", env.d("git"), BASE_ENV)
@@ -348,7 +379,7 @@ def run(a):
         for _ in range(reps):
             order = ["git", "vcs"]
             rng.shuffle(order)
-            l0 = load1()
+            l0 = wait_quiet()
             for t in order:
                 cwd = env.d(t) if s["grp"] != "fresh" or s["id"] == "init" or True else env.d(t)
                 if s["grp"] == "fresh" and s["id"] != "init":
@@ -385,6 +416,7 @@ def run(a):
         for t in ("git", "vcs"):
             run_clean_check(env, t)
     res["meta"]["load1_end"] = load1()
+    res["meta"]["quiet_gate_waits"] = QUIET_WAITS
     if a.out:
         json.dump(res, open(a.out, "w"), indent=1)
 
