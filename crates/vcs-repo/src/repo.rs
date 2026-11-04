@@ -1358,6 +1358,11 @@ impl Repo {
         }
     }
 
+    /// True when a filesystem watcher is running for this repository (and monitoring is not disabled).
+    pub(crate) fn watcher_running(&self) -> bool {
+        std::env::var_os("VCS_NO_FSMONITOR").is_none() && fsmonitor::JournalMonitor::open(&self.vcs).is_some()
+    }
+
     /// Tracked paths that may differ from the index, from the monitor: the unstaged set saved with the
     /// state plus whatever changed since its token. `None` (do a full scan) without a running watcher, a
     /// state for this index, or a usable answer. Untracked files are not covered.

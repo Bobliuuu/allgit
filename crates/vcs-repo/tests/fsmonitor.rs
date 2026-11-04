@@ -591,6 +591,27 @@ mod real {
         assert_eq!(fast, full);
     }
 
+    /// A first `diff` under a running watcher (no `status` ran yet) saves the state itself, so the next
+    /// one narrows to the watcher's paths; both answers equal the reference scan.
+    #[test]
+    fn first_diff_under_a_watcher_saves_state_and_matches_the_reference() {
+        let (_d, r) = base();
+        let (_dm, _m) = start(&r);
+        w(&r, "a/x.txt", "edited before any status");
+        fs::remove_file(r.worktree().join("d/e/f.txt")).unwrap();
+        let state = r.worktree().join(".vcs/fsmon/state");
+        let _ = fs::remove_file(&state);
+        let want: Vec<_> = r.diff_pairs_full(false).unwrap().into_iter().map(|p| (p.path, p.old, p.new)).collect();
+        assert!(!want.is_empty());
+        let first: Vec<_> = r.diff_pairs(false).unwrap().into_iter().map(|p| (p.path, p.old, p.new)).collect();
+        assert_eq!(first, want);
+        assert!(state.exists(), "diff did not save the monitor state");
+        w(&r, "top.txt", "TOP");
+        let want: Vec<_> = r.diff_pairs_full(false).unwrap().into_iter().map(|p| (p.path, p.old, p.new)).collect();
+        let second: Vec<_> = r.diff_pairs(false).unwrap().into_iter().map(|p| (p.path, p.old, p.new)).collect();
+        assert_eq!(second, want);
+    }
+
     #[test]
     fn dead_daemon_falls_back_to_full_scan() {
         let (_d, r) = base();
