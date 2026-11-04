@@ -227,6 +227,10 @@ impl PackCatalog {
         }
     }
 
+    fn trailer_known_ok(&self, stem: &str) -> bool {
+        self.trailers_ok.lock().unwrap().contains(stem)
+    }
+
     /// [`check_trailer`], at most once per pack for this catalog. `Ok(false)`: the pack is gone.
     fn check_trailer_once(&self, b: &dyn Backend, stem: &str, idx: &PackIndex) -> Result<bool, BackendError> {
         if self.trailers_ok.lock().unwrap().contains(stem) {
@@ -445,6 +449,7 @@ fn scan_packs(b: &dyn Backend, remaining: &mut Vec<ObjectId>, out: &mut Vec<(Obj
 
 /// One ranged GET of a pack, holding whole entries: `[start, end)`.
 struct Segment<'a> {
+    cat: &'a PackCatalog,
     stem: &'a str,
     idx: &'a PackIndex,
     start: u64,
@@ -461,13 +466,13 @@ const SEGMENT_MIN: u64 = 1024 * 1024;
 /// about `total / threads` bytes (at least [`SEGMENT_MIN`]) so the pool has work to share.
 /// Returns the segments, the ids no pack has, and the ids of packs found gone (to retry).
 fn plan_segments<'a>(
-    b: &dyn Backend,
-    cat: &PackCatalog,
+    _b: &dyn Backend,
+    cat: &'a PackCatalog,
     packs: &'a PackList,
     want: Vec<ObjectId>,
 ) -> Result<(Vec<Segment<'a>>, Vec<ObjectId>, Vec<ObjectId>), BackendError> {
     let mut remaining = want;
-    let mut gone = Vec::new();
+    let gone = Vec::new();
     let mut per_pack: Vec<(usize, Hits)> = Vec::new();
     for (pi, (_, idx)) in packs.iter().enumerate() {
         if remaining.is_empty() {
@@ -487,20 +492,8 @@ fn plan_segments<'a>(
         }
         per_pack.push((pi, hits));
     }
-    // One trailer check per pack that is read, all in one parallel wave (a chain of them would
-    // cost a round trip per pack). Packs held whole are checked from memory.
-    let checks = crate::par::map_bounded(&per_pack, crate::par::parallelism(), |(pi, _)| {
-        cat.check_trailer_once(b, &packs[*pi].0, &packs[*pi].1)
-    })?;
-    let mut kept = Vec::with_capacity(per_pack.len());
-    for ((pi, hits), ok) in per_pack.into_iter().zip(checks) {
-        if ok {
-            kept.push((pi, hits));
-        } else {
-            gone.extend(hits.iter().map(|h| h.2));
-        }
-    }
-    let per_pack = kept;
+    // The trailer check of each pack that is read runs inside its first segment job, in parallel with the
+    // ranged read (see `run_job`): a separate wave in front of the reads cost one more round trip.
     let total: u64 = per_pack.iter().flat_map(|(_, h)| h.iter()).map(|h| h.1 as u64).sum();
     let target = (total / FETCH_THREADS as u64).clamp(SEGMENT_MIN, 8 * 1024 * 1024);
     let mut segs = Vec::new();
@@ -517,6 +510,7 @@ fn plan_segments<'a>(
                 j += 1;
             }
             segs.push(Segment {
+                cat,
                 stem,
                 idx,
                 start,
@@ -544,9 +538,25 @@ fn run_job(b: &dyn Backend, j: &Job) -> Result<Done, BackendError> {
     match j {
         Job::Seg(seg) => {
             let stem = seg.stem;
-            let Some(buf) = b.get_range(&format!("{stem}.pack"), seg.start, seg.end - seg.start)? else {
-                return Ok(Done::Raced(seg.hits.iter().map(|h| h.2).collect()));
+            let raced = || Ok(Done::Raced(seg.hits.iter().map(|h| h.2).collect()));
+            let range = || b.get_range(&format!("{stem}.pack"), seg.start, seg.end - seg.start);
+            // Trailer check (once per pack per catalog) concurrently with the range read: one round trip
+            // saved on every fetch. Bytes are still verified against their ids; a mismatching trailer or a
+            // vanished pack discards the read exactly as when the check ran first.
+            let buf = if seg.cat.trailer_known_ok(stem) {
+                range()?
+            } else {
+                let (check, buf) = std::thread::scope(|sc| {
+                    let h = sc.spawn(|| seg.cat.check_trailer_once(b, stem, seg.idx));
+                    let buf = range();
+                    (h.join().unwrap_or_else(|_| Err(BackendError::Other("trailer check panicked".into()))), buf)
+                });
+                if !check? {
+                    return raced();
+                }
+                buf?
             };
+            let Some(buf) = buf else { return raced() };
             let mut blocks = BlockCache::default();
             let mut out = Vec::with_capacity(seg.hits.len());
             for (off, len, id) in &seg.hits {
@@ -703,6 +713,14 @@ pub fn fetch_many_with(b: &dyn Backend, cat: &PackCatalog, ids: &[ObjectId]) -> 
 /// cap. Small first so a pack that is mostly file data costs little over-read.
 const PREFIX_FIRST: u64 = 4 * 1024;
 const PREFIX_MAX: u64 = 4 * 1024 * 1024;
+/// Smallest ranged GET of the bounded metadata read (see `read_ahead`). A round trip to S3 costs 20 to 90 ms, 256 KiB
+/// costs about 2 ms at 1 Gbit/s, so a request that is too short is the expensive mistake. `VCS_REMOTE_MIN_READ` (bytes) overrides.
+const MIN_READ_DEFAULT: u64 = 256 * 1024;
+
+fn min_read() -> u64 {
+    static V: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *V.get_or_init(|| std::env::var("VCS_REMOTE_MIN_READ").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(MIN_READ_DEFAULT))
+}
 /// Header of a pack: magic + u32 count; each entry is a u32 length then the encoded object.
 const PACK_HEADER: u64 = 12;
 
@@ -820,7 +838,11 @@ impl<'a> RemoteSource<'a> {
             let mut pos = PACK_HEADER;
             let mut pending: Vec<ObjectId> = Vec::new();
             while let Some(target) = bound.filter(|t| *t > pos) {
-                let Some(buf) = io.get_range(&key, pos, (target - pos).min(PREFIX_MAX))? else {
+                // Never ask for less than MIN_READ (or an eighth of what is left of a small pack, so small repositories do not
+                // pay for an over-read): the walk usually needs the bytes right after `target`
+                // too (the next level of trees), and one more round trip costs more than the over-read.
+                let want = (target - pos).max(min_read().min((end - pos) / 8)).min(PREFIX_MAX).min(end - pos);
+                let Some(buf) = io.get_range(&key, pos, want)? else {
                     break;
                 };
                 let mut fresh = Vec::new();
