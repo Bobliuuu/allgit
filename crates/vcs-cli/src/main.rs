@@ -991,6 +991,10 @@ fn run(cli: Cli) -> Result<(), Error> {
     if let Cmd::More(m) = &cli.cmd {
         return cmds::dispatch(m, cli.json);
     }
+    let zp_json = cli.json && (matches!(&cli.cmd, Cmd::Sync(a) if a.auto) || matches!(&cli.cmd, Cmd::Clone { auto, .. } if auto.active()));
+    if zp_json {
+        zoneprofile_cmd::set_json(true);
+    }
     if let Some(r) = zoneprofile_cmd::intercept(&cli.cmd) {
         return r;
     }
@@ -1000,7 +1004,7 @@ fn run(cli: Cli) -> Result<(), Error> {
     if let Some(r) = ontology::intercept(&cli.cmd, cli.json) {
         return r;
     }
-    if cli.json {
+    if cli.json && !zp_json {
         let doc = json::build(&cli.cmd).ok_or_else(|| Error::Msg("--json is not supported for this command".into()))??;
         println!("{}", doc.render());
         return Ok(());
