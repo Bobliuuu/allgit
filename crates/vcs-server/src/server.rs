@@ -729,6 +729,12 @@ fn etag(tag: &str) -> String {
     format!("\"{tag}\"")
 }
 
+/// Does an `If-None-Match` header value name `tag`? Backends differ in whether a tag carries its own quotes (an S3 ETag
+/// does, a directory backend's does not), and the client strips them all before quoting once: compare without quotes.
+fn tag_matches(header: &str, tag: &str) -> bool {
+    unquote(header.trim()).replace('"', "") == tag.replace('"', "")
+}
+
 fn unquote(s: &str) -> &str {
     s.strip_prefix('"').and_then(|s| s.strip_suffix('"')).unwrap_or(s)
 }
@@ -1155,7 +1161,7 @@ fn object_read(sh: &Shared, req: &Request, who: &Principal, key: &str, head: boo
     }
     match got {
         // Conditional GET: the caller already holds this version, send no body.
-        Ok(Some(v)) if req.header("if-none-match").is_some_and(|t| unquote(t.trim()) == v.tag) => {
+        Ok(Some(v)) if req.header("if-none-match").is_some_and(|t| tag_matches(t, &v.tag)) => {
             Response::new(304, "").with("ETag", etag(&v.tag))
         }
         Ok(Some(v)) => Response::new(200, v.data).with("ETag", etag(&v.tag)),
@@ -1187,7 +1193,7 @@ fn filtered_manifest_response(sh: &Shared, req: &Request, who: &Principal) -> Re
     m.snapshots.clear();
     m.applied.clear();
     let body = m.encode();
-    if req.header("if-none-match").is_some_and(|t| unquote(t.trim()) == v.tag) {
+    if req.header("if-none-match").is_some_and(|t| tag_matches(t, &v.tag)) {
         return Response::new(304, "").with("ETag", etag(&v.tag));
     }
     if let (Some(o), Some(l)) = (req.query_param("offset"), req.query_param("len")) {
@@ -1654,4 +1660,19 @@ fn verify_object_body(key: &str, body: &[u8]) -> Result<(), String> {
         return Err(format!("content hash mismatch: key says {want}, body hashes to {got}"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tag_tests {
+    use super::tag_matches;
+
+    #[test]
+    fn if_none_match_matches_tags_with_or_without_their_own_quotes() {
+        // a directory backend's tag has no quotes, an S3 ETag keeps them; the client always sends one pair
+        assert!(tag_matches("\"abc\"", "abc"));
+        assert!(tag_matches("\"abc\"", "\"abc\""));
+        assert!(tag_matches(" \"abc\" ", "abc"));
+        assert!(!tag_matches("\"abd\"", "\"abc\""));
+        assert!(!tag_matches("\"\"", "abc"));
+    }
 }
