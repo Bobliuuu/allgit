@@ -334,3 +334,73 @@ fn quick_verify_hashes_whole_bundles_written_before_the_header_hash() {
         assert!(bundle::verify_quick(&t).is_err(), "flip at {i} accepted");
     }
 }
+
+fn v2_source(dir: &Path) -> Repo {
+    let a = source(dir);
+    write(&a, "assets/text.txt", &"compressible line of text\n".repeat(4000));
+    write(&a, "engine/small.rs", "fn main() {}\n");
+    commit_all(&a, "more");
+    a.repack_as(vcs_store::pack::PackFormat::V2).unwrap();
+    a
+}
+
+#[test]
+fn bundle_from_v2_packs_forwards_entries_and_still_verifies_and_clones() {
+    let d = tempfile::tempdir().unwrap();
+    let a = v2_source(d.path());
+    let f = d.path().join("v2.bundle");
+    let info = a.bundle_create(&f, &[], None).unwrap();
+    let v = bundle::verify_file(&f).unwrap();
+    assert_eq!(v.objects, info.objects);
+    assert_eq!(v.bytes, fs::metadata(&f).unwrap().len());
+    // the same history bundled from loose/pending objects (recompressed) has the same objects
+    let d2 = tempfile::tempdir().unwrap();
+    let a2 = source(d2.path());
+    write(&a2, "assets/text.txt", &"compressible line of text\n".repeat(4000));
+    write(&a2, "engine/small.rs", "fn main() {}\n");
+    commit_all(&a2, "more");
+    let f2 = d.path().join("fresh.bundle");
+    assert_eq!(a2.bundle_create(&f2, &[], None).unwrap().objects, info.objects);
+    bundle::verify_file(&f2).unwrap();
+    let b = Repo::clone_from_bundle(&f, &d.path().join("b"), sig()).unwrap();
+    assert_eq!(fs::read(b.worktree().join("assets/text.txt")).unwrap().len(), 26 * 4000);
+    assert!(b.fsck().unwrap().problems.is_empty());
+    // incremental from a v2 repository
+    write(&a, "README", "readme 2");
+    commit_all(&a, "third");
+    let inc = d.path().join("inc.bundle");
+    let ii = a.bundle_create(&inc, &[], Some("HEAD~1")).unwrap();
+    assert!(ii.objects < info.objects);
+    bundle::verify_file(&inc).unwrap();
+}
+
+fn find_packs(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    for e in fs::read_dir(dir).unwrap().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            find_packs(&p, out);
+        } else if p.extension().is_some_and(|x| x == "pack") {
+            out.push(p);
+        }
+    }
+}
+
+#[test]
+fn a_corrupt_stored_object_forwarded_without_rehash_is_caught_by_the_receiver() {
+    let d = tempfile::tempdir().unwrap();
+    let a = v2_source(d.path());
+    let mut packs = Vec::new();
+    find_packs(&d.path().join("a"), &mut packs);
+    assert!(!packs.is_empty());
+    for p in &packs {
+        let mut b = fs::read(p).unwrap();
+        let mid = b.len() / 2;
+        b[mid] ^= 0xff;
+        fs::write(p, b).unwrap();
+    }
+    let f = d.path().join("bad.bundle");
+    let created = a.bundle_create(&f, &[], None);
+    if created.is_ok() {
+        assert!(bundle::verify_file(&f).is_err() || Repo::clone_from_bundle(&f, &d.path().join("c"), sig()).is_err());
+    }
+}

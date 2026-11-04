@@ -10,7 +10,7 @@ authors = ["Jerry Zhu"]
 rust-version = "1.80"
 
 [workspace.dependencies]
-blake3 = "1"
+blake3 = { version = "1", features = ["neon"] }
 thiserror = "1"
 unicode-normalization = "0.1"
 clap = { version = "4", features = ["derive"] }
