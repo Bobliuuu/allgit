@@ -394,8 +394,9 @@ fn a_corrupt_stored_object_forwarded_without_rehash_is_caught_by_the_receiver() 
     assert!(!packs.is_empty());
     for p in &packs {
         let mut b = fs::read(p).unwrap();
-        let mid = b.len() / 2;
-        b[mid] ^= 0xff;
+        for i in (12..b.len() - 32).step_by(5) {
+            b[i] ^= 0xff;
+        }
         fs::write(p, b).unwrap();
     }
     let f = d.path().join("bad.bundle");
