@@ -20,6 +20,10 @@ use vcs_repo::{ExportExt, ExportOptions, ImportOptions, Repo, ROOT_ZONE};
 
 type Res<T> = Result<T, String>;
 
+/// Marks above this in the state files are ignored: Git never writes one (its marks are small counters), and
+/// a huge one would make the next run's mark arithmetic overflow.
+const MAX_MARK: usize = u32::MAX as usize;
+
 fn e<E: std::fmt::Display>(x: E) -> String {
     x.to_string()
 }
@@ -56,7 +60,10 @@ impl State {
         };
         for l in read_or_empty(&st.dir.join("marks"))?.lines() {
             if let Some((m, sha)) = l.strip_prefix(':').and_then(|r| r.split_once(' ')) {
-                if let Ok(n) = m.parse() {
+                if let Ok(n) = m.parse::<usize>() {
+                    if n > MAX_MARK {
+                        continue;
+                    }
                     st.marks.insert(n, sha.trim().to_owned());
                 }
             }
@@ -77,7 +84,10 @@ impl State {
         for l in read_or_empty(&st.dir.join("pending"))?.lines() {
             let f: Vec<&str> = l.split(' ').collect();
             let [k, id, m] = f[..] else { continue };
-            let (Ok(id), Some(n)) = (ObjectId::from_hex(id), m.strip_prefix(':').and_then(|n| n.parse::<usize>().ok())) else {
+            let (Ok(id), Some(n)) = (
+                ObjectId::from_hex(id),
+                m.strip_prefix(':').and_then(|n| n.parse::<usize>().ok()).filter(|n| *n <= MAX_MARK),
+            ) else {
                 continue;
             };
             let kind = k.chars().next().unwrap_or('c');
@@ -404,6 +414,24 @@ pub fn fuzz_entry(repo: Repo, state_dir: PathBuf, cmds: &[u8]) {
             out: Vec::new(),
         };
         let _ = serve(h, &mut io::Cursor::new(cmds));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn absurd_marks_in_state_files_are_ignored() {
+        let d = tempfile::tempdir().unwrap();
+        let sha = "a".repeat(40);
+        let id = ObjectId::from_bytes([7; 32]).to_hex();
+        fs::write(d.path().join("marks"), format!(":5 {sha}\n:18446744073709551615 {sha}\n:99999999999 {sha}\n")).unwrap();
+        fs::write(d.path().join("pending"), format!("c {id} :18446744073709551615\nc {id} :7\n")).unwrap();
+        let st = State::load(d.path().to_path_buf()).unwrap();
+        assert_eq!(st.marks.keys().copied().collect::<Vec<_>>(), vec![5]);
+        assert_eq!(st.max_mark(), 7, "only the sane pending mark counts");
+        assert_eq!(st.pending.len(), 1);
     }
 }
 
