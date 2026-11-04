@@ -5,6 +5,7 @@
 //! than the grace period, rewrites packs without them and cleans crash leftovers.
 
 use crate::error::Result;
+use crate::reachcache::ReachCache;
 use crate::repo::Repo;
 use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime};
@@ -23,6 +24,18 @@ pub struct GcReport {
     pub would_delete: Vec<(ObjectId, Kind)>,
     /// Objects named by a root or another object that are not in the store.
     pub missing_referenced: usize,
+    #[doc(hidden)]
+    pub(crate) snapshot: Option<Snapshot>,
+}
+
+/// What a mark learned, for the reachability cache.
+#[derive(Debug)]
+pub(crate) struct Snapshot {
+    ids: Vec<ObjectId>,
+    marked: Vec<bool>,
+    tx: Vec<bool>,
+    roots: Vec<ObjectId>,
+    missing: usize,
 }
 
 /// Options for the destructive sweep.
@@ -87,13 +100,26 @@ impl Repo {
         // Objects are immutable by id, so what the first pass learned (kind, children) is reused by the
         // second; its list, roots and ages are still taken fresh.
         let mut known = Known::new();
-        let first = self.gc_plan_known(now, opts.grace, &mut known)?;
+        let cache = if self.use_reach_cache { self.load_reach_cache() } else { None };
+        let first = self.gc_plan_known(now, opts.grace, &mut known, cache.as_ref())?;
         // Fresh list + fresh roots + fresh ages, immediately before deleting.
-        let second = self.gc_plan_known(now, opts.grace, &mut known)?;
+        let mut second = self.gc_plan_known(now, opts.grace, &mut known, cache.as_ref())?;
         let confirmed: BTreeSet<ObjectId> = second.would_delete.iter().map(|x| x.0).collect();
         let doomed: BTreeSet<ObjectId> = first.would_delete.iter().map(|x| x.0).filter(|i| confirmed.contains(i)).collect();
         let deleted: Vec<(ObjectId, Kind)> = second.would_delete.iter().filter(|x| doomed.contains(&x.0)).copied().collect();
         let sweep = self.store.sweep(&doomed)?;
+        if self.use_reach_cache {
+            if let Some(snap) = second.snapshot.take() {
+                if snap.missing == 0 {
+                    // objects just deleted were unreachable: drop them from the scanned list
+                    let keep: Vec<usize> = (0..snap.ids.len()).filter(|&i| !doomed.contains(&snap.ids[i])).collect();
+                    let ids: Vec<ObjectId> = keep.iter().map(|&i| snap.ids[i]).collect();
+                    let m: Vec<bool> = keep.iter().map(|&i| snap.marked[i]).collect();
+                    let t: Vec<bool> = keep.iter().map(|&i| snap.tx[i]).collect();
+                    self.save_reach_cache(&crate::reachcache::encode(&ids, &m, &t, &snap.roots));
+                }
+            }
+        }
         self.warm_commit_graph();
         Ok(GcRun {
             rechecked_out: first.would_delete.len() - doomed.len(),
@@ -121,20 +147,35 @@ impl Repo {
     /// listed and becomes referenced after the roots were read was written recently, so the
     /// grace period keeps it.
     pub fn gc_plan_at(&self, now: SystemTime, grace: Duration) -> Result<GcReport> {
-        self.gc_plan_known(now, grace, &mut Known::new())
+        let cache = if self.use_reach_cache { self.load_reach_cache() } else { None };
+        let mut r = self.gc_plan_known(now, grace, &mut Known::new(), cache.as_ref())?;
+        r.snapshot = None;
+        Ok(r)
     }
 
-    fn gc_plan_known(&self, now: SystemTime, grace: Duration, known: &mut Known) -> Result<GcReport> {
+    /// Turn the reachability cache (`gc-reach`) on or off for gc (default on). Results are identical either way.
+    pub fn set_reach_cache(&mut self, on: bool) {
+        self.use_reach_cache = on;
+    }
+
+    fn gc_plan_known(&self, now: SystemTime, grace: Duration, known: &mut Known, cache: Option<&ReachCache>) -> Result<GcReport> {
         let ids = self.store.list()?;
-        let roots = self.gc_roots(&ids, known)?;
+        let mut roots = self.gc_roots(&ids, known, cache)?;
+        roots.sort_unstable();
+        roots.dedup();
+        // The cache is usable when every root of the sweep that wrote it is still a root: then its marked
+        // set is the closure of a subset of today's roots, and only the other roots need walking.
+        let cache = cache.filter(|c| c.roots_within(&roots));
+        let is_cached = |id: &ObjectId| cache.is_some_and(|c| c.marked(id));
+        let all_roots = roots.clone();
         let mut missing = 0usize;
-        let mut marked: std::collections::HashSet<ObjectId> = std::collections::HashSet::with_capacity(ids.len());
+        let mut marked: std::collections::HashSet<ObjectId> = std::collections::HashSet::new();
         // Mark level by level; each level's objects are read (and hash-verified) on several threads.
         let mut level: Vec<ObjectId> = roots;
         while !level.is_empty() {
             level.sort_unstable();
             level.dedup();
-            level.retain(|id| !marked.contains(id));
+            level.retain(|id| !marked.contains(id) && !is_cached(id));
             let todo: Vec<ObjectId> = level.iter().filter(|id| !known.contains_key(*id)).copied().collect();
             let got = par_map(&todo, |id| match self.store.get(id) {
                 Ok(o) => Ok(Some(Info::of(&o))),
@@ -172,8 +213,22 @@ impl Repo {
             missing_referenced: missing,
             ..Default::default()
         };
-        for id in ids {
-            if marked.contains(&id) {
+        let mut snap = Snapshot {
+            ids: Vec::with_capacity(ids.len()),
+            marked: Vec::with_capacity(ids.len()),
+            tx: Vec::with_capacity(ids.len()),
+            roots: all_roots,
+            missing,
+        };
+        let mut sorted = ids;
+        sorted.sort_unstable();
+        for id in sorted {
+            let is_marked = marked.contains(&id) || is_cached(&id);
+            snap.ids.push(id);
+            snap.marked.push(is_marked);
+            snap.tx
+                .push(known.get(&id).map_or_else(|| cache.is_some_and(|c| c.is_tx(&id)), |i| i.tx));
+            if is_marked {
                 rep.reachable += 1;
                 continue;
             }
@@ -187,6 +242,7 @@ impl Repo {
                 rep.kept_young.push(id);
             }
         }
+        rep.snapshot = Some(snap);
         Ok(rep)
     }
 
@@ -218,7 +274,7 @@ impl Repo {
     }
 
     /// Everything that pins objects locally. See docs/gc.md for why each one is a root.
-    fn gc_roots(&self, all: &[ObjectId], known: &mut Known) -> Result<Vec<ObjectId>> {
+    fn gc_roots(&self, all: &[ObjectId], known: &mut Known, cache: Option<&ReachCache>) -> Result<Vec<ObjectId>> {
         let mut roots = Vec::new();
         let refs = self.refs()?;
         roots.extend(refs.branches.values().copied());
@@ -235,7 +291,12 @@ impl Repo {
         // Transactions are not reachable from commits and there is no local transaction log yet,
         // so every stored Transaction is a root until the remote/tx-log design lands.
         // Reading each object here also records its children, so the mark phase need not read it again.
-        let todo: Vec<ObjectId> = all.iter().filter(|id| !known.contains_key(*id)).copied().collect();
+        // Objects the cache has scanned before need no read: it knows whether they are transactions.
+        let todo: Vec<ObjectId> = all
+            .iter()
+            .filter(|id| !known.contains_key(*id) && !cache.is_some_and(|c| c.scanned(id)))
+            .copied()
+            .collect();
         let got = par_map(&todo, |id| self.store.get(id).ok().map(|o| Info::of(&o)));
         for (id, info) in todo.into_iter().zip(got) {
             if let Some(info) = info {
@@ -243,6 +304,10 @@ impl Repo {
             }
         }
         roots.extend(all.iter().filter(|id| known.get(*id).is_some_and(|i| i.tx)).copied());
+        if let Some(c) = cache {
+            let present: std::collections::HashSet<&ObjectId> = all.iter().collect();
+            roots.extend(c.txs().into_iter().filter(|t| present.contains(t) && !known.contains_key(t)));
+        }
         Ok(roots)
     }
 }

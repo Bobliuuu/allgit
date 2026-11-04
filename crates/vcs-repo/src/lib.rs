@@ -42,6 +42,7 @@ pub mod pick;
 pub mod plumbing;
 pub mod portable;
 pub mod prefetch;
+mod reachcache;
 pub mod rebase;
 pub mod rebase_todo;
 pub(crate) mod refsdelta;

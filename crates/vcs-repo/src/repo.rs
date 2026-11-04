@@ -100,6 +100,7 @@ pub struct Repo {
     pub(crate) structural: bool,
     pub(crate) renames: bool,
     pub(crate) use_commit_graph: bool,
+    pub(crate) use_reach_cache: bool,
     /// Width of the index "racy" window (ns); only tests shorten it.
     pub(crate) index_racy_ns: u64,
     pub(crate) counters: Counters,
@@ -306,6 +307,7 @@ impl Repo {
             structural: true,
             renames: false,
             use_commit_graph: true,
+            use_reach_cache: true,
             index_racy_ns: RACY_NS,
             counters: Counters::default(),
         };
@@ -349,6 +351,7 @@ impl Repo {
                     structural: true,
                     renames: false,
                     use_commit_graph: true,
+                    use_reach_cache: true,
                     index_racy_ns: RACY_NS,
                     counters: Counters::default(),
                 };
