@@ -44,8 +44,19 @@ publish, fetch, lock/unlock and `auth status` against the real `vcs-server` over
 
 **Mutual TLS (optional).** `--tls-client-ca <pem>` makes the server require a client certificate chaining to that CA;
 the handshake is refused otherwise. The certificate only admits the connection: the bearer token is still required and is
-what names the principal (no mapping from certificate subject to principal). There is no "certificate or token" mode and
-no revocation list: to cut off a client certificate, rotate the client CA or the leaf (and reload, below).
+what names the principal. There is no "certificate or token" mode.
+
+*Revocation.* `--tls-client-crl <pem>` (one or more PEM `X509 CRL` blocks signed by the client CA) makes the handshake
+refuse any client certificate listed there. Only the end-entity certificate is checked, and a certificate whose issuer has
+no CRL in the file is refused (fail closed), so keep the CRL fresh: `kill -HUP` re-reads it together with the CA and the
+server certificate, and new connections use it at once (established connections keep their session). A file with no CRL
+block is a startup error, never "no revocation". OCSP is not supported.
+
+*Subject to principal.* `--tls-client-map <file>` (lines `<subject-CN> <principal>`) binds certificates to principals: a
+request is served only if the connection's client certificate has a mapped common name AND the bearer token authenticates
+as that same principal; otherwise 403. The certificate narrows which token a holder may use; it never grants a role by
+itself, so roles, zones and expiry still come from the tokens file. A certificate with zero or several CNs never maps. The
+map is read at startup (restart to change it).
 
 **Reload (unix).** `kill -HUP <pid>` re-reads the tokens file, the policy file and the TLS certificate/key (and client
 CA). Each is replaced only if it parses; a broken file keeps the running value and the reason goes to stderr. New TLS
@@ -53,7 +64,7 @@ connections use the new certificate, established connections keep theirs. Tested
 binary (certificate swap, broken policy ignored, policy widened and narrowed, token revoked). Without a signal the tokens
 file is still polled once a second. Windows: no signal handler, restart instead.
 
-Not done: certificate revocation, OCSP, ACME, a TLS version/cipher knob (rustls defaults), and the connection-cap refusal
+Not done: OCSP, ACME, a TLS version/cipher knob (rustls defaults), and the connection-cap refusal
 on a TLS port just drops the socket.
 
 ## Tokens file
@@ -213,7 +224,7 @@ Idle cost is one relaxed atomic load per request when no failure has been record
 
 ## Not done (known gaps)
 
-Certificate revocation and subject-to-principal mapping for mTLS; path-level read rules (impossible on content-addressed
+Path-level read rules (impossible on content-addressed
 objects, see Read policy); a filtered manifest per principal; a rate-limit class for lock ops; create-only audit objects (#127, the chained log is the chosen design); lease expiry times are still computed by the client (the
 server bounds only `time_hw`); one request per connection and one thread per connection (bounded by `max_connections`);
 OIDC; Windows signal reload.

@@ -18,7 +18,7 @@ use vcs_server::log::{Format, Level, Logger, V};
 use vcs_server::{auth, backend_url, AuditLog, Config, Policy, RateLimit, Server, TokenTable};
 
 const USAGE: &str = "usage: vcs-server (--root <dir> | --backend <s3://...|dir>) --tokens <file> [--listen host:port] [--audit-log <file> [--audit-key <file>]] \
-[--rate-limit <burst>,<per-sec>] [--max-connections <n>] [--max-conns-per-ip <n>] [--auth-fail-limit <burst>,<per-sec>] [--max-body <bytes>] [--max-inflight-body <bytes>] [--cache-dir <dir> [--cache-size <bytes>]] [--upstream <url> --upstream-token <token|@file> [--upstream-ca <pem>] [--upstream-manifest-ttl <secs>] [--upstream-stale-if-error <secs>]] [--policy <file>] [--allowed-signers <file>] [--revoked-signers <file>] [--max-lease-secs N] [--skew-epsilon-ms N] [--tls-cert <pem> --tls-key <pem> [--tls-client-ca <pem>]] \
+[--rate-limit <burst>,<per-sec>] [--max-connections <n>] [--max-conns-per-ip <n>] [--auth-fail-limit <burst>,<per-sec>] [--max-body <bytes>] [--max-inflight-body <bytes>] [--cache-dir <dir> [--cache-size <bytes>]] [--upstream <url> --upstream-token <token|@file> [--upstream-ca <pem>] [--upstream-manifest-ttl <secs>] [--upstream-stale-if-error <secs>]] [--policy <file>] [--allowed-signers <file>] [--revoked-signers <file>] [--max-lease-secs N] [--skew-epsilon-ms N] [--tls-cert <pem> --tls-key <pem> [--tls-client-ca <pem> [--tls-client-crl <pem>] [--tls-client-map <file>]]] \
 [--config <file>] [--log-format json|text] [--log-level error|warn|info|debug] [--shutdown-grace <secs>] [--metrics-token <token|@file>] \
 [--backend-retries N] [--backend-timeout <secs>] [--breaker-threshold N] [--breaker-cooldown <secs>] [--check-client-cannot-write-manifest] [--no-group-commit]\n       \
 vcs-server hash-token <token>\n       vcs-server audit verify <file> [--key <file>]";
@@ -87,6 +87,7 @@ fn main() {
     let mut maxib: Option<String> = None;
     let (mut maxc_ip, mut auth_fail): (Option<String>, Option<String>) = (None, None);
     let (mut tls_cert, mut tls_key, mut tls_client_ca) = (None, None, None);
+    let (mut tls_client_crl, mut tls_client_map): (Option<String>, Option<String>) = (None, None);
     let (mut backend_arg, mut policy_path, mut max_lease, mut eps) = (None, None, None, None);
     let (mut log_format, mut log_level, mut grace, mut metrics_tok) = (None, None, None, None);
     let (mut retries, mut timeout, mut brk_n, mut brk_cool) = (None, None, None, None);
@@ -121,6 +122,8 @@ fn main() {
             "--tls-cert" => tls_cert = Some(val("--tls-cert")),
             "--tls-key" => tls_key = Some(val("--tls-key")),
             "--tls-client-ca" => tls_client_ca = Some(val("--tls-client-ca")),
+            "--tls-client-crl" => tls_client_crl = Some(val("--tls-client-crl")),
+            "--tls-client-map" => tls_client_map = Some(val("--tls-client-map")),
             "--cache-dir" => cache_dir = Some(val("--cache-dir")),
             "--cache-size" => cache_size = Some(val("--cache-size")),
             "--upstream" => upstream = Some(val("--upstream")),
@@ -333,16 +336,26 @@ fn main() {
     #[allow(unused_mut)]
     let mut scheme = "http";
     #[cfg(feature = "tls")]
-    let tls_files = tls_cert.clone().zip(tls_key.clone()).map(|(c, k)| (c, k, tls_client_ca.clone()));
+    let tls_files = tls_cert
+        .clone()
+        .zip(tls_key.clone())
+        .map(|(c, k)| (c, k, tls_client_ca.clone(), tls_client_crl.clone()));
     if tls_client_ca.is_some() && (tls_cert.is_none() || tls_key.is_none()) {
         die("--tls-client-ca needs --tls-cert and --tls-key");
+    }
+    if (tls_client_crl.is_some() || tls_client_map.is_some()) && tls_client_ca.is_none() {
+        die("--tls-client-crl and --tls-client-map need --tls-client-ca");
+    }
+    if let Some(p) = &tls_client_map {
+        let t = std::fs::read_to_string(p).unwrap_or_else(|e| die(&format!("cannot read {p}: {e}")));
+        cfg.client_cert_map = Some(Arc::new(vcs_server::certmap::ClientCertMap::parse(&t).unwrap_or_else(|e| die(&e))));
     }
     match (tls_cert, tls_key) {
         (None, None) => {}
         #[cfg(feature = "tls")]
         (Some(_), Some(_)) => {
-            let (c, k, ca) = tls_files.clone().unwrap_or_else(|| die("internal: tls files"));
-            cfg.tls = Some(build_tls(&c, &k, ca.as_deref()).unwrap_or_else(|e| die(&e)));
+            let (c, k, ca, crl) = tls_files.clone().unwrap_or_else(|| die("internal: tls files"));
+            cfg.tls = Some(build_tls(&c, &k, ca.as_deref(), crl.as_deref()).unwrap_or_else(|e| die(&e)));
             scheme = "https";
         }
         #[cfg(not(feature = "tls"))]
@@ -424,7 +437,7 @@ struct Reload {
     policy: Option<String>,
     log: Arc<Logger>,
     #[cfg(feature = "tls")]
-    tls: Option<(String, String, Option<String>)>,
+    tls: Option<(String, String, Option<String>, Option<String>)>,
 }
 
 #[cfg(unix)]
@@ -457,8 +470,8 @@ impl Reload {
             }
         }
         #[cfg(feature = "tls")]
-        if let Some((c, k, ca)) = &self.tls {
-            match build_tls(c, k, ca.as_deref()) {
+        if let Some((c, k, ca, crl)) = &self.tls {
+            match build_tls(c, k, ca.as_deref(), crl.as_deref()) {
                 Ok(cfg) => {
                     h.reload_tls(cfg);
                     say("reloaded tls certificate");
@@ -470,10 +483,13 @@ impl Reload {
 }
 
 #[cfg(feature = "tls")]
-fn build_tls(cert: &str, key: &str, client_ca: Option<&str>) -> Result<Arc<rustls::ServerConfig>, String> {
+fn build_tls(cert: &str, key: &str, client_ca: Option<&str>, client_crl: Option<&str>) -> Result<Arc<rustls::ServerConfig>, String> {
     let rd = |p: &str| std::fs::read(p).map_err(|e| format!("cannot read {p}: {e}"));
     match client_ca {
-        Some(ca) => vcs_server::tls::server_config_mtls(&rd(cert)?, &rd(key)?, &rd(ca)?),
+        Some(ca) => match client_crl {
+            Some(crl) => vcs_server::tls::server_config_mtls_crl(&rd(cert)?, &rd(key)?, &rd(ca)?, &rd(crl)?),
+            None => vcs_server::tls::server_config_mtls(&rd(cert)?, &rd(key)?, &rd(ca)?),
+        },
         None => vcs_server::tls::server_config(&rd(cert)?, &rd(key)?),
     }
 }

@@ -81,6 +81,9 @@ pub struct Config {
     /// Serve HTTPS with this configuration (see [`crate::tls`]).
     #[cfg(feature = "tls")]
     pub tls: Option<Arc<rustls::ServerConfig>>,
+    /// Mutual-TLS subject binding (`--tls-client-map`): when set, a request must come over a client
+    /// certificate whose common name maps to the principal its token authenticates as.
+    pub client_cert_map: Option<Arc<crate::certmap::ClientCertMap>>,
     /// Validator clock in unix ms (injectable for tests). Also drives token expiry and rate limiting.
     pub clock: Arc<dyn Fn() -> u64 + Send + Sync>,
 }
@@ -111,6 +114,7 @@ impl Config {
             metrics_token_hash: None,
             resilience: Resilience::default(),
             ready_cache: Duration::from_secs(2),
+            client_cert_map: None,
             #[cfg(feature = "tls")]
             tls: None,
             clock: Arc::new(|| {
@@ -428,8 +432,19 @@ fn refuse(#[allow(unused_variables)] sh: &Shared, mut conn: TcpStream) {
     let _ = conn.shutdown(std::net::Shutdown::Write);
 }
 
-trait Io: Read + Write + Send {}
-impl<T: Read + Write + Send> Io for T {}
+trait Io: Read + Write + Send {
+    /// DER of the verified client leaf certificate (mutual TLS), once the handshake has run.
+    fn peer_leaf(&self) -> Option<Vec<u8>> {
+        None
+    }
+}
+impl Io for DeadlineTcp {}
+#[cfg(feature = "tls")]
+impl Io for rustls::StreamOwned<rustls::ServerConnection, DeadlineTcp> {
+    fn peer_leaf(&self) -> Option<Vec<u8>> {
+        self.conn.peer_certificates()?.first().map(|c| c.as_ref().to_vec())
+    }
+}
 
 /// A TCP stream whose every read and write is bounded by both the per-operation timeout and a
 /// shared overall deadline, so a client that drips one byte at a time cannot hold a connection open.
@@ -560,6 +575,7 @@ fn handle_conn(sh: &Shared, conn: TcpStream) {
             principal: "-".into(),
             role: "none",
             request_id: String::new(),
+            cert_cn: None,
         };
         let (mut method, mut path, mut bytes_in) = (String::from("-"), String::from("-"), 0u64);
         let (mut resp, head, mut want_ka) = match read_request(&mut rd, &limits, &body_limit, &mut on_headers, &mut reserve) {
@@ -570,6 +586,9 @@ fn handle_conn(sh: &Shared, conn: TcpStream) {
                 path = req.path.clone();
                 bytes_in = req.body.len() as u64;
                 set_request_deadline(sh.cfg.resilience.request_deadline.map(|d| Instant::now() + d));
+                if sh.cfg.client_cert_map.is_some() {
+                    ctx.cert_cn = rd.get_ref().peer_leaf().and_then(|d| crate::certmap::subject_common_name(&d));
+                }
                 let r = route(sh, &req, &mut ctx);
                 set_request_deadline(None);
                 (r, head, req.keep_alive)
@@ -662,6 +681,8 @@ struct Ctx {
     principal: String,
     role: &'static str,
     request_id: String,
+    /// Subject CN of the client certificate on this connection (mutual TLS), if any.
+    cert_cn: Option<String>,
 }
 
 fn new_request_id(sh: &Shared) -> String {
@@ -800,6 +821,12 @@ fn route_inner(sh: &Shared, req: &Request, ctx: &mut Ctx) -> Response {
     };
     ctx.principal = who.name.clone();
     ctx.role = role_label(who.role);
+    if let Some(m) = &sh.cfg.client_cert_map {
+        if !m.allows(ctx.cert_cn.as_deref(), &who.name) {
+            sh.metrics.auth_failures.fetch_add(1, Ordering::Relaxed);
+            return text(403, "Forbidden: the client certificate is not mapped to this principal");
+        }
+    }
     let mutating = matches!(req.method.as_str(), "PUT" | "DELETE") && req.path.starts_with("/v1/o/");
     let mut extra = Extra::default();
     let resp = match &sh.limiter {
