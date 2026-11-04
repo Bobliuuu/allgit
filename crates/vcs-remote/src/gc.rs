@@ -396,6 +396,7 @@ pub(crate) struct LockGuard<'a> {
     mine: std::cell::RefCell<Vec<u8>>,
     owner: String,
     ttl_ms: u64,
+    _flock: Option<Box<dyn std::any::Any + Send>>,
 }
 impl Drop for LockGuard<'_> {
     fn drop(&mut self) {
@@ -443,11 +444,20 @@ impl LockGuard<'_> {
 
 pub(crate) fn acquire<'a>(b: &'a dyn Backend, owner: &str, ttl_ms: u64, now: u64) -> Result<LockGuard<'a>, GcError> {
     let mine = format!("{owner} {}", now + ttl_ms).into_bytes();
-    let guard = |mine: Vec<u8>| LockGuard {
+    // Same-host backends: a kernel lock decides liveness, so a SIGKILLed holder's lease is stale
+    // immediately (no waiting out the TTL). Others: the lease alone.
+    let (flock, local) = match b.local_flock("gc")? {
+        crate::backend::LocalFlock::Held => return Err(GcError::Locked(now.saturating_add(1000))),
+        crate::backend::LocalFlock::Acquired(l) => (Some(l), true),
+        crate::backend::LocalFlock::Unsupported => (None, false),
+    };
+    let mut flock = flock;
+    let mut guard = |mine: Vec<u8>| LockGuard {
         b,
         mine: std::cell::RefCell::new(mine),
         owner: owner.to_owned(),
         ttl_ms,
+        _flock: flock.take(),
     };
     if b.put_if_absent(LOCK_KEY, &mine)? {
         return Ok(guard(mine));
@@ -456,7 +466,7 @@ pub(crate) fn acquire<'a>(b: &'a dyn Backend, owner: &str, ttl_ms: u64, now: u64
         return Err(GcError::Locked(0)); // vanished between the two calls: let the caller retry
     };
     let exp = lock_expiry(&cur.data);
-    if exp > now {
+    if exp > now && !local {
         return Err(GcError::Locked(exp));
     }
     // Expired: take over with a CAS so two takers cannot both win.
@@ -739,4 +749,10 @@ pub fn remote_gc_with(
         hook(GcPoint::AfterDelete);
     }
     Ok(rep)
+}
+
+/// Acquire and immediately release the GC lease (kill -9 regression tests).
+#[doc(hidden)]
+pub fn acquire_for_test(b: &dyn Backend, now: u64) -> Result<(), GcError> {
+    acquire(b, "test-gc", 6 * 3600 * 1000, now).map(|_| ())
 }

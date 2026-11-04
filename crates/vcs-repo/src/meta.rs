@@ -471,26 +471,20 @@ pub fn in_sparse_set(set: &BTreeSet<String>, path: &str) -> bool {
     false
 }
 
-/// Exclusive repository lock (create_new). Released on drop.
+/// Exclusive repository lock: kernel `flock` on `.vcs/lock` (see `vcs_store::proclock`). The kernel
+/// releases it if the holder is SIGKILLed, so a crash never wedges the repo; the file is persistent
+/// and carries pid/host/start for diagnostics only. Released on drop.
 pub struct LockGuard {
-    path: PathBuf,
+    _lock: vcs_store::proclock::ProcLock,
 }
 
 impl LockGuard {
     pub fn acquire(path: PathBuf) -> Result<Self> {
-        match fs::OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(mut f) => {
-                let _ = writeln!(f, "pid {}", std::process::id());
-                Ok(Self { path })
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(Error::Locked(path)),
+        match vcs_store::proclock::try_lock(&path) {
+            Ok(Some(l)) => Ok(Self { _lock: l }),
+            Ok(None) => Err(Error::Locked(path)),
             Err(source) => Err(Error::Io { path, source }),
         }
-    }
-}
-impl Drop for LockGuard {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
     }
 }
 

@@ -30,7 +30,10 @@ fn main() {
             #[cfg(target_os = "macos")]
             let rc = unsafe { libc::clonefile(s.as_ptr(), d.as_ptr(), 0) };
             #[cfg(not(target_os = "macos"))]
-            let rc = { let _ = (&s, &d); -1 };
+            let rc = {
+                let _ = (&s, &d);
+                -1
+            };
             println!("clonefile rc={rc} {:.3} s", t.elapsed().as_secs_f64());
         }
         "restamp" => {
@@ -55,7 +58,12 @@ fn main() {
                     });
                 }
             });
-            println!("files={} walk={:.3}s lstat x{th} threads={:.3}s", v.len(), tw, t.elapsed().as_secs_f64());
+            println!(
+                "files={} walk={:.3}s lstat x{th} threads={:.3}s",
+                v.len(),
+                tw,
+                t.elapsed().as_secs_f64()
+            );
         }
         "create" => {
             let n: usize = a[2].parse().unwrap();
@@ -71,14 +79,12 @@ fn main() {
                         for i in (k..n).step_by(th) {
                             let dir = root.join(format!("d{:04}", i % 1000));
                             let fin = dir.join(format!("f{i}.txt"));
-                            let mk = |p: &Path| {
-                                match fs::OpenOptions::new().write(true).create_new(true).open(p) {
-                                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                                        fs::create_dir_all(p.parent().unwrap()).unwrap();
-                                        fs::OpenOptions::new().write(true).create_new(true).open(p).unwrap()
-                                    }
-                                    r => r.unwrap(),
+                            let mk = |p: &Path| match fs::OpenOptions::new().write(true).create_new(true).open(p) {
+                                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                                    fs::create_dir_all(p.parent().unwrap()).unwrap();
+                                    fs::OpenOptions::new().write(true).create_new(true).open(p).unwrap()
                                 }
+                                r => r.unwrap(),
                             };
                             if direct {
                                 let mut f = mk(&fin);
@@ -130,7 +136,10 @@ fn main() {
             for &p in &probes {
                 s += u64::from_le_bytes(sl[p * 64 + 32..p * 64 + 40].try_into().unwrap());
             }
-            println!("mmap + 1000 lookups (zero-copy): {:.3} ms (sum {s})", t.elapsed().as_secs_f64() * 1e3);
+            println!(
+                "mmap + 1000 lookups (zero-copy): {:.3} ms (sum {s})",
+                t.elapsed().as_secs_f64() * 1e3
+            );
         }
         _ => eprintln!("see header"),
     }

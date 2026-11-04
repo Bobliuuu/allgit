@@ -370,13 +370,19 @@ fn fsck_detects_corruption() {
 }
 
 #[test]
-fn stale_lock_blocks_mutation_with_clear_error() {
+fn live_lock_blocks_mutation_but_stale_file_does_not() {
     let (_d, r) = setup();
+    // a leftover lock file from a SIGKILLed process holds no kernel lock: mutation proceeds
     fs::write(r.worktree().join(".vcs/lock"), "pid 1").unwrap();
     write(&r, "f", "1");
-    let e = r.add(&["f".into()]).unwrap_err();
+    r.add(&["f".into()]).unwrap();
+    // a live holder blocks with a clear error
+    let held = vcs_store::proclock::try_lock(&r.worktree().join(".vcs/lock")).unwrap().unwrap();
+    write(&r, "g", "2");
+    let e = r.add(&["g".into()]).unwrap_err();
     assert!(matches!(e, Error::Locked(_)), "{e}");
-    assert!(e.to_string().contains("delete that file"));
+    drop(held);
+    r.add(&["g".into()]).unwrap();
 }
 
 #[test]
