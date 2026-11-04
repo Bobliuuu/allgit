@@ -18,7 +18,6 @@
 
 use crate::error::{Error, Result};
 use crate::ignore::Pattern;
-use crate::index::Index;
 use crate::repo::Repo;
 use crate::treeops::Flat;
 use std::collections::{BTreeMap, BTreeSet};
@@ -186,7 +185,7 @@ pub fn is_read_only(path: &Path) -> bool {
 }
 
 /// Does `hay` contain `needle` (libc `memmem`: vectorized, no allocation)?
-fn bytes_contain(hay: &[u8], needle: &[u8]) -> bool {
+pub(crate) fn bytes_contain(hay: &[u8], needle: &[u8]) -> bool {
     if needle.is_empty() {
         return true;
     }
@@ -222,7 +221,10 @@ impl Repo {
     }
 
     fn index_fp(&self) -> Option<String> {
-        file_fp(&fs::metadata(self.vcs.join("index")).ok()?)
+        let base = file_fp(&fs::metadata(self.vcs.join("index")).ok()?)?;
+        // the edit log is part of the index: its size and mtime change with every appended frame
+        let log = fs::metadata(self.vcs.join("index.log")).ok().and_then(|m| file_fp(&m)).unwrap_or_default();
+        Some(format!("{base}+{log}"))
     }
 
     /// True when the marker says the index file in place (same inode, length and mtime) was
@@ -267,10 +269,10 @@ impl Repo {
         // A marker bound to the index file's identity remembers "scanned, no attribute file in it",
         // so the 7 MB read of a big index is paid once per index write, not once per command.
         if !self.index_holds_no_attrs() {
-            let raw = self.rd("index")?;
-            if bytes_contain(&raw, ATTR_FILE.as_bytes()) {
-                let ix = Index::decode(&raw)?;
-                for p in ix.entries.keys() {
+            let img = self.index_image()?;
+            if img.mentions(ATTR_FILE) {
+                for (p, _) in img.list()? {
+                    let p = &p;
                     if p == ATTR_FILE {
                         continue;
                     }
