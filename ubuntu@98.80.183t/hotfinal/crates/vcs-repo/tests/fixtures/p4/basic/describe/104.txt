@@ -1,0 +1,8 @@
+Change 104 by dave@ws1 on 2024/03/04 08:00:00
+
+	Touch unrelated depot area
+
+Affected files ...
+
+... //depot/other/x.txt#3 edit
+

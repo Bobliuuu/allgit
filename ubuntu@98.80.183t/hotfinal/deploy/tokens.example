@@ -1,0 +1,16 @@
+# vcs-server tokens file: one principal per line, `#` starts a comment.
+#
+#   <principal> <read|write|admin> <zones|*> <blake3-hex-of-token>
+#
+# roles:  read   get/list only
+#         write  puts; changes the manifest only in the listed zones (comma separated, or *)
+#         admin  every zone, and may break other principals' locks
+# The server stores only hashes. Create a token and its hash with:
+#   token=$(head -c 32 /dev/urandom | base64 | tr -d '=+/')
+#   vcs-server hash-token "$token"        # paste the output below; give $token to the user
+# Users export it as VCS_TOKEN and set VCS_PRINCIPAL to their principal name (docs/deploy.md).
+# The hashes below are for the throwaway tokens `example-alice`, `example-bob`, `example-carol`, `example-root`; never use them for real.
+alice  write  *       dfc51501dc31cfa9e9489c796864f93f3403b8ffd482f69eecd32509f282f16c
+bob    write  art,ui  8e9d8cad46d851a1a4ae9d8bedee858d76681cbf259f382a12657549d6e7faf9
+carol  read   *       2fd38b16d525e3cb88f10cdbf4d1718dff44747afb97bf896b460cd12fbc4d18
+root   admin  *       3baf2d29ed790f4b7456c7b7150d109b90675d498a84612a1d547ac5fb20c4e0

@@ -100,8 +100,7 @@ points at an attacker's server (the file is local, so this needs the user to add
 token on the first request. Mitigations considered: bind the variable to a host (`VCS_TOKEN_HOST`), or prefer the
 helper whenever the remote is not the host named at login. Set `VCS_TOKEN_HOST=host:port` (as shown by `vcs login`) and the variable is ignored for any other host, falling through to the credential helper. Unset keeps the old behaviour because making it mandatory changes documented behaviour; recommend
 using `vcs login` (host-scoped) instead of the environment variable, and tokens with the narrowest role and zones.
-Related: the client speaks plain `http://` unless built with the `tls` feature; bearer tokens then cross the network in
-clear text. The README already says to use loopback, a private network or a TLS proxy.
+Related: the CLI's `tls` feature is now on by default (issue #277), so `https://` remotes work out of the box; a build without it speaks plain `http://` and bearer tokens then cross the network in clear text. The README already says to use loopback, a private network or a TLS proxy.
 
 ### 14. Availability limits (Low, accepted)
 

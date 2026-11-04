@@ -1,0 +1,17 @@
+# vcs-server --config /etc/vcs/server.toml   (command-line flags override these values)
+# Keys are the long option names without `--`. Unknown keys are errors reported as file:line.
+root = "/var/lib/vcs/data"          # or: backend = "s3://bucket/prefix?endpoint=https://s3.example.com"
+tokens = "/etc/vcs/tokens"
+policy = "/etc/vcs/policy"
+listen = "127.0.0.1:8480"
+max-lease-secs = 86400
+
+log-format = "json"                 # json | text
+log-level = "info"                  # error | warn | info | debug
+shutdown-grace = 30                 # seconds to let in-flight requests finish on SIGTERM/SIGINT
+metrics-token = "@/etc/vcs/metrics-token"   # token (>= 16 chars) allowed to read /metrics only; "@file" reads it from a file
+
+backend-retries = 2                 # extra attempts for transient backend errors (jittered backoff)
+backend-timeout = 60                # seconds of backend work allowed per request (0 = unbounded)
+breaker-threshold = 5               # consecutive failed backend operations before 503 + Retry-After
+breaker-cooldown = 5                # seconds before one probe call is let through

@@ -57,6 +57,16 @@ pub trait ObjectStore: Send + Sync {
     fn get_encoded(&self, id: &ObjectId) -> Result<Vec<u8>, StoreError> {
         Ok(self.get(id)?.encode())
     }
+    /// The stored v2 pack entry of `id` (codec byte + body), verbatim and **not** hash-checked,
+    /// with the object's kind byte; `None` when the store cannot hand one out (loose, pending,
+    /// other pack formats). For forwarders (bundle create) that let the receiver verify.
+    fn get_payload_v2(&self, _id: &ObjectId) -> Result<Option<(u8, Vec<u8>)>, StoreError> {
+        Ok(None)
+    }
+    /// [`ObjectStore::get_encoded`] without the hash check, for callers whose receiver verifies.
+    fn get_encoded_unchecked(&self, id: &ObjectId) -> Result<Vec<u8>, StoreError> {
+        self.get_encoded(id)
+    }
     /// Durability barrier: when this returns, every object `put` so far is complete and
     /// durable under its final name. Cheap no-op when nothing is pending.
     fn sync(&self) -> Result<(), StoreError> {
@@ -1135,6 +1145,27 @@ impl ObjectStore for LocalStore {
             },
             Err(source) => Err(StoreError::Io { path: p, source }),
         }
+    }
+
+    fn get_payload_v2(&self, id: &ObjectId) -> Result<Option<(u8, Vec<u8>)>, StoreError> {
+        if self.pending.read().unwrap().contains_key(id) {
+            return Ok(None);
+        }
+        for p in self.packs_r()?.iter() {
+            if let Some(pl) = p.read_payload_v2(id)? {
+                return Ok(pack::payload_kind(&pl).map(|k| (k, pl)));
+            }
+        }
+        Ok(None)
+    }
+
+    fn get_encoded_unchecked(&self, id: &ObjectId) -> Result<Vec<u8>, StoreError> {
+        if !self.pending.read().unwrap().contains_key(id) {
+            if let Ok(Some(b)) = self.packed(id) {
+                return Ok(b);
+            }
+        }
+        self.get_encoded(id)
     }
 
     fn put(&self, obj: &Object) -> Result<ObjectId, StoreError> {

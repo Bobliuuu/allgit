@@ -1358,6 +1358,11 @@ impl Repo {
         }
     }
 
+    /// True when a filesystem watcher is running for this repository (and monitoring is not disabled).
+    pub(crate) fn watcher_running(&self) -> bool {
+        std::env::var_os("VCS_NO_FSMONITOR").is_none() && fsmonitor::JournalMonitor::open(&self.vcs).is_some()
+    }
+
     /// Tracked paths that may differ from the index, from the monitor: the unstaged set saved with the
     /// state plus whatever changed since its token. `None` (do a full scan) without a running watcher, a
     /// state for this index, or a usable answer. Untracked files are not covered.
@@ -1642,7 +1647,7 @@ impl Repo {
             }
             Ok((out, clean))
         };
-        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(16);
+        let threads = crate::writer_threads::status_threads();
         if threads <= 1 || list.len() < 2048 {
             return check(list);
         }
@@ -2466,6 +2471,23 @@ impl Repo {
                 return Err(vcs_store::StoreError::NotFound(*id).into());
             }
         }
+        // A fresh materialization of a big tree into an empty worktree: clone a cached snapshot of
+        // it (copy-on-write) instead of writing every file; see `snapcache`.
+        let snap_want: Option<crate::snapcache::Want> = (crate::snapcache::enabled()
+            && old.is_empty()
+            && virt.is_empty()
+            && ws.sparse.is_empty()
+            && ix.entries.is_empty()
+            && changed.len() >= crate::snapcache::min_files())
+        .then(|| changed.iter().map(|p| (p.as_str(), new[*p].0, new[*p].1)).collect());
+        if let Some(want) = &snap_want {
+            if let Some(es) = crate::snapcache::try_restore(&self.common, &self.worktree, want) {
+                for ((p, _, _), e) in want.iter().zip(es) {
+                    ix.insert(p, e)?;
+                }
+                return Ok(());
+            }
+        }
         // deletions
         let mut dirs: BTreeSet<String> = BTreeSet::new();
         for p in old.keys().filter(|p| !new.contains_key(*p)) {
@@ -2497,7 +2519,7 @@ impl Repo {
             };
             let m = if mode == EntryMode::Symlink {
                 io(&abs(), self.wfs.symlink(&data, p))?
-            } else if old.contains_key(p) {
+            } else if old.contains_key(p) || crate::writer_threads::atomic_only() {
                 io(&abs(), self.wfs.write(p, &data, mode))?
             } else {
                 // Not tracked before, and the preflight saw nothing there: create in place (never
@@ -2551,6 +2573,9 @@ impl Repo {
         }
         // prune now-empty directories (never the worktree root)
         self.prune_dirs_fs(dirs);
+        if let Some(want) = &snap_want {
+            crate::snapcache::capture(&self.common, &self.worktree, want);
+        }
         Ok(())
     }
 

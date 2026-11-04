@@ -17,4 +17,4 @@ cargo build -q --release -p vcs-repo --features "$FEATURES" --example replay
 VCS="$(cargo metadata --format-version 1 --no-deps | sed 's/.*"target_directory":"\([^"]*\)".*/\1/')/release"
 rm -rf "$WORK/repo"; "$VCS/vcs" init "$WORK/repo" >/dev/null
 ( cd "$WORK/repo" && "$VCS/vcs" import-git "$WORK/stream" | tail -3 )
-"$VCS/examples/replay" "$WORK/repo" replay --max "$MAX"
+"$VCS/examples/replay" "$WORK/repo" replay --max "$MAX" $REPLAY_ARGS
