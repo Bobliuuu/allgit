@@ -24,6 +24,13 @@ without them, `vcs fsck` checks them):
   paths and their directories. Built lazily by the first long path walk (256 commits examined), stored when 16 new
   filters exist (64 once a file exists). Not built for root commits or changes of more than 512 paths.
 
+Changed-path filters (#507) were already in place; `gc` now also builds them for every commit of every zone on all
+cores (`Repo::build_path_filters`), so the first path walk after a gc no longer pays for them. 100,000 commits (generated, 10x10x10
+files), first `log -n20 -- <rarely touched file>` on a repository without filters: 12 s CPU (159 s wall on a machine at load
+70-140); after `gc`: 0.27 s CPU, 1.6 s wall. Steady state is unchanged (CPU, medians of 5, loaded machine: warm file 27-33 ms, cold
+file 160-240 ms; git 2.52 on the same history: 16-18 ms warm; cold 547 ms without and 95 ms with `--changed-paths`).
+`blame` of the 400-line hot file is unchanged (about 1.2 s CPU; dominated by the line diff, not by commit selection).
+
 Not done: `grep` over several revisions (the command takes one revision; its per-file work already runs on all cores),
 parallel tree walking inside one `diff_trees` (the cost is dominated by object reads, see below), a cache for
 `-S`/`-G` results.
