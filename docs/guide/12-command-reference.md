@@ -377,6 +377,7 @@ Usage: vcs watch [OPTIONS]
 Options:
   -C <DIR>                     Run as if vcs was started in <DIR> (applied before repository discovery)
       --idle-exit <IDLE_EXIT>  Stop after this many seconds without a `status` asking for the journal (set when a command starts the watcher itself)
+      --daemonize              Start the watcher in the background (own session, output to .vcs/fsmon/watchd.log) and return once it is journaling
       --json                   Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>          PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks               Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md

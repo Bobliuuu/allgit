@@ -796,3 +796,52 @@ Small requests (200 each): GET 1 KiB pooled p50 0.16 ms; GET 1 KiB on a new conn
 SigV4 cost on the client: sha256 of the body runs at about 1.2-1.3 GB/s (0.8 us per KiB, 0.87 ms per MiB, 12.9 ms per 16 MiB); a 1 MiB create-only PUT takes 14.9 ms p50 here, so body hashing is about 6% of it (less on a real network). **UNSIGNED-PAYLOAD decision: not adopted.** S3 accepts it only over HTTPS, it drops end-to-end body integrity that the signed hash gives on plain-HTTP local and private-network endpoints, and the saving is at most the 0.87 ms per MiB above. Revisit only if a profile on a fast real network shows hashing above 10% of large PUTs.
 
 Not measured: before/after of #322 (p50 and 16-thread numbers before pooling), any TLS endpoint, any real network, MinIO (its binaries now return HTTP 410; only RustFS was run).
+
+## `status` at 100k files with a watcher: no index decode, one FSEvents stream, `vcs watch --daemonize` (issue #293)
+
+What changed (all behind the existing rule that monitored `status` equals the full scan):
+
+- **Quiet status skips the index.** The saved state (`.vcs/fsmon/state`, still `AGFS`, new trailing section; an older
+  binary rejects it and just recomputes) now also holds the staged lists and the HEAD commit of every subscribed zone.
+  When the state's fingerprint is the current index, the watcher reports no changed path and no rebind touched anything,
+  `status` is assembled from the state without decoding the 100k-entry index (`status_from_state`). Any HEAD move,
+  subscription change, index rewrite that did not log a rebind, or lost event falls back to the old path.
+  `VCS_NO_STATESKIP=1` turns the shortcut off (used for the paired runs below).
+- **macOS: one recursive watch instead of one watch per directory.** A per-directory `notify` watch is one FSEvents
+  stream each. On a tree of 2,100 directories (100,000 files, 20 x 10 x 10 dirs) the watcher had not published its
+  journal after more than 3 minutes (load average about 100); with a single recursive stream on the root it starts in
+  about 1 s. Directory creates and renames need no bookkeeping any more. Linux (inotify) keeps explicit
+  per-directory watches. `VCS_WATCH_PER_DIR=1` forces them on macOS (tests).
+- **Zone-aware watches.** Directories owned by a zone this worktree is not subscribed to are not watched (inotify) or
+  their events are dropped (FSEvents): the untracked walk never looks there. A change of the zone layout or the
+  subscriptions is noticed within 0.5 s and rebuilds the watches (journal gets an `O`, so the next status is a full
+  scan). Sparse sets do not narrow the watch: the untracked walk still reports new names in sparse-excluded directories.
+- **`vcs watch --daemonize`** starts the watcher in its own session with its output in `.vcs/fsmon/watchd.log`, returns
+  once the journal exists, and says so if one already runs (test `watch_daemonize_returns_with_a_running_detached_watcher`).
+  Auto-start for big repositories already existed (above).
+
+Measured on a MacBook (macOS 26, APFS), `vcs` release without LTO, 100,000 files of 10 bytes, **load average 80-150
+(many agents building) so wall times are noisy; CPU time (user + system of the child, median of 15-25 runs) is the
+reliable column**. git 2.x `git status` on the same tree for reference, no fsmonitor.
+
+| tree | state | `status` wall median / min ms | CPU median ms |
+|---|---|---|---|
+| flat, clean | vcs watcher, state shortcut | 70 / 28 | 9.0 |
+| flat, clean | vcs watcher, `VCS_NO_STATESKIP=1` | 149 / 41 | 36.9 |
+| flat, clean | vcs no watcher | 627 / 221 | 485.9 |
+| flat, clean | git | 121 / 25 | 13.1 |
+| flat, 1% modified (1,000 files) | vcs watcher, shortcut | 45 / 16 | 9.1 |
+| flat, 1% modified | vcs watcher, no shortcut | 104 / 44 | 39.5 |
+| flat, 1% modified | vcs no watcher | 366 / 279 | 548.5 |
+| flat, 1% modified | git | 45 / 26 | 12.4 |
+| deep (2,100 dirs), clean | vcs watcher (single stream), shortcut | 13 / 8 | 7.0 |
+| deep, clean | vcs watcher, no shortcut | 31 / 28 | 30.8 |
+| deep, clean | vcs no watcher | 148 / 141 | 660.6 |
+| deep, clean | git | 275 / 239 | 720.5 |
+| deep, 1% modified | vcs watcher, shortcut | 12 / 8 | 6.5 |
+| deep, 1% modified | vcs watcher, no shortcut | 31 / 22 | 29.9 |
+
+Single runs of the whole sequence; the flat rows ran at a different load than the deep rows. The 1% rows report
+1,000 modified files and 1,000 more edits to reach them. Not done: a path arena for index keys (the AGI5 memory-mapped
+index, #493, already removed the decode from the hot commands; the remaining decode is on the fallback path only),
+a quiet-box re-measure, Windows (ReadDirectoryChanges untested).
