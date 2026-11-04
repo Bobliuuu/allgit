@@ -251,7 +251,7 @@ impl Repo {
             }
         }
         refs.branches.remove(&(zone.to_owned(), branch.to_owned()));
-        self.commit_refs_op(&refs, &format!("delete branch {zone}/{branch}"), None)?;
+        self.commit_refs_op_lazy(&refs, &format!("delete branch {zone}/{branch}"), None)?;
         Ok(head)
     }
 

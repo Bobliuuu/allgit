@@ -440,7 +440,9 @@ pub(crate) fn remember_index_digest(vcs: &Path, digest: &[u8; 32]) {
 /// only when the file is not the one last seen. The identity is taken before and after the read of
 /// the cache, and the bytes' length must match, so a file replaced meanwhile is never trusted.
 pub(crate) fn index_digest_cached(vcs: &Path, index: &[u8]) -> [u8; 32] {
-    let Some(id) = index_identity(vcs) else { return index_digest(index) };
+    let Some(id) = index_identity(vcs) else {
+        return index_digest(index);
+    };
     if let Ok(c) = fs::read(vcs.join(DIR).join(DIGEST_CACHE)) {
         if c.len() == 64 && c[..32] == id && u64::from_le_bytes(id[8..16].try_into().expect("8 bytes")) == index.len() as u64 {
             let mut d = [0u8; 32];
@@ -600,7 +602,7 @@ mod digest_cache_tests {
         fs::write(vcs.join("index"), &a).unwrap();
         assert_eq!(index_digest_cached(vcs, &a), index_digest(&a));
         assert_eq!(index_digest_cached(vcs, &a), index_digest(&a)); // served from the cache
-        // a rewrite (new file renamed over the old) of the same length is not mistaken for the old one
+                                                                    // a rewrite (new file renamed over the old) of the same length is not mistaken for the old one
         let tmp = vcs.join("index.tmp");
         fs::write(&tmp, &b).unwrap();
         fs::rename(&tmp, vcs.join("index")).unwrap();

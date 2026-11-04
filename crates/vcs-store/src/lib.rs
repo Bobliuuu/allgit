@@ -1009,6 +1009,18 @@ impl LocalStore {
         }
         Ok(tmp)
     }
+    /// An object-writing barrier also makes deferred ref updates durable: ref-only operations
+    /// append to `oplog.journal` without an fdatasync and leave `oplog.dirty` behind (vcs-repo
+    /// `journal`, docs/durability.md). Cost when nothing is deferred: one failed unlink.
+    fn flush_deferred_refs(&self) {
+        if let Some(root) = self.dir.parent() {
+            if fs::remove_file(root.join("oplog.dirty")).is_ok() {
+                if let Ok(f) = fs::File::open(root.join("oplog.journal")) {
+                    let _ = f.sync_data();
+                }
+            }
+        }
+    }
     /// Store one object as a loose file WITHOUT any fsync (write a temp file, rename it), leaving
     /// `pending` untouched. For objects whose durable copy lives elsewhere: the operation-log
     /// journal (`vcs-repo::journal`) re-creates them after a crash. Never use it for an object
@@ -1192,6 +1204,7 @@ impl ObjectStore for LocalStore {
         if pending.is_empty() {
             return Ok(());
         }
+        self.flush_deferred_refs();
         let in_files = pending.values().filter(|p| matches!(p, Pend::File(_))).count();
         if pending.len() - in_files >= pack_min() && self.packs_r()?.len() < MAX_BARRIER_PACKS {
             self.sync_as_pack(&mut pending)?;

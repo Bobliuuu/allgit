@@ -74,6 +74,7 @@ pub use gc::{GcOptions, GcReport, GcRun};
 pub use histwalk::{FirstParentSkip, LogWalk, ParentIndex, PathFilter};
 pub use import::{ImportOptions, ImportReport};
 pub use import_p4::{P4Report, P4View};
+pub use journal::set_fsync_refs;
 pub use manage::SnapshotCheckoutReport;
 pub use merge::{ConflictRec, MergeOpts, MergeOutcome, MergeState, Resolution, ResolveCheck};
 pub use meta::{DEFAULT_BRANCH, ROOT_ZONE};

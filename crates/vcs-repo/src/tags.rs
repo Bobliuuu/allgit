@@ -120,7 +120,7 @@ impl Repo {
         refs.tags.insert(key, target);
         self.store.sync()?;
         let kind = if target == commit { "" } else { " (annotated)" };
-        self.commit_refs_op(&refs, &format!("tag create {zone}/{name}{kind} at {}", commit.short()), None)?;
+        self.commit_refs_op_lazy(&refs, &format!("tag create {zone}/{name}{kind} at {}", commit.short()), None)?;
         Ok(commit)
     }
 
@@ -134,7 +134,7 @@ impl Repo {
             return msg(format!("no such tag {zone}/{name}"));
         };
         let (commit, _) = self.peel(&zone, id)?;
-        self.commit_refs_op(&refs, &format!("tag delete {zone}/{name} (was {})", commit.short()), None)?;
+        self.commit_refs_op_lazy(&refs, &format!("tag delete {zone}/{name} (was {})", commit.short()), None)?;
         Ok(commit)
     }
 
