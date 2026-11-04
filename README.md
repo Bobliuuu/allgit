@@ -39,7 +39,7 @@ none is a statement about other hardware. Where vcs loses, it says so in the sam
 | Zones chosen from your usage profile | **37 MB** downloaded | 189.5 MB full clone | [zone-profile-bench](docs/research/zone-profile-bench.md) |
 
 Scoreboard totals across all measured cells (one quiet-box pass, build `845610a`, see [below](#-wins-ties-and-losses-measured)):
-**134 wins, 66 ties, 18 losses** for vcs against git, Perforce, walgit, Jujutsu and Sapling. The 18 losses are listed in plain
+**136 wins, 68 ties, 14 losses** for vcs against git, Perforce, walgit, Jujutsu and Sapling. The 14 losses are listed in plain
 text further down.
 
 <p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/charts/huge-scale-dark.svg"><img src="docs/img/charts/huge-scale-light.svg" alt="1M files: vcs vs git, wall seconds on a log axis" width="900"></picture></p>
@@ -225,12 +225,12 @@ Summary (counts are cells, not importance; rows sharing a scenario count once pe
 
 | tool | WIN | TIE | LOSS | where vcs is behind, plainly |
 |---|---|---|---|---|
-| git (flat 100k) | 62 | 57 | 12 | tiny metadata commands (`branch`, `tag`: 6 to 9 ms vs 1.4 ms), `ls-tree`, `bundle verify`/`create`, `log --stat`, `gc` CPU, `add -u` / `commit -a` after a one-file change, no-op `add` at 1M files, push throughput on local disk |
+| git (flat 100k) | 64 | 59 | 8 | tiny metadata commands (`branch`, `tag`: 6 to 9 ms vs 1.4 ms), `ls-tree`, `bundle create`, `log --stat`, `gc` CPU, `add -u` / `commit -a` after a one-file change, no-op `add` at 1M files, push throughput on local disk |
 | Perforce (p4d on loopback) | 17 | 7 | 6 | one-file `submit`, `add`, `opened`, `revert`, `filelog`, full-tree `sync`: p4 thin client vs a server process |
 | walgit (remote workflows) | 24 | 0 | 0 | re-run; object-store request counts, client store size (1.5x) and server memory are worse |
 | Jujutsu (flat 100k, 17 cells) | 16 | 1 | 0 | `commit` of a big staged tree, `switch`, deep `clone` |
 | Sapling (flat 100k, 16 cells) | 15 | 1 | 0 | none in measured cells (gc, describe, amend n/a) |
-| **Total** | **134** | **66** | **18** | single pass, one box, build `845610a`; jj/Sapling flat layout only (deep and binary not re-run) |
+| **Total** | **136** | **68** | **14** | single pass, one box, build `845610a`, except six git cells re-measured after #534, #535, #537 (see the scoreboard); jj/Sapling flat layout only (deep and binary not re-run) |
 
 Beyond the scoreboards: 1M-file `clone`, `add`, `diff`, `checkout` and `gc` win against git; 100k-file `add`, `commit`, `switch`,
 `grep` and `archive` win; `status` on a clean tree is a CPU tie; `log -n 5` is a tie (start-up cost under the 2 ms floor). Remote
@@ -288,7 +288,7 @@ cell under 2 ms wall difference or inside the MAD noise). Green is a win, amber 
 
 | tool | 🟢 WIN | 🟡 TIE | 🔴 LOSS | not measured / n/a | how fresh |
 |---|---|---|---|---|---|
-| git (flat 100k, every doc row; rows sharing a scenario count once per row) | 62 | 57 | 12 | 93 not measured, 44 missing in vcs | 2026-11-04, build `845610a`, box c, 9 interleaved runs, load1 < 1.0 gate |
+| git (flat 100k, every doc row; rows sharing a scenario count once per row) | 64 | 59 | 8 | 93 not measured, 44 missing in vcs | 2026-11-04, build `845610a`, box c, 9 interleaved runs, load1 < 1.0 gate |
 | Perforce (p4d on loopback) | 17 | 7 | 6 | 27 not measured, 2 missing | 2026-11-02, build `8da0be2`, box E, interleaved |
 | walgit (remote workflows) | 24 | 0 | 0 | 8 not measured | same build, 5 reps, walgit 80e9a20 |
 | Jujutsu (flat 100k, 17 cells) | 16 | 1 | 0 | describe and amend n/a | vcs `8da0be2` re-run, **jj numbers from the earlier `34315b6` run, not interleaved** |
@@ -298,12 +298,12 @@ Before this refresh (2026-11-02, build `8da0be2`, box E): git 46 WIN / 68 TIE / 
 is a lower bound (the p4d process is read in 10 ms ticks), p4 and jj/Sapling are different architectures than vcs, the
 git/p4/walgit/jj/Sapling runs are flat 100k only (the older deep and binary jj/Sapling charts above are from earlier runs).
 
-🙈 **Where git (or Perforce) still wins today** (all 18 losses, causes in [the scoreboard](docs/research/command-scoreboard.md)):
+🙈 **Where git (or Perforce) still wins today** (all 14 losses, causes in [the scoreboard](docs/research/command-scoreboard.md)):
 
-- **vs git (12)**: `bundle verify` (376 ms vs 1.7 ms: vcs hashes the whole pack, git checks prerequisites), `branch -m` and `init`
-  (11 to 13 ms vs 2 to 3 ms wall, CPU is a tie: process start-up and store creation), `grep -F -- path`, `ls-files` and
-  `ls-files -s` (55 to 66 ms vs 15 to 31 ms: 100k-entry index decode), `switch --detach` (1.36x), `add -u` (1.31x),
-  `commit -a` (1.26x), `ls-tree -r --name-only` (1.27x).
+- **vs git (8)**: `branch -m` and `init` (11 to 13 ms vs 2 to 3 ms wall, CPU is a tie: process start-up and fsyncs of the
+  new store), `switch --detach` (1.36x), `add -u` (1.12x wall, 1.37x CPU), `commit -a` (1.29x, 1.40x), `ls-tree -r --name-only`
+  (1.27x). Fixed since the 845610a run (re-measured on the same box): `bundle verify` (376 ms to 2.0 ms against git's 1.3 ms,
+  now a TIE; `--full` keeps the whole-pack check), `ls-files` and `ls-files -s` (WIN, 0.22x and 0.18x wall), `grep -F -- path` (TIE).
 - **vs Perforce (6)**: one-file `submit` (120 ms vs 9 ms), `opened` (46 ms vs 5.6 ms), `revert`, `diff`, `delete` (p4 is a
   thin client to a warm server; vcs pays process start-up plus a status), and `sync` of a path at a rev (1.17x).
 - **vs walgit, Jujutsu, Sapling (flat 100k)**: no losses in measured cells.

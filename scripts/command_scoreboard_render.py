@@ -402,6 +402,9 @@ def main():
            "* Several doc rows share one scenario (for example `git add .` and `git add -A`). The scenario is stated in the JSON under `cmds`.", ""]
     gm = next(iter(gmeta.values()), {})
     md += ["## Where and how it was run", ""]
+    rm = next((m['remeasured'] for m in gmeta.values() if m.get('remeasured')), None)
+    if rm:
+        md += [f"* **Partial re-measure**: the cells `bundle_verify`, `lsfiles`, `lsfiles_s`, `grep_path` (clean) and `add_u`, `commit_a` (dirty) were re-run on {rm['host']} on {rm['start'][:10]} (load1 at start {rm['load1_start']}) with {rm['build']}; runs per cell: {rm['runs']}. Every other cell, and the machine/build line below, is from the 845610a run above; the `before` column is unchanged. Source: `remeasured` in the `meta` of `git-clean.json` and `git-dirty.json`.", ""]
     if gm:
         loads = [f"{k.replace('git-','').replace('.json','')}: load1 {m['load1_start']:.1f}->{m.get('load1_end', 0):.1f}" for k, m in gmeta.items()]
         md += [f"* Machine: {gm.get('host')} (AWS c6i.4xlarge timing box c, {gm.get('cores')} vCPU), run {gm.get('start','')[:10]}, vcs release build of `origin/main` {a.build or '(unrecorded)'}, git: `{gm.get('git')}`, vcs: `{gm.get('vcs')}`, "
@@ -445,10 +448,12 @@ def main():
     md += ["## Remaining losses and their causes", "",
            "Causes are from the code and the timings (wall vs CPU), not from profiles taken in this pass.", "",
            "| loss | cause |", "|---|---|",
-           "| git `bundle verify` | `vcs bundle verify` re-hashes the whole pack (`bundle::verify_file`); git only checks prerequisites. `--quick` exists (`verify_quick`); the default is a deliberate integrity check, so the gap is a semantics difference. |",
+           "| (fixed, TIE) git `bundle verify` | was 376 ms: the default re-hashed the whole pack. The default is now the header-only check (`verify_quick`, what git does); `--full` keeps the whole-pack hash and decode, and `fetch`/`clone` always run it. 1.3 ms against 2.0 ms is below the 2 ms floor. |",
            "| git `init`, `init proj`, `branch -m` | wall loss of ~10 ms with CPU within 1.2x (branch -m 1.75x CPU): fixed process start-up, store directory creation and fsync of the new ref, below what git does lazily. |",
-           "| git `grep -F -- src`, `ls-files`, `ls-files -s`, `ls-tree -r --name-only` | decoding the 100k-entry tree/index into memory before printing; git streams its flat index with mmap. CPU 3 to 5x on `ls-files`. |",
-           "| git `switch --detach`, `checkout --detach`, `add -u`, `commit -a` | 1.26 to 1.36x wall and 1.2 to 1.4x CPU: full-tree status pass plus writing a new tree for a one-file change; git is cheaper on the stat-only fast path (which vcs wins in `status`). |",
+           "| (fixed) git `grep -F -- src`, `ls-files`, `ls-files -s` | `scan_tracked` fully decoded the AGI5 index (100k entries) before printing; it now walks the mapped blocks. `ls-files` and `ls-files -s` are WINs, `grep -F` a TIE (wall 0.37, CPU 0.99). |",
+           "| git `ls-tree -r --name-only` (`ls-files --rev`) | not re-measured. Streaming the tree walk into the output (no entry list) measured 0.99 wall on the same box, so the cost is tree decode, not the list; not shipped. |",
+           "| git `switch --detach`, `checkout --detach` | not re-measured. Detach already skips the untracked walk; full-tree stat pass plus index decode and rewrite, as git. A port of the rest of `checkout` onto it measured slower (a second index decode) and was dropped. |",
+           "| git `add -u`, `commit -a` | still a LOSS after skipping the untracked walk (1.12 / 1.37 and 1.29 / 1.40): the status pass finds the changed files, then `add` reads, hashes and writes them and patches the index in a second pass; fusing the two would hash once. |",
            "| p4 `submit` (1 file), `opened`, `delete`, `revert`, `diff` | p4 is a thin client to a warm p4d (4 to 9 ms wall); vcs runs the work in-process after process start-up and a status scan, and `submit` includes publishing to the remote. p4 CPU is a lower bound. |",
            "| p4 `sync path@rev` | 1.17x wall: vcs writes the files of a computed commit; p4d streams already stored revisions. |",
            "", "jj and Sapling: no losses in the measured flat 100k cells, see `docs/research/jj-sl-final.md`. walgit: no losses.", ""]
