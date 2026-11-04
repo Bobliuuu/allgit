@@ -15,8 +15,8 @@ Block-indexed index with point patch (`index_file.rs`), lazy tags (#481), lock-f
 
 | # | What | Before | After | Gain |
 |---|---|---|---|---|
-| P1 | Create 100k x 4 KiB files, 1 thread: tmp file + rename + path stat (what `RealFs::write` does) vs `O_EXCL` at the final path + `fstat` (valid when the path is known absent, i.e. clone / fresh checkout) | 49.1 s, 37.0 s (2 runs) | 18.6 s (1 run) | **2.0-2.6x** |
-| P1 | same, 8 threads | 16.8 s | 12.7 s | 1.3x (kernel/APFS directory lock bound) |
+| P1 | Create 100k x 4 KiB files, 1 thread: tmp file + rename + path stat (what `RealFs::write` does) vs `O_EXCL` at the final path + `fstat` (valid when the path is known absent, i.e. clone / fresh checkout) | 49.1 s, 37.0 s (2 runs) | 18.6 s, 23.2 s (2 runs) | **1.6-2.6x** |
+| P1 | same, 8 threads | 16.8 s, 14.6 s | 12.7 s, 11.1 s | 1.3x (kernel/APFS directory lock bound) |
 | P2 | Whole materialized tree (100,054 files) duplicated with one `clonefile(2)` on the directory | `vcs clone` of the same repo: 17.4-26.1 s wall, 15 s sys (3 runs, same load era); `cp -c -R` 30-40 s | 1.43-1.67 s (5 runs) | **~12-15x vs vcs clone**, ~25x vs `cp -c -R` |
 | P3 | Re-stamp a cloned tree's index (ctime changes on clone; mtime/size are preserved): lstat of 100k files | 2.45 s (1 thread) | 0.22 s (8 threads) | 11x; makes P2 + restamp ~1.9 s total |
 | P4 | Point lookups into an mmap'd fixed-width record file vs read + decode-all (100k records, 1000 lookups) | 1.95 ms | 0.34 ms | 5.7x on this toy; real index decode today is **14.7 ms wall / 30.8 ms CPU for 100k entries** (`index_cost`, loaded), encode 7.1 ms |
