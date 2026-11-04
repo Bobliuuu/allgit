@@ -549,7 +549,11 @@ fn run_job(b: &dyn Backend, j: &Job) -> Result<Done, BackendError> {
                 let (check, buf) = std::thread::scope(|sc| {
                     let h = sc.spawn(|| seg.cat.check_trailer_once(b, stem, seg.idx));
                     let buf = range();
-                    (h.join().unwrap_or_else(|_| Err(BackendError::Other("trailer check panicked".into()))), buf)
+                    (
+                        h.join()
+                            .unwrap_or_else(|_| Err(BackendError::Other("trailer check panicked".into()))),
+                        buf,
+                    )
                 });
                 if !check? {
                     return raced();
@@ -719,7 +723,12 @@ const MIN_READ_DEFAULT: u64 = 256 * 1024;
 
 fn min_read() -> u64 {
     static V: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var("VCS_REMOTE_MIN_READ").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(MIN_READ_DEFAULT))
+    *V.get_or_init(|| {
+        std::env::var("VCS_REMOTE_MIN_READ")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(MIN_READ_DEFAULT)
+    })
 }
 /// Header of a pack: magic + u32 count; each entry is a u32 length then the encoded object.
 const PACK_HEADER: u64 = 12;

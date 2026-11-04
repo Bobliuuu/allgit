@@ -106,10 +106,12 @@ const POOL: usize = 16;
 /// validated). `VCS_S3_MULTIPART_MB=16` enables it from 16 MiB up, `https://` endpoints only; 0 or unset disables.
 fn multipart_threshold() -> u64 {
     static V: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    *V.get_or_init(|| match std::env::var("VCS_S3_MULTIPART_MB").ok().and_then(|v| v.trim().parse::<u64>().ok()) {
-        Some(0) | None => u64::MAX,
-        Some(mb) => mb << 20,
-    })
+    *V.get_or_init(
+        || match std::env::var("VCS_S3_MULTIPART_MB").ok().and_then(|v| v.trim().parse::<u64>().ok()) {
+            Some(0) | None => u64::MAX,
+            Some(mb) => mb << 20,
+        },
+    )
 }
 
 /// Part size: 8 MiB (S3 minimum 5 MiB), larger only when the object would need more than 10,000 parts.
@@ -259,7 +261,9 @@ impl S3Backend {
                 None => std::path::PathBuf::from(std::env::var_os("HOME")?).join(".cache/vcs"),
             },
         };
-        let h = hex(&Sha256::digest(format!("{}\n{}\n{}", self.cfg.endpoint, self.cfg.region, self.cfg.bucket).as_bytes()));
+        let h = hex(&Sha256::digest(
+            format!("{}\n{}\n{}", self.cfg.endpoint, self.cfg.region, self.cfg.bucket).as_bytes(),
+        ));
         Some(root.join("s3-probe").join(&h[..32]))
     }
 
@@ -320,8 +324,14 @@ impl S3Backend {
     /// round trips; off by default (one cached env lookup).
     fn send(&self, method: &str, key: &str, query: &[(&str, String)], headers: &[(&str, &str)], body: &[u8]) -> Result<Resp, BackendError> {
         static TRACE: std::sync::OnceLock<Option<std::time::Instant>> = std::sync::OnceLock::new();
-        let t0 = *TRACE.get_or_init(|| std::env::var_os("VCS_S3_TRACE").filter(|v| v != "0").map(|_| std::time::Instant::now()));
-        let Some(t0) = t0 else { return self.send_inner(method, key, query, headers, body, false) };
+        let t0 = *TRACE.get_or_init(|| {
+            std::env::var_os("VCS_S3_TRACE")
+                .filter(|v| v != "0")
+                .map(|_| std::time::Instant::now())
+        });
+        let Some(t0) = t0 else {
+            return self.send_inner(method, key, query, headers, body, false);
+        };
         let start = t0.elapsed();
         let s = std::time::Instant::now();
         let r = self.send_inner(method, key, query, headers, body, false);
@@ -330,8 +340,17 @@ impl S3Backend {
             Ok(Resp::Status(c, _)) => c.to_string(),
             Err(_) => "err".into(),
         };
-        let range = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("range")).map(|(_, v)| *v).unwrap_or("-");
-        eprintln!("s3trace {:>7.1} {method} {key} {range} {:.1}ms {out} {:?}", start.as_secs_f64() * 1e3, s.elapsed().as_secs_f64() * 1e3, std::thread::current().id());
+        let range = headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("range"))
+            .map(|(_, v)| *v)
+            .unwrap_or("-");
+        eprintln!(
+            "s3trace {:>7.1} {method} {key} {range} {:.1}ms {out} {:?}",
+            start.as_secs_f64() * 1e3,
+            s.elapsed().as_secs_f64() * 1e3,
+            std::thread::current().id()
+        );
         r
     }
 
@@ -341,7 +360,14 @@ impl S3Backend {
         if let Some(s) = g.as_ref().filter(|s| s.fetched.elapsed() < SESSION_REFRESH) {
             return Ok((s.access_key.clone(), s.secret_key.clone(), s.token.clone()));
         }
-        let body = match self.send_inner("GET", "", &[("session", String::new())], &[("x-amz-create-session-mode", "ReadWrite")], b"", true)? {
+        let body = match self.send_inner(
+            "GET",
+            "",
+            &[("session", String::new())],
+            &[("x-amz-create-session-mode", "ReadWrite")],
+            b"",
+            true,
+        )? {
             Resp::Ok { body, .. } => String::from_utf8_lossy(&body).into_owned(),
             Resp::Status(c, m) => return Err(Self::unexpected("CreateSession", c, m)),
         };
@@ -349,12 +375,29 @@ impl S3Backend {
         let (Some(ak), Some(sk), Some(tok)) = (one("AccessKeyId"), one("SecretAccessKey"), one("SessionToken")) else {
             return Err(BackendError::Other("CreateSession response without credentials".into()));
         };
-        *g = Some(Session { access_key: ak.clone(), secret_key: sk.clone(), token: tok.clone(), fetched: std::time::Instant::now() });
+        *g = Some(Session {
+            access_key: ak.clone(),
+            secret_key: sk.clone(),
+            token: tok.clone(),
+            fetched: std::time::Instant::now(),
+        });
         Ok((ak, sk, tok))
     }
 
-    fn send_inner(&self, method: &str, key: &str, query: &[(&str, String)], headers: &[(&str, &str)], body: &[u8], create_session: bool) -> Result<Resp, BackendError> {
-        let mut path = if self.express { String::new() } else { format!("/{}", uri_encode(&self.cfg.bucket, true)) };
+    fn send_inner(
+        &self,
+        method: &str,
+        key: &str,
+        query: &[(&str, String)],
+        headers: &[(&str, &str)],
+        body: &[u8],
+        create_session: bool,
+    ) -> Result<Resp, BackendError> {
+        let mut path = if self.express {
+            String::new()
+        } else {
+            format!("/{}", uri_encode(&self.cfg.bucket, true))
+        };
         if !key.is_empty() {
             path.push('/');
             path.push_str(&uri_encode(key, false));
@@ -367,14 +410,27 @@ impl S3Backend {
         let qs = q.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join("&");
 
         // (access key, secret, token, token header, SigV4 service)
-        let (access_key, secret_key, token, token_header, service): (String, String, Option<String>, &str, &str) = match (self.express, create_session) {
-            (false, _) => (self.cfg.access_key.clone(), self.cfg.secret_key.clone(), self.cfg.session_token.clone(), "x-amz-security-token", "s3"),
-            (true, true) => (self.cfg.access_key.clone(), self.cfg.secret_key.clone(), self.cfg.session_token.clone(), "x-amz-security-token", "s3express"),
-            (true, false) => {
-                let (a, s, t) = self.session_creds()?;
-                (a, s, Some(t), "x-amz-s3session-token", "s3express")
-            }
-        };
+        let (access_key, secret_key, token, token_header, service): (String, String, Option<String>, &str, &str) =
+            match (self.express, create_session) {
+                (false, _) => (
+                    self.cfg.access_key.clone(),
+                    self.cfg.secret_key.clone(),
+                    self.cfg.session_token.clone(),
+                    "x-amz-security-token",
+                    "s3",
+                ),
+                (true, true) => (
+                    self.cfg.access_key.clone(),
+                    self.cfg.secret_key.clone(),
+                    self.cfg.session_token.clone(),
+                    "x-amz-security-token",
+                    "s3express",
+                ),
+                (true, false) => {
+                    let (a, s, t) = self.session_creds()?;
+                    (a, s, Some(t), "x-amz-s3session-token", "s3express")
+                }
+            };
         let amz_date = amz_timestamp();
         let date = &amz_date[..8];
         let payload_hash = hex(&Sha256::digest(body));
@@ -392,7 +448,15 @@ impl S3Backend {
         let auth = format!("AWS4-HMAC-SHA256 Credential={access_key}/{scope}, SignedHeaders={signed_names}, Signature={sig}");
 
         let base = if self.express {
-            format!("{}://{}", if self.cfg.endpoint.starts_with("https://") { "https" } else { "http" }, self.host)
+            format!(
+                "{}://{}",
+                if self.cfg.endpoint.starts_with("https://") {
+                    "https"
+                } else {
+                    "http"
+                },
+                self.host
+            )
         } else {
             self.cfg.endpoint.clone()
         };
@@ -510,10 +574,20 @@ impl S3Backend {
         let mut xml = String::from("<CompleteMultipartUpload>");
         for (i, e) in etags.into_inner().unwrap().into_iter().enumerate() {
             let e = e.expect("every part uploaded");
-            xml.push_str(&format!("<Part><PartNumber>{}</PartNumber><ETag>{}</ETag></Part>", i + 1, e.replace('"', "&quot;")));
+            xml.push_str(&format!(
+                "<Part><PartNumber>{}</PartNumber><ETag>{}</ETag></Part>",
+                i + 1,
+                e.replace('"', "&quot;")
+            ));
         }
         xml.push_str("</CompleteMultipartUpload>");
-        let done = self.send("POST", k, &[("uploadId", upload_id.clone())], &[("if-none-match", "*")], xml.as_bytes());
+        let done = self.send(
+            "POST",
+            k,
+            &[("uploadId", upload_id.clone())],
+            &[("if-none-match", "*")],
+            xml.as_bytes(),
+        );
         match done {
             // S3 can answer 200 and put the failure in the body
             Ok(Resp::Ok { body, .. }) if String::from_utf8_lossy(&body).contains("<Error>") => {

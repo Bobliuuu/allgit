@@ -426,7 +426,11 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let sha = "a".repeat(40);
         let id = ObjectId::from_bytes([7; 32]).to_hex();
-        fs::write(d.path().join("marks"), format!(":5 {sha}\n:18446744073709551615 {sha}\n:99999999999 {sha}\n")).unwrap();
+        fs::write(
+            d.path().join("marks"),
+            format!(":5 {sha}\n:18446744073709551615 {sha}\n:99999999999 {sha}\n"),
+        )
+        .unwrap();
         fs::write(d.path().join("pending"), format!("c {id} :18446744073709551615\nc {id} :7\n")).unwrap();
         let st = State::load(d.path().to_path_buf()).unwrap();
         assert_eq!(st.marks.keys().copied().collect::<Vec<_>>(), vec![5]);
