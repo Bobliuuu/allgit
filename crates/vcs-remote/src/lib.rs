@@ -22,6 +22,7 @@ pub mod protocol;
 pub mod retry;
 #[cfg(feature = "sharded")]
 pub mod shard;
+pub mod sharded;
 pub mod shelf;
 pub mod smallpack;
 pub mod stats;

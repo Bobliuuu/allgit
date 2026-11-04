@@ -135,6 +135,30 @@ impl HttpBackend {
             .set("Authorization", &format!("Bearer {}", self.token))
     }
 
+    /// Wait for this writer's turn to push to `zone`/`branch` (see `tickets.rs`); returns the ticket id.
+    /// Asks again on the server's 202 `wait` until `give_up` has passed.
+    pub fn ticket_acquire(&self, zone: &str, branch: &str, give_up: Duration) -> Result<u64, BackendError> {
+        let start = std::time::Instant::now();
+        let q = format!("/v1/ticket?zone={}&branch={}", enc_query(zone), enc_query(branch));
+        loop {
+            match self.send_raw(self.req("POST", &q), Some(b""))? {
+                Ok((t, _, _)) if t.trim() == "wait" => {
+                    if start.elapsed() >= give_up {
+                        return Err(BackendError::Unavailable("no turn on the branch ticket queue in time".into()));
+                    }
+                }
+                Ok((t, _, _)) => return t.trim().parse().map_err(|_| BackendError::Other("bad ticket id".into())),
+                Err((code, msg)) => return Err(self.status_err(code, &msg)),
+            }
+        }
+    }
+
+    /// Give the turn back (also fine to skip: the lease expires).
+    pub fn ticket_release(&self, zone: &str, branch: &str, id: u64) -> Result<(), BackendError> {
+        let q = format!("/v1/ticket?zone={}&branch={}&id={id}", enc_query(zone), enc_query(branch));
+        self.send(self.req("DELETE", &q), None).map(|_| ())
+    }
+
     /// `GET /v1/whoami` text: `<principal> <role> <zones>`.
     pub fn whoami(&self) -> Result<String, BackendError> {
         let r = self.send(self.req("GET", "/v1/whoami"), None)?;
@@ -365,4 +389,16 @@ impl Backend for HttpBackend {
             Err((c, m)) => Err(self.status_err(c, &m)),
         }
     }
+}
+
+fn enc_query(s: &str) -> String {
+    let mut o = String::new();
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            o.push(b as char);
+        } else {
+            o.push_str(&format!("%{b:02X}"));
+        }
+    }
+    o
 }

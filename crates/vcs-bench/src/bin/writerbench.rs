@@ -3,9 +3,10 @@
 //! push, so hundreds of clients fit in a few processes. Run several processes (`--first-client`) to simulate more.
 //!
 //! usage: writerbench <url> <token> --mode same|zones|branches --clients N --pushes K [--first-client I] [--seed-zone Z]
-//!        [--decorrelated [--retry-base-ms 5 --retry-cap-ms 2000]] [--no-backoff] [--tag T] [--think-ms MS]
+//!        [--ticket] [--decorrelated [--retry-base-ms 5 --retry-cap-ms 2000]] [--no-backoff] [--tag T] [--think-ms MS]
 //!   same      all clients push to zone `shared`, branch `main` (one branch, true serialization)
 //!   branches  one zone `shared`, branch `b<i>` per client
+//!   --ticket  take a per-branch ticket from the server before each push (waits instead of polling; same mode)
 //!   zones     zone `z<i>`, branch `main` per client (disjoint zones)
 //! Output: one JSON line: latencies (ms, per acked push), conflicts (Diverged), unknowns, errors, acked heads for audit.
 use std::sync::{Arc, Barrier, Mutex};
@@ -80,6 +81,7 @@ fn main() {
     let base_ms: u64 = opt("--retry-base-ms").map_or(5, |x| x.parse().unwrap());
     let cap_ms: u64 = opt("--retry-cap-ms").map_or(2000, |x| x.parse().unwrap());
     let nobackoff = a.iter().any(|x| x == "--no-backoff");
+    let use_ticket = a.iter().any(|x| x == "--ticket");
     let bar = Arc::new(Barrier::new(clients + 1));
     let out: Arc<Mutex<(Vec<f64>, u64, u64, Vec<String>, Vec<(String, String, String)>)>> = Arc::default();
     let mut hs = vec![];
@@ -110,6 +112,13 @@ fn main() {
                     for i in 0..pushes {
                         let t0 = Instant::now();
                         let mut tries = 0;
+                        let ticket = if use_ticket {
+                            let t = b.ticket_acquire(&zone, &branch, Duration::from_secs(900)).expect("ticket");
+                            head = load_manifest_head(&b, &zone, &branch);
+                            Some(t)
+                        } else {
+                            None
+                        };
                         loop {
                             tries += 1;
                             let new = commit(&store, &zone, head, &format!("{tag}-{id}-{i}-{tries}"));
@@ -163,6 +172,9 @@ fn main() {
                                     break;
                                 }
                             }
+                        }
+                        if let Some(t) = ticket {
+                            let _ = b.ticket_release(&zone, &branch, t);
                         }
                         if think > 0 {
                             std::thread::sleep(Duration::from_millis(think));
