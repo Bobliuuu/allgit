@@ -11,6 +11,7 @@
 pub mod audit;
 pub mod auth;
 pub mod backend_url;
+pub mod certmap;
 pub mod client;
 pub mod config;
 pub mod glob;
