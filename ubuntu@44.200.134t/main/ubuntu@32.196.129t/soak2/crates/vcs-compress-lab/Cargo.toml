@@ -1,0 +1,26 @@
+[package]
+name = "vcs-compress-lab"
+version = "0.0.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Research lab harness for storage-engine experiments (compression, chunking, blocks). Not used by production code."
+
+[dependencies]
+blake3 = "1"
+zstd = "0.14"
+lz4_flex = "0.14"
+brotli = "9"
+fastcdc = "5"
+serde_json = "1"
+libc = "0.2"
+
+[[bin]]
+name = "compress-lab"
+path = "src/main.rs"
+
+# Standalone workspace: keeps the research lab (and its Cargo.lock) out of the product build.
+[workspace]
+
+[profile.release]
+opt-level = 3

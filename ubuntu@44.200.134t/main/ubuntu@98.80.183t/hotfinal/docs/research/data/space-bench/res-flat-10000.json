@@ -1,0 +1,168 @@
+{
+ "meta": {
+  "layout": "flat",
+  "n_files": 10000,
+  "history_commits": 51,
+  "date": "2026-11-01T15:10:14Z",
+  "machine": "129-146-78-123",
+  "kernel": "6.8.0-1046-nvidia",
+  "cores": 30,
+  "cpu": "AMD EPYC 7J13 64-Core Processor",
+  "fs": "ext4",
+  "git": "git version 2.56.0",
+  "vcs": "vcs 0.1.0",
+  "vcs_commit": "6ef5547"
+ },
+ "cells": {
+  "wt": {
+   "apparent": 5986296,
+   "alloc": 41373696,
+   "files": 10000
+  },
+  "git.client": {
+   "apparent": 5839692,
+   "alloc": 7049216,
+   "files": 229
+  },
+  "git.remote_push": {
+   "apparent": 4493100,
+   "alloc": 4595712,
+   "files": 22
+  },
+  "git.clone": {
+   "apparent": 5297256,
+   "alloc": 5451776,
+   "files": 28
+  },
+  "git.client_gc": {
+   "apparent": 5315744,
+   "alloc": 5455872,
+   "files": 29
+  },
+  "git.remote_gc": {
+   "apparent": 4546519,
+   "alloc": 4661248,
+   "files": 26
+  },
+  "vcs.default.client": {
+   "apparent": 8134627,
+   "alloc": 10387456,
+   "files": 413
+  },
+  "vcs.default.remote_server": {
+   "apparent": 5219529,
+   "alloc": 5246976,
+   "files": 4
+  },
+  "vcs.default.remote_dir": {
+   "apparent": 5219529,
+   "alloc": 5246976,
+   "files": 4
+  },
+  "vcs.default.clone": {
+   "apparent": 8542547,
+   "alloc": 10076160,
+   "files": 265
+  },
+  "vcs.default.client_repack_v1": {
+   "apparent": 8143267,
+   "alloc": 9043968,
+   "files": 12
+  },
+  "vcs.default.client_repack_v2": {
+   "apparent": 7967558,
+   "alloc": 8867840,
+   "files": 12
+  },
+  "vcs.default.client_repack_v3": {
+   "apparent": 5871593,
+   "alloc": 6770688,
+   "files": 12
+  },
+  "vcs.default.client_repack_v4": {
+   "apparent": 5619403,
+   "alloc": 6520832,
+   "files": 12
+  },
+  "vcs.default.client_gc": {
+   "apparent": 7967558,
+   "alloc": 8884224,
+   "files": 12
+  },
+  "vcs.default.remote_compact_v2": {
+   "apparent": 5219529,
+   "alloc": 5251072,
+   "files": 4
+  },
+  "vcs.default.remote_gc": {
+   "apparent": 5219529,
+   "alloc": 5251072,
+   "files": 4
+  },
+  "vcs.default.remote_compact": {
+   "apparent": 5219529,
+   "alloc": 5251072,
+   "files": 4
+  },
+  "vcs.loose.client": {
+   "apparent": 8134648,
+   "alloc": 10383360,
+   "files": 414
+  },
+  "vcs.loose.remote_server": {
+   "apparent": 5219529,
+   "alloc": 5246976,
+   "files": 4
+  },
+  "vcs.loose.remote_dir": {
+   "apparent": 5219529,
+   "alloc": 5246976,
+   "files": 4
+  },
+  "vcs.loose.clone": {
+   "apparent": 8542545,
+   "alloc": 10072064,
+   "files": 265
+  },
+  "vcs.loose.client_repack_v1": {
+   "apparent": 8143286,
+   "alloc": 9039872,
+   "files": 13
+  },
+  "vcs.loose.client_repack_v2": {
+   "apparent": 7967577,
+   "alloc": 8863744,
+   "files": 13
+  },
+  "vcs.loose.client_repack_v3": {
+   "apparent": 5859910,
+   "alloc": 6754304,
+   "files": 13
+  },
+  "vcs.loose.client_repack_v4": {
+   "apparent": 5619422,
+   "alloc": 6516736,
+   "files": 13
+  },
+  "vcs.loose.client_gc": {
+   "apparent": 7967577,
+   "alloc": 8880128,
+   "files": 13
+  },
+  "vcs.loose.remote_compact_v2": {
+   "apparent": 5219529,
+   "alloc": 5251072,
+   "files": 4
+  },
+  "vcs.loose.remote_gc": {
+   "apparent": 5219529,
+   "alloc": 5251072,
+   "files": 4
+  },
+  "vcs.loose.remote_compact": {
+   "apparent": 5219529,
+   "alloc": 5251072,
+   "files": 4
+  }
+ }
+}

@@ -367,6 +367,7 @@ impl Manifest {
         fn group<V>(
             r: &mut Reader,
             out: &mut BTreeMap<(String, String), V>,
+            min_item: usize,
             mut item: impl FnMut(&mut Reader, &str, &str) -> Result<V, ManifestError>,
         ) -> Result<(), ManifestError> {
             let e = |x: vcs_objects::DecodeError| ManifestError(x.to_string());
@@ -379,7 +380,7 @@ impl Manifest {
                 }
                 first = false;
                 pz = z.clone();
-                let n = r.count(33).map_err(e)?;
+                let n = r.count(min_item).map_err(e)?;
                 if n == 0 {
                     return Err(ManifestError("empty zone group".into()));
                 }
@@ -401,7 +402,7 @@ impl Manifest {
             validate_branch_name(n).map_err(|x| ManifestError(x.to_string()))?;
             r.id().map_err(|x| ManifestError(x.to_string()))
         };
-        group(&mut r, &mut m.branches, ids)?;
+        group(&mut r, &mut m.branches, 33, ids)?;
         let mut prev = String::new();
         for i in 0..r.count(33).map_err(e)? {
             let n = get_pname(&mut r, &prev, 200)?;
@@ -444,7 +445,9 @@ impl Manifest {
             m.labels.insert(id, l);
         }
         let next_token = m.next_token;
-        group(&mut r, &mut m.locks, |r, z, p| {
+        // A lock is at least name(2) + holder(1) + token + acquired + expires + reason (1 each) = 7 bytes;
+        // sizing it like an object id (33) rejected a valid manifest ending in one short lock.
+        group(&mut r, &mut m.locks, 7, |r, z, p| {
             validate_zone_name(z).map_err(|x| ManifestError(x.to_string()))?;
             vcs_objects::names::validate_path(p).map_err(|x| ManifestError(x.to_string()))?;
             let e = |x: vcs_objects::DecodeError| ManifestError(x.to_string());
@@ -460,7 +463,7 @@ impl Manifest {
             }
             Ok(l)
         })?;
-        group(&mut r, &mut m.tags, ids)?;
+        group(&mut r, &mut m.tags, 33, ids)?;
         r.finish().map_err(e)?;
         Ok(m)
     }
@@ -486,6 +489,32 @@ mod tests {
         let mut bad = m.encode();
         bad.push(0);
         assert!(Manifest::decode(&bad).is_err());
+    }
+
+    #[test]
+    fn compact_roundtrip_with_a_single_short_lock_at_the_tail() {
+        // #502 soak: a lock PUT on a large manifest was refused with
+        // "element count exceeds input" because the lock group assumed 33-byte elements.
+        let mut m = Manifest {
+            generation: 9,
+            next_token: 5,
+            time_hw: 1_793_776_000_000,
+            ..Default::default()
+        };
+        m.branches.insert(("root".into(), "main".into()), ObjectId::from_bytes([1; 32]));
+        m.locks.insert(
+            ("root".into(), "art/f1.bin".into()),
+            Lock {
+                holder: "u5".into(),
+                token: 4,
+                acquired_at: 1_793_776_000_000,
+                expires_at: 1_793_776_120_000,
+                reason: String::new(),
+            },
+        );
+        assert_eq!(Manifest::decode(&m.encode_compact()).unwrap(), m);
+        m.tags.insert(("root".into(), "t".into()), ObjectId::from_bytes([2; 32]));
+        assert_eq!(Manifest::decode(&m.encode_compact()).unwrap(), m);
     }
 
     #[test]

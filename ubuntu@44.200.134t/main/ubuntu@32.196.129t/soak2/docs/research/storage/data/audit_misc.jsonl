@@ -1,0 +1,11 @@
+{"exp":"gcread","files":1000,"store_objects":1015,"store_bytes":8004611,"gc_plan_rchar":16065359,"ratio":2.01,"ms":49.7,"total":1015,"reachable":1015}
+{"exp":"gcread","files":5000,"store_objects":5055,"store_bytes":40026211,"gc_plan_rchar":80340642,"ratio":2.01,"ms":585.8,"total":5055,"reachable":5055}
+{"exp":"crash","tmp_files_after_crash":10,"tmp_files_after_reopen":10,"unsynced_object_visible_after_restart":false,"tmp_files_after_next_sync":10,"pack_dir_entries_with_idx_missing_after_reopen_and_sync":1}
+{"exp":"dedup","copies_of_same_5000B_file":4,"blob_objects_holding_it":1,"chunk_objects_for_3MiB_file":153,"whole_3MiB_blob_also_stored":false,"new_objects_for_second_identical_big_file":0}
+{"exp":"fslist","keys":10000,"list_packs_prefix_ms_median":12.78,"min":12.74,"max":14.33}
+{"exp":"fslist","keys":100000,"list_packs_prefix_ms_median":106.90,"min":103.54,"max":173.57}
+{"exp":"opgrowth","branches":10,"commits":20,"ops_before":12,"ops_total":32,"op_bytes_total":14211,"last_op_bytes":522}
+{"exp":"opgrowth","branches":100,"commits":20,"ops_before":102,"ops_total":122,"op_bytes_total":304596,"last_op_bytes":4212}
+{"exp":"opgrowth","branches":1000,"commits":20,"ops_before":1002,"ops_total":1022,"op_bytes_total":21899190,"last_op_bytes":42013}
+{"exp":"putcontent","mib":4,"blake3_one_pass_ms":1.00,"content_id_ms":5.26,"put_content_memstore_ms":7.25}
+{"exp":"putcontent","mib":64,"blake3_one_pass_ms":18.62,"content_id_ms":86.83,"put_content_memstore_ms":120.69}

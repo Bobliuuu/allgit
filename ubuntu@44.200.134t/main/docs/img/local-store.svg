@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 520" width="900" height="520" role="img" aria-labelledby="t d">
+<title id="t">vcs local store</title><desc id="d">Loose objects become packs and are compacted into v3 packs; large files are stored as content-defined chunk manifests.</desc>
+<style>
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px}
+.m{font-size:11px}.t{font-size:18px;font-weight:700}.h{font-weight:700}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+.mid{text-anchor:middle}.end{text-anchor:end}
+.panel{stroke-width:1.2}.A,.B,.C,.kD{stroke-width:1.5}.kH{stroke-width:1.8}.kX{stroke-width:1.5}
+.ln{stroke-width:1.5;fill:none}.dash{stroke-dasharray:5 4}
+.ar{stroke-width:1.8;fill:none;marker-end:url(#ah)}
+text{fill:#1f2328}.m{fill:#59636e}
+.bg{fill:#ffffff}.sH{stroke:#bf8700}.sL{stroke:#8c959f}
+.panel{fill:#f6f8fa;stroke:#d0d7de}
+.kA{fill:#ddf4ff;stroke:#0969da}.kB{fill:#dafbe1;stroke:#1a7f37}.kC{fill:#fff1e5;stroke:#bc4c00}.kD{fill:#fbefff;stroke:#8250df}
+.kH{fill:#fff8c5;stroke:#bf8700}.kX{fill:#ffebe9;stroke:#cf222e}
+.ln,.ar{stroke:#8c959f}.fl{fill:#8c959f}
+.dotA{fill:#0969da}.dotB{fill:#1a7f37}.dotC{fill:#bc4c00}.dotD{fill:#8250df}.dotH{fill:#bf8700}.dotX{fill:#cf222e}
+.tA{fill:#0969da}.tB{fill:#1a7f37}.tC{fill:#bc4c00}.tX{fill:#cf222e}
+@media (prefers-color-scheme:dark){text{fill:#e6edf3}.m{fill:#9198a1}
+.bg{fill:#0d1117}.sH{stroke:#d29922}.sL{stroke:#6e7681}
+.panel{fill:#161b22;stroke:#30363d}
+.kA{fill:#0c2d6b;stroke:#58a6ff}.kB{fill:#0f2d1a;stroke:#3fb950}.kC{fill:#3d1f0a;stroke:#f0883e}.kD{fill:#2d1a52;stroke:#bc8cff}
+.kH{fill:#3a2d00;stroke:#d29922}.kX{fill:#4c1417;stroke:#ff7b72}
+.ln,.ar{stroke:#6e7681}.fl{fill:#6e7681}
+.dotA{fill:#58a6ff}.dotB{fill:#3fb950}.dotC{fill:#f0883e}.dotD{fill:#bc8cff}.dotH{fill:#d29922}.dotX{fill:#ff7b72}
+.tA{fill:#58a6ff}.tB{fill:#3fb950}.tC{fill:#f0883e}.tX{fill:#ff7b72}}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="fl"/></marker></defs>
+<rect width="900" height="520" rx="10" class="bg"/>
+<text x="24" y="32" class="t">Local store: loose, packs, compaction, large files</text>
+<text x="24" y="50" class="m">Object ids never change between layouts; only how the same encoded bytes are stored</text>
+<rect x="24" y="66" width="852" height="176" rx="10" class="panel"/>
+<text x="40" y="86" class="h">Object life cycle</text>
+<rect x="40" y="100" width="180" height="92" rx="8" class="kC"/>
+<text x="130" y="124" class="h mid">loose</text>
+<text x="130" y="144" class="mono mid">objects/aa/rest</text>
+<text x="130" y="162" class="m mid">write path</text>
+<rect x="246" y="100" width="180" height="92" rx="8" class="kA"/>
+<text x="336" y="124" class="h mid">pack v2</text>
+<text x="336" y="144" class="mono mid">VCSPACK2 + idx</text>
+<text x="336" y="162" class="m mid">zstd per entry</text>
+<rect x="452" y="100" width="180" height="92" rx="8" class="kD"/>
+<text x="542" y="124" class="h mid">compaction</text>
+<text x="542" y="144" class="mono mid">tiered merge</text>
+<text x="542" y="162" class="m mid">few, bigger packs</text>
+<rect x="658" y="100" width="180" height="92" rx="8" class="kB"/>
+<text x="748" y="124" class="h mid">pack v3</text>
+<text x="748" y="144" class="mono mid">VCSPACK3 + idx</text>
+<text x="748" y="162" class="m mid">4 MiB zstd blocks</text>
+<circle cx="66" cy="178" r="5" class="dotC"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0;0.060;0.40;0.45;1" values="0;1;1;0;0"/></circle>
+<circle cx="96" cy="178" r="5" class="dotC"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0;0.090;0.40;0.45;1" values="0;1;1;0;0"/></circle>
+<circle cx="126" cy="178" r="5" class="dotC"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0;0.120;0.40;0.45;1" values="0;1;1;0;0"/></circle>
+<circle cx="156" cy="178" r="5" class="dotC"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0;0.150;0.40;0.45;1" values="0;1;1;0;0"/></circle>
+<circle cx="186" cy="178" r="5" class="dotC"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0;0.180;0.40;0.45;1" values="0;1;1;0;0"/></circle>
+<path d="M206,146 L244,146" class="ar"/>
+<path d="M412,146 L450,146" class="ar"/>
+<path d="M618,146 L656,146" class="ar"/>
+<text x="226" y="208" class="mono mid">vcs repack</text>
+<text x="432" y="208" class="mono mid">vcs gc --remote --compact</text>
+<text x="638" y="208" class="mono mid">vcs repack --format v3</text>
+<text x="40" y="232" class="m">Readers check loose files first, then packs; v1, v2 and v3 packs are all readable and may coexist. Reading one object from v3 decodes its block.</text>
+<circle r="5" class="dotC" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0.0000;0.4000;0.4010;0.4990;0.5000;1.0000" values="0;0;1;1;0;0"/><animateMotion dur="12s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.4000;0.5000;1" calcMode="linear" path="M66,178 L280,178"/></circle>
+<circle r="5" class="dotC" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0.0000;0.4100;0.4110;0.4990;0.5000;1.0000" values="0;0;1;1;0;0"/><animateMotion dur="12s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.4100;0.5000;1" calcMode="linear" path="M96,178 L294,178"/></circle>
+<circle r="5" class="dotC" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0.0000;0.4200;0.4210;0.4990;0.5000;1.0000" values="0;0;1;1;0;0"/><animateMotion dur="12s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.4200;0.5000;1" calcMode="linear" path="M126,178 L308,178"/></circle>
+<circle r="5" class="dotC" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0.0000;0.4300;0.4310;0.4990;0.5000;1.0000" values="0;0;1;1;0;0"/><animateMotion dur="12s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.4300;0.5000;1" calcMode="linear" path="M156,178 L322,178"/></circle>
+<circle r="5" class="dotC" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0.0000;0.4400;0.4410;0.4990;0.5000;1.0000" values="0;0;1;1;0;0"/><animateMotion dur="12s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.4400;0.5000;1" calcMode="linear" path="M186,178 L336,178"/></circle>
+<circle r="5" class="dotA" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0.0000;0.5500;0.5510;0.6490;0.6500;1.0000" values="0;0;1;1;0;0"/><animateMotion dur="12s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.5500;0.6500;1" calcMode="linear" path="M300,178 L470,178"/></circle>
+<circle r="5" class="dotA" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0.0000;0.5600;0.5610;0.6490;0.6500;1.0000" values="0;0;1;1;0;0"/><animateMotion dur="12s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.5600;0.6500;1" calcMode="linear" path="M314,178 L484,178"/></circle>
+<circle r="5" class="dotA" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0.0000;0.5700;0.5710;0.6490;0.6500;1.0000" values="0;0;1;1;0;0"/><animateMotion dur="12s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.5700;0.6500;1" calcMode="linear" path="M328,178 L498,178"/></circle>
+<circle r="5" class="dotA" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0.0000;0.5800;0.5810;0.6490;0.6500;1.0000" values="0;0;1;1;0;0"/><animateMotion dur="12s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.5800;0.6500;1" calcMode="linear" path="M342,178 L512,178"/></circle>
+<circle r="5" class="dotD" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0.0000;0.7000;0.7010;0.7990;0.8000;1.0000" values="0;0;1;1;0;0"/><animateMotion dur="12s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.7000;0.8000;1" calcMode="linear" path="M500,178 L680,178"/></circle>
+<circle r="5" class="dotD" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0.0000;0.7100;0.7110;0.7990;0.8000;1.0000" values="0;0;1;1;0;0"/><animateMotion dur="12s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.7100;0.8000;1" calcMode="linear" path="M514,178 L694,178"/></circle>
+<circle r="5" class="dotD" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0.0000;0.7200;0.7210;0.7990;0.8000;1.0000" values="0;0;1;1;0;0"/><animateMotion dur="12s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.7200;0.8000;1" calcMode="linear" path="M528,178 L708,178"/></circle>
+<rect x="24" y="256" width="852" height="246" rx="10" class="panel"/>
+<text x="40" y="276" class="h">File content by size</text>
+<rect x="40" y="290" width="250" height="72" rx="8" class="kH"/>
+<text x="54" y="312" class="h">under 1 MiB</text>
+<text x="54" y="330" class="mono">one Blob object</text>
+<text x="54" y="348" class="m">stored whole</text>
+<rect x="310" y="290" width="250" height="72" rx="8" class="kD"/>
+<text x="324" y="312" class="h">1 MiB to 16 MiB</text>
+<text x="324" y="330" class="mono">Chunked (kind 7)</text>
+<text x="324" y="348" class="m">manifest of small chunks</text>
+<rect x="580" y="290" width="280" height="72" rx="8" class="kA"/>
+<text x="594" y="312" class="h">16 MiB and up</text>
+<text x="594" y="330" class="mono">ChunkedLarge (kind 9)</text>
+<text x="594" y="348" class="m">no format bump, FORMAT_VERSION stays 3</text>
+<text x="40" y="384" class="h">kind 9: content-defined chunks of 512 KiB to 8 MiB (about 2 MiB on average), each an ordinary Blob</text>
+<rect x="40" y="398" width="90" height="34" rx="8" class="kB"/>
+<text x="85.0" y="419" class="m mid">chunk</text>
+<rect x="134" y="398" width="120" height="34" rx="8" class="kB"/>
+<text x="194.0" y="419" class="m mid">chunk</text>
+<rect x="258" y="398" width="70" height="34" rx="8" class="kB"/>
+<text x="293.0" y="419" class="m mid">chunk</text>
+<rect x="332" y="398" width="150" height="34" rx="8" class="kB"/>
+<rect x="332" y="398" width="150" height="34" rx="8" class="kH" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0;0.3;0.36;0.85;0.9;1" values="0;0;1;1;0;0"/></rect>
+<text x="407.0" y="419" class="mono mid" opacity="0"><animate attributeName="opacity" dur="12s" repeatCount="indefinite" keyTimes="0;0.3;0.36;0.85;0.9;1" values="0;0;1;1;0;0"/>new chunk</text>
+<rect x="486" y="398" width="90" height="34" rx="8" class="kB"/>
+<text x="531.0" y="419" class="m mid">chunk</text>
+<rect x="580" y="398" width="110" height="34" rx="8" class="kB"/>
+<text x="635.0" y="419" class="m mid">chunk</text>
+<rect x="694" y="398" width="70" height="34" rx="8" class="kB"/>
+<text x="729.0" y="419" class="m mid">chunk</text>
+<rect x="768" y="398" width="100" height="34" rx="8" class="kB"/>
+<text x="818.0" y="419" class="m mid">chunk</text>
+<text x="40" y="454" class="m">Edit the middle of the file: only the changed stretch is re-chunked, up to the first old boundary the new cuts rejoin; the other chunks are reused (stored once).</text>
+<text x="40" y="472" class="m">Add, checkout and restore stream with memory independent of file size; chunks upload and download in parallel. status skips files whose size and times match the index.</text>
+<text x="40" y="490" class="m">A repository that stores a kind 9 manifest records the feature large-chunked; releases that do not know it refuse to open it.</text>
+</svg>
+

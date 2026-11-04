@@ -1,0 +1,15 @@
+{
+ "clone_rc": 0,
+ "clone_s": 0.13,
+ "note": "git verify below",
+ "acked_files": 270,
+ "acked_missing": 0,
+ "acked_wrong_content": 0,
+ "last_wins_files": 0,
+ "last_wins_mismatch": 0,
+ "fresh_clone_fsck": {
+  "rc": 0,
+  "err": ""
+ },
+ "server_alive_at_end": false
+}

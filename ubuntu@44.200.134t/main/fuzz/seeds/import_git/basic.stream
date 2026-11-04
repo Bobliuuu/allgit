@@ -1,0 +1,51 @@
+feature done
+blob
+mark :1
+original-oid aaaa000000000000000000000000000000000001
+data 6
+hello
+commit refs/heads/main
+mark :2
+original-oid bbbb000000000000000000000000000000000001
+author Ann <ann@x> 1000 +0000
+committer Ann <ann@x> 1000 +0000
+data 8
+initial
+M 100644 :1 hello.txt
+M 100644 inline \"q\\\"t/a.txt\"
+data 3
+abc
+
+commit refs/heads/side
+mark :3
+committer Cy <cy@x> 3000 +0000
+data 5
+side
+from :2
+R hello.txt moved/hello.txt
+C moved/hello.txt copy.txt
+D q
+deleteall
+M 100755 :1 run.sh
+
+commit refs/heads/main
+mark :4
+committer Ann <ann@x> 4000 +0000
+data <<EOT
+delimited
+EOT
+from :2
+merge :3
+N inline :1
+data 1
+n
+
+reset refs/heads/x
+from :4
+
+tag v1
+from :4
+tagger T <t@x> 5000 +0000
+data 2
+t
+done

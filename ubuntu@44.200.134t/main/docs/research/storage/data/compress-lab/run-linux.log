@@ -1,0 +1,28 @@
+== linux_fs start 2026-11-01T00:16:19Z load: 8.62 4.69 9.55 20/672 2986844
+git revisions: 1da177e4c3f41524e886b7f1b8a0c1fc7321cac2 4d7b84d1cbb213fdfd2b25ffd1217f249ba1d55a e96e69942312314c061eb2fdd947a7a1211d62f8 2dc9c913154b64efa8346e81cf298012f090c1b1 6707fbb56c8fd3121e334291d170934bcaca2e7f ce00f7feb0a497b4280e1efe16e03728ed292687 7c17e486e865d616f0e37c7f7f0e4dcfab704cd8 12f1d7e4932a40100177be5681f1a26f46265217 1c0490ce902206f4685f812fa81304fd1adf4e35 a51aec4109300d843bf144579109d5288856f72a bbeb1219eeeeab7ef302fdaedee71b08e413a04c cbbddb6b08cc9900a87cccaa9b22bbe06aa4f50a
+loaded in 6.4s: {"by_class":{"source_text":{"blobs":16267,"bytes":330319171}},"files_per_rev":[978,1137,1289,1293,1480,1674,1679,1775,1869,2107,2453,2365],"logical_bytes_all_revisions":370775907,"logical_bytes_last_revision":48376238,"name":"linux_fs","revisions":12,"unique_blobs":16267,"unique_bytes":330319171}
+[codecs] class source_text files 3254 bytes 64524243
+git revisions: 1da177e4c3f41524e886b7f1b8a0c1fc7321cac2 4d7b84d1cbb213fdfd2b25ffd1217f249ba1d55a e96e69942312314c061eb2fdd947a7a1211d62f8 2dc9c913154b64efa8346e81cf298012f090c1b1 6707fbb56c8fd3121e334291d170934bcaca2e7f ce00f7feb0a497b4280e1efe16e03728ed292687 7c17e486e865d616f0e37c7f7f0e4dcfab704cd8 12f1d7e4932a40100177be5681f1a26f46265217 1c0490ce902206f4685f812fa81304fd1adf4e35 a51aec4109300d843bf144579109d5288856f72a bbeb1219eeeeab7ef302fdaedee71b08e413a04c cbbddb6b08cc9900a87cccaa9b22bbe06aa4f50a
+loaded in 3.3s: {"by_class":{"source_text":{"blobs":16267,"bytes":330319171}},"files_per_rev":[978,1137,1289,1293,1480,1674,1679,1775,1869,2107,2453,2365],"logical_bytes_all_revisions":370775907,"logical_bytes_last_revision":48376238,"name":"linux_fs","revisions":12,"unique_blobs":16267,"unique_bytes":330319171}
+[chunk] throughput whole 2739 MB/s
+[chunk] throughput fixed4K 2101 MB/s
+[chunk] throughput fixed16K 2704 MB/s
+[chunk] throughput fixed64K 2742 MB/s
+[chunk] throughput fastcdc4K 1019 MB/s
+[chunk] throughput fastcdc16K 1354 MB/s
+[chunk] throughput fastcdc64K 1731 MB/s
+[chunk] throughput fastcdc256K 2320 MB/s
+[chunk] throughput rabin4K 272 MB/s
+[chunk] throughput rabin16K 245 MB/s
+[chunk] throughput rabin64K 298 MB/s
+[chunk] throughput hybrid_size<=64K->fastcdc16K 1911 MB/s
+[chunk] throughput hybrid_size<=256K->fastcdc64K 2630 MB/s
+[chunk] throughput hybrid_type(text,smallbin whole; largebin cdc64K; model cdc256K) 2783 MB/s
+git revisions: 1da177e4c3f41524e886b7f1b8a0c1fc7321cac2 4d7b84d1cbb213fdfd2b25ffd1217f249ba1d55a e96e69942312314c061eb2fdd947a7a1211d62f8 2dc9c913154b64efa8346e81cf298012f090c1b1 6707fbb56c8fd3121e334291d170934bcaca2e7f ce00f7feb0a497b4280e1efe16e03728ed292687 7c17e486e865d616f0e37c7f7f0e4dcfab704cd8 12f1d7e4932a40100177be5681f1a26f46265217 1c0490ce902206f4685f812fa81304fd1adf4e35 a51aec4109300d843bf144579109d5288856f72a bbeb1219eeeeab7ef302fdaedee71b08e413a04c cbbddb6b08cc9900a87cccaa9b22bbe06aa4f50a
+loaded in 3.3s: {"by_class":{"source_text":{"blobs":16267,"bytes":330319171}},"files_per_rev":[978,1137,1289,1293,1480,1674,1679,1775,1869,2107,2453,2365],"logical_bytes_all_revisions":370775907,"logical_bytes_last_revision":48376238,"name":"linux_fs","revisions":12,"unique_blobs":16267,"unique_bytes":330319171}
+[blocks] class source_text stream 268432710 bytes
+git revisions: 1da177e4c3f41524e886b7f1b8a0c1fc7321cac2 4d7b84d1cbb213fdfd2b25ffd1217f249ba1d55a e96e69942312314c061eb2fdd947a7a1211d62f8 2dc9c913154b64efa8346e81cf298012f090c1b1 6707fbb56c8fd3121e334291d170934bcaca2e7f ce00f7feb0a497b4280e1efe16e03728ed292687 7c17e486e865d616f0e37c7f7f0e4dcfab704cd8 12f1d7e4932a40100177be5681f1a26f46265217 1c0490ce902206f4685f812fa81304fd1adf4e35 a51aec4109300d843bf144579109d5288856f72a bbeb1219eeeeab7ef302fdaedee71b08e413a04c cbbddb6b08cc9900a87cccaa9b22bbe06aa4f50a
+loaded in 3.2s: {"by_class":{"source_text":{"blobs":16267,"bytes":330319171}},"files_per_rev":[978,1137,1289,1293,1480,1674,1679,1775,1869,2107,2453,2365],"logical_bytes_all_revisions":370775907,"logical_bytes_last_revision":48376238,"name":"linux_fs","revisions":12,"unique_blobs":16267,"unique_bytes":330319171}
+[blocks] class source_text stream 268431557 bytes
+== linux_fs end 2026-11-01T00:26:41Z load: 26.13 21.95 16.43 21/744 3219099
+ALLDONE
