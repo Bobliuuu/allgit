@@ -2,6 +2,8 @@
 //! See docs/architecture.md.
 
 pub mod assist;
+#[cfg(target_os = "macos")]
+mod bulkstat;
 pub mod bundle;
 pub mod cgraph;
 pub mod cherry;
