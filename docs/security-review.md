@@ -150,16 +150,31 @@ tree-sitter) were not evaluated.
 
 ## Not covered
 
-* `feat/pack-v2` does not exist on the remote, so pack v2 / zstd decompression bombs were not reviewed. Require a bound
-  on decompressed size (declared and actual) and a ratio cap when it lands, and fuzz it.
+* Pack v2/v3/v4 (zstd, blocks, deltas) were reviewed once they existed (follow-up to #282). Declared sizes: a zstd frame
+  without a content size is refused; a declared size is capped (4 GiB per object, 256 MiB per v3 block, twice the
+  object cap for a v4 delta body) and a claim of more than 65,536 times the compressed size above 1 MiB is refused before
+  any allocation (`check_ratio`; tests `zstd_ratio.rs`); the decompressor's output capacity is the declared size, so a
+  frame that really expands further fails instead of growing. v4 delta chains are capped at 50 and every intermediate at
+  the object cap. Found and fixed in this pass: `delta::apply` reserved the declared target (up to 4 GiB) from a few
+  bytes of delta; it now reserves at most twice the base plus the delta (test
+  `huge_declared_target_from_a_tiny_delta_fails_without_a_huge_reserve`). The `pack_data` and `pack_index` fuzz targets
+  cover the readers.
 * Windows: checkout refuses reserved device names (`CON`, `NUL`, `AUX`, `COM1`..., with or without an extension),
   trailing dots/spaces, characters NTFS forbids (including `:stream` names) and paths that reach the 260-byte limit
   with the worktree prefix. The check always runs on Windows builds and elsewhere when `VCS_PROTECT_WINDOWS=1`
   (`portable::windows_path_problem`; tests `windows_names.rs`). It is not in name validation, because those names are
   legal on Linux and macOS. Windows is still not a supported platform (symlinks, locking and file watching are untested
   there); do not claim it.
-* `import-git`, `import-p4` and the git remote helper were only checked through the shared name validation (which
-  now rejects the aliases in finding 1); their parsers were not fuzzed or re-read.
+* `import-git`, `import-p4` and the git remote helper (follow-up to #282, re-read and fuzzed). Read: `p4_marshal` (depth 32,
+  every read bounds-checked, counts never preallocate), `import_p4` (depot path to view mapping slices only at prefixes it
+  just matched; mapped paths go through `validate_path`; the file read path refuses `..` and empty components),
+  `import` (line cap 64 KiB, data block cap 1 GiB read without trusting the length), the helper's `marks`/`map`/`pending`
+  state files (lines parsed leniently, bad lines skipped; found and fixed: a mark of `usize::MAX` in `marks` or `pending` made the next export's mark counter overflow, so marks above `u32::MAX` are now ignored, test `absurd_marks_in_state_files_are_ignored`). Fuzzed on a
+  Mac laptop (aarch64, nightly, libFuzzer + ASan, 4 minutes each, empty corpus): `import_git` 5,176 runs (21 exec/s: each
+  run initialises a repository), `import_p4` 48,025, `remote_helper` 3,403, `p4_marshal` 1,089,999. No crash, no
+  timeout, no leak, no fsck problem after an accepted import. These short runs add little to the 20-minute campaign
+  above; the fuzzers found nothing, the re-read found the one state-file case above. The helper runs are slow because every input
+  creates a repository: a shared repository per process would multiply throughput, not done.
 * `stash`, `rebase` and `merge` write paths were assumed to share the checkout preflight; not individually tested for
   symlink races.
 * Local TOCTOU attacks (a hostile process racing the preflight checks) and anything needing a local attacker with write
