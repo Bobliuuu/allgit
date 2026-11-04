@@ -135,8 +135,8 @@ def highload(mode, t):
 
 
 def scoreboard(mode, t):
-    data = [("git (flat 100k)", 46, 68, 17), ("Perforce", 9, 7, 14), ("walgit (remote)", 20, 4, 0),
-            ("Jujutsu", 43, 2, 6), ("Sapling", 48, 0, 0)]
+    data = [("git (flat 100k)", 62, 57, 12), ("Perforce", 17, 7, 6), ("walgit (remote)", 24, 0, 0),
+            ("Jujutsu (flat)", 16, 1, 0), ("Sapling (flat)", 15, 1, 0)]
     fig, ax = plt.subplots(figsize=(9, 4))
     fig.subplots_adjust(left=0.18, right=0.93, top=0.78, bottom=0.22)
     ax.set_xlim(0, 150)
@@ -159,7 +159,7 @@ def scoreboard(mode, t):
     ax.legend(frameon=False, loc="lower right", ncol=1, labelcolor=t["fg"], fontsize=8.5)
     title(fig, t, "Per-command scoreboards: wins, ties and losses",
           "Win = at least 10% less wall and CPU; loss = 10% more in both; tie = anything else or under 2 ms. Not-measured cells excluded.",
-          "Source: README scoreboard table, docs/research/command-scoreboard.md, jj-sapling-benchmark.md. Mixed build dates; see README for freshness.")
+          "Source: README scoreboard table, docs/research/command-scoreboard.md, jj-sapling-benchmark.md. Single pass, build 845610a, box c.")
     save(fig, "scoreboard-summary", mode)
 
 
