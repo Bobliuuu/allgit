@@ -202,11 +202,7 @@ pub struct Index {
 
 impl Index {
     /// An index from entries that are already strictly sorted and conflict-free.
-    pub(crate) fn from_sorted(
-        list: Vec<(String, IndexEntry)>,
-        written_ns: u64,
-        trees: Option<(ObjectId, BTreeMap<String, ObjectId>)>,
-    ) -> Index {
+    pub(crate) fn from_sorted(list: Vec<(String, IndexEntry)>, written_ns: u64, trees: Option<(ObjectId, BTreeMap<String, ObjectId>)>) -> Index {
         let mut ix = Index {
             entries: Entries::default(),
             written_ns,
@@ -298,12 +294,7 @@ impl Index {
     /// Serialise as `AGI5` (see `index5`): fixed-width records a reader can search in place.
     /// Every older layout is still read.
     pub fn encode(&self) -> Vec<u8> {
-        let trees = self
-            .entries
-            .trees_fp
-            .as_ref()
-            .filter(|_| !self.entries.trees.is_empty())
-            .map(|fp| (fp, &self.entries.trees));
+        let trees = self.entries.trees_fp.as_ref().filter(|_| !self.entries.trees.is_empty()).map(|fp| (fp, &self.entries.trees));
         crate::index5::encode(
             self.entries.len(),
             self.entries.iter().map(|(p, e)| (p.as_str(), e)),
