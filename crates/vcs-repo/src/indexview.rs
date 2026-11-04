@@ -194,6 +194,60 @@ impl<'a> IndexView<'a> {
         Ok(all)
     }
 
+    /// Visit every entry on up to `threads` block-parallel workers, one `T` (made by `init`) per
+    /// block, returned in block order. Paths are checked as the full decoder checks them (order and
+    /// `validate_path_after`); nothing is collected per entry.
+    pub fn par_scan<T: Send>(
+        &self,
+        threads: usize,
+        init: &(dyn Fn() -> T + Sync),
+        visit: &(dyn Fn(&mut T, &str, &IndexEntry) + Sync),
+    ) -> Result<Vec<T>> {
+        let blocks: Vec<usize> = (0..self.nblocks()).collect();
+        let one = |bi: usize| -> Result<T> {
+            let mut t = init();
+            let mut prev = String::new();
+            self.each_in_block(bi, |p, e| {
+                vcs_objects::names::validate_path_after(&prev, p)?;
+                visit(&mut t, p, &e);
+                prev.clear();
+                prev.push_str(p);
+                Ok(())
+            })?;
+            Ok(t)
+        };
+        let threads = threads.min(blocks.len()).max(1);
+        if threads == 1 {
+            return blocks.iter().map(|&b| one(b)).collect();
+        }
+        let next = AtomicUsize::new(0);
+        let mut parts: Vec<(usize, Result<T>)> = std::thread::scope(|sc| {
+            let hs: Vec<_> = (0..threads)
+                .map(|_| {
+                    sc.spawn(|| {
+                        let mut mine = Vec::new();
+                        loop {
+                            let k = next.fetch_add(1, Ordering::Relaxed);
+                            if k >= blocks.len() {
+                                break;
+                            }
+                            let r = one(blocks[k]);
+                            let failed = r.is_err();
+                            mine.push((k, r));
+                            if failed {
+                                break;
+                            }
+                        }
+                        mine
+                    })
+                })
+                .collect();
+            hs.into_iter().flat_map(|h| h.join().expect("index scan worker panicked")).collect()
+        });
+        parts.sort_by_key(|p| p.0);
+        parts.into_iter().map(|(_, r)| r).collect()
+    }
+
     /// Run `work` over every entry of `blocks` on up to `threads` threads; the `Some` results come
     /// back in block order, entry order within a block.
     pub fn par_filter_map<T: Send>(
