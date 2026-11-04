@@ -1,0 +1,5 @@
+target*
+.git
+**/target
+docs/img
+fuzz

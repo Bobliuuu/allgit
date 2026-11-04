@@ -1132,6 +1132,11 @@ fn object_read(sh: &Shared, req: &Request, who: &Principal, key: &str, head: boo
             Err(e) => backend_err(e),
         };
     }
+    // A read-only token under a read policy gets a manifest without the zones it may not read (it never publishes, so
+    // it never needs the exact bytes for a compare-and-swap). Ranges are cut from the filtered bytes.
+    if key == manifest::KEY && who.role == Role::Read && restricted(sh, who) {
+        return filtered_manifest_response(sh, req, who);
+    }
     if let (Some(o), Some(l)) = (req.query_param("offset"), req.query_param("len")) {
         let (Ok(o), Ok(l)) = (o.parse::<u64>(), l.parse::<u64>()) else {
             return text(400, "bad offset/len");
@@ -1157,6 +1162,44 @@ fn object_read(sh: &Shared, req: &Request, who: &Principal, key: &str, head: boo
         Ok(None) => text(404, "not found"),
         Err(e) => backend_err(e),
     }
+}
+
+/// The manifest as a read-only, read-restricted principal may see it: only refs, tags, locks, zone prefixes and labels of zones
+/// it may read. Snapshots (their objects name every zone's heads) and the applied-transaction list are dropped. Other roles get
+/// the stored bytes: a writer needs them byte for byte for its compare-and-swap.
+fn filtered_manifest_response(sh: &Shared, req: &Request, who: &Principal) -> Response {
+    let v = match sh.backend.get(manifest::KEY) {
+        Ok(Some(v)) => v,
+        Ok(None) => return text(404, "not found"),
+        Err(e) => return backend_err(e),
+    };
+    let mut m = match Manifest::decode(&v.data) {
+        Ok(m) => m,
+        Err(e) => return text(500, &format!("stored manifest invalid: {e}")),
+    };
+    let policy = sh.validator.read().unwrap_or_else(|e| e.into_inner()).policy.clone();
+    let ok = |z: &str| policy.read_zone_allowed(&who.name, z);
+    m.branches.retain(|(z, _), _| ok(z));
+    m.tags.retain(|(z, _), _| ok(z));
+    m.locks.retain(|(z, _), _| ok(z));
+    m.zones.retain(|z, _| ok(z));
+    m.labels.retain(|z, _| ok(z));
+    m.snapshots.clear();
+    m.applied.clear();
+    let body = m.encode();
+    if req.header("if-none-match").is_some_and(|t| unquote(t.trim()) == v.tag) {
+        return Response::new(304, "").with("ETag", etag(&v.tag));
+    }
+    if let (Some(o), Some(l)) = (req.query_param("offset"), req.query_param("len")) {
+        let (Ok(o), Ok(l)) = (o.parse::<usize>(), l.parse::<usize>()) else {
+            return text(400, "bad offset/len");
+        };
+        if o >= body.len() {
+            return text(404, "not found");
+        }
+        return Response::new(200, body[o..body.len().min(o.saturating_add(l))].to_vec());
+    }
+    Response::new(200, body).with("ETag", etag(&v.tag))
 }
 
 fn reject_response(r: Reject) -> Response {
