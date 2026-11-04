@@ -67,8 +67,8 @@ impl Repo {
     pub fn diff_pairs_limited(&self, staged: bool, only: &[String]) -> Result<Vec<FilePair>> {
         let zones = self.zones()?;
         let ws = self.workspace()?;
-        let bytes = self.rd("index")?;
-        let view = IndexView::parse(&bytes)?;
+        let img = self.index_image()?;
+        let view = self.index_view(&img)?;
         let mut out = Vec::new();
         if staged {
             if ws.subs.len() != zones.names().count() {
@@ -81,7 +81,7 @@ impl Repo {
             if view.as_ref().is_some_and(|v| trees_match(&zones, v, &roots)) {
                 return Ok(out); // every zone's cached tree id is HEAD's: nothing is staged
             }
-            let ix = Index::decode(&bytes)?;
+            let ix = img.to_index()?;
             let mut cache = TreeCache::new();
             for p in self.index_vs_roots(&zones, &ix, &roots)? {
                 if !kept(only, &p) {
@@ -109,20 +109,20 @@ impl Repo {
             }
         } else {
             // With a running watcher and a saved state for this index, only the paths it names can differ.
-            let mut narrowed = if only.is_empty() { self.monitored_candidates(&bytes) } else { None };
+            let mut narrowed = if only.is_empty() { self.monitored_candidates(&img) } else { None };
             if narrowed.is_none() && only.is_empty() && self.watcher_running() {
                 // A watcher is up but no state is saved for this index yet (nothing ran `status`):
                 // one monitored status saves it, and every later diff then stats only the paths the
                 // watcher names instead of the whole tree. Best effort; a failure is a full scan.
                 if self.status_tracked_auto(crate::repo::StatusOpts::default()).is_ok() {
-                    narrowed = self.monitored_candidates(&bytes);
+                    narrowed = self.monitored_candidates(&img);
                 }
             }
             if narrowed.as_ref().is_some_and(|c| c.is_empty()) {
                 return Ok(out);
             }
             let only = narrowed.as_deref().unwrap_or(only);
-            for (p, e) in self.worktree_changed(&bytes, view.as_ref(), &zones, &ws, only, true, false)? {
+            for (p, e) in self.worktree_changed(&img, view.as_ref(), &zones, &ws, only, true, false)? {
                 if let Some(pair) = self.unstaged_pair(&p, &e)? {
                     out.push(pair);
                 }
@@ -140,8 +140,8 @@ impl Repo {
         if !any {
             return Err(Error::Msg(format!("unknown revision {rev:?} in any subscribed zone")));
         }
-        let bytes = self.rd("index")?;
-        let view = IndexView::parse(&bytes)?;
+        let img = self.index_image()?;
+        let view = self.index_view(&img)?;
         let all_subscribed = ws.subs.len() == zones.names().count();
         let tree_eq = all_subscribed && view.as_ref().is_some_and(|v| trees_match(&zones, v, &roots));
         if staged && tree_eq {
@@ -150,7 +150,7 @@ impl Repo {
         let mut paths: BTreeSet<String> = BTreeSet::new();
         let mut ix: Option<Index> = None;
         if !tree_eq {
-            let i = Index::decode(&bytes)?;
+            let i = img.to_index()?;
             if all_subscribed {
                 paths.extend(self.index_vs_roots(&zones, &i, &roots)?);
             } else {
@@ -167,7 +167,7 @@ impl Repo {
         if !staged {
             // a symlink is read through to its target by this comparison: always look at it
             paths.extend(
-                self.worktree_changed(&bytes, view.as_ref(), &zones, &ws, only, false, true)?
+                self.worktree_changed(&img, view.as_ref(), &zones, &ws, only, false, true)?
                     .into_iter()
                     .map(|(p, _)| p),
             );
@@ -325,7 +325,7 @@ impl Repo {
     #[allow(clippy::too_many_arguments)]
     fn worktree_changed(
         &self,
-        bytes: &[u8],
+        img: &crate::indeximage::IndexImage,
         view: Option<&IndexView<'_>>,
         zones: &Zones,
         ws: &Workspace,
@@ -339,7 +339,7 @@ impl Repo {
         // (measured on 100k files: 16 threads cost 1.2x the CPU of 8 for the same wall time)
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
         let Some(view) = view else {
-            let ix = Index::decode(bytes)?;
+            let ix = img.to_index()?;
             let mut list: Vec<(&String, &IndexEntry)> = Vec::new();
             let keep = |p: &String| keep_set.kept(p) && (!sparse || !ws.skips(zones.owner(p), p));
             list.extend(ix.entries.iter().filter(|(p, _)| keep(p)));

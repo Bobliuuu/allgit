@@ -1,31 +1,28 @@
 //! Reading and patching the on-disk index without decoding all of it.
 //!
-//! The `AGI3`/`AGI4` layouts store entries in blocks behind a length table. A point lookup only
-//! needs the first path of every block (to binary-search) and one decoded block; a patch (a few
-//! entries added, changed or removed) re-encodes only the blocks it touches and copies every
-//! other block's bytes as they are. Commands that change a handful of entries (`rm`,
-//! `restore --staged`, `reset <path>`, `add -u` on a mostly clean tree) therefore cost a file
-//! read, a block or two of work and a file write, instead of decoding and encoding every entry.
+//! [`IndexFile`] is the lazy face of [`crate::indeximage::IndexImage`]: the `AGI5` base is
+//! memory mapped and searched in place, edits made since it was written come from `index.log`.
+//! Commands that change a handful of entries (`add` of a file, `rm`, `mv`, `restore --staged`,
+//! `reset <path>`, `add -u` on a mostly clean tree) cost a few lookups and one appended log frame,
+//! not a decode and rewrite of every entry.
 //!
-//! Patched files are written as `AGI4`, whose table carries each block's own entry count (a
-//! removal leaves an uneven block); `Index::decode` reads both. A patch keeps `written_ns` as it
-//! was: entries it adds are then "racy" at worst (re-read once by the next status), never
-//! wrongly trusted.
+//! A patch keeps `written_ns` as it was: entries it adds are then "racy" at worst (re-read once
+//! by the next status), never wrongly trusted.
 
 use crate::error::{Error, Result};
-use crate::index::{put_entry, put_varint, read_entry, IndexEntry, BLOCK};
-use crate::meta::{unframe, STATE_VERSION};
-use std::collections::BTreeMap;
+use crate::index::IndexEntry;
+use crate::indeximage::{IndexImage, Op};
+use std::collections::{BTreeMap, BTreeSet};
 use vcs_objects::codec::Reader;
 use vcs_objects::ObjectId;
 use vcs_store::ObjectStore;
 
 thread_local! {
-    /// Set by `prepare_index_patch`, consumed by the `write_index_bytes` that follows it.
+    /// Set by `prepare_index_patch`, consumed by the `write_index_patch` that follows it.
     static PENDING: std::cell::RefCell<Option<Pending>> = const { std::cell::RefCell::new(None) };
 }
 
-/// What `prepare_index_patch` leaves for the `write_index_bytes` after it: the paths the patch touches,
+/// What `prepare_index_patch` leaves for the `write_index_patch` after it: the paths the patch touches,
 /// and (when a filesystem-monitor state exists) the fingerprint of the index it starts from.
 struct Pending {
     touched: Vec<String>,
@@ -34,300 +31,123 @@ struct Pending {
     workspace: Vec<u8>,
 }
 
-struct Blk {
-    off: usize,
-    len: usize,
-    count: usize,
-    first: String,
-}
-
-/// A parsed index file: header and block table only; entries are decoded on demand.
+/// A parsed index: the `AGI5` base and its log; entries are read on demand.
 pub(crate) struct IndexFile {
-    bytes: Vec<u8>,
+    pub(crate) img: IndexImage,
     pub written_ns: u64,
-    blocks: Vec<Blk>,
-    /// Offset of the cache-tree section.
-    tail: usize,
 }
 
 /// Edits to apply: `Some(entry)` sets (adds or replaces), `None` removes.
 pub(crate) type Edits = BTreeMap<String, Option<IndexEntry>>;
+
+/// The log ops that carry an [`Edits`] out, ready for [`crate::repo::Repo::write_index_patch`].
+pub(crate) struct Patch {
+    ops: Vec<Op>,
+}
 
 fn corrupt(e: impl std::fmt::Display) -> Error {
     Error::Corrupt(format!("index: {e}"))
 }
 
 impl IndexFile {
-    /// Parse the header. `None` for the older layouts (`AGI2`, `AGIX`), which have no blocks.
-    pub(crate) fn parse(bytes: Vec<u8>) -> Result<Option<IndexFile>> {
-        let v4 = bytes.starts_with(b"AGI4");
-        if !v4 && !bytes.starts_with(b"AGI3") {
-            return Ok(None);
-        }
-        let body = unframe(if v4 { b"AGI4" } else { b"AGI3" }, &bytes, "index")?;
-        let mut r = Reader::new(body);
-        let written_ns = r.varint().map_err(corrupt)?;
-        let n = r.count(36).map_err(corrupt)?;
-        let mut meta: Vec<(usize, usize)> = Vec::new();
-        if v4 {
-            let nblocks = r.count(2).map_err(corrupt)?;
-            for _ in 0..nblocks {
-                let len = r.varint().map_err(corrupt)? as usize;
-                let cnt = r.varint().map_err(corrupt)? as usize;
-                meta.push((len, cnt));
-            }
-        } else {
-            let per = r.varint().map_err(corrupt)? as usize;
-            let nblocks = r.count(1).map_err(corrupt)?;
-            if per == 0 || per > (1 << 20) || nblocks != n.div_ceil(per) {
-                return Err(corrupt("bad block table"));
-            }
-            for i in 0..nblocks {
-                let len = r.varint().map_err(corrupt)? as usize;
-                meta.push((len, if i + 1 == nblocks { n - per * i } else { per }));
-            }
-        }
-        if meta.iter().map(|m| m.1).sum::<usize>() != n || meta.iter().any(|m| m.1 == 0) {
-            return Err(corrupt("bad block table"));
-        }
-        let mut off = bytes.len() - r.remaining();
-        let mut blocks = Vec::with_capacity(meta.len());
-        for (len, count) in meta {
-            let b = r.raw(len).map_err(corrupt)?;
-            let first = Reader::new(b).str(4096).map_err(corrupt)?;
-            blocks.push(Blk { off, len, count, first });
-            off += len;
-        }
-        if r.remaining() == 0 {
-            return Err(corrupt("missing tree section"));
-        }
-        Ok(Some(IndexFile {
-            bytes,
-            written_ns,
-            blocks,
-            tail: off,
-        }))
+    pub(crate) fn from_image(img: IndexImage) -> Option<IndexFile> {
+        img.is_v5().then(|| IndexFile {
+            written_ns: img.written_ns,
+            img,
+        })
     }
 
-    /// No entries at all (a patch needs a block to start from).
+    /// `None` for the older layouts (`AGI2`, `AGIX`, `AGI3`, `AGI4`), which have no in-place form.
+    #[cfg(test)]
+    pub(crate) fn parse(bytes: Vec<u8>) -> Result<Option<IndexFile>> {
+        Ok(Self::from_image(IndexImage::from_bytes(&bytes)?))
+    }
+
+    /// No entries at all (a patch has nothing to look at).
     pub(crate) fn is_empty(&self) -> bool {
-        self.blocks.is_empty()
+        self.img.next_ge("").ok().flatten().is_none()
     }
 
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
-        self.blocks.iter().map(|b| b.count).sum()
-    }
-
-    fn decode_block(&self, i: usize) -> Result<Vec<(String, IndexEntry)>> {
-        let b = &self.blocks[i];
-        let mut r = Reader::new(&self.bytes[b.off..b.off + b.len]);
-        let mut v: Vec<(String, IndexEntry)> = Vec::with_capacity(b.count);
-        for _ in 0..b.count {
-            let e = read_entry(&mut r, false, v.last().map_or("", |l| l.0.as_str()))?;
-            v.push(e);
-        }
-        r.finish().map_err(corrupt)?;
-        Ok(v)
-    }
-
-    /// Index of the block that holds (or would hold) `key`.
-    fn block_for(&self, key: &str) -> usize {
-        self.blocks.partition_point(|b| b.first.as_str() <= key).saturating_sub(1)
+        self.img.list().unwrap().len()
     }
 
     /// The entry for exactly `path`.
     pub(crate) fn get(&self, path: &str) -> Result<Option<IndexEntry>> {
-        if self.blocks.is_empty() {
-            return Ok(None);
-        }
-        let v = self.decode_block(self.block_for(path))?;
-        Ok(v.binary_search_by(|(k, _)| k.as_str().cmp(path)).ok().map(|i| v[i].1.clone()))
+        self.img.get(path)
     }
 
     /// First tracked path that sorts at or after `key`.
     fn lower_bound(&self, key: &str) -> Result<Option<String>> {
-        if self.blocks.is_empty() {
-            return Ok(None);
-        }
-        let i = self.block_for(key);
-        let v = self.decode_block(i)?;
-        let at = v.partition_point(|(k, _)| k.as_str() < key);
-        if let Some((k, _)) = v.into_iter().nth(at) {
-            return Ok(Some(k));
-        }
-        Ok(self.blocks.get(i + 1).map(|b| b.first.clone()))
+        Ok(self.img.next_ge(key)?.map(|x| x.0))
     }
 
     /// Entries equal to `prefix` or beneath `prefix/` (all of them for an empty prefix), in order.
     pub(crate) fn under(&self, prefix: &str) -> Result<Vec<(String, IndexEntry)>> {
-        let mut out = Vec::new();
-        if self.blocks.is_empty() {
-            return Ok(out);
-        }
-        let (lo, hi) = (format!("{prefix}/"), format!("{prefix}0")); // '0' == '/' + 1
-        let first = if prefix.is_empty() { 0 } else { self.block_for(prefix) };
-        for i in first..self.blocks.len() {
-            if !prefix.is_empty() && self.blocks[i].first.as_str() >= hi.as_str() {
-                break;
-            }
-            for (k, e) in self.decode_block(i)? {
-                if prefix.is_empty() || k == prefix || (k.as_str() >= lo.as_str() && k.as_str() < hi.as_str()) {
-                    out.push((k, e));
-                }
-            }
-        }
-        Ok(out)
+        self.img.under(prefix)
     }
 
     /// The cached tree id of directory `dir` ("" = root) from the cache-tree section, when that
     /// section was computed under the zone layout `fp`. Reads only the tail, never an entry.
     pub(crate) fn cached_tree(&self, fp: &ObjectId, dir: &str) -> Result<Option<ObjectId>> {
-        let mut tr = Reader::new(&self.bytes[self.tail..]);
-        let tn = tr.varint().map_err(corrupt)? as usize;
-        if tn == 0 || tr.id().map_err(corrupt)? != *fp {
-            return Ok(None);
-        }
-        for _ in 0..tn {
-            let d = tr.str(4096).map_err(corrupt)?;
-            let id = tr.id().map_err(corrupt)?;
-            if d == dir {
-                return Ok(Some(id));
-            }
-        }
-        Ok(None)
+        self.img.cached_tree(fp, dir)
     }
 
-    /// Apply `edits` and return the new file bytes plus how many entries really changed.
-    pub(crate) fn patch(&self, edits: &Edits) -> Result<(Vec<u8>, usize)> {
-        // 1. group the edits by block
-        let mut per_block: BTreeMap<usize, Vec<(&String, &Option<IndexEntry>)>> = BTreeMap::new();
-        for kv in edits {
-            per_block.entry(self.block_for(kv.0)).or_default().push(kv);
-        }
-        // 2. rebuild the touched blocks
+    /// Check `edits` and turn them into log ops plus how many entries really change.
+    pub(crate) fn patch(&self, edits: &Edits) -> Result<(Patch, usize)> {
         let mut changed = 0usize;
         let mut added: Vec<&str> = Vec::new();
-        let mut invalid: Vec<&str> = Vec::new(); // paths whose ancestors' cached trees go
-        let mut rebuilt: BTreeMap<usize, Vec<(Vec<u8>, usize)>> = BTreeMap::new();
-        for (&bi, list) in &per_block {
-            let old = self.decode_block(bi)?;
-            let mut out: Vec<(String, IndexEntry)> = Vec::with_capacity(old.len() + list.len());
-            let mut oi = old.into_iter().peekable();
-            for &(k, new) in list {
-                while let Some(o) = oi.next_if(|o| o.0.as_str() < k.as_str()) {
-                    out.push(o);
+        let mut invalid: BTreeSet<String> = BTreeSet::new(); // dirs whose cached trees go
+        let mut ops: Vec<Op> = Vec::with_capacity(edits.len() + 1);
+        for (k, new) in edits {
+            let cur = self.img.get(k)?;
+            match (cur, new) {
+                (Some(_), None) => {
+                    changed += 1;
+                    self.invalidate(k, &mut invalid);
+                    ops.push(Op::Remove(k.clone()));
                 }
-                let cur = oi.next_if(|o| o.0.as_str() == k.as_str());
-                match (cur, new) {
-                    (Some(_), None) => {
+                (None, None) => {}
+                (Some(o), Some(n)) => {
+                    if o != *n {
                         changed += 1;
-                        invalid.push(k);
+                        ops.push(Op::Set(k.clone(), n.clone()));
                     }
-                    (None, None) => {}
-                    (Some((_, o)), Some(n)) => {
-                        if o != *n {
-                            changed += 1;
-                        }
-                        if o.id != n.id || o.mode != n.mode {
-                            invalid.push(k);
-                        }
-                        out.push((k.clone(), n.clone()));
+                    if o.id != n.id || o.mode != n.mode {
+                        self.invalidate(k, &mut invalid);
                     }
-                    (None, Some(n)) => {
-                        changed += 1;
-                        added.push(k);
-                        invalid.push(k);
-                        out.push((k.clone(), n.clone()));
-                    }
+                }
+                (None, Some(n)) => {
+                    changed += 1;
+                    added.push(k);
+                    self.invalidate(k, &mut invalid);
+                    ops.push(Op::Set(k.clone(), n.clone()));
                 }
             }
-            out.extend(oi);
-            let mut chunks = Vec::new();
-            for part in out.chunks(BLOCK) {
-                let mut buf = Vec::with_capacity(part.len() * 100);
-                for (p, e) in part {
-                    put_entry(&mut buf, p, e);
-                }
-                chunks.push((buf, part.len()));
-            }
-            rebuilt.insert(bi, chunks);
         }
         if changed == 0 {
-            return Ok((self.bytes.clone(), 0));
+            return Ok((Patch { ops: Vec::new() }, 0));
         }
-        // 3. file/directory conflicts for brand-new paths, judged on the state after the edits
+        // file/directory conflicts for brand-new paths, judged on the state after the edits
         for p in added {
             self.check_conflicts(p, edits)?;
         }
-        // 4. cache-tree section
-        let mut tr = Reader::new(&self.bytes[self.tail..]);
-        let tn = tr.varint().map_err(corrupt)? as usize;
-        let mut fp: Option<ObjectId> = None;
-        let mut trees: BTreeMap<String, ObjectId> = BTreeMap::new();
-        if tn > 0 {
-            fp = Some(tr.id().map_err(corrupt)?);
-            for _ in 0..tn {
-                let d = tr.str(4096).map_err(corrupt)?;
-                trees.insert(d, tr.id().map_err(corrupt)?);
-            }
+        if !invalid.is_empty() && self.img.trees()?.is_some_and(|t| !t.1.is_empty()) {
+            ops.push(Op::DropTrees(invalid.into_iter().collect()));
         }
-        tr.finish().map_err(corrupt)?;
-        if !trees.is_empty() {
-            for path in invalid {
-                trees.remove(path);
-                let mut end = path.len();
-                while let Some(i) = path[..end].rfind('/') {
-                    end = i;
-                    trees.remove(&path[..end]);
-                }
-                trees.remove("");
-            }
+        Ok((Patch { ops }, changed))
+    }
+
+    /// `path`, every directory above it and the root: their cached trees are stale after a change.
+    fn invalidate(&self, path: &str, into: &mut BTreeSet<String>) {
+        into.insert(path.to_owned());
+        let mut end = path.len();
+        while let Some(i) = path[..end].rfind('/') {
+            end = i;
+            into.insert(path[..end].to_owned());
         }
-        // 5. assemble
-        let mut table: Vec<(usize, usize)> = Vec::with_capacity(self.blocks.len() + 1);
-        let mut body: Vec<u8> = Vec::with_capacity(self.tail - self.blocks[0].off + 4096);
-        let mut n_new = 0usize;
-        for (i, b) in self.blocks.iter().enumerate() {
-            match rebuilt.get(&i) {
-                None => {
-                    body.extend_from_slice(&self.bytes[b.off..b.off + b.len]);
-                    table.push((b.len, b.count));
-                    n_new += b.count;
-                }
-                Some(chunks) => {
-                    for (buf, cnt) in chunks {
-                        body.extend_from_slice(buf);
-                        table.push((buf.len(), *cnt));
-                        n_new += cnt;
-                    }
-                }
-            }
-        }
-        let mut out = Vec::with_capacity(body.len() + 128 + trees.len() * 40);
-        out.extend_from_slice(b"AGI4");
-        out.push(STATE_VERSION);
-        put_varint(&mut out, self.written_ns);
-        put_varint(&mut out, n_new as u64);
-        put_varint(&mut out, table.len() as u64);
-        for (l, c) in &table {
-            put_varint(&mut out, *l as u64);
-            put_varint(&mut out, *c as u64);
-        }
-        out.extend_from_slice(&body);
-        match (fp, trees.is_empty()) {
-            (Some(fp), false) => {
-                put_varint(&mut out, trees.len() as u64);
-                out.extend_from_slice(fp.as_bytes());
-                for (d, id) in &trees {
-                    put_varint(&mut out, d.len() as u64);
-                    out.extend_from_slice(d.as_bytes());
-                    out.extend_from_slice(id.as_bytes());
-                }
-            }
-            _ => put_varint(&mut out, 0),
-        }
-        Ok((out, changed))
+        into.insert(String::new());
     }
 
     /// Is there a tracked path or directory that differs from `path` (not tracked itself) only by case or
@@ -367,24 +187,8 @@ impl IndexFile {
             // about 1,000 entries, not all 100,000.
             let mut cur = lo.clone();
             let mut last_child = String::new();
-            let mut cached: Option<(usize, Vec<(String, IndexEntry)>)> = None;
             loop {
-                let bi = self.block_for(&cur);
-                if cached.as_ref().is_none_or(|c| c.0 != bi) {
-                    cached = Some((bi, self.decode_block(bi)?));
-                }
-                let v = &cached.as_ref().expect("block cached").1;
-                let at = v.partition_point(|(k, _)| k.as_str() < cur.as_str());
-                let Some((k, _)) = v.get(at) else {
-                    // `cur` sorts after everything in this block: the next block starts past it
-                    match self.blocks.get(bi + 1) {
-                        Some(nb) => {
-                            cur = nb.first.clone();
-                            continue;
-                        }
-                        None => break,
-                    }
-                };
+                let Some((k, _)) = self.img.next_ge(&cur)? else { break };
                 if !k.starts_with(&lo) || (!parent.is_empty() && k.as_str() >= hi.as_str()) {
                     break;
                 }
@@ -414,6 +218,7 @@ impl IndexFile {
             return Ok(None);
         }
     }
+
 
     /// Would adding `path` (not tracked before) clash with a tracked file/directory once `edits` are applied?
     fn check_conflicts(&self, path: &str, edits: &Edits) -> Result<()> {
@@ -447,25 +252,36 @@ impl IndexFile {
     }
 }
 
+
 impl crate::repo::Repo {
+    /// The index as an image (mapped base plus log), whatever layout it is in.
+    pub(crate) fn index_image(&self) -> Result<IndexImage> {
+        IndexImage::load(&self.vcs)
+    }
+
+    /// The index file, parsed lazily; `None` while the index is in an older layout (the callers
+    /// then take their whole-index path, which upgrades it on save).
+    pub(crate) fn open_index_file(&self) -> Result<Option<IndexFile>> {
+        Ok(IndexFile::from_image(self.index_image()?))
+    }
+
     /// The index file, parsed lazily. An index in an older layout is rewritten once in the
     /// current one first.
     pub(crate) fn index_file(&self) -> Result<IndexFile> {
-        let raw = self.rd("index")?;
-        if let Some(f) = IndexFile::parse(raw.clone())? {
+        if let Some(f) = self.open_index_file()? {
             return Ok(f);
         }
-        let mut ix = crate::index::Index::decode(&raw)?;
+        let mut ix = self.index()?;
         self.save_index(&mut ix)?;
-        IndexFile::parse(self.rd("index")?)?.ok_or_else(|| corrupt("unreadable layout after rewrite"))
+        self.open_index_file()?.ok_or_else(|| corrupt("unreadable layout after rewrite"))
     }
 
-    /// The index bytes with `edits` applied, ready for [`Self::write_index_bytes`], and how many
-    /// entries changed (`None` bytes when nothing does). Nothing is written. Commands compute this
+    /// The log ops for `edits`, ready for [`Self::write_index_patch`], and how many
+    /// entries changed (`None` when nothing does). Nothing is written. Commands compute this
     /// first, record their operation, and write the index last: the operation log's fsyncs then
     /// do not have to wait for a freshly written index to reach the disk.
-    pub(crate) fn prepare_index_patch(&self, f: &IndexFile, edits: &Edits) -> Result<(Option<Vec<u8>>, usize)> {
-        let (bytes, changed) = f.patch(edits)?;
+    pub(crate) fn prepare_index_patch(&self, f: &IndexFile, edits: &Edits) -> Result<(Option<Patch>, usize)> {
+        let (patch, changed) = f.patch(edits)?;
         // Remember what this patch touches (narrows the attribute-file scan, tells the filesystem
         // monitor what moved) and, for the monitor, which index it starts from.
         let pending = (changed > 0).then(|| {
@@ -478,7 +294,7 @@ impl crate::repo::Repo {
                 None
             };
             let (zones, workspace) = mon.clone().unwrap_or_default();
-            let old_fp = mon.map(|(z, w)| self.fingerprint_disk(&f.bytes, &z, &w));
+            let old_fp = mon.map(|(z, w)| self.fingerprint_img(&f.img, &z, &w));
             Pending {
                 touched: edits.keys().cloned().collect(),
                 old_fp,
@@ -487,37 +303,25 @@ impl crate::repo::Repo {
             }
         });
         PENDING.with(|p| *p.borrow_mut() = pending);
-        Ok((if changed == 0 { None } else { Some(bytes) }, changed))
+        Ok((if changed == 0 { None } else { Some(patch) }, changed))
     }
 
-    /// Replace the index file with `bytes` (atomic rename, no fsync of the temp file; the
-    /// blobs it names are made durable first).
-    pub(crate) fn write_index_bytes(&self, bytes: &[u8]) -> Result<()> {
+    /// Persist a patch: one appended log frame (no rewrite of the index), or, when the log is
+    /// long or the index is in an older layout, a new base generation (atomic rename). The
+    /// blobs the index names are made durable first.
+    pub(crate) fn write_index_patch(&self, f: &IndexFile, patch: &Patch) -> Result<()> {
         self.store.sync()?;
         let clean = self.index_holds_no_attrs();
         let pending = PENDING.with(|p| p.borrow_mut().take());
-        let path = self.vcs.join("index");
-        // The new index's fingerprint is hashed while the file is written, not after it.
-        let (written, digest) = std::thread::scope(|sc| {
-            let d = pending
-                .as_ref()
-                .filter(|p| p.old_fp.is_some())
-                .map(|_| sc.spawn(|| crate::fsmonitor::index_digest(bytes)));
-            let w = crate::meta::write_atomic_nosync(&path, bytes);
-            (w, d.map(|h| h.join().expect("digest thread panicked")))
-        });
-        written?;
-        if let Some(d) = &digest {
-            crate::fsmonitor::remember_index_digest(&self.vcs, d);
-        }
+        let after = f.img.commit(&self.vcs, patch.ops.clone())?;
         match &pending {
             // The patch knows every path it changed: only those can have introduced an attribute file.
             Some(p) => self.carry_attrs_marker_touched(clean, &p.touched),
-            None => self.carry_attrs_marker(clean, bytes),
+            None => self.carry_attrs_marker_touched(clean, &patch.ops.iter().filter_map(|o| match o { Op::Set(p, _) | Op::Remove(p) => Some(p.clone()), _ => None }).collect::<Vec<_>>()),
         }
-        if let (Some(p), Some(d)) = (pending, digest) {
+        if let Some(p) = pending {
             if let Some(old) = p.old_fp {
-                let new = crate::fsmonitor::fingerprint_with(&d, bytes.len(), &p.zones, &p.workspace);
+                let new = crate::fsmonitor::fingerprint_with(&after.digest, after.len, &p.zones, &p.workspace);
                 if new != old {
                     crate::fsmonitor::log_rebind(&self.vcs, &old, &new, &p.touched);
                 }
@@ -532,6 +336,9 @@ impl crate::repo::Repo {
 /// cache-tree section does not end exactly at the end of the file (a torn write). Other layouts
 /// are not checked here (they are decoded in full anyway).
 pub(crate) fn index_looks_whole(path: &std::path::Path) -> bool {
+    if let Some(v) = crate::index5::looks_whole(path) {
+        return v;
+    }
     use std::io::{Read, Seek, SeekFrom};
     let Ok(mut f) = std::fs::File::open(path) else { return true };
     let Ok(len) = f.metadata().map(|m| m.len() as usize) else {
@@ -640,6 +447,7 @@ impl crate::repo::Repo {
         match rebuilt {
             Ok(ix) => {
                 if crate::meta::write_atomic(&path, &ix.encode()).is_ok() {
+                    let _ = std::fs::remove_file(self.vcs.join("index.log"));
                     eprintln!("warning: the index file was damaged (a torn write); rebuilt it from the branch heads. Staged changes that were not committed are lost; your files are untouched.");
                 }
             }
@@ -647,6 +455,7 @@ impl crate::repo::Repo {
         }
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -699,17 +508,30 @@ mod tests {
         j
     }
 
+    fn open(ix: &Index) -> (tempfile::TempDir, IndexFile) {
+        let d = tempfile::tempdir().unwrap();
+        crate::indeximage::write_full(d.path(), ix).unwrap();
+        let f = IndexFile::from_image(IndexImage::load(d.path()).unwrap()).unwrap();
+        (d, f)
+    }
+
+    /// Persist the patch (log append or fold) and read it back through a fresh load.
+    fn patched(d: &tempfile::TempDir, f: &IndexFile, edits: &Edits) -> Result<Index> {
+        let (p, _) = f.patch(edits)?;
+        f.img.commit(d.path(), p.ops)?;
+        IndexImage::load(d.path())?.to_index()
+    }
+
     fn check(ix: &Index, edits: Edits) {
-        let f = IndexFile::parse(ix.encode()).unwrap().unwrap();
-        let (bytes, _) = f.patch(&edits).unwrap();
-        let got = Index::decode(&bytes).unwrap();
+        let (d, f) = open(ix);
+        let got = patched(&d, &f, &edits).unwrap();
         let want = apply_in_memory(ix, &edits);
         assert_eq!(got.entries, want.entries);
         assert_eq!(got.written_ns, ix.written_ns);
         let fp = ObjectId::from_bytes([9; 32]);
         assert_eq!(got.entries.cached_trees(&fp), want.entries.cached_trees(&fp));
-        // a second patch of the patched (AGI4) file still works, and a full re-encode agrees
-        let again = IndexFile::parse(bytes).unwrap().unwrap();
+        // a second patch on top of the log still works, and a full re-encode agrees
+        let again = IndexFile::from_image(IndexImage::load(d.path()).unwrap()).unwrap();
         assert_eq!(again.len(), want.entries.len());
         assert_eq!(Index::decode(&got.encode()).unwrap().entries, want.entries);
     }
@@ -752,15 +574,14 @@ mod tests {
         for k in &all {
             e.insert(k.clone(), None);
         }
-        let f = IndexFile::parse(ix.encode()).unwrap().unwrap();
-        let (bytes, _) = f.patch(&e).unwrap();
-        assert!(Index::decode(&bytes).unwrap().entries.is_empty());
+        let (d, f) = open(&ix);
+        assert!(patched(&d, &f, &e).unwrap().entries.is_empty());
     }
 
     #[test]
     fn lookups_match_the_map() {
         let ix = big();
-        let f = IndexFile::parse(ix.encode()).unwrap().unwrap();
+        let (_d, f) = open(&ix);
         assert_eq!(f.len(), ix.entries.len());
         for (k, v) in ix.entries.iter().step_by(37) {
             assert_eq!(f.get(k).unwrap().as_ref(), Some(v));
@@ -777,7 +598,7 @@ mod tests {
     #[test]
     fn patch_refuses_file_dir_conflicts() {
         let ix = big();
-        let f = IndexFile::parse(ix.encode()).unwrap().unwrap();
+        let (d, f) = open(&ix);
         let mut e = Edits::new();
         e.insert("top.txt/inner".into(), Some(en(1, 1)));
         assert!(f.patch(&e).is_err());
@@ -790,17 +611,15 @@ mod tests {
             e.insert(k, None);
         }
         e.insert("d01".into(), Some(en(1, 1)));
-        let (b, _) = f.patch(&e).unwrap();
-        let got = Index::decode(&b).unwrap();
+        let got = patched(&d, &f, &e).unwrap();
         assert!(got.entries.contains_key("d01") && !got.entries.contains_key("d01/f00001.txt"));
     }
 
     #[test]
     fn legacy_layouts_are_not_parsed() {
         let ix = big();
-        let enc = ix.encode();
-        assert!(IndexFile::parse(enc).unwrap().is_some());
-        assert!(IndexFile::parse(b"AGI2\x01\x00\x00\x00".to_vec()).unwrap().is_none());
+        assert!(IndexFile::parse(ix.encode()).unwrap().is_some());
+        assert!(IndexFile::parse(ix.encode_v3()).unwrap().is_none());
     }
 
     #[test]
@@ -819,7 +638,7 @@ mod tests {
         for n in &names {
             ix.insert(n, en(1, 1)).unwrap();
         }
-        let f = IndexFile::parse(ix.encode()).unwrap().unwrap();
+        let (_d, f) = open(&ix);
         let probes = [
             "src/new.txt",
             "SRC/File1.TXT",
