@@ -15,6 +15,8 @@ pub enum J {
     Null,
     Bool(bool),
     Num(u64),
+    /// A finite float, printed with 4 decimals (scores).
+    Float(f64),
     Str(String),
     Arr(Vec<J>),
     Obj(Vec<(&'static str, J)>),
@@ -38,6 +40,9 @@ impl J {
             J::Bool(b) => o.push_str(if *b { "true" } else { "false" }),
             J::Num(n) => {
                 let _ = write!(o, "{n}");
+            }
+            J::Float(f) => {
+                let _ = write!(o, "{:.4}", if f.is_finite() { *f } else { 0.0 });
             }
             J::Str(s) => {
                 o.push('"');
