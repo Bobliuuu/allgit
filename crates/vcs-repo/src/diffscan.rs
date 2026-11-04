@@ -30,6 +30,25 @@ pub fn kept(only: &[String], p: &str) -> bool {
             .any(|f| f.is_empty() || p == f || (p.len() > f.len() && p.starts_with(f.as_str()) && p.as_bytes()[f.len()] == b'/'))
 }
 
+/// [`kept`] for a long `only` list in O(depth of the path) instead of O(|only|): the paths go in a hash set and a
+/// candidate is looked up under each of its directory prefixes. (A watcher can name thousands of paths.)
+struct Keep<'a> {
+    all: bool,
+    set: std::collections::HashSet<&'a str>,
+}
+
+impl<'a> Keep<'a> {
+    fn new(only: &'a [String]) -> Self {
+        Keep {
+            all: only.is_empty() || only.iter().any(|f| f.is_empty()),
+            set: only.iter().map(|s| s.as_str()).collect(),
+        }
+    }
+    fn kept(&self, p: &str) -> bool {
+        self.all || self.set.contains(p) || p.bytes().enumerate().any(|(i, b)| b == b'/' && self.set.contains(&p[..i]))
+    }
+}
+
 type Entry = (EntryMode, ObjectId);
 type TreeCache = std::collections::HashMap<ObjectId, vcs_objects::Tree>;
 
@@ -315,13 +334,14 @@ impl Repo {
         symlinks: bool,
     ) -> Result<Vec<(String, IndexEntry)>> {
         let sparse = skip_sparse && !ws.sparse.is_empty();
+        let keep_set = Keep::new(only);
         // 8, not 16: the per-file fstatat is kernel-bound and more threads only add lock contention
         // (measured on 100k files: 16 threads cost 1.2x the CPU of 8 for the same wall time)
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
         let Some(view) = view else {
             let ix = Index::decode(bytes)?;
             let mut list: Vec<(&String, &IndexEntry)> = Vec::new();
-            let keep = |p: &String| kept(only, p) && (!sparse || !ws.skips(zones.owner(p), p));
+            let keep = |p: &String| keep_set.kept(p) && (!sparse || !ws.skips(zones.owner(p), p));
             list.extend(ix.entries.iter().filter(|(p, _)| keep(p)));
             let (changes, _clean) = self.unstaged_changes(&list, ix.written_ns)?;
             let mut out: Vec<(String, IndexEntry)> = changes.into_iter().map(|c| (c.path.clone(), ix.entries[&c.path].clone())).collect();
@@ -339,7 +359,7 @@ impl Repo {
         };
         let blocks = view.blocks_for(only)?;
         let work = |cur: &mut StatCursor, p: &str, e: &IndexEntry| -> Result<Option<(String, IndexEntry)>> {
-            if !kept(only, p) || (sparse && ws.skips(zones.owner(p), p)) {
+            if !keep_set.kept(p) || (sparse && ws.skips(zones.owner(p), p)) {
                 return Ok(None);
             }
             let (st, _) = self.wt_state_seq(cur, p, e, view.written_ns)?;
@@ -401,4 +421,26 @@ fn trees_match(zones: &Zones, view: &IndexView<'_>, roots: &BTreeMap<&str, Optio
             (Some(r), Some(c)) => r == c,
             _ => false,
         })
+}
+
+#[cfg(test)]
+mod keep_tests {
+    use super::{kept, Keep};
+
+    #[test]
+    fn keep_set_agrees_with_kept() {
+        let sets: Vec<Vec<String>> = vec![
+            vec![],
+            vec!["".into()],
+            vec!["a".into(), "b/c".into(), "d/e/f".into()],
+            vec!["a/b".into(), "a".into()],
+        ];
+        let paths = ["a", "a/b", "ab", "a/bc", "b", "b/c", "b/c/d", "b/cd", "d/e", "d/e/f", "d/e/f/g", "d/e/fg", "x/y"];
+        for only in &sets {
+            let k = Keep::new(only);
+            for p in paths {
+                assert_eq!(k.kept(p), kept(only, p), "{only:?} {p}");
+            }
+        }
+    }
 }
