@@ -65,7 +65,9 @@ pub fn open_backend(url: &str) -> Result<Box<dyn Backend>, Error> {
         }
     };
     let b = FsBackend::open(path).map_err(|e| Error::Msg(format!("cannot open remote {url}: {e}")))?;
-    Ok(Box::new(vcs_remote::RetryBackend::new(Box::new(b))))
+    Ok(Box::new(vcs_remote::sharded::ShardedBackend::new(Box::new(
+        vcs_remote::RetryBackend::new(Box::new(b)),
+    ))))
 }
 
 /// [`open_backend`] behind a per-process read memo (see [`vcs_remote::MemoBackend`]). `snapshot` also
@@ -157,7 +159,9 @@ fn tls_material(url: &str) -> Result<(Option<Vec<u8>>, Option<ClientIdentity>), 
 fn open_s3(url: &str) -> Result<Box<dyn Backend>, Error> {
     let cfg = s3_config(url, &|k| std::env::var(k).ok())?;
     let b = S3Backend::connect(cfg).map_err(|e| Error::Msg(format!("cannot open remote {url}: {e}")))?;
-    Ok(Box::new(vcs_remote::RetryBackend::new(Box::new(b))))
+    Ok(Box::new(vcs_remote::sharded::ShardedBackend::new(Box::new(
+        vcs_remote::RetryBackend::new(Box::new(b)),
+    ))))
 }
 
 fn pct_decode(s: &str) -> Result<String, String> {

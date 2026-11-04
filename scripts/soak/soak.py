@@ -820,6 +820,15 @@ def cmd_run(a):
         srv = start_vcs_server(a, store)
         a.url = "http://127.0.0.1:8491"
         seed_vcs(a)
+        if a.sharded:
+            # one-way opt-in to per-zone sharded manifests (docs/manifest-scaling.md); the same store, restarted
+            srv.terminate()
+            srv.wait()
+            rc = subprocess.run([BIN + "/vcs-server", "migrate-sharded", "--backend", store], capture_output=True, text=True)
+            if rc.returncode:
+                raise SystemExit("migrate-sharded failed: " + rc.stderr)
+            print("sharded:", rc.stdout.strip(), flush=True)
+            srv = start_vcs_server(a, store)
     else:
         bare = os.path.join(a.out, "repo.git")
         seed_git(a, bare)
@@ -887,6 +896,7 @@ def main():
     r = sp.add_parser("run")
     r.add_argument("--kind", default="vcs")
     r.add_argument("--backend", default="local")
+    r.add_argument("--sharded", action="store_true", help="migrate the seeded repository to sharded manifests before the workload (vcs, local backend)")
     r.add_argument("--s3url", default="s3://soak/repo?endpoint=http://127.0.0.1:9000&region=us-east-1")
     r.add_argument("--s3store", default=os.path.expanduser("~/soak/rustfs/data/soak"))
     r.add_argument("--n", type=int, default=100)

@@ -102,8 +102,33 @@ rebuilds and retries, so requests grow with N squared and the server burns CPU (
 The median push is fast (about 150 ms) while the tail is 30 to 110 s: starvation, not slowness. Decorrelated jitter on the
 client retry and the batch commit keep 64 to 256 writers alive on one branch where the old client collapsed on S3 and
 at 512 on disk, but **one hot branch above about 64 writers is not a supported workload**: use per-writer branches or zones
-and integrate with a merge train. A server-side per-branch ticket queue (so losers wait instead of polling) is the next
-step and is not built; it is not sharding and would not change the manifest.
+and integrate with a merge train. A server-side per-branch ticket queue (so losers wait instead of polling) is built now (`crates/vcs-server/src/tickets.rs`):
+see "Per-branch ticket queue" below. It is not sharding and does not change the manifest.
+
+## Per-branch ticket queue (LOCAL measurement, not S3)
+
+`POST /v1/ticket?zone=Z&branch=B` blocks, FIFO, until it is the caller's turn to push to Z/B and answers an id (202 `wait`
+after 50 s: ask again); `DELETE /v1/ticket?...&id=N` gives the turn back; an unreleased ticket expires after 15 s. The holder
+refetches the head, builds, pushes, releases, so the push cannot conflict with another ticket holder and nobody polls.
+Advisory: a writer that ignores the queue is accepted exactly as before. Client: `HttpBackend::ticket_acquire/ticket_release`;
+driver: `writerbench --mode same --ticket` (`scripts/scalability/ticket_bench.sh`).
+
+Setup: vcs-server over a local disk backend, loopback, writerbench threads on the same machine, **box load1 30 to 68 from other
+agents' jobs** (so every absolute number is about 10x worse than the disk rows above and the machine was not quiet); one run per cell,
+so compare only the pairs.
+
+| writers x pushes | client | pushes/s | p50 s | p99 s | conflicts (Diverged) |
+|---|---|---|---|---|---|
+| 64 x 3 | decorrelated-jitter polling | 0.8 | 39.6 | 227.7 | 5,878 |
+| 64 x 3 | ticket | 5.5 | 11.3 | 12.1 | 0 |
+| 256 x 1 | decorrelated-jitter polling | 0.3 | 383.1 | 877.5 | 18,730 |
+| 256 x 1 | ticket | 18.9 | 6.8 | 13.5 | 0 |
+| 512 x 1 | ticket | 20.5 | 15.2 | 24.8 | 0 |
+
+The ticket makes the one-branch workload scale linearly in writers instead of quadratically in requests: every writer
+waits about (position in queue) x (one push), none retries. The remaining limit is one push per round trip on that branch,
+which no protocol change can remove. Failure modes covered by tests (`tickets.rs` unit tests, `tests/tickets.rs`): FIFO order,
+one holder at a time, lease expiry after a crashed holder, per-branch independence, "ask again" path.
 
 ## Retry jitter in the publish path (`crates/vcs-remote/src/protocol.rs`)
 
@@ -130,4 +155,4 @@ numbers above come from `writerbench --decorrelated`, which applies the same rul
 * git (local bare repo over ssh) and walgit at these writer counts: the earlier 8/32/128 comparison is in
   `highload-matrix.md`; not repeated here.
 * S3 SlowDown/503 counts (see Method), gc running under the 1024-writer load, writers beyond 1024, and more than one run per cell.
-* Sharded manifests (not built, by decision).
+* Sharded manifests on real S3 (built, opt-in, local numbers only in manifest-scaling.md); ticket queue on real S3 and at 512 or 1024 writers.
