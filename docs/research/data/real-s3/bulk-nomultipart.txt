@@ -1,0 +1,18 @@
+endpoint https://s3.us-east-1.amazonaws.com trials 5 files 300 commits 50 (a local server, not a cloud)
+PUT 64 MiB single request (rep 0): 695 ms, 97 MB/s
+PUT 64 MiB single request (rep 1): 675 ms, 99 MB/s
+PUT 64 MiB single request (rep 2): 682 ms, 98 MB/s
+create-only refusal and byte-for-byte readback of the 64 MiB object: ok
+GET 64 MiB single request (rep 0): 675 ms, 99 MB/s (67108864 B)
+GET 64 MiB single request (rep 1): 674 ms, 100 MB/s (67108864 B)
+GET 64 MiB single request (rep 2): 674 ms, 100 MB/s (67108864 B)
+GET 64 MiB as 8 ranges of 8 MiB on 1 threads: median 702 ms (96 MB/s), min 693
+GET 64 MiB as 8 ranges of 8 MiB on 4 threads: median 185 ms (362 MB/s), min 174
+GET 64 MiB as 8 ranges of 8 MiB on 8 threads: median 91 ms (738 MB/s), min 89
+GET 64 MiB as 16 ranges of 4 MiB on 16 threads: median 65 ms (1026 MB/s), min 65
+GET 64 MiB as 8 ranges of 8 MiB on 16 threads: median 96 ms (701 MB/s), min 92
+GET 64 MiB as 32 ranges of 2 MiB on 32 threads: median 92 ms (728 MB/s), min 66
+PUT 16 x 8 MiB objects on 1 threads: 2349 ms, 57 MB/s
+PUT 16 x 8 MiB objects on 4 threads: 629 ms, 213 MB/s
+PUT 16 x 8 MiB objects on 8 threads: 323 ms, 415 MB/s
+PUT 16 x 8 MiB objects on 16 threads: 257 ms, 523 MB/s
