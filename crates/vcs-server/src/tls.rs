@@ -1,7 +1,7 @@
 //! rustls configuration helpers (feature `tls`). Certificate verification on the client is never disabled.
 
 use rustls::pki_types::pem::PemObject;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::pki_types::{CertificateDer, CertificateRevocationListDer, PrivateKeyDer};
 use std::sync::Arc;
 
 /// Server configuration from a PEM certificate chain and a PEM private key (PKCS#8, PKCS#1 or SEC1).
@@ -24,6 +24,19 @@ pub fn server_config(cert_pem: &[u8], key_pem: &[u8]) -> Result<Arc<rustls::Serv
 /// `client_ca_pem` (mutual TLS). The handshake fails without one; bearer-token authentication
 /// still applies on top (the certificate only admits the connection, it does not name a principal).
 pub fn server_config_mtls(cert_pem: &[u8], key_pem: &[u8], client_ca_pem: &[u8]) -> Result<Arc<rustls::ServerConfig>, String> {
+    server_config_mtls_crl(cert_pem, key_pem, client_ca_pem, b"")
+}
+
+/// [`server_config_mtls`] plus certificate revocation: `crl_pem` holds one or more PEM CRLs
+/// (`X509 CRL`) signed by the client CA. The client's end-entity certificate is checked against
+/// them; a certificate whose issuer has no CRL here is refused (fail closed), so list one CRL per
+/// issuing CA. An empty `crl_pem` means no revocation checking.
+pub fn server_config_mtls_crl(
+    cert_pem: &[u8],
+    key_pem: &[u8],
+    client_ca_pem: &[u8],
+    crl_pem: &[u8],
+) -> Result<Arc<rustls::ServerConfig>, String> {
     let certs = CertificateDer::pem_slice_iter(cert_pem)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| format!("invalid certificate PEM: {e}"))?;
@@ -32,9 +45,17 @@ pub fn server_config_mtls(cert_pem: &[u8], key_pem: &[u8], client_ca_pem: &[u8])
     }
     let key = PrivateKeyDer::from_pem_slice(key_pem).map_err(|e| format!("invalid private key PEM: {e}"))?;
     let roots = roots_from_pem(client_ca_pem)?;
-    let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(roots))
-        .build()
-        .map_err(|e| format!("client CA rejected: {e}"))?;
+    let crls = CertificateRevocationListDer::pem_slice_iter(crl_pem)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("invalid CRL PEM: {e}"))?;
+    if !crl_pem.is_empty() && crls.is_empty() && crl_pem.iter().any(|b| !b.is_ascii_whitespace()) {
+        return Err("CRL file contains no `X509 CRL` blocks".into());
+    }
+    let mut vb = rustls::server::WebPkiClientVerifier::builder(Arc::new(roots));
+    if !crls.is_empty() {
+        vb = vb.with_crls(crls).only_check_end_entity_revocation();
+    }
+    let verifier = vb.build().map_err(|e| format!("client CA rejected: {e}"))?;
     let cfg = rustls::ServerConfig::builder()
         .with_client_cert_verifier(verifier)
         .with_single_cert(certs, key)

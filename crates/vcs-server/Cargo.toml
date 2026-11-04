@@ -35,4 +35,5 @@ libc = "0.2"
 vcs-store.workspace = true
 tempfile.workspace = true
 rcgen = "0.13"
+time = "0.3"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
