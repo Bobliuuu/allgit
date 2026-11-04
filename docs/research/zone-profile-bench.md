@@ -52,7 +52,7 @@ Tie rule used throughout: within about 10 percent, or overlapping ranges, is a t
 * `sync --auto` beats a full vcs sync by a wide margin in all of time, requests and bytes (it only updates 3 zones' contents).
 * **git is ahead of vcs here**: git partial pull (0.29 s, 1.1 MB) and git full pull (0.39 s, 2.4 MB) beat vcs `--auto` (0.78 s, 2.0 MB) in wall time
   by more than 10 percent with non-overlapping medians; bytes vs the full-clone git pull are a tie (2.0 vs 2.4), vs partial git about 1.8 times more.
-* The full vcs sync downloaded 49 MB for 1000 changed files (about 3 MB of changed content). I did not find out why; it is existing behaviour of
+* The full vcs sync downloaded 49 MB for 1000 changed files (about 3 MB of changed content). Cause found afterwards (#465 follow-up): `vcs sync` built a fresh pack catalog for each changed zone, so every zone re-downloaded every remote pack index (`.idx`, 44 bytes per object): 50 zones x the indexes of all packs. Fixed: one catalog and the on-disk index cache per sync (a 12-zone repro went from 77 requests / 3.16 MB to 19 requests / about 0.2 MB, test `sync_reads_each_pack_index_once_however_many_zones_changed`). The 49 MB figure above is the old behaviour; it is existing behaviour of
   `vcs sync` on a clone that holds every zone, measured with the same binary and not changed by this PR. It is the baseline `--auto` is compared with,
   so it exaggerates the size of the win; the fairer comparison for bytes is the git rows.
 
