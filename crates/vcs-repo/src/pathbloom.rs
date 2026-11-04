@@ -305,3 +305,58 @@ impl Repo {
         }
     }
 }
+
+impl Repo {
+    /// Build the changed-path filters of every commit in each zone's commit-graph (all cores), so the
+    /// first path walk after a gc starts with them instead of computing them on the fly. Commits that
+    /// already have filters are kept. Best effort: it is only a cache. Returns how many commits got new
+    /// filters. Run by `gc` (not by import, which would pay for it before anyone asks).
+    pub fn build_path_filters(&self) -> usize {
+        if !self.use_commit_graph {
+            return 0;
+        }
+        let Ok(refs) = self.refs() else { return 0 };
+        let mut done = BTreeSet::new();
+        let mut total = 0;
+        for ((zone, _), head) in &refs.branches {
+            if !done.insert(zone.clone()) {
+                continue;
+            }
+            let Some(g) = self.commit_graph(&[*head]) else { continue };
+            let mut blooms = self.load_path_blooms(zone);
+            let todo: Vec<ObjectId> = g.ids().iter().filter(|id| blooms.get(id).is_none()).copied().collect();
+            if todo.is_empty() {
+                continue;
+            }
+            let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(16);
+            let per = todo.len().div_ceil(threads).max(1);
+            let results: Vec<Vec<(ObjectId, Vec<Filter>)>> = std::thread::scope(|sc| {
+                let hs: Vec<_> = todo
+                    .chunks(per)
+                    .map(|ch| {
+                        sc.spawn(move || {
+                            let mut out = Vec::new();
+                            for id in ch {
+                                if let Ok(c) = self.commit_obj(id) {
+                                    if let Ok(Some(f)) = self.compute_filters(&c) {
+                                        out.push((*id, f));
+                                    }
+                                }
+                            }
+                            out
+                        })
+                    })
+                    .collect();
+                hs.into_iter().map(|h| h.join().unwrap_or_default()).collect()
+            });
+            for (id, f) in results.into_iter().flatten() {
+                blooms.insert(id, f);
+                total += 1;
+            }
+            if blooms.pending() > 0 {
+                self.save_path_blooms(zone, &blooms);
+            }
+        }
+        total
+    }
+}

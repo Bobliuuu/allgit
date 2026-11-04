@@ -121,6 +121,7 @@ impl Repo {
             }
         }
         self.warm_commit_graph();
+        self.build_path_filters();
         Ok(GcRun {
             rechecked_out: first.would_delete.len() - doomed.len(),
             plan: second,

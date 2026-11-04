@@ -305,3 +305,26 @@ fn log_paths_equals_filtering_the_walk() {
     let e = Repo::init(&d.path().join("e")).unwrap();
     assert!(e.log_paths(ROOT_ZONE, Some("main"), &[], None, 5).is_err() || e.log_paths(ROOT_ZONE, None, &[], None, 5).unwrap().1);
 }
+
+#[test]
+fn eager_filters_from_gc_equal_the_unfiltered_walk_and_pass_fsck() {
+    let (_d, r) = history(90);
+    let all = r.log(ROOT_ZONE, None, usize::MAX).unwrap();
+    let mut off = Repo::discover(r.worktree()).unwrap();
+    off.set_commit_graph(false);
+    assert!(!r.worktree().join(".vcs/path-filters").exists());
+    let built = r.build_path_filters();
+    assert!(built > 80, "{built}");
+    assert_eq!(r.build_path_filters(), 0, "second run finds nothing new");
+    assert!(r.fsck().unwrap().problems.is_empty(), "{:?}", r.fsck().unwrap().problems);
+    for specs in [vec!["a/b"], vec!["d"], vec!["h/i/j/k.txt", "top.txt"], vec!["side"], vec!["nope"]] {
+        let specs: Vec<String> = specs.into_iter().map(String::from).collect();
+        // a fresh walk now consults the stored filters from the first commit on
+        let mut pf = PathFilter::new(&r, ROOT_ZONE, &specs).unwrap();
+        let got: Vec<ObjectId> = all.iter().filter(|(id, c)| pf.touches(id, c).unwrap()).map(|x| x.0).collect();
+        let want: Vec<ObjectId> = all.iter().filter(|(_, c)| touches_ref(&r, &specs, c)).map(|x| x.0).collect();
+        assert_eq!(got, want, "{specs:?}");
+        let (l, _) = off.log_paths(ROOT_ZONE, None, &specs, None, usize::MAX).unwrap();
+        assert_eq!(l.iter().map(|x| x.0).collect::<Vec<_>>(), want);
+    }
+}
