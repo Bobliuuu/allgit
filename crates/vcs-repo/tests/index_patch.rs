@@ -111,11 +111,11 @@ fn a_torn_index_is_detected_and_rebuilt_at_open_never_read_as_empty() {
     }
     r.add(&s("")).unwrap();
     r.commit("base", sig()).unwrap();
-    r.rm(&s("f0007.txt"), true, false).unwrap(); // leaves a patched (AGI4) index
+    r.rm(&s("f0007.txt"), true, false).unwrap(); // logs the removal next to the AGI5 base
     let want: BTreeSet<String> = (0..3000u32).map(|k| format!("f{k:04}.txt")).collect();
     let index = root.join(".vcs/index");
     let whole = fs::read(&index).unwrap();
-    assert!(whole.starts_with(b"AGI4"));
+    assert!(whole.starts_with(b"AGI5"));
     drop(r);
     for cut in [whole.len() / 2, whole.len() - 1, 40, 4, 0] {
         fs::write(&index, &whole[..cut]).unwrap();

@@ -40,6 +40,9 @@ pub struct Entries {
     trees_fp: Option<ObjectId>,
     /// Bumped on every real change to the map (not persisted).
     rev: u64,
+    /// Digest of the stored index these entries were loaded from (not persisted): lets a writer
+    /// check the file is still the one it read.
+    src: Option<[u8; 32]>,
 }
 
 impl PartialEq for Entries {
@@ -155,6 +158,31 @@ impl Entries {
     pub fn tree_count(&self) -> usize {
         self.trees.len()
     }
+    pub(crate) fn src_digest(&self) -> Option<[u8; 32]> {
+        self.src
+    }
+    pub(crate) fn set_src_digest(&mut self, d: [u8; 32]) {
+        self.src = Some(d);
+    }
+    pub(crate) fn replace_trees(&mut self, t: Option<(ObjectId, BTreeMap<String, ObjectId>)>) {
+        match t {
+            Some((fp, m)) => {
+                self.trees = m;
+                self.trees_fp = Some(fp);
+            }
+            None => {
+                self.trees.clear();
+                self.trees_fp = None;
+            }
+        }
+    }
+    /// The cache-tree section as persisted (`None`: absent).
+    pub(crate) fn trees_snapshot(&self) -> Option<(ObjectId, BTreeMap<String, ObjectId>)> {
+        match (&self.trees_fp, self.trees.is_empty()) {
+            (Some(fp), false) => Some((*fp, self.trees.clone())),
+            _ => None,
+        }
+    }
 }
 
 /// See [`Entries::children`].
@@ -173,6 +201,20 @@ pub struct Index {
 }
 
 impl Index {
+    /// An index from entries that are already strictly sorted and conflict-free.
+    pub(crate) fn from_sorted(list: Vec<(String, IndexEntry)>, written_ns: u64, trees: Option<(ObjectId, BTreeMap<String, ObjectId>)>) -> Index {
+        let mut ix = Index {
+            entries: Entries::default(),
+            written_ns,
+        };
+        ix.entries.map = list.into_iter().collect();
+        if let Some((fp, t)) = trees {
+            ix.entries.trees = t;
+            ix.entries.trees_fp = Some(fp);
+        }
+        ix
+    }
+
     /// Insert, refusing file/directory conflicts (`a` vs `a/b`).
     pub fn insert(&mut self, path: &str, e: IndexEntry) -> Result<()> {
         let mut pos = 0;
@@ -249,9 +291,21 @@ impl Index {
         })
     }
 
-    /// Serialise as `AGI3`: entries in fixed-size blocks behind a length table, so a reader can
-    /// decode the blocks on several threads. `AGI2` and `AGIX` (older layouts) are still read.
+    /// Serialise as `AGI5` (see `index5`): fixed-width records a reader can search in place.
+    /// Every older layout is still read.
     pub fn encode(&self) -> Vec<u8> {
+        let trees = self.entries.trees_fp.as_ref().filter(|_| !self.entries.trees.is_empty()).map(|fp| (fp, &self.entries.trees));
+        crate::index5::encode(
+            self.entries.len(),
+            self.entries.iter().map(|(p, e)| (p.as_str(), e)),
+            self.written_ns,
+            trees,
+            crate::index5::new_gen(),
+        )
+    }
+
+    /// The `AGI3` encoding (kept so tests and tools can produce the previous layout).
+    pub fn encode_v3(&self) -> Vec<u8> {
         let n = self.entries.len();
         // All blocks go into one buffer (sized for ~100 bytes an entry; untouched capacity costs
         // nothing), then the header, which needs their lengths, is put in front.
@@ -344,6 +398,15 @@ impl Index {
 
     fn decode_impl(bytes: &[u8], keep_list: bool) -> Result<(Self, Option<Vec<(String, IndexEntry)>>)> {
         let c = |e: vcs_objects::DecodeError| Error::Corrupt(format!("index: {e}"));
+        if crate::index5::Base5::is_agi5(bytes) {
+            let b = crate::index5::Base5::parse(crate::index5::Bytes::Vec(bytes.to_vec()))?;
+            let list = b.decode_all()?;
+            let trees = b.trees()?;
+            if keep_list {
+                return Ok((Index::from_sorted(Vec::new(), b.written_ns, trees), Some(list)));
+            }
+            return Ok((Index::from_sorted(list, b.written_ns, trees), None));
+        }
         let v4 = bytes.starts_with(b"AGI4");
         let v3 = v4 || bytes.starts_with(b"AGI3");
         // AGIX: legacy entries without a ctime.
@@ -447,7 +510,7 @@ pub(crate) fn put_varint(buf: &mut Vec<u8>, mut v: u64) {
 /// thread costs allocator-arena setup and page faults: on 100k entries (16-core box) one thread
 /// takes 28 ms of CPU, four 31 ms (12 ms wall), eight 35 ms, sixteen 48 ms (10 ms wall). So
 /// roughly one thread per 12.5k entries, at most four.
-fn threads_for(n: usize) -> usize {
+pub(crate) fn threads_for(n: usize) -> usize {
     if n < PAR_MIN {
         1
     } else {
@@ -915,8 +978,14 @@ mod tests {
             ObjectId::from_bytes([4; 32]),
             [("".to_string(), ObjectId::from_bytes([5; 32]))].into_iter().collect(),
         );
-        let b3 = i.encode();
+        let b3 = i.encode_v3();
         assert!(b3.starts_with(b"AGI3"));
+        // upgrade: AGI3 -> decode -> AGI5 keeps everything, and AGI5 is what encode() now writes
+        let b5 = i.encode();
+        assert!(b5.starts_with(b"AGI5"));
+        let d5 = Index::decode(&b5).unwrap();
+        assert_eq!(d5.entries, i.entries);
+        assert_eq!(Index::decode(&b3).unwrap().encode().len(), b5.len());
         let d3 = Index::decode(&b3).unwrap();
         assert_eq!(d3.entries, i.entries);
         assert_eq!(d3.written_ns, 7);
@@ -998,7 +1067,7 @@ mod tests {
                 i.insert(&format!("d{}/é{k}.txt", k % 7), en).unwrap();
             }
             i.written_ns = 123_456_789_012;
-            assert_eq!(i.encode(), encode_v3_reference(&i), "n={n}");
+            assert_eq!(i.encode_v3(), encode_v3_reference(&i), "n={n}");
             i.entries.store_trees(
                 ObjectId::from_bytes([4; 32]),
                 [
@@ -1008,7 +1077,7 @@ mod tests {
                 .into_iter()
                 .collect(),
             );
-            assert_eq!(i.encode(), encode_v3_reference(&i), "n={n} trees");
+            assert_eq!(i.encode_v3(), encode_v3_reference(&i), "n={n} trees");
             assert_eq!(Index::decode(&i.encode()).unwrap().entries, i.entries);
         }
     }
