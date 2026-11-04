@@ -1,0 +1,21 @@
+s3trace     0.0 PUT .vcs-probe/18e4ba516f017e22-375111-0 - 39.4ms 200/0 ThreadId(1)
+s3trace    39.5 PUT .vcs-probe/18e4ba516f017e22-375111-0 - 12.5ms 412 ThreadId(1)
+s3trace    52.0 PUT .vcs-probe/18e4ba516f017e22-375111-0 - 18.3ms 412 ThreadId(1)
+s3trace    70.3 PUT .vcs-probe/18e4ba516f017e22-375111-0 - 33.4ms 200/0 ThreadId(1)
+s3trace   103.7 DELETE .vcs-probe/18e4ba516f017e22-375111-0 - 19.7ms 204/0 ThreadId(1)
+s3trace   123.5 GET  - 17.8ms 200/1067 ThreadId(1)
+s3trace   123.5 GET manifest - 61.7ms 200/2492 ThreadId(2)
+s3trace   185.3 GET packs/pack-afa132d53206e5b9a732c877aafe87ac490c8ff29f781edadef4341803b66127.idx - 24.7ms 200/455188 ThreadId(3)
+s3trace   665.0 GET packs/pack-afa132d53206e5b9a732c877aafe87ac490c8ff29f781edadef4341803b66127.pack bytes=12-5552 90.8ms 206/5541 ThreadId(1)
+s3trace   756.0 GET packs/pack-afa132d53206e5b9a732c877aafe87ac490c8ff29f781edadef4341803b66127.pack bytes=5553-289439 22.9ms 206/283887 ThreadId(1)
+s3trace   780.1 GET packs/pack-afa132d53206e5b9a732c877aafe87ac490c8ff29f781edadef4341803b66127.pack bytes=289440-464851 24.8ms 206/175412 ThreadId(1)
+selected 1 of 51 zone(s): 200 file(s), 81.8 KiB (stored size from pack indexes, an estimate)
+whole repository: not measured (only the zones needed were looked at)
+  g07              g07/                          200 file(s)   81.8 KiB  requested
+note: dependencies come from manifests only; pass --deep to also scan source imports
+note: the root zone (top-level files, shared tooling) is not included
+planning cost so far: 8 request(s), 1.3 MiB downloaded (commits, trees and manifests; no other file content)
+s3trace  1389.9 GET packs/pack-afa132d53206e5b9a732c877aafe87ac490c8ff29f781edadef4341803b66127.pack bytes=4517778-4517810 17.7ms 206/32 ThreadId(1)
+s3trace  1407.6 GET packs/pack-afa132d53206e5b9a732c877aafe87ac490c8ff29f781edadef4341803b66127.pack bytes=2414808-2512619 21.9ms 206/97812 ThreadId(1
+clone total transfer (planning included): requests: 16, downloaded: 2398072 bytes (planning 1377708 + clone 1020364)
+Cloned s3://<bucket>/real-s3/trace-1793763369?endpoint=https://s3.us-east-1.amazonaws.com&region=us-east-1 into c1 with 1 of the reposi
