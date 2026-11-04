@@ -91,8 +91,15 @@ class Procs:
 P = Procs()
 
 
+def wait_quiet(limit=600):
+    t0 = time.time()
+    while load1() >= float(os.environ.get("BENCH_MAX_LOAD1", "1.0")) and time.time() - t0 < limit:
+        time.sleep(2)
+
+
 def timed(cmd, cwd, srv=()):
     out = open(f"{WB}/.out", "w+")
+    wait_quiet()
     c0 = {n: ticks(P.pid(n)) for n in srv}
     l1 = load1()
     t = time.perf_counter()
@@ -106,6 +113,7 @@ def timed(cmd, cwd, srv=()):
 
 
 def timed_par(cmds, srv=()):
+    wait_quiet()
     c0 = {n: ticks(P.pid(n)) for n in srv}
     l1 = load1()
     t = time.perf_counter()
@@ -440,7 +448,7 @@ def run(argv):
     b = Bench(layout, n, rounds, fan, int(opt("--fan-rounds", 3)))
     meta = dict(layout=layout, n_requested=n, rounds=rounds, fan=fan, fan_rounds=b.FR, date=time.strftime("%FT%TZ", time.gmtime()),
                 kernel=platform.release(), cores=os.cpu_count(), load_start=open("/proc/loadavg").read().split()[:3],
-                git=sh("git --version").stdout.strip(), vcs=sh("vcs --version").stdout.strip(),
+                git=sh("git --version").stdout.strip(), vcs=sh("vcs --version").stdout.strip(), build_sha=os.environ.get("BUILD_SHA"), quiet_gate=float(os.environ.get("BENCH_MAX_LOAD1", "1.0")),
                 cpu=[l.split(":")[1].strip() for l in open("/proc/cpuinfo") if l.startswith("model name")][0], dropped_caches=False)
     try:
         b.build()

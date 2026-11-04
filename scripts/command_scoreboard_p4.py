@@ -12,7 +12,7 @@ Run under `flock ~/bench.lock`. Prep and post steps are untimed.
 """
 import argparse, json, os, random, shlex, shutil, subprocess, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from command_scoreboard import BASE_ENV, files, mod_files, timed, sh, load1  # noqa: E402
+from command_scoreboard import BASE_ENV, files, mod_files, timed, sh, load1, wait_quiet, tool_versions, QUIET_WAITS  # noqa: E402
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--work", required=True)
@@ -105,7 +105,7 @@ cells = {}
 meta = {"p4": subprocess.run([P4, "-V"], capture_output=True, text=True).stdout.strip().splitlines()[-1],
         "p4d": [l for l in subprocess.run([P4D, "-V"], capture_output=True, text=True).stdout.splitlines() if "Rev." in l][0],
         "vcs": subprocess.run([V, "--version"], capture_output=True, text=True).stdout.strip(), "n": a.n,
-        "host": os.uname().nodename, "cores": os.cpu_count(), "load1_start": load1(), "runs": a.runs,
+        "host": os.uname().nodename, "cores": os.cpu_count(), "load1_start": load1(), "tools": tool_versions(), "runs": a.runs,
         "start": time.strftime("%FT%TZ", time.gmtime())}
 
 
@@ -118,7 +118,7 @@ def cell(cid, pcmd, vcmd, pprep=None, vprep=None, ppost=None, vpost=None, reps=N
     for _ in range(reps or a.runs):
         order = ["p4", "vcs"]
         rng.shuffle(order)
-        l0 = load1()
+        l0 = wait_quiet()
         for t in order:
             if t == "p4":
                 if pprep:
@@ -170,7 +170,7 @@ loads = []
 for _ in range(min(a.runs, 3)):
     order = ["p4", "vcs"]
     rng.shuffle(order)
-    l0 = load1()
+    l0 = wait_quiet()
     for t in order:
         if t == "p4":
             start()
@@ -265,4 +265,5 @@ cell("clone_sync", "-c ws2 -q sync //...", f"clone {os.path.join(W, 'vcs', 'remo
 stop()
 shutil.rmtree(P, ignore_errors=True)
 meta["load1_end"] = load1()
+meta["quiet_gate_waits"] = QUIET_WAITS
 json.dump({"meta": meta, "cells": cells}, open(a.out, "w"), indent=1)
