@@ -656,6 +656,10 @@ impl Block {
     pub fn is_empty(&self) -> bool {
         self.order.is_empty()
     }
+    /// Decoded size in bytes (what a cache of blocks pays for holding it).
+    pub fn byte_len(&self) -> usize {
+        self.data.len()
+    }
 }
 
 /// True if a v3 block payload holds only commits and trees (read from its codec byte).
