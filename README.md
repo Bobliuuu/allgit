@@ -209,7 +209,7 @@ the store directory ok. Protocol-level, one hot branch: the per-branch ticket qu
 64 to 256 clients, and the sharded manifest does not help that case. Against git on the same bytes: `add` of one 4 GiB file 3.0 to 4.0 s vs
 126 s, a 4 MiB edit of that file pushed in 0.03 s vs 126 s, remote 4.0 GiB vs 8.0 GiB. Losses, stated: `blame` of a 10k-revision file did not
 finish in 1,131 s (git 3.7 s), `fsck` needs 12.6 GiB at 200k commits and 35.1 GiB at 1M commits (git 0.8 GiB), a whole-tree `clone` over HTTP takes
-177 s (git 24 s from a local path), and every client-side auto-compaction left `gc/lock` for its 6 h lease because a write-role token cannot delete it (fixed in #547). The big-tree readers were starved in these runs, so reads of the 1M-file root zone during writes were not exercised.
+177 s (git 24 s from a local path), and every client-side auto-compaction left `gc/lock` for its 6 h lease because a write-role token cannot delete it (fixed in #549). The big-tree readers were starved in these runs, so reads of the 1M-file root zone during writes were not exercised.
 
 **Zones chosen for you.** `--auto` downloads 19.5% of the bytes of a full vcs clone and ties git partial+sparse on bytes while being
 faster in wall time, but makes 71 requests instead of 28 and loses to `git pull` on incremental sync (0.78 s vs 0.29 s).

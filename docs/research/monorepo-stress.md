@@ -15,7 +15,7 @@ could not be reached it says so. Harness: `scripts/stress/` (new) plus the exten
 | remote objects | 2,553,155 in 25 packs after the base publish; 70 GB store | |
 | concurrent writers | 64, 128 and 256 CLI clients (one process each, `vcs` CLI against `vcs-server`) | single manifest (64, 256) and sharded manifest (128, 256) |
 | concurrent readers | 3 reader clients per run (`clone --auto`, root-zone clone, slice clone) | the first two take 4 to 5 minutes to clone, so they did little in runs A to D; run F started them six minutes before the writers |
-| chaos | `kill -9` of `vcs-server` every 90 to 300 s (8 kills in each of C and D), periodic audits; `gc --remote` kills only ran in run G (after #547) | the first `gc` rounds were all blocked by the leaked `gc/lock`, see "What broke" item 4 |
+| chaos | `kill -9` of `vcs-server` every 90 to 300 s (8 kills in each of C and D), periodic audits; `gc --remote` kills only ran in run G (after #549) | the first `gc` rounds were all blocked by the leaked `gc/lock`, see "What broke" item 4 |
 | spend | US$10.3 | see the end |
 
 Not reached: 10M-file monorepo with the full history (tried separately, see "Limits tried"), 1M commits with 1M files,
@@ -29,8 +29,8 @@ The protocol-level hot-branch test below is the server capacity number.
   100 GB gp3 root), us-east-1, Ubuntu 24.04, git 2.43.0, rust 1.99.1. Everything under `/data`; the client cache
   (`~/.cache/vcs`) is moved to `/data` with `XDG_CACHE_HOME` (see "What broke", item 6).
 - Software: `origin/main` at `525aa7f` plus four fixes found by this run, each in its own PR: #542 (import), #543 (publish pack
-  split), #546 (gc block cache), #547 (gc lock). The harness PR is this one. Runs A to F used binaries with #542, #543 and #546; run G used the
-  binaries with #547 as well.
+  split), #546 (gc block cache), #549 (gc lock). The harness PR is this one. Runs A to F used binaries with #542, #543 and #546; run G used the
+  binaries with #549 as well.
 - Base repository (`scripts/stress/build_base.sh`, timings in `data/monorepo-stress/build.log`):
 
 | step | wall | peak RSS |
@@ -242,7 +242,7 @@ within 0.3 to 1.0 s. The clients saw `Connection refused` on publish, sync, clon
 present afterwards (table above).
 
 **`gc --remote` killed mid-run.** In C, D and in E (64 writers, only gc chaos, no server kill, same binaries) every one of the 20 gc
-rounds was refused with `another gc holds gc/lock` (dead holder, "What broke" item 4). Run G repeats E with the binaries that include #547
+rounds was refused with `another gc holds gc/lock` (dead holder, "What broke" item 4). Run G repeats E with the binaries that include #549
 (`run_stress.sh g64-gcfixed 64 14 --readers 0 --chaos gcmix --gc-first 60 --gc-every 60 --gc-grace 600`; only gc is killed):
 
 | round | what | result |
@@ -263,7 +263,7 @@ binaries): 8 of 8 rounds refused, 5,738 acked files, 0 missing, packs grew to 1,
 
 ## What broke
 
-Found by this run, in the order they were hit. Items 1 to 4 have a fix with a regression test, in PRs #542, #543, #546 and #547.
+Found by this run, in the order they were hit. Items 1 to 4 have a fix with a regression test, in PRs #542, #543, #546 and #549.
 
 1. **`import-git` was commits x files** (fixed, #542). It cloned and rebuilt the whole flat file map for every commit. 20,000
    commits on a 100,000-file tree did not finish in 150 s (a 200k-commit, 1M-file import was out of reach). A commit with at most
@@ -282,7 +282,7 @@ Found by this run, in the order they were hit. Items 1 to 4 have a fix with a re
    object read (8-block cache, block fetched before the cache lookup). `perf` showed 61% of the time in `ZSTD_decompressSequences`.
    Table above: the real sweep was killed at 811 s, with the fix it takes 315 s and the dry run is the same 156 s as on the
    uncompacted store.
-4. **Every client-side auto-compaction left `gc/lock` behind for its 6 h lease** (fixed, #547). `compact_with` took `gc/lock` and then ran
+4. **Every client-side auto-compaction left `gc/lock` behind for its 6 h lease** (fixed, #549). `compact_with` took `gc/lock` and then ran
    its `DELETE compact/probe` check. A write-role token on `vcs-server` gets 403 for every `DELETE`, so it could not release the lock either:
    each automatic compaction a client attempted (the server log has one refused `DELETE /v1/o/compact/probe` per attempt, every few minutes)
    left a lock whose holder pid was dead, and every later `gc --remote` / `--compact`, by an operator too, failed with `another gc holds
