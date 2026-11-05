@@ -26,6 +26,9 @@ use vcs_objects::{ChangeId, Commit, EntryMode, Object, ObjectId, RefUpdate, Sign
 use vcs_store::ObjectStore;
 
 const MAP_FILE: &str = "git-import";
+/// A commit with at most this many file operations edits its parent's tree directly; larger ones go through the
+/// flat path map. The edit costs a few tree writes per operation, the flat map costs the whole tree.
+const INCREMENTAL_MAX_OPS: usize = 2048;
 /// Longest header/command line accepted (paths are <= 4096 bytes, quoted at most 4x).
 const MAX_LINE: u64 = 64 * 1024;
 /// Largest single `data` block (one blob or one message). The block is held in memory.
@@ -578,14 +581,33 @@ impl Importer<'_> {
                 parents.push(id);
             }
         }
-        let mut flat = match parents.first() {
-            Some(p) => self.flat_of(p)?,
-            None => Flat::new(),
+        // A commit with few changes edits its first parent's tree in place (only the directories on the changed
+        // paths are read and written), so the cost per commit follows the change, not the size of the tree. A
+        // first commit or a very large one (the initial import of a big tree) is built from the flat map.
+        let (root, flat) = match parents.first() {
+            Some(p) if gc.ops.len() <= INCREMENTAL_MAX_OPS => {
+                let mut root = Some(self.repo.commit_obj(p)?.root);
+                for op in &gc.ops {
+                    self.apply_inc(&mut root, op)?;
+                }
+                let root = match root {
+                    Some(r) => r,
+                    None => treeops::build(&self.repo.store, std::iter::empty())?,
+                };
+                (root, None)
+            }
+            _ => {
+                let mut flat = match parents.first() {
+                    Some(p) => self.flat_of(p)?,
+                    None => Flat::new(),
+                };
+                for op in &gc.ops {
+                    self.apply(&mut flat, op)?;
+                }
+                let root = treeops::build(&self.repo.store, flat.iter().map(|(p, (m, id))| (p.as_str(), *m, *id)))?;
+                (root, Some(flat))
+            }
         };
-        for op in &gc.ops {
-            self.apply(&mut flat, op)?;
-        }
-        let root = treeops::build(&self.repo.store, flat.iter().map(|(p, (m, id))| (p.as_str(), *m, *id)))?;
         let author = gc.signature.clone().expect("checked in parse");
         let message = String::from_utf8_lossy(&gc.message).into_owned();
         let trailer = trailer_change_id(&message);
@@ -628,7 +650,7 @@ impl Importer<'_> {
             self.map.insert(k, id);
             self.new_keys += 1;
         }
-        self.flat_cache = Some((id, flat));
+        self.flat_cache = flat.map(|f| (id, f));
         self.tips.insert(gc.refname, id);
         self.report.commits_imported += 1;
         Ok(())
@@ -643,6 +665,60 @@ impl Importer<'_> {
             }
         };
         Some(p)
+    }
+
+    /// [`Self::apply`] on a tree id instead of the flat map; `None` is the empty tree.
+    fn apply_inc(&mut self, root: &mut Option<ObjectId>, op: &Op) -> Result<()> {
+        let store = &self.repo.store;
+        match op {
+            Op::DeleteAll => *root = None,
+            Op::Delete(p) => {
+                if let Some(p) = std::str::from_utf8(p).ok().filter(|p| !p.is_empty()) {
+                    *root = treeops::set_entry(store, *root, p, None)?;
+                }
+            }
+            Op::Copy(a, b) | Op::Rename(a, b) => {
+                let (Ok(a), Some(b)) = (std::str::from_utf8(a), self.path(b)) else {
+                    return Ok(());
+                };
+                let Some(r) = *root else { return Ok(()) };
+                let Some(src) = treeops::entry_at(store, r, a)? else {
+                    return Ok(());
+                };
+                let mut r = Some(r);
+                if matches!(op, Op::Rename(..)) {
+                    r = treeops::set_entry(store, r, a, None)?;
+                }
+                *root = treeops::set_entry(store, r, &b, Some(src))?;
+            }
+            Op::Modify { mode, dataref, path } => {
+                let Some(p) = self.path(path) else { return Ok(()) };
+                let m = match mode {
+                    0o100644 | 0o644 => EntryMode::File,
+                    0o100755 | 0o755 => EntryMode::Executable,
+                    0o120000 => {
+                        self.report.symlinks += 1;
+                        EntryMode::Symlink
+                    }
+                    0o160000 => {
+                        self.report.submodules.push(p.clone());
+                        *root = treeops::set_entry(&self.repo.store, *root, &p, None)?;
+                        return Ok(());
+                    }
+                    _ => {
+                        self.report.paths_skipped.push(format!("{p} (mode {mode:o})"));
+                        *root = treeops::set_entry(&self.repo.store, *root, &p, None)?;
+                        return Ok(());
+                    }
+                };
+                let id = match dataref {
+                    DataRef::Inline(d) => self.put_content(d)?,
+                    DataRef::Mark(r) | DataRef::Sha(r) => self.resolve(r)?,
+                };
+                *root = treeops::set_entry(&self.repo.store, *root, &p, Some((m, id)))?;
+            }
+        }
+        Ok(())
     }
 
     fn apply(&mut self, flat: &mut Flat, op: &Op) -> Result<()> {
