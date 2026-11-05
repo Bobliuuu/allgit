@@ -15,8 +15,8 @@ ulimit -n 1048576 2>/dev/null || true
 sar -u -d -n DEV 10 > "$OUT.sar.txt" 2>/dev/null & SAR=$!
 ( while sleep 5; do echo "$(date +%s) $(awk '/ lo:/{print $2, $10}' /proc/net/dev) $(df -k --output=used "$RUNS" | tail -1)"; done > "$OUT.lo-bytes.txt" ) & LO=$!
 python3 "$HERE/../soak/soak.py" run --kind vcs --base-store "$BASE/base-store" --slice --bigmb 128 --n "$N" --minutes "$MIN" \
-  --think 4 --ramp 90 --out "$OUT" --big-manifest "$BASE/big-v3.json" "$@" 2>&1 | tee "$OUT/soak.log"
+  --think 4 --ramp 90 --out "$OUT" --big-manifest "$BASE/big-v3.json" "$@" 2>&1 | tee "$OUT.soak.log"
 kill $SAR $LO 2>/dev/null
-mv "$OUT.sar.txt" "$OUT/sar.txt"; mv "$OUT.lo-bytes.txt" "$OUT/lo-bytes.txt"
+mv "$OUT.soak.log" "$OUT/soak.log"; mv "$OUT.sar.txt" "$OUT/sar.txt"; mv "$OUT.lo-bytes.txt" "$OUT/lo-bytes.txt"
 python3 "$HERE/../soak/report.py" "$OUT" --json "$OUT/report.json" > "$OUT/report.txt" 2>&1
 echo finished "$NAME" >> "$RUNS/progress.log"
