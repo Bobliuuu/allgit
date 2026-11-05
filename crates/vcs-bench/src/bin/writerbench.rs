@@ -231,12 +231,18 @@ fn main() {
 /// Number of commits behind `zone`/`branch` in the server's manifest (first parents), 0 when the branch does not exist.
 /// Audit for `--mode same`: after a run, the chain must have grown by exactly the number of acked pushes.
 fn chain_len(b: &HttpBackend, zone: &str, branch: &str) -> usize {
+    // one RemoteSource keeps the pack indexes: fetching each commit with fetch_object re-reads every index of the
+    // store (thousands of packs after a run), which made this walk quadratic
+    let mut src = vcs_remote::packfetch::RemoteSource::new(b, vcs_remote::packfetch::ReadAhead::None);
     let mut n = 0;
     let mut cur = load_manifest_head(b, zone, branch);
     while let Some(id) = cur {
         n += 1;
-        cur = match vcs_remote::fetch_object(b, &id) {
-            Ok(Object::Commit(c)) => c.parents.first().copied(),
+        cur = match src.fetch(&id) {
+            Ok(Some(enc)) => match Object::decode(&enc) {
+                Ok(Object::Commit(c)) => c.parents.first().copied(),
+                _ => break,
+            },
             _ => break,
         };
     }

@@ -164,6 +164,37 @@ initial reader clone). Only the slice reader ran: `sync` (p50 0.43 to 0.53 s), `
 not exercised**; the one-client table above is the evidence for the big-tree read costs, on a quiet box. A rerun with the readers
 started before the writers and a retry on connection errors would close this gap.
 
+### One hot branch at the protocol level (`run_hot.sh`, `writerbench --mode same`)
+
+64, 128 and 256 protocol-level clients (threads, no CLI process per push) push 30 commits each to the same zone and branch through
+`vcs-server` on a copy of the base store, with and without the per-branch ticket queue (`--ticket`, #533), single and sharded
+manifest. Each client retries a rejected push with decorrelated jitter; "latency" is per acked push including retries and ticket wait. Every run is
+audited by `writerbench`: the commit chain behind the branch grew by exactly the number of acked pushes (12 of 12 runs: ok).
+Raw: `data/monorepo-stress/hot/`.
+
+| manifest | tickets | clients | acked | rejected pushes (conflicts) | pushes/s | p50 / p95 / p99 ms | server RSS at end |
+|---|---|---|---|---|---|---|---|
+| single | no | 64 | 1,920 | 1,188 | 81.8 | 1.4 / 18.9 / 10,089 | 0.2 GiB |
+| single | no | 128 | 3,840 | 3,296 | 115.8 | 2.0 / 2.5 / 15,035 | 0.5 GiB |
+| single | no | 256 | 7,680 | 9,469 | 157.1 | 2.2 / 2.6 / 22,762 | 0.6 GiB |
+| single | **yes** | 64 | 1,920 | **0** | **337.6** | 188 / 194 / **227** | 0.5 GiB |
+| single | **yes** | 128 | 3,840 | **0** | **302.6** | 420 / 442 / **493** | 0.6 GiB |
+| single | **yes** | 256 | 7,680 | **0** | **250.3** | 1,020 / 1,102 / **1,110** | 0.7 GiB |
+| sharded | no | 64 | 1,920 | 1,642 | 64.4 | 2.5 / 63 / 15,691 | 0.3 GiB |
+| sharded | no | 128 | 3,840 | 3,527 | 84.9 | 3.2 / 7.2 / 21,959 | 1.1 GiB |
+| sharded | no | 256 | 7,680 | 15,191 | 53.9 | 4.9 / 30 / **78,149** | 5.1 GiB |
+| sharded | yes | 64 | 1,920 | 0 | 288.9 | 197 / 399 / 439 | 1.3 GiB |
+| sharded | yes | 128 | 3,840 | 0 | 212.2 | 518 / 1,041 / 1,192 | 1.9 GiB |
+| sharded | yes | 256 | 7,680 | 0 | 218.8 | 1,099 / 1,822 / 2,119 | 2.2 GiB |
+
+- On one hot branch the ticket queue turns a retry storm into a queue: no rejected push, p99 from 10 to 23 s down to 0.2 to 1.1 s,
+  and 1.6 to 4.1 times the pushes per second (the no-ticket p50 is small because the winners are fast and the losers are in the tail).
+  Throughput with tickets falls from 338 to 250 pushes/s from 64 to 256 clients (the queue is serial; its wait is the latency).
+- The sharded manifest does **not** help a single hot branch: without tickets it is slower than the single manifest (54 against
+  157 pushes/s and p99 78 s against 23 s at 256 clients, 5.1 GiB server RSS at the end of the 256-client run), with tickets it is 13 to 30% slower. Sharding
+  is for disjoint zones; the hot branch needs the ticket queue. (Disjoint zones in the same box: runs A to D above.)
+- These are the server capacity numbers. The CLI-client runs above are bounded by the clients' own CPU.
+
 ### Integrity (every run)
 
 | run | acked files in a fresh clone of the writers' zones | missing | wrong content | last-wins (`art/uN.txt`) | big files (128 MiB, newest acked version present) | `vcs locks` at the end | fsck of the fresh clone |
