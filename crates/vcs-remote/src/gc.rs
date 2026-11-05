@@ -490,12 +490,28 @@ pub(crate) struct LockGuard<'a> {
     ttl_ms: u64,
     _flock: Option<Box<dyn std::any::Any + Send>>,
 }
+/// How long a finished (or failed) collector keeps trying to release `gc/lock` when the backend is only briefly
+/// unavailable: the delays double from 20 ms, about 8 s in all.
+const RELEASE_TRIES: u32 = 9;
+
 impl Drop for LockGuard<'_> {
     fn drop(&mut self) {
-        // Only remove the lock if it is still ours (it may have been taken over after expiry).
-        if let Ok(Some(v)) = self.b.get(LOCK_KEY) {
-            if v.data == *self.mine.borrow() {
-                let _ = self.b.delete(LOCK_KEY);
+        // Only remove the lock if it is still ours (it may have been taken over after expiry). A server that was
+        // killed and restarted a moment ago fails the first calls with `Unavailable`: a collector that gave up at
+        // once left the lock for its whole lease (6 h), and every later gc or compaction was refused until an
+        // operator removed it (seen on every `kill -9` of vcs-server during a client's auto-compaction).
+        for attempt in 0..RELEASE_TRIES {
+            let step = match self.b.get(LOCK_KEY) {
+                Ok(Some(v)) if v.data == *self.mine.borrow() => self.b.delete(LOCK_KEY).map(|_| ()),
+                Ok(_) => return,
+                Err(e) => Err(e),
+            };
+            match step {
+                Ok(()) => return,
+                Err(crate::backend::BackendError::Unavailable(_)) if attempt + 1 < RELEASE_TRIES => {
+                    std::thread::sleep(std::time::Duration::from_millis(20u64 << attempt));
+                }
+                Err(_) => return,
             }
         }
     }
