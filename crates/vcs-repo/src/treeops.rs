@@ -827,7 +827,12 @@ impl<'a> IndexTrees<'a> {
 /// the depth times the size of those directories, not the number of files in the tree. A file in the middle of
 /// the path is replaced by a directory, and a directory at `rel` is replaced as a whole (removing `rel` removes
 /// everything under it), the same results as editing the flat map and rebuilding.
-pub fn set_entry(store: &dyn ObjectStore, base: Option<ObjectId>, rel: &str, leaf: Option<(EntryMode, ObjectId)>) -> Result<Option<ObjectId>> {
+pub fn set_entry(
+    store: &dyn ObjectStore,
+    base: Option<ObjectId>,
+    rel: &str,
+    leaf: Option<(EntryMode, ObjectId)>,
+) -> Result<Option<ObjectId>> {
     let parts: Vec<&str> = rel.split('/').collect();
     set_entry_parts(store, base, &parts, leaf)
 }
@@ -848,7 +853,11 @@ fn set_entry_parts(
     let name = parts[0];
     let at = entries.binary_search_by(|e| e.name.as_str().cmp(name));
     let new_entry = if parts.len() == 1 {
-        leaf.map(|(mode, id)| TreeEntry { name: name.to_owned(), mode, id })
+        leaf.map(|(mode, id)| TreeEntry {
+            name: name.to_owned(),
+            mode,
+            id,
+        })
     } else {
         let child = match &at {
             Ok(i) if entries[*i].mode == EntryMode::Directory => Some(entries[*i].id),
