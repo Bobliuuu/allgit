@@ -1,0 +1,24 @@
+sharded-ticket_no-n128.time: 46.47 s wall, 3.25 user, 2.30 sys, 325480 KB
+sharded-ticket_no-n256.time: 148.36 s wall, 13.46 user, 7.11 sys, 434444 KB
+sharded-ticket_no-n64.time: 30.16 s wall, 1.18 user, 1.01 sys, 201388 KB
+sharded-ticket_yes-n128.time: 36.34 s wall, 16.39 user, 2.99 sys, 491988 KB
+sharded-ticket_yes-n256.time: 65.09 s wall, 29.32 user, 4.48 sys, 577764 KB
+sharded-ticket_yes-n64.time: 19.41 s wall, 10.97 user, 2.18 sys, 427936 KB
+single-ticket_no-n128.time: 34.32 s wall, 3.38 user, 2.41 sys, 374228 KB
+single-ticket_no-n256.time: 53.78 s wall, 10.86 user, 6.14 sys, 599648 KB
+single-ticket_no-n64.time: 23.75 s wall, 1.03 user, 0.82 sys, 204468 KB
+single-ticket_yes-n128.time: 23.05 s wall, 11.95 user, 3.26 sys, 536488 KB
+single-ticket_yes-n256.time: 47.81 s wall, 21.00 user, 5.20 sys, 719272 KB
+single-ticket_yes-n64.time: 13.75 s wall, 8.48 user, 2.28 sys, 449348 KB
+sharded-ticket_no-n128.server_rss_kb: 1145716
+sharded-ticket_no-n256.server_rss_kb: 5363448
+sharded-ticket_no-n64.server_rss_kb: 357640
+sharded-ticket_yes-n128.server_rss_kb: 1912892
+sharded-ticket_yes-n256.server_rss_kb: 2265972
+sharded-ticket_yes-n64.server_rss_kb: 1335752
+single-ticket_no-n128.server_rss_kb: 549376
+single-ticket_no-n256.server_rss_kb: 665684
+single-ticket_no-n64.server_rss_kb: 197460
+single-ticket_yes-n128.server_rss_kb: 644520
+single-ticket_yes-n256.server_rss_kb: 730932
+single-ticket_yes-n64.server_rss_kb: 481272

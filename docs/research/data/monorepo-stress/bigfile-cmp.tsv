@@ -1,0 +1,17 @@
+git	add_v1	126.34	123.53	1.86	4776	0
+git	commit_v1	0.03	0.00	0.00	4696	0
+git	push_v1	126.29	135.04	6.41	4197200	0
+git	add_v2	125.35	123.40	1.77	5104	0
+git	commit_v2	0.00	0.00	0.00	4748	0
+git	push_v2	126.25	134.93	6.45	4193364	0
+git	clone_v2	227.30	283.53	23.24	4198584	0
+git	remote_kb	8386212
+vcs	add_v1	3.97	4.26	6.12	223872	0
+vcs	commit_v1	0.03	0.00	0.00	10120	0
+vcs	push_v1	6.25	4.54	5.15	557512	0
+vcs	add_v2	0.70	4.05	1.09	79712	0
+vcs	commit_v2	0.00	0.00	0.00	9836	0
+vcs	push_v2	0.04	0.01	0.04	57932	0
+vcs	clone_v2	5.42	5.04	10.85	594880	0
+vcs	remote_kb	4212520
+vcs	clone_hash_equal	True

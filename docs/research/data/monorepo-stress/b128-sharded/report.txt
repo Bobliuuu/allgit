@@ -1,0 +1,114 @@
+span 838s
+op,n_ok,n_expected_fail,n_error,ops_per_s,p50_ms,p95_ms,p99_ms,max_ms
+add,3486,0,0,4.16,19.5,50.8,131.2,401.2
+add_big,79,0,0,0.09,181.6,451.3,683.4,683.4
+branch_create,357,0,0,0.43,7.1,16.0,22.0,24.8
+branch_delete,350,0,7,0.43,6.5,14.4,17.7,20.0
+branch_switch,707,0,7,0.85,7.5,26.5,41.5,75.4
+clone_fresh,236,0,0,0.28,19132.3,47325.8,57366.3,66324.1
+clone_initial,128,0,0,0.15,22208.9,69675.1,74785.5,76726.1
+commit,3403,0,83,4.16,16.2,38.9,57.6,358.1
+commit_big,69,0,10,0.09,133.8,250.9,404.5,404.5
+fsck_clone,69,0,0,0.08,47.0,485.8,1032.3,1032.3
+lock,182,423,0,0.72,25.2,3730.5,19357.2,20388.9
+merge,2066,0,1419,4.16,5528.5,39285.6,64561.0,128040.7
+publish,739,2669,0,4.07,110.8,6293.9,10094.3,13717.3
+publish_auto,326,264,93,0.82,3326.2,127819.7,198800.1,293920.5
+publish_lock,145,172,38,0.42,6753.0,116933.8,168481.1,243875.8
+rd_blame,5,0,0,0.01,13.1,25.4,25.4,25.4
+rd_clone,1,0,2,0.0,24781.5,24781.5,24781.5,24781.5
+rd_clone_fresh,1,0,0,0.0,29914.1,29914.1,29914.1,29914.1
+rd_fsck,2,0,0,0.0,158.0,158.0,158.0,158.0
+rd_gc_remote_dry,0,0,1,0.0,nan,nan,nan,None
+rd_log_path,5,0,0,0.01,7.0,10.4,10.4,10.4
+rd_status,8,0,0,0.01,12.1,25.6,25.6,25.6
+rd_sync,11,0,0,0.01,533.9,1227.4,1227.4,1227.4
+sync,5013,0,0,5.98,397.1,1174.7,1444.3,3268.2
+undo,314,0,0,0.37,16.7,45.1,71.3,80.3
+unlock,156,0,26,0.22,18.5,4363.3,22589.6,30955.1
+ERR 1025x [merge] error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 252x [merge] error: a merge of origin/main into zN/main is already in progress
+
+Options:
+  vcs conflict list
+  vcs merge --abort
+ERR 47x [commit] using to commit lockable file(s) without a lock (see .vcsattributes):
+  art/fN.bin
+
+Options:
+  vcs lock <path> --lease-secs <n>   take the l
+ERR 40x [merge] fetched missing object <id>
+error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 33x [commit] error: cannot commit: merge of origin/main into zN/main has N unresolved conflict(s):
+  zN/uN/log.txt (modify/modify)
+  zN/uN/log.txt (add/a
+ERR 31x [merge] missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched 
+ERR 31x [publish_lock] error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 28x [publish_auto] error: a merge of origin/main into zN/main is already in progress
+
+Options:
+  vcs conflict list
+  vcs merge --abort
+ERR 24x [merge] issing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched m
+ERR 20x [publish_auto] error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 16x [merge] error: untracked path "zN/uN/fN.txt" would be overwritten; move or remove it first
+ERR 15x [merge] fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+error: zone "zN" has uncommi
+ERR 15x [unlock] error: art/fN.bin is not locked
+ERR 12x [publish_auto] timeout
+ERR 11x [unlock] error: fN.bin in zone art is locked by uN; only the holder can release it
+ERR 9x [publish_auto] issing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched m
+ERR 8x [merge] fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+
+ERR 7x [branch_switch] error: zone "zN" is in the middle of a merge; resolve and commit, or `vcs merge --abort`
+ERR 7x [branch_delete] error: zone "zN" is in the middle of a merge; resolve or `vcs merge --abort` first
+ERR 6x [commit_big] error: cannot commit: merge of origin/main into zN/main has N unresolved conflict(s):
+  zN/uN/log.txt (modify/modify)
+  zN/uN/log.txt (add/a
+ERR 5x [publish_auto] fetched missing object <id>
+error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 5x [publish_auto] missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched 
+ERR 4x [commit_big] using to commit lockable file(s) without a lock (see .vcsattributes):
+  art/fN.bin
+
+Options:
+  vcs lock <path> --lease-secs <n>   take the l
+ERR 3x [publish_auto] ng object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+auto-merged r
+ERR 3x [commit] error: cannot commit: merge of origin/main into zN/main has N unresolved conflict(s):
+  zN/uN/log.txt (modify/modify)
+
+Options:
+  edit the f
+resources: {"rss_kb": {"first_quartile_mean": 3408244.8, "last_quartile_mean": 13413266.5, "max": 13724576.0, "last": 13503032.0}, "cpu_pct": {"first_quartile_mean": 242.9, "last_quartile_mean": 537.8, "max": 880.5, "last": 10.0}, "fds": {"first_quartile_mean": 63.4, "last_quartile_mean": 92.0, "max": 248.0, "last": 4.0}, "threads": {"first_quartile_mean": 56.8, "last_quartile_mean": 85.3, "max": 240.0, "last": 4.0}, "manifest_bytes": {"first_quartile_mean": 6.0, "last_quartile_mean": 6.0, "max": 6.0, "last": 6.0}, "packs": {"first_quartile_mean": 196.3, "last_quartile_mean": 1577.9, "max": 1656.0, "last": 1656.0}}

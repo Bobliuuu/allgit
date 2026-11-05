@@ -1,0 +1,103 @@
+span 739s
+op,n_ok,n_expected_fail,n_error,ops_per_s,p50_ms,p95_ms,p99_ms,max_ms
+add,3813,0,0,5.16,9.6,28.8,48.7,259.2
+add_big,63,0,0,0.09,146.9,211.7,274.4,274.4
+branch_create,377,0,0,0.51,5.0,11.8,16.8,23.4
+branch_delete,377,0,0,0.51,4.5,9.8,18.9,37.4
+branch_switch,754,0,0,1.02,5.6,14.9,27.5,57.8
+clone_fresh,226,0,0,0.31,14270.1,24007.4,25298.5,27171.9
+clone_initial,64,0,0,0.09,13556.8,26219.9,26793.7,26793.7
+commit,3813,0,0,5.16,9.4,23.7,36.8,184.7
+commit_big,63,0,0,0.09,67.7,159.8,209.7,209.7
+fsck_clone,64,0,0,0.09,127.1,312.2,381.0,381.0
+lock,470,155,0,0.85,8.1,248.9,787.5,1372.1
+merge,879,0,903,2.41,1735.7,8762.4,14370.9,26034.4
+publish,860,1212,0,2.8,15.2,433.2,977.6,1523.2
+publish_auto,366,156,12,0.72,177.9,22417.8,57102.7,69893.3
+publish_lock,444,126,30,0.81,1424.9,22014.2,67591.3,123414.2
+rd_blame,5,0,0,0.01,6.4,13.9,13.9,13.9
+rd_clone,1,0,2,0.0,8742.5,8742.5,8742.5,8742.5
+rd_clone_fresh,1,0,0,0.0,11374.0,11374.0,11374.0,11374.0
+rd_fsck,2,0,0,0.0,54.9,54.9,54.9,54.9
+rd_gc_remote_dry,0,0,1,0.0,nan,nan,nan,None
+rd_log_path,5,0,0,0.01,3.2,9.1,9.1,9.1
+rd_status,8,0,0,0.01,5.1,7.1,7.1,7.1
+rd_sync,11,0,0,0.01,427.8,657.6,657.6,657.6
+sync,3823,0,0,5.17,428.0,737.2,905.3,1446.0
+undo,305,0,0,0.41,9.2,34.2,69.0,110.0
+unlock,469,0,1,0.64,7.1,93.1,471.2,827.3
+ERR 825x [merge] error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 26x [publish_lock] error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 20x [merge] fetched missing object <id>
+error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 18x [merge] issing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched m
+ERR 16x [merge] missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched 
+ERR 10x [merge] fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+
+ERR 7x [merge] fetched missing object <id>
+fetched missing object <id>
+error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert th
+ERR 5x [publish_auto] error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 4x [merge] fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+error: zone "zN" has uncommi
+ERR 3x [publish_auto] missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched 
+ERR 3x [merge] fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+error: zone "zN" has uncommitted changes (N staged, N un
+ERR 2x [publish_lock] fetched missing object <id>
+auto-merged remote art/main (attempt N)
+error: zone "zN" has uncommitted changes (N staged, N unstaged); commit 
+ERR 2x [rd_clone] timeout
+ERR 2x [publish_auto] issing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched m
+ERR 1x [publish_auto] ched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fet
+ERR 1x [publish_lock] fetched missing object <id>
+fetched missing object <id>
+auto-merged remote art/main (attempt N)
+fetched missing object <id>
+error: zone "zN"
+ERR 1x [publish_lock] e art/main (attempt N)
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+auto-merged remote art/main (atte
+ERR 1x [unlock] error: art/fN.bin is not locked
+ERR 1x [publish_auto] fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+error: zone "zN" has uncommi
+ERR 1x [rd_gc_remote_dry] timeout
+resources: {"rss_kb": {"first_quartile_mean": 1788633.3, "last_quartile_mean": 6355449.1, "max": 7038044.0, "last": 6991424.0}, "cpu_pct": {"first_quartile_mean": 200.8, "last_quartile_mean": 419.1, "max": 567.0, "last": 7.6}, "fds": {"first_quartile_mean": 23.4, "last_quartile_mean": 41.8, "max": 101.0, "last": 4.0}, "threads": {"first_quartile_mean": 20.6, "last_quartile_mean": 35.4, "max": 98.0, "last": 4.0}, "manifest_bytes": {"first_quartile_mean": 16032.5, "last_quartile_mean": 80556.1, "max": 86965.0, "last": 86965.0}, "packs": {"first_quartile_mean": 187.2, "last_quartile_mean": 1744.7, "max": 1969.0, "last": 1969.0}}

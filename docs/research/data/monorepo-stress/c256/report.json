@@ -1,0 +1,360 @@
+{
+ "span_s": 1554,
+ "ops": {
+  "add": {
+   "n_ok": 5270,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 3.39,
+   "p50_ms": 9.7,
+   "p95_ms": 31.6,
+   "p99_ms": 65.3,
+   "max_ms": 246.1
+  },
+  "add_big": {
+   "n_ok": 99,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.06,
+   "p50_ms": 130.2,
+   "p95_ms": 233.8,
+   "p99_ms": 394.1,
+   "max_ms": 394.1
+  },
+  "branch_create": {
+   "n_ok": 565,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.36,
+   "p50_ms": 4.5,
+   "p95_ms": 13.8,
+   "p99_ms": 19.8,
+   "max_ms": 29.1
+  },
+  "branch_delete": {
+   "n_ok": 565,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.36,
+   "p50_ms": 3.9,
+   "p95_ms": 11.5,
+   "p99_ms": 17.8,
+   "max_ms": 128.8
+  },
+  "branch_switch": {
+   "n_ok": 1130,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.73,
+   "p50_ms": 5.0,
+   "p95_ms": 14.5,
+   "p99_ms": 29.9,
+   "max_ms": 207.3
+  },
+  "clone_fresh": {
+   "n_ok": 216,
+   "n_expected_fail": 0,
+   "n_error": 105,
+   "per_s": 0.21,
+   "p50_ms": 15485.2,
+   "p95_ms": 25756.3,
+   "p99_ms": 32645.9,
+   "max_ms": 42735.2
+  },
+  "clone_initial": {
+   "n_ok": 150,
+   "n_expected_fail": 0,
+   "n_error": 530,
+   "per_s": 0.44,
+   "p50_ms": 15764.0,
+   "p95_ms": 39875.3,
+   "p99_ms": 53571.5,
+   "max_ms": 53932.9
+  },
+  "commit": {
+   "n_ok": 5270,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 3.39,
+   "p50_ms": 8.9,
+   "p95_ms": 25.9,
+   "p99_ms": 40.5,
+   "max_ms": 229.9
+  },
+  "commit_big": {
+   "n_ok": 99,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.06,
+   "p50_ms": 55.3,
+   "p95_ms": 138.3,
+   "p99_ms": 238.0,
+   "max_ms": 238.0
+  },
+  "fsck_clone": {
+   "n_ok": 61,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.04,
+   "p50_ms": 52.9,
+   "p95_ms": 321.3,
+   "p99_ms": 398.1,
+   "max_ms": 398.1
+  },
+  "lock": {
+   "n_ok": 285,
+   "n_expected_fail": 328,
+   "n_error": 262,
+   "per_s": 0.56,
+   "p50_ms": 8.8,
+   "p95_ms": 2531.5,
+   "p99_ms": 4085.5,
+   "max_ms": 10307.6
+  },
+  "merge": {
+   "n_ok": 3138,
+   "n_expected_fail": 0,
+   "n_error": 1798,
+   "per_s": 3.18,
+   "p50_ms": 3416.4,
+   "p95_ms": 70729.9,
+   "p99_ms": 110918.1,
+   "max_ms": 261883.1
+  },
+  "publish": {
+   "n_ok": 705,
+   "n_expected_fail": 3526,
+   "n_error": 687,
+   "per_s": 3.17,
+   "p50_ms": 45.3,
+   "p95_ms": 2529.3,
+   "p99_ms": 7611.1,
+   "max_ms": 10459.8
+  },
+  "publish_auto": {
+   "n_ok": 324,
+   "n_expected_fail": 648,
+   "n_error": 382,
+   "per_s": 0.87,
+   "p50_ms": 2201.9,
+   "p95_ms": 87088.9,
+   "p99_ms": 246866.0,
+   "max_ms": 299337.5
+  },
+  "publish_lock": {
+   "n_ok": 212,
+   "n_expected_fail": 279,
+   "n_error": 168,
+   "per_s": 0.42,
+   "p50_ms": 3659.2,
+   "p95_ms": 111997.2,
+   "p99_ms": 157645.1,
+   "max_ms": 292642.9
+  },
+  "rd_clone": {
+   "n_ok": 0,
+   "n_expected_fail": 0,
+   "n_error": 3,
+   "per_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "max_ms": null
+  },
+  "sync": {
+   "n_ok": 6434,
+   "n_expected_fail": 0,
+   "n_error": 549,
+   "per_s": 4.49,
+   "p50_ms": 250.7,
+   "p95_ms": 748.5,
+   "p99_ms": 1302.0,
+   "max_ms": 2344.2
+  },
+  "undo": {
+   "n_ok": 449,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.29,
+   "p50_ms": 8.0,
+   "p95_ms": 29.9,
+   "p99_ms": 54.2,
+   "max_ms": 100.0
+  },
+  "unlock": {
+   "n_ok": 243,
+   "n_expected_fail": 0,
+   "n_error": 42,
+   "per_s": 0.18,
+   "p50_ms": 7.8,
+   "p95_ms": 341.9,
+   "p99_ms": 3471.4,
+   "max_ms": 8039.9
+  }
+ },
+ "errors": [
+  {
+   "op": "merge",
+   "msg": "error: zone \"zN\" has uncommitted changes (N staged, N unstaged); commit or revert them first",
+   "n": 1426
+  },
+  {
+   "op": "publish",
+   "msg": "error: backend unavailable: http://N.N.N.N:N/vN/o/manifest: Connection Failed: Connect error: Connection refused (os error N)",
+   "n": 683
+  },
+  {
+   "op": "sync",
+   "msg": "error: backend unavailable: http://N.N.N.N:N/vN/o/manifest: Connection Failed: Connect error: Connection refused (os error N)",
+   "n": 544
+  },
+  {
+   "op": "clone_initial",
+   "msg": "error: backend unavailable: http://N.N.N.N:N/vN/o/manifest: Connection Failed: Connect error: Connection refused (os error N)",
+   "n": 511
+  },
+  {
+   "op": "publish_auto",
+   "msg": "error: backend unavailable: http://N.N.N.N:N/vN/o/manifest: Connection Failed: Connect error: Connection refused (os error N)",
+   "n": 279
+  },
+  {
+   "op": "lock",
+   "msg": "error: outcome unknown after N retries (last error: http://N.N.N.N:N/vN/o/tx/<id>: Connection Failed: Connect error: Connection refused (os ",
+   "n": 261
+  },
+  {
+   "op": "merge",
+   "msg": "sing object <id>\nfetched missing object <id>\nfetched missing object <id>\nerror: backend unavailable: http://N.N.N.N:N/vN/o/packs/pack-<id>.i",
+   "n": 102
+  },
+  {
+   "op": "clone_fresh",
+   "msg": "error: backend unavailable: http://N.N.N.N:N/vN/o/manifest: Connection Failed: Connect error: Connection refused (os error N)",
+   "n": 99
+  },
+  {
+   "op": "merge",
+   "msg": "fetched missing object <id>\nerror: zone \"zN\" has uncommitted changes (N staged, N unstaged); commit or revert them first",
+   "n": 68
+  },
+  {
+   "op": "publish_lock",
+   "msg": "error: backend unavailable: http://N.N.N.N:N/vN/o/manifest: Connection Failed: Connect error: Connection refused (os error N)",
+   "n": 65
+  },
+  {
+   "op": "merge",
+   "msg": "error: untracked path \"zN/uN/fN.txt\" would be overwritten; move or remove it first",
+   "n": 57
+  },
+  {
+   "op": "publish_lock",
+   "msg": "error: zone \"zN\" has uncommitted changes (N staged, N unstaged); commit or revert them first",
+   "n": 56
+  },
+  {
+   "op": "merge",
+   "msg": "issing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched m",
+   "n": 44
+  },
+  {
+   "op": "merge",
+   "msg": "missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched ",
+   "n": 33
+  },
+  {
+   "op": "publish_auto",
+   "msg": "error: zone \"zN\" has uncommitted changes (N staged, N unstaged); commit or revert them first",
+   "n": 29
+  },
+  {
+   "op": "publish_auto",
+   "msg": "sing object <id>\nfetched missing object <id>\nfetched missing object <id>\nerror: backend unavailable: http://N.N.N.N:N/vN/o/packs/pack-<id>.i",
+   "n": 29
+  },
+  {
+   "op": "clone_initial",
+   "msg": "error: backend unavailable: http://N.N.N.N:N/vN/o/packs/pack-<id>.pack?offset=N&len=N: Connection Failed: Connect error: Connection refused ",
+   "n": 19
+  },
+  {
+   "op": "merge",
+   "msg": "fetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nerror: zone \"zN\" has uncommi",
+   "n": 17
+  },
+  {
+   "op": "unlock",
+   "msg": "error: art/fN.bin is not locked",
+   "n": 16
+  },
+  {
+   "op": "publish_lock",
+   "msg": "sing object <id>\nfetched missing object <id>\nfetched missing object <id>\nerror: backend unavailable: http://N.N.N.N:N/vN/o/packs/pack-<id>.i",
+   "n": 14
+  },
+  {
+   "op": "merge",
+   "msg": "fetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\n",
+   "n": 13
+  },
+  {
+   "op": "unlock",
+   "msg": "error: backend unavailable: http://N.N.N.N:N/vN/o/manifest: Connection Failed: Connect error: Connection refused (os error N)",
+   "n": 13
+  },
+  {
+   "op": "unlock",
+   "msg": "error: fN.bin in zone art is locked by uN; only the holder can release it",
+   "n": 12
+  },
+  {
+   "op": "merge",
+   "msg": "error: backend unavailable: http://N.N.N.N:N/vN/o/packs/pack-<id>.idx: Connection Failed: Connect error: Connection refused (os error N)",
+   "n": 8
+  },
+  {
+   "op": "merge",
+   "msg": "fetched missing object <id>\nerror: backend unavailable: http://N.N.N.N:N/vN/o/packs/pack-<id>.idx: Connection Failed: Connect error: Connect",
+   "n": 7
+  }
+ ],
+ "resources": {
+  "rss_kb": {
+   "first_quartile_mean": 3874072.4,
+   "last_quartile_mean": 5564792.8,
+   "max": 10053672.0,
+   "last": 2911320.0
+  },
+  "cpu_pct": {
+   "first_quartile_mean": 354.7,
+   "last_quartile_mean": 602.6,
+   "max": 1083.8,
+   "last": 2.6
+  },
+  "fds": {
+   "first_quartile_mean": 69.5,
+   "last_quartile_mean": 43.6,
+   "max": 234.0,
+   "last": 4.0
+  },
+  "threads": {
+   "first_quartile_mean": 64.9,
+   "last_quartile_mean": 37.6,
+   "max": 228.0,
+   "last": 4.0
+  },
+  "manifest_bytes": {
+   "first_quartile_mean": 17341.6,
+   "last_quartile_mean": 62489.3,
+   "max": 63000.0,
+   "last": 63000.0
+  },
+  "packs": {
+   "first_quartile_mean": 251.8,
+   "last_quartile_mean": 1502.4,
+   "max": 1519.0,
+   "last": 1519.0
+  }
+ }
+}
