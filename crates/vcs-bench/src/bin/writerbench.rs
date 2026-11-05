@@ -216,7 +216,10 @@ fn main() {
         o.0.iter().map(|x| format!("{x:.1}")).collect::<Vec<_>>().join(",")
     );
     if mode == "same" {
-        s += &format!("\"chain_before\":{chain_before},\"chain_after\":{},", chain_len(&audit_b, "shared", "main"));
+        s += &format!(
+            "\"chain_before\":{chain_before},\"chain_after\":{},",
+            chain_len(&audit_b, "shared", "main")
+        );
     }
     s += &format!(
         "\"heads\":[{}]}}",
