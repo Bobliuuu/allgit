@@ -1,0 +1,350 @@
+{
+ "span_s": 859,
+ "ops": {
+  "add": {
+   "n_ok": 4725,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 5.5,
+   "p50_ms": 8.7,
+   "p95_ms": 29.7,
+   "p99_ms": 48.6,
+   "max_ms": 226.5
+  },
+  "add_big": {
+   "n_ok": 76,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.09,
+   "p50_ms": 116.1,
+   "p95_ms": 207.2,
+   "p99_ms": 245.1,
+   "max_ms": 245.1
+  },
+  "branch_create": {
+   "n_ok": 449,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.52,
+   "p50_ms": 4.6,
+   "p95_ms": 9.4,
+   "p99_ms": 14.7,
+   "max_ms": 16.2
+  },
+  "branch_delete": {
+   "n_ok": 441,
+   "n_expected_fail": 0,
+   "n_error": 8,
+   "per_s": 0.52,
+   "p50_ms": 3.8,
+   "p95_ms": 8.5,
+   "p99_ms": 13.7,
+   "max_ms": 17.1
+  },
+  "branch_switch": {
+   "n_ok": 890,
+   "n_expected_fail": 0,
+   "n_error": 8,
+   "per_s": 1.05,
+   "p50_ms": 5.1,
+   "p95_ms": 12.6,
+   "p99_ms": 20.6,
+   "max_ms": 30.5
+  },
+  "clone_fresh": {
+   "n_ok": 294,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.34,
+   "p50_ms": 13201.1,
+   "p95_ms": 17592.6,
+   "p99_ms": 24859.5,
+   "max_ms": 25405.9
+  },
+  "clone_initial": {
+   "n_ok": 64,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.07,
+   "p50_ms": 12354.4,
+   "p95_ms": 24397.2,
+   "p99_ms": 25216.9,
+   "max_ms": 25216.9
+  },
+  "commit": {
+   "n_ok": 4658,
+   "n_expected_fail": 0,
+   "n_error": 67,
+   "per_s": 5.5,
+   "p50_ms": 8.4,
+   "p95_ms": 24.0,
+   "p99_ms": 39.0,
+   "max_ms": 131.4
+  },
+  "commit_big": {
+   "n_ok": 67,
+   "n_expected_fail": 0,
+   "n_error": 9,
+   "per_s": 0.09,
+   "p50_ms": 46.9,
+   "p95_ms": 161.6,
+   "p99_ms": 243.1,
+   "max_ms": 243.1
+  },
+  "fsck_clone": {
+   "n_ok": 90,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.1,
+   "p50_ms": 158.1,
+   "p95_ms": 370.2,
+   "p99_ms": 591.5,
+   "max_ms": 591.5
+  },
+  "lock": {
+   "n_ok": 626,
+   "n_expected_fail": 145,
+   "n_error": 0,
+   "per_s": 0.9,
+   "p50_ms": 7.6,
+   "p95_ms": 25.7,
+   "p99_ms": 175.8,
+   "max_ms": 709.6
+  },
+  "merge": {
+   "n_ok": 990,
+   "n_expected_fail": 0,
+   "n_error": 1142,
+   "per_s": 2.48,
+   "p50_ms": 1110.9,
+   "p95_ms": 7377.9,
+   "p99_ms": 12303.8,
+   "max_ms": 23087.9
+  },
+  "publish": {
+   "n_ok": 1022,
+   "n_expected_fail": 1474,
+   "n_error": 0,
+   "per_s": 2.91,
+   "p50_ms": 12.2,
+   "p95_ms": 116.8,
+   "p99_ms": 380.8,
+   "max_ms": 892.0
+  },
+  "publish_auto": {
+   "n_ok": 465,
+   "n_expected_fail": 210,
+   "n_error": 25,
+   "per_s": 0.82,
+   "p50_ms": 53.4,
+   "p95_ms": 25634.1,
+   "p99_ms": 74397.2,
+   "max_ms": 185761.6
+  },
+  "publish_lock": {
+   "n_ok": 602,
+   "n_expected_fail": 96,
+   "n_error": 24,
+   "per_s": 0.84,
+   "p50_ms": 451.9,
+   "p95_ms": 16427.0,
+   "p99_ms": 52719.9,
+   "max_ms": 158893.2
+  },
+  "sync": {
+   "n_ok": 4644,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 5.41,
+   "p50_ms": 519.8,
+   "p95_ms": 986.3,
+   "p99_ms": 1153.4,
+   "max_ms": 1445.3
+  },
+  "undo": {
+   "n_ok": 365,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.43,
+   "p50_ms": 8.0,
+   "p95_ms": 26.6,
+   "p99_ms": 50.1,
+   "max_ms": 99.4
+  },
+  "unlock": {
+   "n_ok": 626,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.73,
+   "p50_ms": 7.0,
+   "p95_ms": 18.2,
+   "p99_ms": 40.7,
+   "max_ms": 1076.4
+  }
+ },
+ "errors": [
+  {
+   "op": "merge",
+   "msg": "error: zone \"zN\" has uncommitted changes (N staged, N unstaged); commit or revert them first",
+   "n": 815
+  },
+  {
+   "op": "merge",
+   "msg": "error: a merge of origin/main into zN/main is already in progress\n\nOptions:\n  vcs conflict list\n  vcs merge --abort",
+   "n": 236
+  },
+  {
+   "op": "commit",
+   "msg": "t lockable file(s) without a lock (see .vcsattributes):\n  art/fN.bin\n  art/fN.bin\n\nOptions:\n  vcs lock <path> --lease-secs <n>   take the lo",
+   "n": 41
+  },
+  {
+   "op": "merge",
+   "msg": "fetched missing object <id>\nerror: zone \"zN\" has uncommitted changes (N staged, N unstaged); commit or revert them first",
+   "n": 32
+  },
+  {
+   "op": "merge",
+   "msg": "missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched ",
+   "n": 22
+  },
+  {
+   "op": "publish_lock",
+   "msg": "error: zone \"zN\" has uncommitted changes (N staged, N unstaged); commit or revert them first",
+   "n": 21
+  },
+  {
+   "op": "merge",
+   "msg": "issing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched m",
+   "n": 16
+  },
+  {
+   "op": "publish_auto",
+   "msg": "error: a merge of origin/main into zN/main is already in progress\n\nOptions:\n  vcs conflict list\n  vcs merge --abort",
+   "n": 16
+  },
+  {
+   "op": "commit",
+   "msg": "using to commit lockable file(s) without a lock (see .vcsattributes):\n  art/fN.bin\n\nOptions:\n  vcs lock <path> --lease-secs <n>   take the l",
+   "n": 13
+  },
+  {
+   "op": "commit",
+   "msg": "error: cannot commit: merge of origin/main into zN/main has N unresolved conflict(s):\n  zN/uN/log.txt (modify/modify)\n\nOptions:\n  edit the f",
+   "n": 10
+  },
+  {
+   "op": "branch_switch",
+   "msg": "error: zone \"zN\" is in the middle of a merge; resolve and commit, or `vcs merge --abort`",
+   "n": 8
+  },
+  {
+   "op": "branch_delete",
+   "msg": "error: zone \"zN\" is in the middle of a merge; resolve or `vcs merge --abort` first",
+   "n": 8
+  },
+  {
+   "op": "merge",
+   "msg": "fetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\n",
+   "n": 6
+  },
+  {
+   "op": "merge",
+   "msg": "fetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nerror: zone \"zN\" has uncommi",
+   "n": 5
+  },
+  {
+   "op": "commit_big",
+   "msg": "t lockable file(s) without a lock (see .vcsattributes):\n  art/fN.bin\n  art/fN.bin\n\nOptions:\n  vcs lock <path> --lease-secs <n>   take the lo",
+   "n": 5
+  },
+  {
+   "op": "merge",
+   "msg": "fetched missing object <id>\nfetched missing object <id>\nerror: zone \"zN\" has uncommitted changes (N staged, N unstaged); commit or revert th",
+   "n": 4
+  },
+  {
+   "op": "merge",
+   "msg": "fetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nerror: zone \"zN\" has uncommitted changes (N staged, N un",
+   "n": 4
+  },
+  {
+   "op": "publish_auto",
+   "msg": "error: zone \"zN\" has uncommitted changes (N staged, N unstaged); commit or revert them first",
+   "n": 3
+  },
+  {
+   "op": "publish_auto",
+   "msg": "missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched ",
+   "n": 2
+  },
+  {
+   "op": "commit_big",
+   "msg": "error: cannot commit: merge of origin/main into zN/main has N unresolved conflict(s):\n  zN/uN/log.txt (modify/modify)\n\nOptions:\n  edit the f",
+   "n": 2
+  },
+  {
+   "op": "commit",
+   "msg": "e(s) without a lock (see .vcsattributes):\n  art/fN.bin\n  art/fN.bin\n  art/fN.bin\n\nOptions:\n  vcs lock <path> --lease-secs <n>   take the loc",
+   "n": 2
+  },
+  {
+   "op": "publish_auto",
+   "msg": "fetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nerror: zone \"zN\" has uncommitted changes (N staged, N un",
+   "n": 1
+  },
+  {
+   "op": "publish_lock",
+   "msg": "missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched ",
+   "n": 1
+  },
+  {
+   "op": "publish_lock",
+   "msg": "ng object <id>\nfetched missing object <id>\nauto-merged remote art/main (attempt N)\nfetched missing object <id>\nfetched missing object <id>\nf",
+   "n": 1
+  },
+  {
+   "op": "publish_lock",
+   "msg": "fetched missing object <id>\nfetched missing object <id>\nauto-merged remote art/main (attempt N)\nerror: zone \"zN\" has uncommitted changes (N ",
+   "n": 1
+  }
+ ],
+ "resources": {
+  "rss_kb": {
+   "first_quartile_mean": 1853160.6,
+   "last_quartile_mean": 4749203.3,
+   "max": 4974408.0,
+   "last": 4756032.0
+  },
+  "cpu_pct": {
+   "first_quartile_mean": 202.6,
+   "last_quartile_mean": 352.2,
+   "max": 536.8,
+   "last": 0.0
+  },
+  "fds": {
+   "first_quartile_mean": 21.9,
+   "last_quartile_mean": 46.5,
+   "max": 98.0,
+   "last": 4.0
+  },
+  "threads": {
+   "first_quartile_mean": 19.4,
+   "last_quartile_mean": 41.0,
+   "max": 94.0,
+   "last": 4.0
+  },
+  "manifest_bytes": {
+   "first_quartile_mean": 18559.2,
+   "last_quartile_mean": 100851.4,
+   "max": 109077.0,
+   "last": 109077.0
+  },
+  "packs": {
+   "first_quartile_mean": 157.0,
+   "last_quartile_mean": 1409.2,
+   "max": 1588.0,
+   "last": 1588.0
+  }
+ }
+}

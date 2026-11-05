@@ -1,0 +1,4 @@
+clone zone big: 111.65 s wall, 1721076 KB
+20 files 65044217856 bytes
+hash: 23.73 s wall
+big files: 20/20 equal in sha256 and size; extra files: []

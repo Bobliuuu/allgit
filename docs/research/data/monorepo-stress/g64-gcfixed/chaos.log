@@ -1,0 +1,12 @@
+1793867185.9 gc#1 compact KILLED -9 after 0.81s 
+1793867209.3 AUDIT after gc kill #1 (compact): bad=0 {"why": "after gc kill #1 (compact)", "t": 1793867209.2604692, "bad": 0, "acked_files": 70, "acked_missing": 0, "acked_wrong_content": 0, "clone_rc": 0, "clone_s": 23.08, "fsck_rc": 0}
+1793867269.3 STALE gc/lock (holder dead) removed by harness (was: vcs-compact pid 99036 1793888785042)
+1793867269.3 gc#2 sweep finished rc=1 in 0.00s error: remote gc: another gc holds gc/lock until 1793888785042 (backend clock, unix ms)
+1793867342.4 gc#3 compact finished rc=0 in 13.10s ce8da57c09117716f10edda37991ca5350117b5efbab5085d29f8a63 | read 1431550 object(s) (348 duplicate(s) dropped), wrote 1431202; 1623 request(s), 770212715 byte(s) read and 460105733 written on the remote
+1793867406.3 gc#4 sweep KILLED -9 after 3.95s DESTRUCTIVE: deleting unreachable objects older than 600s on /data/run/runs/g64-gcfixed/store
+1793867429.2 AUDIT after gc kill #4 (sweep): bad=0 {"why": "after gc kill #4 (sweep)", "t": 1793867429.2160118, "bad": 0, "acked_files": 1976, "acked_missing": 0, "acked_wrong_content": 0, "clone_rc": 0, "clone_s": 21.21, "fsck_rc": 0}
+1793867453.0 AUDIT periodic: bad=0 {"why": "periodic", "t": 1793867452.993044, "bad": 0, "acked_files": 2186, "acked_missing": 0, "acked_wrong_content": 0, "clone_rc": 0, "clone_s": 22.12, "fsck_rc": 0}
+1793867489.2 STALE gc/lock (holder dead) removed by harness (was: vcs-gc pid 345190 1793889002367)
+1793867489.2 gc#5 compact finished rc=1 in 0.00s error: remote compaction: another gc holds gc/lock until 1793889002367 (backend clock, unix ms)
+1793867781.2 AUDIT periodic: bad=0 {"why": "periodic", "t": 1793867781.1552682, "bad": 0, "acked_files": 5089, "acked_missing": 0, "acked_wrong_content": 0, "clone_rc": 0, "clone_s": 25.47, "fsck_rc": 0}
+1793868067.8 gc#6 sweep finished rc=0 in 518.57s 29 pack(s): 2567645 reachable; 0 unreachable unit(s) younger than the grace period; 0 old and unreachable at first look | deleted 0 object(s) including 0 whole pack(s); 0 unit(s) saved by the re-check
