@@ -224,16 +224,19 @@ pub fn compact_with(
         dry_run: opts.dry_run,
         ..Default::default()
     };
+    if !opts.dry_run {
+        // Fail before doing any work on a backend that cannot delete (idempotent on absent keys). This comes BEFORE the
+        // lock: a principal that may not delete (a write-role token on vcs-server, 403) also cannot delete `gc/lock`,
+        // so a refused probe after the acquire left the lock for its whole 6 h lease, and every client publish that
+        // tried an automatic compaction did exactly that (seen in the monorepo stress run: every gc round blocked).
+        b.delete("compact/probe")?;
+    }
     // C5. The lock needs the backend's clock; without one there is no sweeper to exclude.
     let _lock = if opts.dry_run || !b.supports_gc() {
         None
     } else {
         Some(acquire(b, &opts.owner, opts.lock_ttl_ms, b.now_ms()?)?)
     };
-    if !opts.dry_run {
-        // Fail before doing any work on a backend that cannot delete (idempotent on absent keys).
-        b.delete("compact/probe")?;
-    }
     let loaded = load_packs(b)?;
     rep.packs_before = loaded.len();
     let infos: Vec<PackInfo> = loaded.iter().map(|(p, _)| p.clone()).collect();
