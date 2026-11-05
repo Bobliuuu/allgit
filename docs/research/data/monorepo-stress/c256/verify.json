@@ -1,0 +1,65 @@
+{
+ "clone_rc": 0,
+ "clone_s": 15.81,
+ "big_acked_files": 8,
+ "big_bad": 0,
+ "big_newer_than_ack": 0,
+ "acked_files": 7168,
+ "acked_missing": 0,
+ "acked_wrong_content": 0,
+ "last_wins_files": 89,
+ "last_wins_mismatch": 0,
+ "last_wins_newer_than_ack": 0,
+ "locks_at_end": {
+  "rc": 0,
+  "out": "no locks"
+ },
+ "fresh_clone_fsck": {
+  "rc": 0,
+  "out": "checked 23221 objects\n3726 object(s) not cached locally; they are on the remote and will be refetched on demand\nok",
+  "err": "",
+  "s": 0.9
+ },
+ "server_alive_at_end": true,
+ "final_manifest_bytes": 63000,
+ "final_packs": 1519,
+ "store_bytes": 71662295234,
+ "audits": [
+  {
+   "why": "periodic",
+   "t": 1793855388.3315108,
+   "bad": 0,
+   "acked_files": 1127,
+   "acked_missing": 0,
+   "acked_wrong_content": 0,
+   "clone_rc": 0,
+   "clone_s": 28.32,
+   "fsck_rc": 0
+  },
+  {
+   "why": "periodic",
+   "t": 1793855840.0510263,
+   "bad": 0,
+   "acked_files": 4574,
+   "acked_missing": 0,
+   "acked_wrong_content": 0,
+   "clone_rc": 0,
+   "clone_s": 28.51,
+   "fsck_rc": 0
+  },
+  {
+   "why": "periodic",
+   "t": 1793856288.8654404,
+   "bad": 0,
+   "acked_files": 6640,
+   "acked_missing": 0,
+   "acked_wrong_content": 0,
+   "clone_rc": 0,
+   "clone_s": 25.48,
+   "fsck_rc": 0
+  }
+ ],
+ "stale_gc_locks_cleared": 6,
+ "stale_cas_locks_cleared_age_s": [],
+ "audits_bad": 0
+}
