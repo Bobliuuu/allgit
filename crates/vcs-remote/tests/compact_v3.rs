@@ -199,3 +199,18 @@ fn compaction_releases_gc_lock_after_a_transient_delete_failure() {
     compact(&b, &opts()).unwrap();
     assert!(b.get("gc/lock").unwrap().is_none(), "gc/lock was left behind");
 }
+
+/// A principal that may not delete (a write-role token on vcs-server answers 403 to `DELETE`) cannot release `gc/lock`
+/// either, so compaction must refuse BEFORE it takes the lock. It used to acquire the lock first and fail the delete
+/// probe second, leaving the lock for its whole 6 h lease on every automatic compaction a client attempted.
+#[test]
+fn compaction_that_cannot_delete_never_takes_the_gc_lock() {
+    let (b, _store, _commits, _all) = build(6);
+    b.fail_next_delete("compact/probe");
+    assert!(compact(&b, &opts()).is_err());
+    assert!(b.get("gc/lock").unwrap().is_none(), "gc/lock was left behind");
+    assert!(
+        !b.history().iter().any(|(k, _)| k == "gc/lock"),
+        "the lock was taken before the probe failed"
+    );
+}
