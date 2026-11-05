@@ -1,0 +1,390 @@
+{
+ "span_s": 1407,
+ "ops": {
+  "add": {
+   "n_ok": 3481,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 2.47,
+   "p50_ms": 11.1,
+   "p95_ms": 33.8,
+   "p99_ms": 65.0,
+   "max_ms": 273.7
+  },
+  "add_big": {
+   "n_ok": 62,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.04,
+   "p50_ms": 142.4,
+   "p95_ms": 240.9,
+   "p99_ms": 307.1,
+   "max_ms": 307.1
+  },
+  "branch_create": {
+   "n_ok": 350,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.25,
+   "p50_ms": 5.7,
+   "p95_ms": 13.9,
+   "p99_ms": 19.7,
+   "max_ms": 25.8
+  },
+  "branch_delete": {
+   "n_ok": 350,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.25,
+   "p50_ms": 4.9,
+   "p95_ms": 12.5,
+   "p99_ms": 17.5,
+   "max_ms": 36.4
+  },
+  "branch_switch": {
+   "n_ok": 700,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.5,
+   "p50_ms": 6.2,
+   "p95_ms": 15.7,
+   "p99_ms": 26.4,
+   "max_ms": 66.8
+  },
+  "clone_fresh": {
+   "n_ok": 216,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.15,
+   "p50_ms": 15732.8,
+   "p95_ms": 25365.0,
+   "p99_ms": 25877.6,
+   "max_ms": 26455.8
+  },
+  "clone_initial": {
+   "n_ok": 64,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.05,
+   "p50_ms": 13638.5,
+   "p95_ms": 26509.4,
+   "p99_ms": 27451.7,
+   "max_ms": 27451.7
+  },
+  "commit": {
+   "n_ok": 3481,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 2.47,
+   "p50_ms": 10.7,
+   "p95_ms": 27.2,
+   "p99_ms": 40.6,
+   "max_ms": 129.8
+  },
+  "commit_big": {
+   "n_ok": 62,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.04,
+   "p50_ms": 71.8,
+   "p95_ms": 194.9,
+   "p99_ms": 235.9,
+   "max_ms": 235.9
+  },
+  "fsck_clone": {
+   "n_ok": 62,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.04,
+   "p50_ms": 142.5,
+   "p95_ms": 343.5,
+   "p99_ms": 376.2,
+   "max_ms": 376.2
+  },
+  "lock": {
+   "n_ok": 379,
+   "n_expected_fail": 259,
+   "n_error": 0,
+   "per_s": 0.45,
+   "p50_ms": 9.8,
+   "p95_ms": 1263.7,
+   "p99_ms": 3548.1,
+   "max_ms": 5010.1
+  },
+  "merge": {
+   "n_ok": 1042,
+   "n_expected_fail": 0,
+   "n_error": 734,
+   "per_s": 1.26,
+   "p50_ms": 1562.1,
+   "p95_ms": 9825.7,
+   "p99_ms": 15539.6,
+   "max_ms": 36055.5
+  },
+  "publish": {
+   "n_ok": 800,
+   "n_expected_fail": 1206,
+   "n_error": 0,
+   "per_s": 1.43,
+   "p50_ms": 24.6,
+   "p95_ms": 1398.2,
+   "p99_ms": 2203.2,
+   "max_ms": 2767.4
+  },
+  "publish_auto": {
+   "n_ok": 353,
+   "n_expected_fail": 174,
+   "n_error": 16,
+   "per_s": 0.39,
+   "p50_ms": 601.4,
+   "p95_ms": 19879.9,
+   "p99_ms": 56615.0,
+   "max_ms": 127752.4
+  },
+  "publish_lock": {
+   "n_ok": 358,
+   "n_expected_fail": 108,
+   "n_error": 18,
+   "per_s": 0.34,
+   "p50_ms": 2731.3,
+   "p95_ms": 39656.1,
+   "p99_ms": 87966.0,
+   "max_ms": 124000.5
+  },
+  "rd_blame": {
+   "n_ok": 7,
+   "n_expected_fail": 0,
+   "n_error": 2,
+   "per_s": 0.01,
+   "p50_ms": 2.5,
+   "p95_ms": 15.0,
+   "p99_ms": 15.0,
+   "max_ms": 15.0
+  },
+  "rd_clone": {
+   "n_ok": 3,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.0,
+   "p50_ms": 242923.6,
+   "p95_ms": 271255.1,
+   "p99_ms": 271255.1,
+   "max_ms": 271255.1
+  },
+  "rd_clone_fresh": {
+   "n_ok": 2,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.0,
+   "p50_ms": 22645.8,
+   "p95_ms": 22645.8,
+   "p99_ms": 22645.8,
+   "max_ms": 22645.8
+  },
+  "rd_fsck": {
+   "n_ok": 2,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.0,
+   "p50_ms": 3.4,
+   "p95_ms": 3.4,
+   "p99_ms": 3.4,
+   "max_ms": 3.4
+  },
+  "rd_gc_remote_dry": {
+   "n_ok": 1,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.0,
+   "p50_ms": 609900.1,
+   "p95_ms": 609900.1,
+   "p99_ms": 609900.1,
+   "max_ms": 609900.1
+  },
+  "rd_log_path": {
+   "n_ok": 7,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.0,
+   "p50_ms": 2.6,
+   "p95_ms": 17783.9,
+   "p99_ms": 17783.9,
+   "max_ms": 17783.9
+  },
+  "rd_status": {
+   "n_ok": 14,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.01,
+   "p50_ms": 3.0,
+   "p95_ms": 1995.2,
+   "p99_ms": 1995.2,
+   "max_ms": 1995.2
+  },
+  "rd_sync": {
+   "n_ok": 15,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.01,
+   "p50_ms": 3.5,
+   "p95_ms": 790.5,
+   "p99_ms": 790.5,
+   "max_ms": 790.5
+  },
+  "sync": {
+   "n_ok": 3587,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 2.55,
+   "p50_ms": 437.3,
+   "p95_ms": 934.7,
+   "p99_ms": 1258.2,
+   "max_ms": 1811.8
+  },
+  "undo": {
+   "n_ok": 268,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.19,
+   "p50_ms": 10.2,
+   "p95_ms": 33.9,
+   "p99_ms": 43.3,
+   "max_ms": 55.9
+  },
+  "unlock": {
+   "n_ok": 374,
+   "n_expected_fail": 0,
+   "n_error": 5,
+   "per_s": 0.27,
+   "p50_ms": 9.1,
+   "p95_ms": 1119.5,
+   "p99_ms": 3084.6,
+   "max_ms": 5209.2
+  }
+ },
+ "errors": [
+  {
+   "op": "merge",
+   "msg": "error: zone \"zN\" has uncommitted changes (N staged, N unstaged); commit or revert them first",
+   "n": 651
+  },
+  {
+   "op": "merge",
+   "msg": "fetched missing object <id>\nerror: zone \"zN\" has uncommitted changes (N staged, N unstaged); commit or revert them first",
+   "n": 28
+  },
+  {
+   "op": "merge",
+   "msg": "missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched ",
+   "n": 19
+  },
+  {
+   "op": "merge",
+   "msg": "issing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched m",
+   "n": 18
+  },
+  {
+   "op": "publish_lock",
+   "msg": "error: zone \"zN\" has uncommitted changes (N staged, N unstaged); commit or revert them first",
+   "n": 17
+  },
+  {
+   "op": "merge",
+   "msg": "fetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\n",
+   "n": 8
+  },
+  {
+   "op": "publish_auto",
+   "msg": "error: zone \"zN\" has uncommitted changes (N staged, N unstaged); commit or revert them first",
+   "n": 7
+  },
+  {
+   "op": "publish_auto",
+   "msg": "fetched missing object <id>\nerror: zone \"zN\" has uncommitted changes (N staged, N unstaged); commit or revert them first",
+   "n": 5
+  },
+  {
+   "op": "merge",
+   "msg": "fetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nerror: zone \"zN\" has uncommi",
+   "n": 4
+  },
+  {
+   "op": "merge",
+   "msg": "fetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nerror: zone \"zN\" has uncommitted changes (N staged, N un",
+   "n": 3
+  },
+  {
+   "op": "merge",
+   "msg": "fetched missing object <id>\nfetched missing object <id>\nerror: zone \"zN\" has uncommitted changes (N staged, N unstaged); commit or revert th",
+   "n": 3
+  },
+  {
+   "op": "unlock",
+   "msg": "error: art/fN.bin is not locked",
+   "n": 3
+  },
+  {
+   "op": "unlock",
+   "msg": "error: fN.bin in zone art is locked by uN; only the holder can release it",
+   "n": 2
+  },
+  {
+   "op": "publish_auto",
+   "msg": "missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched ",
+   "n": 2
+  },
+  {
+   "op": "rd_blame",
+   "msg": "<id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object ",
+   "n": 2
+  },
+  {
+   "op": "publish_auto",
+   "msg": "issing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched m",
+   "n": 2
+  },
+  {
+   "op": "publish_lock",
+   "msg": "ng object <id>\nauto-merged remote art/main (attempt N)\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nf",
+   "n": 1
+  }
+ ],
+ "resources": {
+  "rss_kb": {
+   "first_quartile_mean": 379192.1,
+   "last_quartile_mean": 8387956.0,
+   "max": 8434580.0,
+   "last": 8387956.0
+  },
+  "cpu_pct": {
+   "first_quartile_mean": 15.1,
+   "last_quartile_mean": 10.6,
+   "max": 653.3,
+   "last": 0.2
+  },
+  "fds": {
+   "first_quartile_mean": 6.3,
+   "last_quartile_mean": 4.3,
+   "max": 126.0,
+   "last": 4.0
+  },
+  "threads": {
+   "first_quartile_mean": 6.2,
+   "last_quartile_mean": 4.1,
+   "max": 120.0,
+   "last": 4.0
+  },
+  "manifest_bytes": {
+   "first_quartile_mean": 7792.0,
+   "last_quartile_mean": 76533.0,
+   "max": 76533.0,
+   "last": 76533.0
+  },
+  "packs": {
+   "first_quartile_mean": 25.0,
+   "last_quartile_mean": 2224.0,
+   "max": 2224.0,
+   "last": 2224.0
+  }
+ }
+}

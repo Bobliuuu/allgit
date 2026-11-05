@@ -199,6 +199,18 @@ the git comparison row was verify-only. [box-harvest](docs/research/box-harvest.
 
 <p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/charts/soak-chaos-dark.svg"><img src="docs/img/charts/soak-chaos-light.svg" alt="Pack count over 14 minutes with 157 server kills; 245 acknowledged files, none missing" width="820"></picture></p>
 
+**Monorepo stress, one box ([monorepo-stress](docs/research/monorepo-stress.md)).** On a c6id.8xlarge, one run per cell: a synthetic monorepo of
+1,000,659 files, 200,000 commits and 20 binaries of 1 to 5 GiB (64.7 GB, three versions each) imports in 76 s (`import-git` was
+commits x files before #542), `add` takes 60 s and the first `publish` to `vcs-server` 213 s (a push over 1 GiB failed with 413 before #543).
+Then 64, 128 and 256 CLI writers (a hot shared branch, 31 disjoint zones, lock cycles, 128 MiB file pushes), single and sharded
+manifest, with the server `kill -9`ed eight times in each 256-writer run: 5,038 to 7,223 acknowledged files per run, **none missing, none
+wrong**, the newest acked version of every big file present, no leaked client locks, and `fsck` of a full clone (2,190,663 objects) and of
+the store directory ok. Protocol-level, one hot branch: the per-branch ticket queue takes p99 from 10 to 23 s (no ticket) to 0.2 to 1.1 s at
+64 to 256 clients, and the sharded manifest does not help that case. Against git on the same bytes: `add` of one 4 GiB file 3.0 to 4.0 s vs
+126 s, a 4 MiB edit of that file pushed in 0.03 s vs 126 s, remote 4.0 GiB vs 8.0 GiB. Losses, stated: `blame` of a 10k-revision file did not
+finish in 1,131 s (git 3.7 s), `fsck` needs 12.6 GiB at 200k commits and 35.1 GiB at 1M commits (git 0.8 GiB), a whole-tree `clone` over HTTP takes
+177 s (git 24 s from a local path), and every client-side auto-compaction left `gc/lock` for its 6 h lease because a write-role token cannot delete it (fixed in #547). The big-tree readers were starved in these runs, so reads of the 1M-file root zone during writes were not exercised.
+
 **Zones chosen for you.** `--auto` downloads 19.5% of the bytes of a full vcs clone and ties git partial+sparse on bytes while being
 faster in wall time, but makes 71 requests instead of 28 and loses to `git pull` on incremental sync (0.78 s vs 0.29 s).
 

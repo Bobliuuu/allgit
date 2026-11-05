@@ -1,0 +1,2 @@
+note: blame killed by hand after 1115 s (CPU-bound in diff::script/split_lines, 99%)
+note: remote sweep after compaction killed by hand after 14 min (decompressing a v3 block per object read)

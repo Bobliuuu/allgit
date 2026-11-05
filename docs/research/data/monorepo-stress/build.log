@@ -1,0 +1,35 @@
+gen_stream maxrss_kb=729436 user=11.19 sys=0.57
+gen_stream wall=11.768677762
+-rw-rw-r-- 1 ubuntu ubuntu 644992940 Nov  5 02:36 stream
+import_git maxrss_kb=1620020 user=62.95 sys=24.81
+import_git wall=76.055169332
+big_gen maxrss_kb=77536 user=0.07 sys=211.19
+big_gen wall=47.542272588
+big_hash_v1 maxrss_kb=45624 user=52.71 sys=17.88
+big_hash_v1 wall=24.151018199
+add_all maxrss_kb=1859084 user=92.12 sys=83.42
+add_all wall=59.566376219
+commit_v1 maxrss_kb=475224 user=7.82 sys=2.30
+commit_v1 wall=7.471014666
+big_mutate_v2 maxrss_kb=143040 user=0.05 sys=6.26
+big_mutate_v2 wall=4.360216836
+big_hash_v2 maxrss_kb=45660 user=51.53 sys=17.13
+big_hash_v2 wall=22.065595324
+add_big_v2 maxrss_kb=4389736 user=53.97 sys=37.14
+add_big_v2 wall=9.982526252
+commit_big_v2 maxrss_kb=489332 user=7.50 sys=5.03
+commit_big_v2 wall=7.370954926
+big_mutate_v3 maxrss_kb=142828 user=0.04 sys=5.92
+big_mutate_v3 wall=3.863477916
+big_hash_v3 maxrss_kb=45640 user=51.67 sys=15.75
+big_hash_v3 wall=15.337818636
+add_big_v3 maxrss_kb=3901568 user=55.41 sys=37.36
+add_big_v3 wall=9.860296089
+commit_big_v3 maxrss_kb=496600 user=7.51 sys=5.18
+commit_big_v3 wall=7.400273942
+Command exited with non-zero status 1
+publish_all maxrss_kb=20765600 user=108.93 sys=86.06
+publish_all maxrss_kb=14938384 user=111.26 sys=84.16
+publish_all wall=212.846000603
+git_fast_import maxrss_kb=472364 user=88.06 sys=6.93 wall=95.06
+gitbase_kb=368224
