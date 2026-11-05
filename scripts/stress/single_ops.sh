@@ -6,6 +6,8 @@ set -uo pipefail
 B=${1:?base dir}; O=${2:?out dir}; BIN=${VCS_BIN:?VCS_BIN}; export PATH=$BIN:$PATH
 export VCS_AUTHOR_NAME=bench VCS_AUTHOR_EMAIL=b@x VCS_TOKEN=tok-admin VCS_PRINCIPAL=admin
 mkdir -p "$O"; R=$O/results.tsv; : > "$R"
+# the client cache (~/.cache/vcs) must live on the fast disk: on a 3000-IOPS root volume it throttles a 1M-file clone
+export XDG_CACHE_HOME=${XDG_CACHE_HOME:-$O/cache}; rm -rf "$XDG_CACHE_HOME"
 m() { # tool op cmd...
   local tool=$1 op=$2; shift 2
   /usr/bin/time -f "$tool\t$op\t%e\t%U\t%S\t%M\t%x" -a -o "$R" "$@" >"$O/$tool-$op.out" 2>"$O/$tool-$op.err" || true
