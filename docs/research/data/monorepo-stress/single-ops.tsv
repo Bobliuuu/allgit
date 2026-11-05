@@ -1,0 +1,29 @@
+vcs	clone_root	177.45	75.57	115.06	1670948	0
+vcs	clone_auto	288.33	97.16	194.37	2011584	0
+vcs	clone_slice_z0	7.74	7.33	0.66	949572	0
+vcs	status_first	1.67	2.19	10.29	392048	0
+vcs	status_second	0.65	0.68	0.99	291300	0
+vcs	log_path	17.56	17.36	0.19	125452	0
+vcs	log_100	0.01	0.00	0.01	25408	0
+Command terminated by signal 9
+vcs	blame	1130.73	965.00	102.69	128936	0
+vcs	fsck_clone	180.98	173.99	27.49	13231840	0
+vcs	gc_local	28.61	51.36	88.11	4415972	0
+vcs	gc_remote_dry	279.32	70.73	38.54	826884	0
+vcs	gc_remote_sweep_dry	157.21	56.21	21.50	826696	0
+vcs	gc_remote_compact	6.52	7.22	1.68	2642544	0
+Command terminated by signal 9
+vcs	gc_remote_sweep	811.19	760.78	49.91	728796	0
+Command exited with non-zero status 128
+Command exited with non-zero status 128
+Command exited with non-zero status 128
+git	clone_full	24.29	4.79	19.49	598536	0
+git	status_first	0.65	0.50	1.22	217380	0
+git	status_second	0.64	0.48	1.24	217488	0
+git	log_path	0.02	0.01	0.00	70064	0
+git	log_100	0.00	0.00	0.00	20968	0
+git	blame	3.69	3.50	0.18	532980	0
+git	fsck	60.42	60.07	0.34	886828	0
+git	gc	35.57	35.91	18.72	1520328	0
+git	gc_bare	76.58	77.60	17.99	1422604	0
+git	fsck_bare	59.23	58.81	0.36	718636	0

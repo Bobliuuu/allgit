@@ -82,6 +82,8 @@ fn main() {
     let cap_ms: u64 = opt("--retry-cap-ms").map_or(2000, |x| x.parse().unwrap());
     let nobackoff = a.iter().any(|x| x == "--no-backoff");
     let use_ticket = a.iter().any(|x| x == "--ticket");
+    let audit_b = HttpBackend::new(&url, &token).unwrap();
+    let chain_before = if mode == "same" { chain_len(&audit_b, "shared", "main") } else { 0 };
     let bar = Arc::new(Barrier::new(clients + 1));
     let out: Arc<Mutex<(Vec<f64>, u64, u64, Vec<String>, Vec<(String, String, String)>)>> = Arc::default();
     let mut hs = vec![];
@@ -213,6 +215,9 @@ fn main() {
         "\"lat_ms\":[{}],",
         o.0.iter().map(|x| format!("{x:.1}")).collect::<Vec<_>>().join(",")
     );
+    if mode == "same" {
+        s += &format!("\"chain_before\":{chain_before},\"chain_after\":{},", chain_len(&audit_b, "shared", "main"));
+    }
     s += &format!(
         "\"heads\":[{}]}}",
         o.4.iter()
@@ -221,6 +226,27 @@ fn main() {
             .join(",")
     );
     println!("{s}");
+}
+
+/// Number of commits behind `zone`/`branch` in the server's manifest (first parents), 0 when the branch does not exist.
+/// Audit for `--mode same`: after a run, the chain must have grown by exactly the number of acked pushes.
+fn chain_len(b: &HttpBackend, zone: &str, branch: &str) -> usize {
+    // one RemoteSource keeps the pack indexes: fetching each commit with fetch_object re-reads every index of the
+    // store (thousands of packs after a run), which made this walk quadratic
+    let mut src = vcs_remote::packfetch::RemoteSource::new(b, vcs_remote::packfetch::ReadAhead::None);
+    let mut n = 0;
+    let mut cur = load_manifest_head(b, zone, branch);
+    while let Some(id) = cur {
+        n += 1;
+        cur = match src.fetch(&id) {
+            Ok(Some(enc)) => match Object::decode(&enc) {
+                Ok(Object::Commit(c)) => c.parents.first().copied(),
+                _ => break,
+            },
+            _ => break,
+        };
+    }
+    n
 }
 
 fn load_manifest_head(b: &HttpBackend, zone: &str, branch: &str) -> Option<ObjectId> {

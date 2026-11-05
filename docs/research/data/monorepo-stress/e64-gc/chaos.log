@@ -1,0 +1,18 @@
+1793864500.2 STALE gc/lock (holder dead) removed by harness (was: vcs-auto-compact pid 2773889 1793886074496)
+1793864500.2 gc#1 compact finished rc=1 in 0.01s error: remote compaction: another gc holds gc/lock until 1793886074496 (backend clock, unix ms)
+1793864590.2 STALE gc/lock (holder dead) removed by harness (was: vcs-auto-compact pid 2786697 1793886101360)
+1793864590.2 gc#2 sweep finished rc=1 in 0.00s error: remote gc: another gc holds gc/lock until 1793886101360 (backend clock, unix ms)
+1793864680.3 STALE gc/lock (holder dead) removed by harness (was: vcs-auto-compact pid 2890549 1793886196505)
+1793864680.3 gc#3 compact finished rc=1 in 0.00s error: remote compaction: another gc holds gc/lock until 1793886196505 (backend clock, unix ms)
+1793864769.0 AUDIT periodic: bad=0 {"why": "periodic", "t": 1793864768.97409, "bad": 0, "acked_files": 2009, "acked_missing": 0, "acked_wrong_content": 0, "clone_rc": 0, "clone_s": 26.56, "fsck_rc": 0}
+1793864770.3 STALE gc/lock (holder dead) removed by harness (was: vcs-auto-compact pid 2988630 1793886283126)
+1793864770.3 gc#4 sweep finished rc=1 in 0.01s error: remote gc: another gc holds gc/lock until 1793886283126 (backend clock, unix ms)
+1793864860.3 STALE gc/lock (holder dead) removed by harness (was: vcs-auto-compact pid 3087887 1793886371548)
+1793864860.3 gc#5 compact finished rc=1 in 0.00s error: remote compaction: another gc holds gc/lock until 1793886371548 (backend clock, unix ms)
+1793864950.3 STALE gc/lock (holder dead) removed by harness (was: vcs-auto-compact pid 3186611 1793886461442)
+1793864950.3 gc#6 sweep finished rc=1 in 0.01s error: remote gc: another gc holds gc/lock until 1793886461442 (backend clock, unix ms)
+1793865040.3 STALE gc/lock (holder dead) removed by harness (was: vcs-auto-compact pid 3299877 1793886557999)
+1793865040.3 gc#7 compact finished rc=1 in 0.01s error: remote compaction: another gc holds gc/lock until 1793886557999 (backend clock, unix ms)
+1793865099.2 AUDIT periodic: bad=0 {"why": "periodic", "t": 1793865099.1931684, "bad": 0, "acked_files": 4751, "acked_missing": 0, "acked_wrong_content": 0, "clone_rc": 0, "clone_s": 27.13, "fsck_rc": 0}
+1793865130.3 STALE gc/lock (holder dead) removed by harness (was: vcs-auto-compact pid 3395338 1793886642210)
+1793865130.3 gc#8 sweep finished rc=1 in 0.01s error: remote gc: another gc holds gc/lock until 1793886642210 (backend clock, unix ms)

@@ -1,0 +1,92 @@
+span 1407s
+op,n_ok,n_expected_fail,n_error,ops_per_s,p50_ms,p95_ms,p99_ms,max_ms
+add,3481,0,0,2.47,11.1,33.8,65.0,273.7
+add_big,62,0,0,0.04,142.4,240.9,307.1,307.1
+branch_create,350,0,0,0.25,5.7,13.9,19.7,25.8
+branch_delete,350,0,0,0.25,4.9,12.5,17.5,36.4
+branch_switch,700,0,0,0.5,6.2,15.7,26.4,66.8
+clone_fresh,216,0,0,0.15,15732.8,25365.0,25877.6,26455.8
+clone_initial,64,0,0,0.05,13638.5,26509.4,27451.7,27451.7
+commit,3481,0,0,2.47,10.7,27.2,40.6,129.8
+commit_big,62,0,0,0.04,71.8,194.9,235.9,235.9
+fsck_clone,62,0,0,0.04,142.5,343.5,376.2,376.2
+lock,379,259,0,0.45,9.8,1263.7,3548.1,5010.1
+merge,1042,0,734,1.26,1562.1,9825.7,15539.6,36055.5
+publish,800,1206,0,1.43,24.6,1398.2,2203.2,2767.4
+publish_auto,353,174,16,0.39,601.4,19879.9,56615.0,127752.4
+publish_lock,358,108,18,0.34,2731.3,39656.1,87966.0,124000.5
+rd_blame,7,0,2,0.01,2.5,15.0,15.0,15.0
+rd_clone,3,0,0,0.0,242923.6,271255.1,271255.1,271255.1
+rd_clone_fresh,2,0,0,0.0,22645.8,22645.8,22645.8,22645.8
+rd_fsck,2,0,0,0.0,3.4,3.4,3.4,3.4
+rd_gc_remote_dry,1,0,0,0.0,609900.1,609900.1,609900.1,609900.1
+rd_log_path,7,0,0,0.0,2.6,17783.9,17783.9,17783.9
+rd_status,14,0,0,0.01,3.0,1995.2,1995.2,1995.2
+rd_sync,15,0,0,0.01,3.5,790.5,790.5,790.5
+sync,3587,0,0,2.55,437.3,934.7,1258.2,1811.8
+undo,268,0,0,0.19,10.2,33.9,43.3,55.9
+unlock,374,0,5,0.27,9.1,1119.5,3084.6,5209.2
+ERR 651x [merge] error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 28x [merge] fetched missing object <id>
+error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 19x [merge] missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched 
+ERR 18x [merge] issing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched m
+ERR 17x [publish_lock] error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 8x [merge] fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+
+ERR 7x [publish_auto] error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 5x [publish_auto] fetched missing object <id>
+error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 4x [merge] fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+error: zone "zN" has uncommi
+ERR 3x [merge] fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+error: zone "zN" has uncommitted changes (N staged, N un
+ERR 3x [merge] fetched missing object <id>
+fetched missing object <id>
+error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert th
+ERR 3x [unlock] error: art/fN.bin is not locked
+ERR 2x [unlock] error: fN.bin in zone art is locked by uN; only the holder can release it
+ERR 2x [publish_auto] missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched 
+ERR 2x [rd_blame] <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object 
+ERR 2x [publish_auto] issing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched m
+ERR 1x [publish_lock] ng object <id>
+auto-merged remote art/main (attempt N)
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+f
+resources: {"rss_kb": {"first_quartile_mean": 379192.1, "last_quartile_mean": 8387956.0, "max": 8434580.0, "last": 8387956.0}, "cpu_pct": {"first_quartile_mean": 15.1, "last_quartile_mean": 10.6, "max": 653.3, "last": 0.2}, "fds": {"first_quartile_mean": 6.3, "last_quartile_mean": 4.3, "max": 126.0, "last": 4.0}, "threads": {"first_quartile_mean": 6.2, "last_quartile_mean": 4.1, "max": 120.0, "last": 4.0}, "manifest_bytes": {"first_quartile_mean": 7792.0, "last_quartile_mean": 76533.0, "max": 76533.0, "last": 76533.0}, "packs": {"first_quartile_mean": 25.0, "last_quartile_mean": 2224.0, "max": 2224.0, "last": 2224.0}}

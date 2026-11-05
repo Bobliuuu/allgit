@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Generate a large working tree. usage: huge_gen_tree.py <dest> <layout> <n>
+"""Generate a large working tree. usage: huge_gen_tree.py <dest> <layout> <n> [<lo> <hi>]
 layouts: flat1k (dirs of 1000 files), nested (100x100xN/10000 files per leaf), wide (all n in one dir), deep (chain of depth n, 5 files per level)
 Deterministic content (seeded), 200-1500 bytes of pseudo-text per file."""
 import os, sys, random
 dest, layout, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
+lo, hi = (int(sys.argv[4]), int(sys.argv[5])) if len(sys.argv) > 5 else (0, n)   # optional slice [lo, hi) of the nested layout, so several processes can fill one tree
 rnd = random.Random(42)
 words = [''.join(rnd.choice('abcdefghijklmnopqrstuvwxyz') for _ in range(rnd.randint(2, 9))) for _ in range(2000)]
 def body(i):
@@ -18,7 +19,7 @@ if layout == 'flat1k':
         if i % 1000 == 0: os.makedirs(d)
         w(f'{d}/f{i%1000:04d}.txt', i)
 elif layout == 'nested':
-    for i in range(n):
+    for i in range(lo, hi):
         d = f'{dest}/a{i//10000:03d}/b{(i//100)%100:03d}'
         if i % 100 == 0: os.makedirs(d, exist_ok=True)
         w(f'{d}/f{i%100:03d}.txt', i)

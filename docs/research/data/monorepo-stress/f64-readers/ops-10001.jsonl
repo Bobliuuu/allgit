@@ -1,0 +1,13 @@
+{"t": 1793865573.82, "c": 10001, "op": "rd_clone", "dt": 242.9236, "rc": 0, "k": "ok"}
+{"t": 1793865574.041, "c": 10001, "op": "rd_sync", "dt": 0.2206, "rc": 0, "k": "ok"}
+{"t": 1793865578.672, "c": 10001, "op": "rd_sync", "dt": 0.2199, "rc": 0, "k": "ok"}
+{"t": 1793865589.572, "c": 10001, "op": "rd_status", "dt": 1.9952, "rc": 0, "k": "ok"}
+{"t": 1793865591.982, "c": 10001, "op": "rd_status", "dt": 0.003, "rc": 0, "k": "ok"}
+{"t": 1793865592.531, "c": 10001, "op": "rd_status", "dt": 0.003, "rc": 0, "k": "ok"}
+{"t": 1793865599.893, "c": 10001, "op": "rd_status", "dt": 0.0032, "rc": 0, "k": "ok"}
+{"t": 1793865626.488, "c": 10001, "op": "rd_log_path", "dt": 17.7839, "rc": 0, "k": "ok"}
+{"t": 1793865662.613, "c": 10001, "op": "rd_sync", "dt": 0.2158, "rc": 0, "k": "ok"}
+{"t": 1793865668.952, "c": 10001, "op": "rd_status", "dt": 0.0032, "rc": 0, "k": "ok"}
+{"t": 1793865671.595, "c": 10001, "op": "rd_log_path", "dt": 0.1178, "rc": 0, "k": "ok"}
+{"t": 1793866767.962, "c": 10001, "op": "rd_blame", "dt": 1089.5529, "rc": -9, "k": "error", "err": "472c3faf24b5\nfetched missing object 42314de78eab\nfetched missing object 8a7cc06c9941\nfetched missing object b304de26be3a\nfetched missing object 8c8ff8ed6582\nfetched missing object 16f945432d81\nfetched missing object 5c368feb46a1\nfetched missing object e5ba384462a1\nfetched missing object 685937d2e0f7"}
+{"t": 1793866802.0114524, "c": 10001, "op": "done", "dt": 0, "rc": 0, "k": "ok"}
