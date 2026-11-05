@@ -135,7 +135,7 @@ def highload(mode, t):
 
 
 def scoreboard(mode, t):
-    data = [("git (flat 100k)", 62, 57, 12), ("Perforce", 17, 7, 6), ("walgit (remote)", 24, 0, 0),
+    data = [("git (flat 100k)", 64, 59, 8), ("Perforce", 17, 7, 6), ("walgit (remote)", 24, 0, 0),
             ("Jujutsu (flat)", 16, 1, 0), ("Sapling (flat)", 15, 1, 0)]
     fig, ax = plt.subplots(figsize=(9, 4))
     fig.subplots_adjust(left=0.18, right=0.93, top=0.78, bottom=0.22)
