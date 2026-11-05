@@ -9,7 +9,7 @@ Every operation is a CLI invocation timed with a monotonic clock; results go to 
 Every acknowledged publish/push is recorded in DIR/acked-<id>.jsonl and verified at the end
 against a fresh clone. See docs/research/soak-chaos.md for the workload description.
 """
-import argparse, glob, hashlib, json, os, random, shutil, signal, subprocess, sys, time
+import argparse, glob, hashlib, json, os, random, re, shutil, signal, subprocess, sys, time
 
 NZ = int(os.environ.get("SOAK_NZ", 10))   # zones (vcs) / per-zone branches (git)
 HOT = os.environ.get("SOAK_HOT") == "1"    # a quarter of the clients all write zone z0: one hot shared branch
@@ -49,6 +49,7 @@ class Worker:
         self.i = a.id
         self.z = "z0" if (HOT and self.i % 4 == 0) else f"z{self.i % NZ}"
         self.bigseq = 0
+        self.timeout = 300       # per CLI call; readers raise it (a 1M-file clone takes minutes under load)
         self.rng = random.Random(a.seed * 100003 + self.i)
         self.work = os.path.join(a.out, "work", f"c{self.i}")
         self.tmp = os.path.join(a.out, "work", f"t{self.i}")
@@ -73,7 +74,7 @@ class Worker:
         if ck:   # SIGKILL the client mid-operation; an unacked publish stays pending and is retried
             rc, out, err, dt = sh_kill(args, cwd or self.work, self.env, self.rng.uniform(0.02, 0.6))
         else:
-            rc, out, err, dt = sh(args, cwd=cwd or self.work, env=self.env)
+            rc, out, err, dt = sh(args, cwd=cwd or self.work, env=self.env, timeout=self.timeout)
         if rc != 0 and "repository lock held" in err and self.repair_lock(cwd or self.work):
             # known gap (see docs/research/soak-long.md): a SIGKILLed vcs leaves .vcs/lock behind and nothing
             # detects the dead pid. Do what the error message says (delete it) so the client keeps working,
@@ -371,6 +372,7 @@ class Reader(Worker):
         a.id = 10000 + a.rid
         super().__init__(a)
         self.env.update(VCS_TOKEN="tok-admin", VCS_PRINCIPAL="admin")
+        self.timeout = 3600
         self.mode = a.rid % 3
         self.hot = "hot/app.txt"
 
@@ -570,6 +572,7 @@ class Chaos:
         self.rng = random.Random(7)
         self.audits = []
         self.stale_locks = 0
+        self.live_locks = 0
         self.stale_cas = []
         self.audit_lock = __import__("threading").Lock()
 
@@ -641,9 +644,17 @@ class Chaos:
                 lk = os.path.join(self.store, "gc", "lock")
                 try:
                     held = open(lk).read().strip()
-                    os.unlink(lk)
-                    self.stale_locks += 1
-                    self.note(f"STALE gc/lock removed by harness (was: {held})")
+                    # owner is "<role> pid <pid> <expiry>"; only a holder that is gone is stale. A live holder (an
+                    # admin client's auto-compaction, the readers use the admin token) must not lose its lock.
+                    m = re.search(r"pid (\d+)", held)
+                    alive = bool(m) and os.path.exists(f"/proc/{m.group(1)}")
+                    if alive:
+                        self.live_locks += 1
+                        self.note(f"gc/lock held by a LIVE process, left alone (was: {held})")
+                    else:
+                        os.unlink(lk)
+                        self.stale_locks += 1
+                        self.note(f"STALE gc/lock (holder dead) removed by harness (was: {held})")
                 except OSError:
                     pass
             self.note(f"gc#{r} {mode} {'KILLED -9 after %.2fs' % dt if killed else 'finished rc=%d in %.2fs' % (p.returncode, dt)} {tail}")
@@ -707,6 +718,16 @@ class Chaos:
         """kill -9 server (during pushes), kill -9 gc/compact, periodic audit: concurrently."""
         import threading
         ts = [threading.Thread(target=f) for f in (self.kill9, self.gckill, self.auditor, self.casguard)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+
+    def gcmix(self):
+        """Only the gc side of `mixed`: `gc --remote` / `--compact` SIGKILLed at random moments (and run to the end every
+        third round), periodic audits; the server is never killed, so a gc/lock left behind is a gc client's own."""
+        import threading
+        ts = [threading.Thread(target=f) for f in (self.gckill, self.auditor, self.casguard)]
         for t in ts:
             t.start()
         for t in ts:
@@ -956,7 +977,8 @@ def verify_big(a):
     the manifest build_base.sh recorded for the last version."""
     if not a.big_manifest:
         return {}
-    env = dict(os.environ, VCS_TOKEN="tok-admin", VCS_PRINCIPAL="admin", PATH=BIN + ":" + os.environ["PATH"])
+    env = dict(os.environ, VCS_TOKEN="tok-admin", VCS_PRINCIPAL="admin", PATH=BIN + ":" + os.environ["PATH"],
+               VCS_AUTHOR_NAME="v", VCS_AUTHOR_EMAIL="v@x")
     d = os.path.join(a.out, "verify-big")
     shutil.rmtree(d, ignore_errors=True)
     rc, out, err, dt = sh(["vcs", "clone", a.url, d, "--zone", "big"], cwd=a.out, env=env, timeout=7200)
@@ -1029,24 +1051,26 @@ def cmd_run(a):
         chaos = Chaos(a, holder, store)
         cth = threading.Thread(target=chaos.run)
         cth.start()
-    a.deadline = time.time() + a.minutes * 60
+    a.deadline = time.time() + a.writer_delay + a.minutes * 60
     stop = threading.Event()
     th = threading.Thread(target=sampler, args=(a, holder, store if a.backend == "local" or a.kind == "git" else a.s3store, stop, None))
     th.start()
     me = os.path.abspath(__file__)
     ws = []
-    for i in range(a.n):
-        ws.append(subprocess.Popen([sys.executable, me, "worker", "--id", str(i), "--out", a.out, "--kind", a.kind,
-                                    "--url", a.url, "--deadline", str(a.deadline), "--think", str(a.think),
-                                    "--ramp", str(a.ramp), "--seed", str(a.seed), "--backend", a.backend,
-                                    "--clientkill", str(a.clientkill), "--bigmb", str(a.bigmb)] + (["--slice"] if a.slice else []),
-                                   stdout=subprocess.DEVNULL, stderr=open(os.path.join(a.out, f"worker-{i}.err"), "w")))
     for k in range(a.readers):
         ws.append(subprocess.Popen([sys.executable, me, "reader", "--rid", str(k), "--id", "0", "--out", a.out, "--kind", a.kind,
                                     "--url", a.url, "--deadline", str(a.deadline), "--think", "10",
                                     "--ramp", str(a.ramp), "--seed", str(a.seed), "--backend", a.backend,
                                     "--clientkill", "0", "--bigmb", "0"],
                                    stdout=subprocess.DEVNULL, stderr=open(os.path.join(a.out, f"reader-{k}.err"), "w")))
+    if a.writer_delay:   # let the readers finish their first clones before the writers start
+        time.sleep(a.writer_delay)
+    for i in range(a.n):
+        ws.append(subprocess.Popen([sys.executable, me, "worker", "--id", str(i), "--out", a.out, "--kind", a.kind,
+                                    "--url", a.url, "--deadline", str(a.deadline), "--think", str(a.think),
+                                    "--ramp", str(a.ramp), "--seed", str(a.seed), "--backend", a.backend,
+                                    "--clientkill", str(a.clientkill), "--bigmb", str(a.bigmb)] + (["--slice"] if a.slice else []),
+                                   stdout=subprocess.DEVNULL, stderr=open(os.path.join(a.out, f"worker-{i}.err"), "w")))
     for w in ws:
         w.wait()
     stop.set()
@@ -1069,6 +1093,7 @@ def cmd_run(a):
     if chaos:
         res["audits"] = chaos.audits
         res["stale_gc_locks_cleared"] = chaos.stale_locks
+        res["gc_lock_held_by_live_process"] = chaos.live_locks
         res["stale_cas_locks_cleared_age_s"] = chaos.stale_cas
         res["audits_bad"] = sum(x["bad"] for x in chaos.audits)
     json.dump(res, open(os.path.join(a.out, "verify.json"), "w"), indent=1)
@@ -1098,7 +1123,7 @@ def main():
     r.add_argument("--ramp", type=float, default=60)
     r.add_argument("--sample", type=int, default=10)
     r.add_argument("--seed", type=int, default=1)
-    r.add_argument("--chaos", default="", help="kill9|diskfull|netdrop|slowdisk|mixed")
+    r.add_argument("--chaos", default="", help="kill9|diskfull|netdrop|slowdisk|mixed|gcmix")
     r.add_argument("--kill-min", type=float, default=2)
     r.add_argument("--kill-max", type=float, default=8)
     r.add_argument("--gc-first", type=float, default=60)
@@ -1111,6 +1136,7 @@ def main():
     r.add_argument("--base-store", default="", help="monorepo: copy this prebuilt server store (scripts/stress/build_base.sh) instead of seeding")
     r.add_argument("--slice", action="store_true", help="writers clone only their zone and art (monorepo)")
     r.add_argument("--bigmb", type=int, default=0, help="every 8th writer also commits/pushes a large binary of this many MiB")
+    r.add_argument("--writer-delay", type=float, default=0, help="start the writers this many seconds after the readers")
     r.add_argument("--readers", type=int, default=0, help="read-heavy clients (clone --auto, root zone, slices; log -- path, blame, fsck, gc dry runs)")
     r.add_argument("--full-verify", action="store_true", help="also verify a full clone (root + big), the store directory clone and the prebuilt big files")
     r.add_argument("--big-manifest", default="", help="JSON from bigfiles.py hash: expected sha256 of the prebuilt big files")

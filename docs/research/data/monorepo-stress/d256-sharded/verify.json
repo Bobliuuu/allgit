@@ -1,0 +1,105 @@
+{
+ "clone_rc": 0,
+ "clone_s": 15.72,
+ "big_acked_files": 7,
+ "big_bad": 0,
+ "big_newer_than_ack": 0,
+ "acked_files": 7223,
+ "acked_missing": 0,
+ "acked_wrong_content": 0,
+ "last_wins_files": 88,
+ "last_wins_mismatch": 0,
+ "last_wins_newer_than_ack": 0,
+ "locks_at_end": {
+  "rc": 0,
+  "out": "no locks"
+ },
+ "fresh_clone_fsck": {
+  "rc": 0,
+  "out": "checked 23341 objects\n3743 object(s) not cached locally; they are on the remote and will be refetched on demand\nok",
+  "err": "",
+  "s": 0.8
+ },
+ "server_alive_at_end": true,
+ "full": {
+  "clone_rc": 0,
+  "clone_s": 316.29,
+  "big_acked_files": 7,
+  "big_bad": 0,
+  "big_newer_than_ack": 0,
+  "acked_files": 7223,
+  "acked_missing": 0,
+  "acked_wrong_content": 0,
+  "last_wins_files": 88,
+  "last_wins_mismatch": 0,
+  "last_wins_newer_than_ack": 0,
+  "locks_at_end": {
+   "rc": 0,
+   "out": "no locks"
+  },
+  "fresh_clone_fsck": {
+   "rc": 0,
+   "out": "checked 2190663 objects\n389242 object(s) not cached locally; they are on the remote and will be refetched on demand\nok",
+   "err": "",
+   "s": 351.1
+  },
+  "store_dircopy_clone_fsck": {
+   "clone_rc": 0,
+   "fsck_rc": 0,
+   "out": "checked 2190663 objects\n389242 object(s) not cached locally; they are on the remote and will be refetched on demand\nok",
+   "err": ""
+  },
+  "gc_remote_dry_run": {
+   "rc": 0,
+   "out": "2588786 remote object(s) in 1517 pack(s): 2585729 reachable; 214 unreachable unit(s) younger than the grace period; 0 old and unreachable at first look\n0 would be deleted (upper bound; the real run re-checks after writing tombstones)\ndry run: nothing was deleted\n19 pack(s) hold some unreachable objects but were kept whole (too young, recently used, or over 512 MiB)",
+   "err": ""
+  }
+ },
+ "big_zone": {
+  "clone_rc": 1,
+  "clone_s": 0.0,
+  "err": "error: user.name and user.email are not set\n\nTell vcs who you are:\n  vcs config set --user user.name \"Your Name\"\n  vcs config set --user user.email you@example.com\n(drop --user to set it for this repository only)\n"
+ },
+ "final_manifest_bytes": 6,
+ "final_packs": 1517,
+ "store_bytes": 71434802253,
+ "audits": [
+  {
+   "why": "periodic",
+   "t": 1793857490.4808161,
+   "bad": 0,
+   "acked_files": 1014,
+   "acked_missing": 0,
+   "acked_wrong_content": 0,
+   "clone_rc": 0,
+   "clone_s": 28.33,
+   "fsck_rc": 0
+  },
+  {
+   "why": "periodic",
+   "t": 1793857941.3109787,
+   "bad": 0,
+   "acked_files": 4653,
+   "acked_missing": 0,
+   "acked_wrong_content": 0,
+   "clone_rc": 0,
+   "clone_s": 28.04,
+   "fsck_rc": 0
+  },
+  {
+   "why": "periodic",
+   "t": 1793858388.7808187,
+   "bad": 0,
+   "acked_files": 6701,
+   "acked_missing": 0,
+   "acked_wrong_content": 0,
+   "clone_rc": 0,
+   "clone_s": 24.53,
+   "fsck_rc": 0
+  }
+ ],
+ "stale_gc_locks_cleared": 6,
+ "gc_lock_held_by_live_process": 0,
+ "stale_cas_locks_cleared_age_s": [],
+ "audits_bad": 0
+}

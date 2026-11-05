@@ -1,0 +1,27 @@
+{
+ "clone_rc": 0,
+ "clone_s": 15.62,
+ "big_acked_files": 6,
+ "big_bad": 0,
+ "big_newer_than_ack": 0,
+ "acked_files": 5791,
+ "acked_missing": 0,
+ "acked_wrong_content": 0,
+ "last_wins_files": 61,
+ "last_wins_mismatch": 0,
+ "last_wins_newer_than_ack": 0,
+ "locks_at_end": {
+  "rc": 0,
+  "out": "no locks"
+ },
+ "fresh_clone_fsck": {
+  "rc": 0,
+  "out": "checked 20838 objects\n3409 object(s) not cached locally; they are on the remote and will be refetched on demand\nok",
+  "err": "",
+  "s": 0.9
+ },
+ "server_alive_at_end": true,
+ "final_manifest_bytes": 86965,
+ "final_packs": 1969,
+ "store_bytes": 70982239628
+}
