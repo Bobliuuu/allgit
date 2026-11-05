@@ -165,8 +165,44 @@ struct View<'a> {
     /// object -> first pack holding it
     loc: HashMap<ObjectId, String>,
     /// recently decoded v3 blocks, by (pack stem, block offset)
-    #[allow(clippy::type_complexity)]
-    blocks: std::cell::RefCell<Vec<((String, u64), std::rc::Rc<vcs_store::pack::Block>)>>,
+    blocks: std::cell::RefCell<BlockLru>,
+}
+
+/// Decoded blocks the reachability walk keeps. A walk visits commits, then trees, in graph order, which jumps
+/// between the blocks of a compacted (v3) pack; with a handful of blocks every object read decompressed a whole
+/// block again (a 1.4M-object store took more than 12 minutes to sweep where the same store before compaction
+/// took 2.6). Bounded by bytes, least recently used out, never fewer than `MIN_BLOCKS`.
+const BLOCK_CACHE_BYTES: usize = 1 << 30;
+const MIN_BLOCKS: usize = 8;
+
+#[derive(Default)]
+struct BlockLru {
+    map: HashMap<(String, u64), (std::rc::Rc<vcs_store::pack::Block>, u64)>,
+    tick: u64,
+    bytes: usize,
+}
+
+impl BlockLru {
+    fn get(&mut self, key: &(String, u64)) -> Option<std::rc::Rc<vcs_store::pack::Block>> {
+        self.tick += 1;
+        let t = self.tick;
+        self.map.get_mut(key).map(|(b, used)| {
+            *used = t;
+            b.clone()
+        })
+    }
+    fn put(&mut self, key: (String, u64), b: std::rc::Rc<vcs_store::pack::Block>) {
+        self.tick += 1;
+        self.bytes += b.byte_len();
+        self.map.insert(key, (b, self.tick));
+        while self.bytes > BLOCK_CACHE_BYTES && self.map.len() > MIN_BLOCKS {
+            let oldest = self.map.iter().min_by_key(|(_, (_, used))| *used).map(|(k, _)| k.clone());
+            let Some(k) = oldest else { break };
+            if let Some((b, _)) = self.map.remove(&k) {
+                self.bytes -= b.byte_len();
+            }
+        }
+    }
 }
 
 fn parse_key(k: &str) -> Option<ObjectId> {
@@ -219,26 +255,20 @@ impl<'a> View<'a> {
                 .as_ref()
                 .ok_or_else(|| GcError::Damaged(format!("{id}: not in {stem}")))?;
             let (off, len) = idx.find(id).ok_or_else(|| GcError::Damaged(format!("{id}: not in {stem}")))?;
+            // a v3 block holds many objects; a decoded one that is still cached needs no fetch at all
+            let cached = if idx.version() >= 3 { self.blocks.borrow_mut().get(&(stem.clone(), off)) } else { None };
+            if let Some(blk) = cached {
+                blk.get(id)
+                    .ok_or_else(|| GcError::Damaged(format!("{id}: not in its block of {stem}")))?
+                    .to_vec()
+            } else {
             match self.b.get_range(&format!("{stem}.pack"), off, len as u64)? {
                 Some(d) if d.len() == len as usize => {
                     if idx.version() >= 3 {
-                        // a block holds many objects; keep a few decoded so a walk does not refetch it
-                        let key = (stem.clone(), off);
-                        let hit = self.blocks.borrow().iter().find(|(k, _)| *k == key).map(|(_, b)| b.clone());
-                        let blk = match hit {
-                            Some(b) => b,
-                            None => {
-                                let b = std::rc::Rc::new(
-                                    vcs_store::pack::decode_block(&d).map_err(|e| GcError::Damaged(format!("{id}: pack {stem}: {e}")))?,
-                                );
-                                let mut c = self.blocks.borrow_mut();
-                                if c.len() >= 8 {
-                                    c.remove(0);
-                                }
-                                c.push((key, b.clone()));
-                                b
-                            }
-                        };
+                        let blk = std::rc::Rc::new(
+                            vcs_store::pack::decode_block(&d).map_err(|e| GcError::Damaged(format!("{id}: pack {stem}: {e}")))?,
+                        );
+                        self.blocks.borrow_mut().put((stem.clone(), off), blk.clone());
                         blk.get(id)
                             .ok_or_else(|| GcError::Damaged(format!("{id}: not in its block of {stem}")))?
                             .to_vec()
@@ -249,6 +279,7 @@ impl<'a> View<'a> {
                     }
                 }
                 _ => return Err(GcError::Damaged(format!("{id}: pack {stem} is truncated or missing"))),
+            }
             }
         } else {
             match self.b.get(&object_key(id))? {
