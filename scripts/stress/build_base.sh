@@ -4,6 +4,7 @@
 # Layout under WORKDIR: stream (fast-import stream), seed/ (the vcs repo, working tree materialised),
 # base-store/ (server store holding everything, the starting point of every soak run), gitbase.git (same history in git),
 # big-v{1,2,3}.json (sha256 of every big file per version), build.log (phase timings).
+# ONLY_PUBLISH=1 re-runs just the publish + git steps on an existing seed/ (the publish is idempotent).
 # Needs VCS_BIN (dir with vcs, vcs-server) on PATH-able form and python3.
 set -euo pipefail
 W=${1:?workdir}; D=${DIRS:-100}; SD=${SUBDIRS:-100}; F=${FILES:-100}; C=${COMMITS:-200000}; NBIG=${NBIG:-20}; NZ=${NZ:-32}
@@ -11,6 +12,7 @@ HERE=$(cd "$(dirname "$0")" && pwd); BIN=${VCS_BIN:?VCS_BIN}; export PATH=$BIN:$
 export VCS_AUTHOR_NAME=seed VCS_AUTHOR_EMAIL=seed@stress.test VCS_TOKEN=tok-admin VCS_PRINCIPAL=admin
 mkdir -p "$W"; cd "$W"; L=$W/build.log
 t() { local n=$1; shift; local s=$(date +%s.%N); /usr/bin/time -f "$n maxrss_kb=%M user=%U sys=%S" -a -o "$L" "$@"; echo "$n wall=$(echo "$(date +%s.%N) - $s" | bc)" >> "$L"; }
+if [ -z "${ONLY_PUBLISH:-}" ]; then
 : > "$L"
 t gen_stream bash -c "python3 $HERE/../histgen.py --commits $C --dirs $D --subdirs $SD --files $F --lines 6 > stream"
 ls -l stream >> "$L"
@@ -32,12 +34,13 @@ for v in 2 3; do
   t add_big_v$v vcs add big
   t commit_big_v$v vcs commit -m "big files v$v"
 done
+fi
 cd "$W"; echo "admin admin * $(vcs-server hash-token tok-admin)" > tokens
 rm -rf base-store; vcs-server --root base-store --tokens tokens --listen 127.0.0.1:8491 --max-connections 4096 >server-base.log 2>&1 &
 SP=$!; until curl -sf http://127.0.0.1:8491/healthz >/dev/null; do sleep 0.2; done
 cd seed; vcs remote set http://127.0.0.1:8491 >/dev/null
 t publish_all vcs publish
-kill $SP; wait $SP 2>/dev/null || true
+kill $SP 2>/dev/null || true; wait $SP 2>/dev/null || true
 du -sk "$W/base-store" | awk '{print "base_store_kb="$1}' >> "$L"
 cd "$W"; rm -rf gitbase.git; git init -q --bare gitbase.git
 t git_fast_import bash -c "git -C gitbase.git fast-import --quiet < stream"
