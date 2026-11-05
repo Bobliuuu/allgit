@@ -405,11 +405,18 @@ fn big_transaction_is_split_into_packs_below_the_limit() {
     let root = s.put(&Object::Tree(Tree::new(es).unwrap())).unwrap();
     let c = commit(&s, "z", vec![], root, 1);
     let mem = MemBackend::new();
-    Publisher::new(&mem, &s, tx("z", None, c)).with_max_pack_bytes(16 << 10).run().unwrap();
+    Publisher::new(&mem, &s, tx("z", None, c))
+        .with_max_pack_bytes(16 << 10)
+        .run()
+        .unwrap();
     let keys = mem.list("packs/").unwrap();
     let packs: Vec<&String> = keys.iter().filter(|k| k.ends_with(".pack")).collect();
     let idxs = keys.iter().filter(|k| k.ends_with(".idx")).count();
-    assert!(packs.len() >= 4, "~200 KiB at 16 KiB per pack must give several packs, got {}", packs.len());
+    assert!(
+        packs.len() >= 4,
+        "~200 KiB at 16 KiB per pack must give several packs, got {}",
+        packs.len()
+    );
     assert_eq!(packs.len(), idxs, "every pack has its index");
     for k in &packs {
         let len = mem.get(k).unwrap().unwrap().data.len();
