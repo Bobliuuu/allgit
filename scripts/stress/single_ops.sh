@@ -37,19 +37,4 @@ mkdir -p "$O/gc"; ( cd "$O/gc"; vcs init . >/dev/null; vcs remote set "$O/store"
   m vcs gc_remote_compact vcs gc --remote --compact --yes
   m vcs gc_remote_sweep vcs gc --remote --yes --grace-secs 14400 --hold-secs 600 )
 rm -rf "$O/store"
-# ---- git (same history)
-rm -rf "$O/gclone"
-m git clone_full git clone -q --no-hardlinks "$B/gitbase.git" "$O/gclone"
-( cd "$O/gclone"
-  m git status_first git status --porcelain
-  m git status_second git status --porcelain
-  m git log_path git log -n 50 --oneline -- hot/app.txt
-  m git log_100 git log -n 100 --oneline
-  m git blame git blame hot/app.txt
-  m git fsck git fsck --no-dangling
-  m git gc git gc -q )
-cp -r "$B/gitbase.git" "$O/gitbase-gc.git"
-m git gc_bare git -C "$O/gitbase-gc.git" gc -q
-m git fsck_bare git -C "$B/gitbase.git" fsck --no-dangling
-rm -rf "$O/gitbase-gc.git" "$O/gclone" "$O/vc" "$O/vauto" "$O/vslice" "$O/gc"
-cat "$R"
+"$(dirname "$0")/git_ops.sh" "$B" "$O"

@@ -141,7 +141,7 @@ class Worker:
         return True
 
     # ---- ops
-    def write_files(self, nfiles):
+    def write_files(self, nfiles, edit_log=True):
         """New unique files in my zone dir + modify an existing one. Returns [(rel, sha)]."""
         d = os.path.join(self.work, self.z, f"u{self.i}")
         os.makedirs(d, exist_ok=True)
@@ -154,14 +154,16 @@ class Worker:
             with open(os.path.join(self.work, rel), "wb") as f:
                 f.write(body)
             files.append((rel, sha(body)))
-        # edit an existing file of mine (a log that grows)
-        rel = f"{self.z}/u{self.i}/log.txt"
-        with open(os.path.join(self.work, rel), "ab") as f:
-            f.write(f"edit {self.seq} {time.time()}\n".encode())
+        # edit an existing file of mine (a log that grows); not before an undo, which would leave the edit unstaged
+        # and make the next `vcs merge` refuse a dirty zone (a harness artefact seen in the first monorepo run)
+        if edit_log:
+            rel = f"{self.z}/u{self.i}/log.txt"
+            with open(os.path.join(self.work, rel), "ab") as f:
+                f.write(f"edit {self.seq} {time.time()}\n".encode())
         return files
 
     def op_commit(self, undo=False):
-        files = self.write_files(self.rng.randint(1, 3))
+        files = self.write_files(self.rng.randint(1, 3), edit_log=not undo)
         rc, _, _ = self.run("add", ["git", "add", "-A"] if self.bin == "git" else ["vcs", "add", self.z])
         if rc != 0:
             return
@@ -291,7 +293,10 @@ class Worker:
 
     def op_clone_fresh(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
-        rc, _, _ = self.run("clone_fresh", [self.bin, "clone", self.a.url, self.tmp], cwd=self.a.out)
+        cmd = [self.bin, "clone", self.a.url, self.tmp]
+        if self.a.slice and self.bin == "vcs":
+            cmd += ["--zone", self.z, "--zone", "art"]
+        rc, _, _ = self.run("clone_fresh", cmd, cwd=self.a.out)
         if rc == 0 and self.bin == "vcs" and self.rng.random() < 0.3:
             self.run("fsck_clone", ["vcs", "fsck"], cwd=self.tmp)
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -304,10 +309,11 @@ class Worker:
             self.run("branch_switch", ["git", "switch", "-q", f"w{self.i}"])
             self.run("branch_delete", ["git", "branch", "-q", "-D", b])
         else:
-            self.run("branch_create", ["vcs", "branch", b])
-            self.run("branch_switch", ["vcs", "switch", b])
-            self.run("branch_switch", ["vcs", "switch", "main"])
-            self.run("branch_delete", ["vcs", "branch", "-d", b, "--force"])
+            zf = ["--zone", self.z] if self.a.slice else []   # a sliced clone has no root zone
+            self.run("branch_create", ["vcs", "branch", b, *zf])
+            self.run("branch_switch", ["vcs", "switch", b, *zf])
+            self.run("branch_switch", ["vcs", "switch", "main", *zf])
+            self.run("branch_delete", ["vcs", "branch", "-d", b, "--force", *zf])
 
     def loop(self):
         a = self.a
@@ -353,6 +359,9 @@ class Worker:
                                    "unpublished": len(self.pending)}) + "\n")
 
 
+NOPATH = ("no commits yet", "does not exist", "not subscribed")   # `--auto` may not take the zone a path is in
+
+
 class Reader(Worker):
     """A read-heavy client that runs next to the writers: fetch, status, `log -- path`, blame, fsck, local gc, fresh
     clones (`--auto`, root zone, one-zone slice) and a remote-gc dry run. Mode k % 3: 0 = `--auto` clone,
@@ -382,11 +391,11 @@ class Reader(Worker):
             elif op == "status":
                 self.run("rd_status", ["vcs", "status"])
             elif op == "log_path":
-                p = self.hot if self.mode == 1 else "README"
-                self.run("rd_log_path", ["vcs", "log", "-n", "50", "--oneline", "--", p])
+                p = self.hot if self.mode != 2 else f"z{a.rid % NZ}/README"
+                self.run("rd_log_path", ["vcs", "log", "-n", "50", "--oneline", "--", p], expect=NOPATH)
             elif op == "blame":
-                p = self.hot if self.mode == 1 else "README"
-                self.run("rd_blame", ["vcs", "blame", p])
+                p = self.hot if self.mode != 2 else f"z{a.rid % NZ}/README"
+                self.run("rd_blame", ["vcs", "blame", p], expect=NOPATH)
             elif op == "fsck":
                 self.run("rd_fsck", ["vcs", "fsck"])
             elif op == "gc_local":
