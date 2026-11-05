@@ -152,8 +152,10 @@ pub enum Step {
 enum State {
     Collect,
     Upload(usize),
-    PutPack,
-    PutIdx,
+    /// Upload pack `i` of `built`.
+    PutPack(usize),
+    /// Upload the index of pack `i` (the last one also carries the transaction record).
+    PutIdx(usize),
     /// GC handshake over `Publisher::guard`: phase 0 touch, 1 tombstone check, 2 existence check.
     Guard {
         phase: u8,
@@ -175,8 +177,10 @@ pub struct Publisher<'a> {
     txid: ObjectId,
     state: State,
     to_upload: Vec<ObjectId>,
-    /// Packed mode: the bundle of this transaction's new objects, built once in Collect.
-    built: Option<BuiltPack>,
+    /// Packed mode: the bundles of this transaction's new objects, built once in Collect. Several packs when the
+    /// objects exceed `max_pack_bytes`, so no single request body is larger than a server accepts.
+    built: Vec<BuiltPack>,
+    max_pack_bytes: usize,
     packed: bool,
     /// Probe the remote for legacy loose copies of new commits (see [`Publisher::with_loose_probe`]).
     loose_probe: bool,
@@ -217,10 +221,29 @@ pub struct Publisher<'a> {
 
 /// Blobs at least this large are uploaded as their own objects instead of being copied into the transaction's pack.
 const BIG_UPLOAD: usize = 1 << 20;
+/// A transaction's new objects are bundled into packs of about this many (uncompressed) bytes at most. `vcs-server`
+/// refuses request bodies over 1 GiB by default, and a 4 GiB file is 4 GiB of chunks.
+pub const MAX_PACK_BYTES: usize = 256 << 20;
 /// Objects uploaded concurrently per [`State::Upload`] step.
 const UPLOAD_BATCH: usize = 16;
 /// Longest randomized wait after a lost manifest CAS; the window doubles per loss up to this.
 pub const CAS_BACKOFF_CAP_MS: u64 = 250;
+
+/// Cut `objects` (in order) into groups of at most `max` encoded bytes each (an object bigger than `max` gets a
+/// group of its own). One group when everything fits.
+fn split_packs(objects: Vec<(ObjectId, Vec<u8>)>, max: usize) -> Vec<Vec<(ObjectId, Vec<u8>)>> {
+    let mut groups = vec![Vec::new()];
+    let mut bytes = 0usize;
+    for o in objects {
+        if bytes > 0 && bytes + o.1.len() > max {
+            groups.push(Vec::new());
+            bytes = 0;
+        }
+        bytes += o.1.len();
+        groups.last_mut().expect("never empty").push(o);
+    }
+    groups
+}
 
 /// Dependencies of an object (what must exist remotely before it may).
 pub(crate) fn deps(o: &Object) -> Vec<ObjectId> {
@@ -406,7 +429,8 @@ impl<'a> Publisher<'a> {
             txid,
             state: State::Collect,
             to_upload: vec![],
-            built: None,
+            built: Vec::new(),
+            max_pack_bytes: MAX_PACK_BYTES,
             packed: true,
             loose_probe: false,
             retries: 0,
@@ -488,6 +512,12 @@ impl<'a> Publisher<'a> {
     /// need a publisher that adopts a loose orphan.
     pub fn with_loose_probe(mut self) -> Self {
         self.loose_probe = true;
+        self
+    }
+    /// Largest pack (encoded bytes) the publish builds; bigger transactions are split into several packs, all
+    /// uploaded before the manifest CAS. Default [`MAX_PACK_BYTES`].
+    pub fn with_max_pack_bytes(mut self, n: usize) -> Self {
+        self.max_pack_bytes = n.max(1);
         self
     }
     /// The authenticated identity lock decisions are made for (NOT `Transaction.author`).
@@ -770,7 +800,7 @@ impl<'a> Publisher<'a> {
     fn guard_then(&mut self, keys: Vec<(String, String)>, then: Then) -> State {
         if keys.is_empty() || !self.backend.supports_gc() {
             return match then {
-                Then::PutPack => State::PutPack,
+                Then::PutPack => State::PutPack(0),
                 Then::Upload => State::Upload(0),
                 Then::PutTx => State::PutTx,
                 Then::Load => State::Load,
@@ -793,7 +823,7 @@ impl<'a> Publisher<'a> {
             };
             if phase > 2 || (phase == 2 && (skip || i >= self.guard.len())) {
                 self.state = match self.guard_then {
-                    Then::PutPack => State::PutPack,
+                    Then::PutPack => State::PutPack(0),
                     Then::Upload => State::Upload(0),
                     Then::PutTx => State::PutTx,
                     Then::Load => State::Load,
@@ -869,9 +899,9 @@ impl<'a> Publisher<'a> {
                     Ok((staged, loose_pruned)) => {
                         let (bigs, staged): (Vec<_>, Vec<_>) = staged.into_iter().partition(|s| s.1.is_empty());
                         self.to_upload = bigs.iter().map(|s| s.0).collect();
-                        self.built = None;
+                        self.built.clear();
                         let then = if staged.len() >= 2 {
-                            self.built = Some(build_pack(staged));
+                            self.built = split_packs(staged, self.max_pack_bytes).into_iter().map(build_pack).collect();
                             if self.to_upload.is_empty() {
                                 Then::PutPack
                             } else {
@@ -970,8 +1000,8 @@ impl<'a> Publisher<'a> {
                 Ok(Step::Continue)
             }
             State::Guard { phase, i } => self.guard_step(phase, i),
-            State::PutPack => {
-                let b = self.built.as_ref().expect("built in Collect");
+            State::PutPack(pi) => {
+                let b = &self.built[pi];
                 let (name, pack) = (b.name.clone(), &b.pack);
                 let key = format!("{}{name}.pack", packfetch::PACK_PREFIX);
                 match self.backend.put_if_absent(&key, pack) {
@@ -979,22 +1009,23 @@ impl<'a> Publisher<'a> {
                         if !created {
                             self.dedup.push((key, pack_tomb_key(&name)));
                         }
-                        self.state = State::PutIdx;
+                        self.state = State::PutIdx(pi);
                     }
                     Err(e) => {
-                        self.state = State::PutPack;
+                        self.state = State::PutPack(pi);
                         return self.retry(e);
                     }
                 }
                 Ok(Step::Continue)
             }
-            State::PutIdx => {
+            State::PutIdx(pi) => {
                 // The index is the commit point of the pack, so it follows the pack. The transaction
                 // record does not depend on it for anything the CAS needs: a record whose objects are
                 // not visible yet is as harmless as the one a lost CAS leaves behind (nothing reads
                 // `tx/` except through the manifest's applied window, and the GC never deletes it).
                 // Both are create-only and idempotent, so they go up together: one round trip fewer.
-                let b = self.built.as_ref().expect("built in Collect");
+                let last = pi + 1 == self.built.len();
+                let b = &self.built[pi];
                 let (name, idx) = (b.name.clone(), &b.idx);
                 let key = format!("{}{name}.idx", packfetch::PACK_PREFIX);
                 let (tkey, tbytes) = (tx_key(&self.txid), Object::Transaction(self.tx.clone()).encode());
@@ -1003,7 +1034,12 @@ impl<'a> Publisher<'a> {
                     if k == 0 {
                         backend.put_if_absent(&key, idx)
                     } else {
-                        backend.put_if_absent(&tkey, &tbytes)
+                        // the transaction record goes with the last index; earlier packs are inert until the CAS
+                        if last {
+                            backend.put_if_absent(&tkey, &tbytes)
+                        } else {
+                            Ok(true)
+                        }
                     }
                 });
                 let tx_res = res.pop().expect("two results");
@@ -1013,11 +1049,15 @@ impl<'a> Publisher<'a> {
                         if !created {
                             self.dedup.push((key, pack_tomb_key(&name)));
                         }
-                        let keys = std::mem::take(&mut self.dedup);
-                        self.state = self.guard_then(keys, Then::Load);
+                        if last {
+                            let keys = std::mem::take(&mut self.dedup);
+                            self.state = self.guard_then(keys, Then::Load);
+                        } else {
+                            self.state = State::PutPack(pi + 1);
+                        }
                     }
                     (Err(e), _) | (_, Err(e)) => {
-                        self.state = State::PutIdx;
+                        self.state = State::PutIdx(pi);
                         return self.retry(e);
                     }
                 }
@@ -1026,7 +1066,7 @@ impl<'a> Publisher<'a> {
             State::Upload(i) => {
                 if i >= self.to_upload.len() {
                     self.distrust.extend(self.to_upload.iter().copied());
-                    self.state = if self.built.is_some() { State::PutPack } else { State::PutTx };
+                    self.state = if self.built.is_empty() { State::PutTx } else { State::PutPack(0) };
                     return Ok(Step::Continue);
                 }
                 // a batch at a time: big objects go up in parallel; ones the remote already has (an
