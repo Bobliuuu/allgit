@@ -189,3 +189,35 @@ fn v3_input_and_v2_input_merge_into_either_format() {
     let ids: Vec<ObjectId> = all.iter().map(|o| o.0).collect();
     assert_eq!(fetch_many(&b, &ids).unwrap().len(), ids.len());
 }
+
+/// The GC walk reads commits and trees in graph order, which jumps between the blocks of a compacted pack. Every
+/// object read used to fetch and decompress its whole block again once more than 8 blocks were in play (a 1.4M-object
+/// store took over 12 minutes to sweep where the same store before compaction took 2.6). The decoded blocks are now
+/// kept up to a byte budget, so each block is fetched once: the bytes downloaded stay near the size of the pack.
+#[test]
+fn gc_walk_fetches_each_v3_block_once() {
+    let (b, _store, _commits, all) = build(150);
+    let mut o = opts();
+    o.block_bytes = 2048; // many small blocks, far more than the 8 the old cache held
+    compact(&b, &o).unwrap();
+    let packs = load_packs(&b).unwrap();
+    assert_eq!(packs.len(), 1);
+    let pack_len = packs[0].0.len;
+    b.advance_ms(30 * 24 * 3600 * 1000);
+    let cb = CountingBackend::new(&b);
+    let r = remote_gc(
+        &cb,
+        &RemoteGcOptions {
+            dry_run: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(r.reachable, all.len());
+    let st = cb.stats();
+    assert!(
+        st.bytes_down < 2 * pack_len,
+        "gc downloaded {} bytes for a {pack_len}-byte pack: blocks are being refetched",
+        st.bytes_down
+    );
+}
