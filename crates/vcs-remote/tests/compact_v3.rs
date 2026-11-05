@@ -189,3 +189,13 @@ fn v3_input_and_v2_input_merge_into_either_format() {
     let ids: Vec<ObjectId> = all.iter().map(|o| o.0).collect();
     assert_eq!(fetch_many(&b, &ids).unwrap().len(), ids.len());
 }
+
+/// A compaction that finishes while the backend is briefly unavailable (a restarted server) still releases `gc/lock`;
+/// it used to give up after one failed `delete` and leave the lock for its whole 6 h lease.
+#[test]
+fn compaction_releases_gc_lock_after_a_transient_delete_failure() {
+    let (b, _store, _commits, _all) = build(6);
+    b.fail_next_delete("gc/lock");
+    compact(&b, &opts()).unwrap();
+    assert!(b.get("gc/lock").unwrap().is_none(), "gc/lock was left behind");
+}
