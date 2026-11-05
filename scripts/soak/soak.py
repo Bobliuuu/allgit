@@ -11,7 +11,8 @@ against a fresh clone. See docs/research/soak-chaos.md for the workload descript
 """
 import argparse, glob, hashlib, json, os, random, shutil, signal, subprocess, sys, time
 
-NZ = 10          # zones (vcs) / per-zone branches (git)
+NZ = int(os.environ.get("SOAK_NZ", 10))   # zones (vcs) / per-zone branches (git)
+HOT = os.environ.get("SOAK_HOT") == "1"    # a quarter of the clients all write zone z0: one hot shared branch
 NART = 16        # shared lockable binaries
 BIN = os.environ.get("VCS_BIN") or os.path.expanduser("~/rt/soakchaos/target/release")
 
@@ -46,7 +47,8 @@ class Worker:
     def __init__(self, a):
         self.a = a
         self.i = a.id
-        self.z = f"z{self.i % NZ}"
+        self.z = "z0" if (HOT and self.i % 4 == 0) else f"z{self.i % NZ}"
+        self.bigseq = 0
         self.rng = random.Random(a.seed * 100003 + self.i)
         self.work = os.path.join(a.out, "work", f"c{self.i}")
         self.tmp = os.path.join(a.out, "work", f"t{self.i}")
@@ -124,7 +126,10 @@ class Worker:
         shutil.rmtree(self.work, ignore_errors=True)
         os.makedirs(os.path.dirname(self.work), exist_ok=True)
         for attempt in range(5):
-            rc, _, _ = self.run("clone_initial", [self.bin, "clone", self.a.url, self.work], cwd=self.a.out)
+            cmd = [self.bin, "clone", self.a.url, self.work]
+            if self.a.slice and self.bin == "vcs":   # a monorepo: take this writer's zone and the lockable art zone only
+                cmd += ["--zone", self.z, "--zone", "art"]
+            rc, _, _ = self.run("clone_initial", cmd, cwd=self.a.out)
             if rc == 0:
                 break
             shutil.rmtree(self.work, ignore_errors=True)
@@ -178,6 +183,40 @@ class Worker:
         else:
             self.pending.extend(files)
 
+    def op_bigfile(self):
+        """Create / change a large binary in my zone (chunked path): rewrite 2 MiB, append 4 MiB, commit; the publish
+        that follows acks the sha256 of the whole file. All versions committed are logged so the audit can tell a
+        newer-than-ack version (publish landed, reply lost to a kill) from a lost write."""
+        rel = f"{self.z}/u{self.i}/blob.bin"
+        path = os.path.join(self.work, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        mb = self.a.bigmb
+        if not os.path.exists(path):
+            with open(path, "wb") as f:
+                for _ in range(mb // 16 + 1):
+                    f.write(os.urandom(16 << 20))
+        else:
+            sz = os.path.getsize(path)
+            with open(path, "r+b") as f:
+                for _ in range(2):
+                    f.seek(self.rng.randrange(max(1, sz - (1 << 20)))); f.write(os.urandom(1 << 20))
+                f.seek(0, 2); f.write(os.urandom(4 << 20))
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for blk in iter(lambda: f.read(16 << 20), b""):
+                h.update(blk)
+        rc, _, _ = self.run("add_big", ["vcs", "add", self.z])
+        if rc != 0:
+            return
+        rc, _, _ = self.run("commit_big", ["vcs", "commit", "-m", f"big {self.bigseq} by u{self.i}"])
+        if rc != 0:
+            return
+        self.bigseq += 1
+        with open(os.path.join(self.a.out, f"bigver-{self.i}.jsonl"), "a") as f:
+            f.write(json.dumps({"file": rel, "sha": h.hexdigest(), "seq": self.bigseq}) + "\n")
+        self.pending.append((rel, h.hexdigest(), self.bigseq))
+        self.op_publish()
+
     def op_sync(self):
         if self.bin == "git":
             rc, out, err = self.run("sync", ["git", "fetch", "-q", "origin"])
@@ -190,8 +229,12 @@ class Worker:
 
     def ack(self, op_ok):
         if op_ok:
-            for rel, h in self.pending:
-                self.ackf.write(json.dumps({"c": self.i, "file": rel, "sha": h, "t": time.time()}) + "\n")
+            for item in self.pending:
+                rel, h = item[:2]
+                rec = {"c": self.i, "file": rel, "sha": h, "t": time.time()}
+                if len(item) > 2:       # a big file: only the newest acked version has to be in the final tree
+                    rec.update(latest=True, seq=item[2])
+                self.ackf.write(json.dumps(rec) + "\n")
             self.pending = []
 
     def op_publish(self):
@@ -275,6 +318,8 @@ class Worker:
         weights = [("commit", 40), ("sync", 12), ("publish", 28), ("undo", 4), ("branch", 5), ("clone", 3)]
         if self.bin == "vcs":
             weights.append(("lock", 8))
+            if self.a.bigmb and self.i % 8 == 1:
+                weights.append(("bigfile", 6))
         only = os.environ.get("SOAK_OPS")   # e.g. SOAK_OPS=lock : targeted repro, only these ops
         if only:
             weights = [w for w in weights if w[0] in only.split(",")]
@@ -296,6 +341,8 @@ class Worker:
                 self.op_clone_fresh()
             elif op == "lock":
                 self.op_lock_cycle()
+            elif op == "bigfile":
+                self.op_bigfile()
             time.sleep(self.rng.expovariate(1.0 / a.think))
         # final: publish whatever is pending (tail), so the ack file is complete
         for _ in range(3):
@@ -304,6 +351,54 @@ class Worker:
             self.op_publish()
         self.ops.write(json.dumps({"t": time.time(), "c": self.i, "op": "done", "dt": 0, "rc": 0, "k": "ok",
                                    "unpublished": len(self.pending)}) + "\n")
+
+
+class Reader(Worker):
+    """A read-heavy client that runs next to the writers: fetch, status, `log -- path`, blame, fsck, local gc, fresh
+    clones (`--auto`, root zone, one-zone slice) and a remote-gc dry run. Mode k % 3: 0 = `--auto` clone,
+    1 = root zone (the 1M-file tree), 2 = one-zone slices. Uses the admin token."""
+
+    def __init__(self, a):
+        a.id = 10000 + a.rid
+        super().__init__(a)
+        self.env.update(VCS_TOKEN="tok-admin", VCS_PRINCIPAL="admin")
+        self.mode = a.rid % 3
+        self.hot = "hot/app.txt"
+
+    def loop(self):
+        a = self.a
+        time.sleep(self.rng.random() * a.ramp)
+        zone = ["--auto"] if self.mode == 0 else ["--zone", "root"] if self.mode == 1 else ["--zone", f"z{a.rid % NZ}"]
+        shutil.rmtree(self.work, ignore_errors=True)
+        rc, _, _ = self.run("rd_clone", ["vcs", "clone", a.url, self.work, *zone], cwd=a.out)
+        if rc != 0:
+            return
+        ops = ["sync", "status", "log_path", "blame", "fsck", "gc_local", "gc_remote_dry", "clone_fresh"]
+        ws = [30, 20, 15, 10, 4, 3, 3, 2 if self.mode != 1 else 1]
+        while time.time() < a.deadline:
+            op = self.rng.choices(ops, ws)[0]
+            if op == "sync":
+                self.run("rd_sync", ["vcs", "sync"], expect=("diverged",))
+            elif op == "status":
+                self.run("rd_status", ["vcs", "status"])
+            elif op == "log_path":
+                p = self.hot if self.mode == 1 else "README"
+                self.run("rd_log_path", ["vcs", "log", "-n", "50", "--oneline", "--", p])
+            elif op == "blame":
+                p = self.hot if self.mode == 1 else "README"
+                self.run("rd_blame", ["vcs", "blame", p])
+            elif op == "fsck":
+                self.run("rd_fsck", ["vcs", "fsck"])
+            elif op == "gc_local":
+                self.run("rd_gc_local", ["vcs", "gc", "--dry-run"])
+            elif op == "gc_remote_dry":
+                self.run("rd_gc_remote_dry", ["vcs", "gc", "--remote", "--dry-run"])
+            else:
+                shutil.rmtree(self.tmp, ignore_errors=True)
+                self.run("rd_clone_fresh", ["vcs", "clone", a.url, self.tmp, *(["--auto"] if self.mode == 0 else ["--zone", f"z{self.rng.randrange(NZ)}"])], cwd=a.out)
+                shutil.rmtree(self.tmp, ignore_errors=True)
+            time.sleep(self.rng.expovariate(1.0 / max(a.think, 1)))
+        self.ops.write(json.dumps({"t": time.time(), "c": self.i, "op": "done", "dt": 0, "rc": 0, "k": "ok"}) + "\n")
 
 
 # ------------------------------------------------------------------ orchestrator
@@ -713,7 +808,7 @@ def sampler(a, holder, store, stop, rows):
         f.write(f"{now - t0:.0f},{sum(rss)},{cpu:.1f},{sum(fd)},{nthreads(pid)},{man},{npk},{sb},{os.getloadavg()[0]:.1f},{pid}\n")
 
 
-def verify(a, store, cutoff=None, tag="verify", quick=False):
+def verify(a, store, cutoff=None, tag="verify", quick=False, full=False):
     """Fresh clone + every acked file present with the recorded hash; fsck; server-store checks."""
     res = {}
     vdir = os.path.join(a.out, tag)
@@ -725,7 +820,12 @@ def verify(a, store, cutoff=None, tag="verify", quick=False):
     t0 = time.time()
     for attempt in range(6):   # the server may be mid-restart (kill -9 chaos): retry the clone, not the check
         shutil.rmtree(vdir, ignore_errors=True)
-        rc, out, err, dt = sh([a.kind if a.kind == "git" else "vcs", "clone", a.url, vdir], cwd=a.out, env=env, timeout=3600)
+        ccmd = [a.kind if a.kind == "git" else "vcs", "clone", a.url, vdir]
+        if a.slice and a.kind == "vcs" and not full:   # monorepo: the writers' zones and art, not the 1M-file root
+            for z in range(NZ):
+                ccmd += ["--zone", f"z{z}"]
+            ccmd += ["--zone", "art"]
+        rc, out, err, dt = sh(ccmd, cwd=a.out, env=env, timeout=7200)
         if rc == 0:
             break
         time.sleep(3)
@@ -743,6 +843,7 @@ def verify(a, store, cutoff=None, tag="verify", quick=False):
         res["note"] = "git verify below"
     missing, bad, total = 0, 0, 0
     last_wins = {}
+    latest = {}
     for fn in glob.glob(os.path.join(a.out, "acked-*.jsonl")):
         for l in open(fn):
             try:
@@ -750,6 +851,10 @@ def verify(a, store, cutoff=None, tag="verify", quick=False):
             except ValueError:
                 continue
             if cutoff and r.get("t", 0) > cutoff:
+                continue
+            if r.get("latest"):       # big file: keep the newest ack per path
+                if r["file"] not in latest or r["seq"] > latest[r["file"]]["seq"]:
+                    latest[r["file"]] = r
                 continue
             if r.get("last_wins"):
                 last_wins[r["file"]] = r  # later acks overwrite
@@ -770,6 +875,29 @@ def verify(a, store, cutoff=None, tag="verify", quick=False):
                     bad += 1
             except FileNotFoundError:
                 missing += 1
+    # big files: the final content must be a version committed at or after the newest acked one
+    big_bad = big_newer = 0
+    if a.kind == "vcs" and latest:
+        vers = {}
+        for fn in glob.glob(os.path.join(a.out, "bigver-*.jsonl")):
+            for l in open(fn):
+                r = json.loads(l)
+                vers.setdefault(r["file"], {})[r["sha"]] = r["seq"]
+        for rel, r in latest.items():
+            h = hashlib.sha256()
+            try:
+                with open(os.path.join(vdir, rel), "rb") as f:
+                    for blk in iter(lambda: f.read(16 << 20), b""):
+                        h.update(blk)
+            except FileNotFoundError:
+                big_bad += 1
+                continue
+            seq = vers.get(rel, {}).get(h.hexdigest())
+            if seq is None or seq < r["seq"]:
+                big_bad += 1
+            elif seq > r["seq"]:
+                big_newer += 1
+        res.update(big_acked_files=len(latest), big_bad=big_bad, big_newer_than_ack=big_newer)
     lw_bad = lw_newer = 0
     if a.kind == "vcs":
         # The body of art/uN.txt is the client's monotonic seq. A lock-cycle commit whose publish was not
@@ -794,13 +922,15 @@ def verify(a, store, cutoff=None, tag="verify", quick=False):
     res.update(acked_files=total, acked_missing=missing, acked_wrong_content=bad,
                last_wins_files=len(last_wins), last_wins_mismatch=lw_bad, last_wins_newer_than_ack=lw_newer)
     if a.kind == "vcs":
-        rc, out, err, dt = sh(["vcs", "fsck"], cwd=vdir, env=env, timeout=3600)
+        rc, out, err, dt = sh(["vcs", "locks"], cwd=vdir, env=env, timeout=600)
+        res["locks_at_end"] = {"rc": rc, "out": out.strip()[-800:]}
+        rc, out, err, dt = sh(["vcs", "fsck"], cwd=vdir, env=env, timeout=7200)
         res["fresh_clone_fsck"] = {"rc": rc, "out": out.strip()[-300:], "err": err.strip()[-300:], "s": round(dt, 1)}
-        if store and not quick:
+        if store and not quick and (full or not a.slice):
             d2 = os.path.join(a.out, "verify-store-clone")
             shutil.rmtree(d2, ignore_errors=True)
-            rc, out, err, dt = sh(["vcs", "clone", store, d2], cwd=a.out, env=env, timeout=3600)
-            rc2, out2, err2, dt2 = sh(["vcs", "fsck"], cwd=d2, env=env, timeout=3600) if rc == 0 else (rc, "", err, 0)
+            rc, out, err, dt = sh(["vcs", "clone", store, d2], cwd=a.out, env=env, timeout=7200)
+            rc2, out2, err2, dt2 = sh(["vcs", "fsck"], cwd=d2, env=env, timeout=7200) if rc == 0 else (rc, "", err, 0)
             res["store_dircopy_clone_fsck"] = {"clone_rc": rc, "fsck_rc": rc2, "out": out2.strip()[-300:], "err": (err2 or err).strip()[-300:]}
             rc, out, err, dt = sh(["vcs", "gc", "--remote", "--dry-run"], cwd=vdir, env=env, timeout=3600)
             res["gc_remote_dry_run"] = {"rc": rc, "out": out.strip()[-600:], "err": err.strip()[-300:]}
@@ -809,6 +939,29 @@ def verify(a, store, cutoff=None, tag="verify", quick=False):
         rc, out, err, dt = sh(["git", "fsck", "--no-dangling"], cwd=vdir, env=env, timeout=3600)
         res["fresh_clone_fsck"] = {"rc": rc, "err": err.strip()[-300:]}
     shutil.rmtree(vdir, ignore_errors=True)
+    return res
+
+
+def verify_big(a):
+    """Zone `big` (prebuilt 1-5 GiB binaries, three committed versions): clone it and compare sha256 + size with
+    the manifest build_base.sh recorded for the last version."""
+    if not a.big_manifest:
+        return {}
+    env = dict(os.environ, VCS_TOKEN="tok-admin", VCS_PRINCIPAL="admin", PATH=BIN + ":" + os.environ["PATH"])
+    d = os.path.join(a.out, "verify-big")
+    shutil.rmtree(d, ignore_errors=True)
+    rc, out, err, dt = sh(["vcs", "clone", a.url, d, "--zone", "big"], cwd=a.out, env=env, timeout=7200)
+    res = {"clone_rc": rc, "clone_s": round(dt, 1)}
+    if rc:
+        res["err"] = err[-300:]
+        return res
+    want = json.load(open(a.big_manifest))
+    t0 = time.time()
+    r = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "stress", "bigfiles.py"),
+                        "hash", os.path.join(d, "big"), os.path.join(a.out, "big-final.json")], capture_output=True, text=True)
+    got = json.load(open(os.path.join(a.out, "big-final.json")))
+    res.update(files=len(want), equal=sum(1 for k, v in want.items() if got.get(k) == v), hash_s=round(time.time() - t0, 1))
+    shutil.rmtree(d, ignore_errors=True)
     return res
 
 
@@ -826,17 +979,30 @@ def cmd_run(a):
             store = a.s3store  # on-disk data dir of the S3 server, for sampling only
         if a.chaos:
             setup_store_mount(a, store)
-        srv = start_vcs_server(a, store)
+        if a.base_store:   # monorepo: start from a prebuilt store (build_base.sh) instead of seeding
+            t0 = time.time()
+            os.makedirs(store, exist_ok=True)
+            subprocess.run(["cp", "-a", "--reflink=auto", a.base_store + "/.", store], check=True)
+            print(f"copied base store in {time.time() - t0:.1f}s", flush=True)
+            hash_token("tok-admin")
+            srv = None
+        else:
+            srv = start_vcs_server(a, store)
         a.url = "http://127.0.0.1:8491"
-        seed_vcs(a)
+        if not a.base_store:
+            seed_vcs(a)
         if a.sharded:
             # one-way opt-in to per-zone sharded manifests (docs/manifest-scaling.md); the same store, restarted
-            srv.terminate()
-            srv.wait()
+            if srv:
+                srv.terminate()
+                srv.wait()
+            t0 = time.time()
             rc = subprocess.run([BIN + "/vcs-server", "migrate-sharded", "--backend", store], capture_output=True, text=True)
             if rc.returncode:
                 raise SystemExit("migrate-sharded failed: " + rc.stderr)
-            print("sharded:", rc.stdout.strip(), flush=True)
+            print("sharded:", rc.stdout.strip(), f"({time.time() - t0:.1f}s)", flush=True)
+            srv = start_vcs_server(a, store)
+        elif srv is None:
             srv = start_vcs_server(a, store)
     else:
         bare = os.path.join(a.out, "repo.git")
@@ -864,8 +1030,14 @@ def cmd_run(a):
         ws.append(subprocess.Popen([sys.executable, me, "worker", "--id", str(i), "--out", a.out, "--kind", a.kind,
                                     "--url", a.url, "--deadline", str(a.deadline), "--think", str(a.think),
                                     "--ramp", str(a.ramp), "--seed", str(a.seed), "--backend", a.backend,
-                                    "--clientkill", str(a.clientkill)],
+                                    "--clientkill", str(a.clientkill), "--bigmb", str(a.bigmb)] + (["--slice"] if a.slice else []),
                                    stdout=subprocess.DEVNULL, stderr=open(os.path.join(a.out, f"worker-{i}.err"), "w")))
+    for k in range(a.readers):
+        ws.append(subprocess.Popen([sys.executable, me, "reader", "--rid", str(k), "--id", "0", "--out", a.out, "--kind", a.kind,
+                                    "--url", a.url, "--deadline", str(a.deadline), "--think", "10",
+                                    "--ramp", str(a.ramp), "--seed", str(a.seed), "--backend", a.backend,
+                                    "--clientkill", "0", "--bigmb", "0"],
+                                   stdout=subprocess.DEVNULL, stderr=open(os.path.join(a.out, f"reader-{k}.err"), "w")))
     for w in ws:
         w.wait()
     stop.set()
@@ -878,6 +1050,9 @@ def cmd_run(a):
     json.dump({"server_alive_at_end": alive, "server_exit": srv.poll()}, open(os.path.join(a.out, "server_end.json"), "w"))
     res = verify(a, store if a.backend == "local" else None)
     res["server_alive_at_end"] = alive
+    if a.full_verify and a.kind == "vcs":
+        res["full"] = verify(a, store if a.backend == "local" else None, tag="verify-full", full=True)
+        res["big_zone"] = verify_big(a)
     if a.kind == "vcs" and a.backend == "local":
         res["final_manifest_bytes"] = os.path.getsize(os.path.join(store, "manifest"))
         res["final_packs"] = len(glob.glob(os.path.join(store, "packs", "*.pack")))
@@ -924,6 +1099,12 @@ def main():
     r.add_argument("--clientkill", type=float, default=0.0, help="probability a publish/commit/sync client is SIGKILLed mid-run")
     r.add_argument("--disk-mb", type=int, default=24)
     r.add_argument("--delay-ms", type=int, default=20)
+    r.add_argument("--base-store", default="", help="monorepo: copy this prebuilt server store (scripts/stress/build_base.sh) instead of seeding")
+    r.add_argument("--slice", action="store_true", help="writers clone only their zone and art (monorepo)")
+    r.add_argument("--bigmb", type=int, default=0, help="every 8th writer also commits/pushes a large binary of this many MiB")
+    r.add_argument("--readers", type=int, default=0, help="read-heavy clients (clone --auto, root zone, slices; log -- path, blame, fsck, gc dry runs)")
+    r.add_argument("--full-verify", action="store_true", help="also verify a full clone (root + big), the store directory clone and the prebuilt big files")
+    r.add_argument("--big-manifest", default="", help="JSON from bigfiles.py hash: expected sha256 of the prebuilt big files")
     r.add_argument("--out", required=True)
     w = sp.add_parser("worker")
     for k, t in (("id", int), ("seed", int), ("think", float), ("ramp", float), ("deadline", float)):
@@ -931,9 +1112,21 @@ def main():
     for k in ("out", "kind", "url", "backend"):
         w.add_argument("--" + k, required=True)
     w.add_argument("--clientkill", type=float, default=0.0)
+    w.add_argument("--bigmb", type=int, default=0)
+    w.add_argument("--slice", action="store_true")
+    rd = sp.add_parser("reader")
+    for k, t in (("rid", int), ("id", int), ("seed", int), ("think", float), ("ramp", float), ("deadline", float)):
+        rd.add_argument("--" + k, type=t, required=True)
+    for k in ("out", "kind", "url", "backend"):
+        rd.add_argument("--" + k, required=True)
+    rd.add_argument("--clientkill", type=float, default=0.0)
+    rd.add_argument("--bigmb", type=int, default=0)
     a = ap.parse_args()
     if a.cmd == "run":
         cmd_run(a)
+    elif a.cmd == "reader":
+        a.slice = False
+        Reader(a).loop()
     else:
         Worker(a).loop()
 
