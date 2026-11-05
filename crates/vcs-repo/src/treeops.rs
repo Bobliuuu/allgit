@@ -822,6 +822,58 @@ impl<'a> IndexTrees<'a> {
     }
 }
 
+/// Replace (or, with `leaf == None`, remove) the entry at zone-relative `rel` below `base` and return the new
+/// tree id, `None` when the tree becomes empty. Only the trees on the path are read and written, so the cost is
+/// the depth times the size of those directories, not the number of files in the tree. A file in the middle of
+/// the path is replaced by a directory, and a directory at `rel` is replaced as a whole (removing `rel` removes
+/// everything under it), the same results as editing the flat map and rebuilding.
+pub fn set_entry(store: &dyn ObjectStore, base: Option<ObjectId>, rel: &str, leaf: Option<(EntryMode, ObjectId)>) -> Result<Option<ObjectId>> {
+    let parts: Vec<&str> = rel.split('/').collect();
+    set_entry_parts(store, base, &parts, leaf)
+}
+
+fn set_entry_parts(
+    store: &dyn ObjectStore,
+    base: Option<ObjectId>,
+    parts: &[&str],
+    leaf: Option<(EntryMode, ObjectId)>,
+) -> Result<Option<ObjectId>> {
+    let mut entries: Vec<TreeEntry> = match base {
+        Some(b) => match store.get(&b)? {
+            Object::Tree(t) => t.into_entries(),
+            _ => return Err(Error::Corrupt(format!("object {b} is not a tree"))),
+        },
+        None => Vec::new(),
+    };
+    let name = parts[0];
+    let at = entries.binary_search_by(|e| e.name.as_str().cmp(name));
+    let new_entry = if parts.len() == 1 {
+        leaf.map(|(mode, id)| TreeEntry { name: name.to_owned(), mode, id })
+    } else {
+        let child = match &at {
+            Ok(i) if entries[*i].mode == EntryMode::Directory => Some(entries[*i].id),
+            _ => None,
+        };
+        set_entry_parts(store, child, &parts[1..], leaf)?.map(|id| TreeEntry {
+            name: name.to_owned(),
+            mode: EntryMode::Directory,
+            id,
+        })
+    };
+    match (at, new_entry) {
+        (Ok(i), Some(e)) => entries[i] = e,
+        (Ok(i), None) => {
+            entries.remove(i);
+        }
+        (Err(i), Some(e)) => entries.insert(i, e),
+        (Err(_), None) => {}
+    }
+    if entries.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(store.put(&Object::Tree(Tree::new(entries)?))?))
+}
+
 /// The entry (mode and id) at zone-relative `rel` below `root`, or `None` when nothing is
 /// there. `rel == ""` is the root itself (a directory). A file in the middle of the path means
 /// "absent", not an error. Reads one tree per path component.

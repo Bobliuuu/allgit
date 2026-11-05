@@ -234,3 +234,96 @@ done\n";
     assert_eq!(rep2.tags_imported, 0);
     assert_eq!(r.tag_list("root").unwrap().len(), 2);
 }
+
+/// The incremental per-commit tree edit must give the tree the flat rebuild gives: a stream that edits a big tree
+/// in place (modify, delete a file, delete a directory, rename a directory, copy, file <-> directory) ends in the
+/// same root tree id as one root commit that states the final files.
+#[test]
+fn incremental_commit_edits_match_a_flat_rebuild() {
+    let mut files: BTreeMap<String, String> = BTreeMap::new();
+    for d in 0..6 {
+        for s in 0..6 {
+            for f in 0..12 {
+                files.insert(format!("d{d}/s{s}/f{f}.txt"), format!("body {d} {s} {f}\n"));
+            }
+        }
+    }
+    fn modify(out: &mut String, path: &str, body: &str) {
+        out.push_str(&format!("M 100644 inline {path}\ndata {}\n{body}\n", body.len()));
+    }
+    fn commit(out: &mut String, mark: u32, from: Option<u32>, ops: &dyn Fn(&mut String)) {
+        out.push_str(&format!(
+            "commit refs/heads/main\nmark :{mark}\ncommitter C <c@x> {mark}000 +0000\ndata 2\nc\n"
+        ));
+        if let Some(f) = from {
+            out.push_str(&format!("from :{f}\n"));
+        }
+        ops(out);
+        out.push('\n');
+    }
+    let mut s1 = String::from("feature done\n");
+    commit(&mut s1, 1, None, &|o| {
+        for (p, b) in &files {
+            modify(o, p, b);
+        }
+    });
+    commit(&mut s1, 2, Some(1), &|o| {
+        modify(o, "d0/s0/f0.txt", "edited\n");
+        modify(o, "d0/s0/new.txt", "new\n");
+        o.push_str("D d1/s1/f3.txt\n");
+        o.push_str("D d2/s2\n"); // a whole directory
+        o.push_str("R d3/s3 d3/moved\n"); // directory rename
+        o.push_str("C d4/s4 d5/copy4\n"); // directory copy
+        o.push_str("R d0/s1/f1.txt top.txt\n");
+        modify(o, "d5/s0", "now a file\n"); // file replaces a directory
+        modify(o, "d4/s5/f0.txt/deep.txt", "dir replaces a file\n");
+        o.push_str("D no/such/path\n");
+    });
+    s1.push_str("done\n");
+
+    files.insert("d0/s0/f0.txt".into(), "edited\n".into());
+    files.insert("d0/s0/new.txt".into(), "new\n".into());
+    files.remove("d1/s1/f3.txt");
+    files.retain(|k, _| !k.starts_with("d2/s2/"));
+    let moved: Vec<_> = files.iter().filter(|(k, _)| k.starts_with("d3/s3/")).map(|(k, v)| (k.clone(), v.clone())).collect();
+    for (k, v) in moved {
+        files.remove(&k);
+        files.insert(k.replacen("d3/s3/", "d3/moved/", 1), v);
+    }
+    let copied: Vec<_> = files.iter().filter(|(k, _)| k.starts_with("d4/s4/")).map(|(k, v)| (k.clone(), v.clone())).collect();
+    for (k, v) in copied {
+        files.insert(k.replacen("d4/s4/", "d5/copy4/", 1), v);
+    }
+    let v = files.remove("d0/s1/f1.txt").unwrap();
+    files.insert("top.txt".into(), v);
+    files.retain(|k, _| !k.starts_with("d5/s0/"));
+    files.insert("d5/s0".into(), "now a file\n".into());
+    files.remove("d4/s5/f0.txt");
+    files.insert("d4/s5/f0.txt/deep.txt".into(), "dir replaces a file\n".into());
+
+    let mut s2 = String::from("feature done\n");
+    commit(&mut s2, 1, None, &|o| {
+        for (p, b) in &files {
+            modify(o, p, b);
+        }
+    });
+    s2.push_str("done\n");
+
+    let d = tempfile::tempdir().unwrap();
+    let a = Repo::init(&d.path().join("a")).unwrap();
+    a.import_git(s1.as_bytes()).unwrap();
+    let b = Repo::init(&d.path().join("b")).unwrap();
+    b.import_git(s2.as_bytes()).unwrap();
+    let head = |r: &Repo| r.refs().unwrap().head("root", "main").unwrap();
+    let (ha, hb) = (head(&a), head(&b));
+    let got = files_at(&a, &ha);
+    assert_eq!(got.len(), files.len());
+    for (k, v) in &files {
+        assert_eq!(got[k], v.as_bytes(), "{k}");
+    }
+    let root = |r: &Repo, id| match r.store().get(id).unwrap() {
+        vcs_objects::Object::Commit(c) => c.root,
+        _ => panic!(),
+    };
+    assert_eq!(root(&a, &ha), root(&b, &hb), "incremental edits must give the canonical tree");
+}
