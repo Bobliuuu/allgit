@@ -285,12 +285,20 @@ fn incremental_commit_edits_match_a_flat_rebuild() {
     files.insert("d0/s0/new.txt".into(), "new\n".into());
     files.remove("d1/s1/f3.txt");
     files.retain(|k, _| !k.starts_with("d2/s2/"));
-    let moved: Vec<_> = files.iter().filter(|(k, _)| k.starts_with("d3/s3/")).map(|(k, v)| (k.clone(), v.clone())).collect();
+    let moved: Vec<_> = files
+        .iter()
+        .filter(|(k, _)| k.starts_with("d3/s3/"))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
     for (k, v) in moved {
         files.remove(&k);
         files.insert(k.replacen("d3/s3/", "d3/moved/", 1), v);
     }
-    let copied: Vec<_> = files.iter().filter(|(k, _)| k.starts_with("d4/s4/")).map(|(k, v)| (k.clone(), v.clone())).collect();
+    let copied: Vec<_> = files
+        .iter()
+        .filter(|(k, _)| k.starts_with("d4/s4/"))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
     for (k, v) in copied {
         files.insert(k.replacen("d4/s4/", "d5/copy4/", 1), v);
     }
