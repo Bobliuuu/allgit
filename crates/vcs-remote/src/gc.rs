@@ -34,7 +34,10 @@
 
 use crate::backend::{Backend, BackendError};
 use crate::packfetch::PACK_PREFIX;
-use crate::protocol::{deps, load_manifest, object_key, pack_tomb_key, tomb_key, tx_key, GcQuirks, PublishError, DEFAULT_HOLD_MS};
+use crate::protocol::{
+    deps, load_manifest, object_key, pack_tomb_key, tomb_key, tx_key, GcQuirks, PublishError,
+    DEFAULT_HOLD_MS,
+};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use vcs_objects::{id_of_encoded, Object, ObjectId};
@@ -165,8 +168,48 @@ struct View<'a> {
     /// object -> first pack holding it
     loc: HashMap<ObjectId, String>,
     /// recently decoded v3 blocks, by (pack stem, block offset)
-    #[allow(clippy::type_complexity)]
-    blocks: std::cell::RefCell<Vec<((String, u64), std::rc::Rc<vcs_store::pack::Block>)>>,
+    blocks: std::cell::RefCell<BlockLru>,
+}
+
+/// Decoded blocks the reachability walk keeps. A walk visits commits, then trees, in graph order, which jumps
+/// between the blocks of a compacted (v3) pack; with a handful of blocks every object read decompressed a whole
+/// block again (a 1.4M-object store took more than 12 minutes to sweep where the same store before compaction
+/// took 2.6). Bounded by bytes, least recently used out, never fewer than `MIN_BLOCKS`.
+const BLOCK_CACHE_BYTES: usize = 1 << 30;
+const MIN_BLOCKS: usize = 8;
+
+#[derive(Default)]
+struct BlockLru {
+    map: HashMap<(String, u64), (std::rc::Rc<vcs_store::pack::Block>, u64)>,
+    tick: u64,
+    bytes: usize,
+}
+
+impl BlockLru {
+    fn get(&mut self, key: &(String, u64)) -> Option<std::rc::Rc<vcs_store::pack::Block>> {
+        self.tick += 1;
+        let t = self.tick;
+        self.map.get_mut(key).map(|(b, used)| {
+            *used = t;
+            b.clone()
+        })
+    }
+    fn put(&mut self, key: (String, u64), b: std::rc::Rc<vcs_store::pack::Block>) {
+        self.tick += 1;
+        self.bytes += b.byte_len();
+        self.map.insert(key, (b, self.tick));
+        while self.bytes > BLOCK_CACHE_BYTES && self.map.len() > MIN_BLOCKS {
+            let oldest = self
+                .map
+                .iter()
+                .min_by_key(|(_, (_, used))| *used)
+                .map(|(k, _)| k.clone());
+            let Some(k) = oldest else { break };
+            if let Some((b, _)) = self.map.remove(&k) {
+                self.bytes -= b.byte_len();
+            }
+        }
+    }
 }
 
 fn parse_key(k: &str) -> Option<ObjectId> {
@@ -177,12 +220,19 @@ fn parse_key(k: &str) -> Option<ObjectId> {
 
 impl<'a> View<'a> {
     fn load(b: &'a dyn Backend) -> Result<View<'a>, GcError> {
-        let loose: Vec<ObjectId> = b.list(OBJECT_PREFIX)?.iter().filter_map(|k| parse_key(k)).collect();
+        let loose: Vec<ObjectId> = b
+            .list(OBJECT_PREFIX)?
+            .iter()
+            .filter_map(|k| parse_key(k))
+            .collect();
         let mut packs: BTreeMap<String, Option<PackIndex>> = BTreeMap::new();
         for k in b.list(PACK_PREFIX)? {
             if let Some(stem) = k.strip_suffix(".idx") {
                 let idx = match b.get(&k)? {
-                    Some(v) => Some(PackIndex::parse(&v.data, Path::new(stem)).map_err(|e| GcError::Damaged(format!("{k}: {e}")))?),
+                    Some(v) => Some(
+                        PackIndex::parse(&v.data, Path::new(stem))
+                            .map_err(|e| GcError::Damaged(format!("{k}: {e}")))?,
+                    ),
                     None => None, // deleted since the listing
                 };
                 packs.insert(stem.to_owned(), idx);
@@ -218,37 +268,46 @@ impl<'a> View<'a> {
             let idx = self.packs[stem]
                 .as_ref()
                 .ok_or_else(|| GcError::Damaged(format!("{id}: not in {stem}")))?;
-            let (off, len) = idx.find(id).ok_or_else(|| GcError::Damaged(format!("{id}: not in {stem}")))?;
-            match self.b.get_range(&format!("{stem}.pack"), off, len as u64)? {
-                Some(d) if d.len() == len as usize => {
-                    if idx.version() >= 3 {
-                        // a block holds many objects; keep a few decoded so a walk does not refetch it
-                        let key = (stem.clone(), off);
-                        let hit = self.blocks.borrow().iter().find(|(k, _)| *k == key).map(|(_, b)| b.clone());
-                        let blk = match hit {
-                            Some(b) => b,
-                            None => {
-                                let b = std::rc::Rc::new(
-                                    vcs_store::pack::decode_block(&d).map_err(|e| GcError::Damaged(format!("{id}: pack {stem}: {e}")))?,
-                                );
-                                let mut c = self.blocks.borrow_mut();
-                                if c.len() >= 8 {
-                                    c.remove(0);
-                                }
-                                c.push((key, b.clone()));
-                                b
-                            }
-                        };
-                        blk.get(id)
-                            .ok_or_else(|| GcError::Damaged(format!("{id}: not in its block of {stem}")))?
-                            .to_vec()
-                    } else {
-                        idx.decode_entry(id, &d)
-                            .map_err(|e| GcError::Damaged(format!("{id}: pack {stem}: {e}")))?
-                            .into_owned()
+            let (off, len) = idx
+                .find(id)
+                .ok_or_else(|| GcError::Damaged(format!("{id}: not in {stem}")))?;
+            // a v3 block holds many objects; a decoded one that is still cached needs no fetch at all
+            let cached = if idx.version() >= 3 {
+                self.blocks.borrow_mut().get(&(stem.clone(), off))
+            } else {
+                None
+            };
+            if let Some(blk) = cached {
+                blk.get(id)
+                    .ok_or_else(|| GcError::Damaged(format!("{id}: not in its block of {stem}")))?
+                    .to_vec()
+            } else {
+                match self.b.get_range(&format!("{stem}.pack"), off, len as u64)? {
+                    Some(d) if d.len() == len as usize => {
+                        if idx.version() >= 3 {
+                            let blk = std::rc::Rc::new(vcs_store::pack::decode_block(&d).map_err(
+                                |e| GcError::Damaged(format!("{id}: pack {stem}: {e}")),
+                            )?);
+                            self.blocks
+                                .borrow_mut()
+                                .put((stem.clone(), off), blk.clone());
+                            blk.get(id)
+                                .ok_or_else(|| {
+                                    GcError::Damaged(format!("{id}: not in its block of {stem}"))
+                                })?
+                                .to_vec()
+                        } else {
+                            idx.decode_entry(id, &d)
+                                .map_err(|e| GcError::Damaged(format!("{id}: pack {stem}: {e}")))?
+                                .into_owned()
+                        }
+                    }
+                    _ => {
+                        return Err(GcError::Damaged(format!(
+                            "{id}: pack {stem} is truncated or missing"
+                        )))
                     }
                 }
-                _ => return Err(GcError::Damaged(format!("{id}: pack {stem} is truncated or missing"))),
             }
         } else {
             match self.b.get(&object_key(id))? {
@@ -259,11 +318,18 @@ impl<'a> View<'a> {
         if id_of_encoded(&bytes) != *id {
             return Err(GcError::Damaged(format!("{id}: fails hash verification")));
         }
-        Object::decode(&bytes).map(Some).map_err(|e| GcError::Damaged(format!("{id}: {e}")))
+        Object::decode(&bytes)
+            .map(Some)
+            .map_err(|e| GcError::Damaged(format!("{id}: {e}")))
     }
 
     /// Closure of `starts` into `into`. With `strict`, a missing object is a damaged remote.
-    fn closure(&self, starts: Vec<ObjectId>, strict: bool, into: &mut HashSet<ObjectId>) -> Result<(), GcError> {
+    fn closure(
+        &self,
+        starts: Vec<ObjectId>,
+        strict: bool,
+        into: &mut HashSet<ObjectId>,
+    ) -> Result<(), GcError> {
         let mut stack = starts;
         while let Some(id) = stack.pop() {
             if !into.insert(id) {
@@ -271,7 +337,9 @@ impl<'a> View<'a> {
             }
             match self.read(&id)? {
                 Some(o) => stack.extend(deps(&o)),
-                None if strict => return Err(GcError::Damaged(format!("{id} is referenced but missing"))),
+                None if strict => {
+                    return Err(GcError::Damaged(format!("{id} is referenced but missing")))
+                }
                 None => {}
             }
         }
@@ -283,7 +351,9 @@ impl<'a> View<'a> {
     fn age(&self, u: &Unit, at: u64) -> Result<Option<u64>, GcError> {
         let keys: Vec<String> = match u {
             Unit::Loose(id) => vec![object_key(id)],
-            Unit::Pack(stem) | Unit::Rewrite(stem) => vec![format!("{stem}.idx"), format!("{stem}.pack")],
+            Unit::Pack(stem) | Unit::Rewrite(stem) => {
+                vec![format!("{stem}.idx"), format!("{stem}.pack")]
+            }
         };
         let mut youngest: Option<u64> = None;
         for k in keys {
@@ -311,11 +381,19 @@ impl<'a> View<'a> {
 
 /// Write a pack of just `live` (read and verified from `stem`), index last, and read the index back.
 /// Returns the new stem. The old pack is untouched; the caller deletes it afterwards.
-fn rewrite_pack(b: &dyn Backend, stem: &str, live: &[ObjectId], hook: &mut dyn FnMut(GcPoint)) -> Result<String, GcError> {
+fn rewrite_pack(
+    b: &dyn Backend,
+    stem: &str,
+    live: &[ObjectId],
+    hook: &mut dyn FnMut(GcPoint),
+) -> Result<String, GcError> {
     let Some(got) = b.get(&format!("{stem}.idx"))? else {
-        return Err(GcError::Damaged(format!("{stem}.idx vanished while rewriting")));
+        return Err(GcError::Damaged(format!(
+            "{stem}.idx vanished while rewriting"
+        )));
     };
-    let idx = PackIndex::parse(&got.data, Path::new(stem)).map_err(|e| GcError::Damaged(format!("{stem}.idx: {e}")))?;
+    let idx = PackIndex::parse(&got.data, Path::new(stem))
+        .map_err(|e| GcError::Damaged(format!("{stem}.idx: {e}")))?;
     let info = crate::compact::PackInfo {
         stem: stem.to_owned(),
         len: idx.pack_len,
@@ -326,10 +404,16 @@ fn rewrite_pack(b: &dyn Backend, stem: &str, live: &[ObjectId], hook: &mut dyn F
         .filter(|(id, _)| want.contains(id))
         .collect();
     if objs.len() != want.len() {
-        return Err(GcError::Damaged(format!("{stem}: live objects missing from the pack")));
+        return Err(GcError::Damaged(format!(
+            "{stem}: live objects missing from the pack"
+        )));
     }
     let objs = vcs_store::layout::locality_order(objs);
-    let built = build_pack_blocks(objs, vcs_store::pack::PackFormat::for_compaction(), vcs_store::pack::BLOCK_TARGET);
+    let built = build_pack_blocks(
+        objs,
+        vcs_store::pack::PackFormat::for_compaction(),
+        vcs_store::pack::BLOCK_TARGET,
+    );
     let new_stem = format!("{PACK_PREFIX}{}", built.name);
     let (pk, ik) = (format!("{new_stem}.pack"), format!("{new_stem}.idx"));
     b.put_if_absent(&pk, &built.pack)?;
@@ -337,7 +421,8 @@ fn rewrite_pack(b: &dyn Backend, stem: &str, live: &[ObjectId], hook: &mut dyn F
     let back = b
         .get(&ik)?
         .ok_or_else(|| GcError::Damaged(format!("{ik} missing right after upload")))?;
-    let nidx = PackIndex::parse(&back.data, Path::new(&new_stem)).map_err(|e| GcError::Damaged(format!("{ik}: {e}")))?;
+    let nidx = PackIndex::parse(&back.data, Path::new(&new_stem))
+        .map_err(|e| GcError::Damaged(format!("{ik}: {e}")))?;
     if let Some(m) = live.iter().find(|id| nidx.find(id).is_none()) {
         return Err(GcError::Damaged(format!(
             "rewritten pack {new_stem} lacks {m}; old pack left in place"
@@ -381,7 +466,10 @@ fn roots(b: &dyn Backend, quirks: &GcQuirks, now: u64) -> Result<Vec<ObjectId>, 
         .chain(shelf_roots)
         .collect();
     // sharded manifests: prepared or committed-but-unfinalized records make objects reachable
-    r.extend(crate::sharded::pending_roots(b).map_err(|e| GcError::Damaged(format!("sharded pending records: {e}")))?);
+    r.extend(
+        crate::sharded::pending_roots(b)
+            .map_err(|e| GcError::Damaged(format!("sharded pending records: {e}")))?,
+    );
     for txid in &m.applied {
         if let Some(v) = b.get(&tx_key(txid))? {
             if let Ok(Object::Transaction(t)) = Object::decode(&v.data) {
@@ -402,12 +490,28 @@ pub(crate) struct LockGuard<'a> {
     ttl_ms: u64,
     _flock: Option<Box<dyn std::any::Any + Send>>,
 }
+/// How long a finished (or failed) collector keeps trying to release `gc/lock` when the backend is only briefly
+/// unavailable: the delays double from 20 ms, about 8 s in all.
+const RELEASE_TRIES: u32 = 9;
+
 impl Drop for LockGuard<'_> {
     fn drop(&mut self) {
-        // Only remove the lock if it is still ours (it may have been taken over after expiry).
-        if let Ok(Some(v)) = self.b.get(LOCK_KEY) {
-            if v.data == *self.mine.borrow() {
-                let _ = self.b.delete(LOCK_KEY);
+        // Only remove the lock if it is still ours (it may have been taken over after expiry). A server that was
+        // killed and restarted a moment ago fails the first calls with `Unavailable`: a collector that gave up at
+        // once left the lock for its whole lease (6 h), and every later gc or compaction was refused until an
+        // operator removed it (seen on every `kill -9` of vcs-server during a client's auto-compaction).
+        for attempt in 0..RELEASE_TRIES {
+            let step = match self.b.get(LOCK_KEY) {
+                Ok(Some(v)) if v.data == *self.mine.borrow() => self.b.delete(LOCK_KEY).map(|_| ()),
+                Ok(_) => return,
+                Err(e) => Err(e),
+            };
+            match step {
+                Ok(()) => return,
+                Err(crate::backend::BackendError::Unavailable(_)) if attempt + 1 < RELEASE_TRIES => {
+                    std::thread::sleep(std::time::Duration::from_millis(20u64 << attempt));
+                }
+                Err(_) => return,
             }
         }
     }
@@ -446,7 +550,12 @@ impl LockGuard<'_> {
     }
 }
 
-pub(crate) fn acquire<'a>(b: &'a dyn Backend, owner: &str, ttl_ms: u64, now: u64) -> Result<LockGuard<'a>, GcError> {
+pub(crate) fn acquire<'a>(
+    b: &'a dyn Backend,
+    owner: &str,
+    ttl_ms: u64,
+    now: u64,
+) -> Result<LockGuard<'a>, GcError> {
     let mine = format!("{owner} {}", now + ttl_ms).into_bytes();
     // Same-host backends: a kernel lock decides liveness, so a SIGKILLed holder's lease is stale
     // immediately (no waiting out the TTL). Others: the lease alone.
@@ -519,20 +628,25 @@ pub fn remote_gc_with(
         Some(g)
     };
     if !opts.dry_run {
-        let g = crate::sharded::gc_decisions(b, opts.grace_ms).map_err(|e| GcError::Damaged(format!("sharded decisions: {e}")))?;
+        let g = crate::sharded::gc_decisions(b, opts.grace_ms)
+            .map_err(|e| GcError::Damaged(format!("sharded decisions: {e}")))?;
         rep.decisions_deleted = g.committed_deleted + g.aborted_deleted;
     }
     // Expired shelves stop pinning their bases and are removed (meta first). Dry run: report only.
     if !quirks.sweeper_ignores_shelves {
-        for (p, n) in crate::shelf::expired(b, now).map_err(|e| GcError::Damaged(format!("shelves: {e}")))? {
+        for (p, n) in
+            crate::shelf::expired(b, now).map_err(|e| GcError::Damaged(format!("shelves: {e}")))?
+        {
             if !opts.dry_run {
-                crate::shelf::delete(b, &p, &n).map_err(|e| GcError::Damaged(format!("shelves: {e}")))?;
+                crate::shelf::delete(b, &p, &n)
+                    .map_err(|e| GcError::Damaged(format!("shelves: {e}")))?;
             }
             rep.expired_shelves.push(format!("{p}/{n}"));
         }
     }
     let grace = opts.grace_ms;
-    let renew = |force: bool| -> Result<(), GcError> { lock.as_ref().map_or(Ok(()), |l| l.renew(force)) };
+    let renew =
+        |force: bool| -> Result<(), GcError> { lock.as_ref().map_or(Ok(()), |l| l.renew(force)) };
 
     // 1. Candidates: units that are old and contain nothing reachable.
     // Roots BEFORE the listing: a push that lands between the two has its pack in the listing but its head
@@ -558,7 +672,9 @@ pub fn remote_gc_with(
                         .as_ref()
                         .is_some_and(|i| i.pack_len <= crate::compact::DEFAULT_MAX_MERGE_BYTES);
                     match view.age(&u, now)? {
-                        Some(a) if a > grace && small && opts.rewrite_packs => candidates.push(Unit::Rewrite(stem.clone())),
+                        Some(a) if a > grace && small && opts.rewrite_packs => {
+                            candidates.push(Unit::Rewrite(stem.clone()))
+                        }
                         _ => rep.packs_with_garbage_kept += 1,
                     }
                 }
@@ -578,7 +694,8 @@ pub fn remote_gc_with(
             match u {
                 Unit::Rewrite(s) => {
                     rep.packs_rewritten.push((s.clone(), String::new()));
-                    rep.deleted.extend(view.pack_ids(s).into_iter().filter(|o| !marked.contains(o)));
+                    rep.deleted
+                        .extend(view.pack_ids(s).into_iter().filter(|o| !marked.contains(o)));
                 }
                 Unit::Loose(id) => rep.deleted.push(*id),
                 Unit::Pack(s) => {
@@ -603,30 +720,34 @@ pub fn remote_gc_with(
     // generally, I1: a survivor must not lose a dependency. Candidates were chosen at one
     // instant; if time moves on (a stalled sweeper, a clock step) a parent can stop being young
     // while its child is a candidate, and deleting only the child would leave the parent dangling.
-    let keep_set = |v: &View, rts: Vec<ObjectId>| -> Result<(HashSet<ObjectId>, HashSet<Unit>), GcError> {
-        let mut keep = HashSet::new();
-        let mut touched_units = HashSet::new();
-        v.closure(rts, true, &mut keep)?;
-        if !quirks.sweeper_young_not_roots {
-            let mut survivors = Vec::new();
-            let at = b.now_ms()?;
-            for u in v.all_units() {
-                let u = match &u {
-                    Unit::Pack(s) if cand_set.contains(&Unit::Rewrite(s.clone())) => Unit::Rewrite(s.clone()),
-                    _ => u,
-                };
-                let touched = cand_set.contains(&u) && matches!(v.age(&u, at)?, Some(a) if a <= grace);
-                if touched {
-                    touched_units.insert(u.clone());
+    let keep_set =
+        |v: &View, rts: Vec<ObjectId>| -> Result<(HashSet<ObjectId>, HashSet<Unit>), GcError> {
+            let mut keep = HashSet::new();
+            let mut touched_units = HashSet::new();
+            v.closure(rts, true, &mut keep)?;
+            if !quirks.sweeper_young_not_roots {
+                let mut survivors = Vec::new();
+                let at = b.now_ms()?;
+                for u in v.all_units() {
+                    let u = match &u {
+                        Unit::Pack(s) if cand_set.contains(&Unit::Rewrite(s.clone())) => {
+                            Unit::Rewrite(s.clone())
+                        }
+                        _ => u,
+                    };
+                    let touched =
+                        cand_set.contains(&u) && matches!(v.age(&u, at)?, Some(a) if a <= grace);
+                    if touched {
+                        touched_units.insert(u.clone());
+                    }
+                    if !cand_set.contains(&u) || touched {
+                        survivors.extend(v.objects_of(&u));
+                    }
                 }
-                if !cand_set.contains(&u) || touched {
-                    survivors.extend(v.objects_of(&u));
-                }
+                v.closure(survivors, false, &mut keep)?;
             }
-            v.closure(survivors, false, &mut keep)?;
-        }
-        Ok((keep, touched_units))
-    };
+            Ok((keep, touched_units))
+        };
     // The decision uses exactly what `keep_set` saw: a touch that lands after it is the
     // publisher's handshake to handle (it will find the tombstone or the missing object), and
     // consulting fresh ages here would let a child be deleted under a parent that was just spared.
@@ -700,7 +821,11 @@ pub fn remote_gc_with(
             }
         }
     }
-    let mut ready: Vec<Unit> = indeg.iter().filter(|(_, n)| **n == 0).map(|(u, _)| u.clone()).collect();
+    let mut ready: Vec<Unit> = indeg
+        .iter()
+        .filter(|(_, n)| **n == 0)
+        .map(|(u, _)| u.clone())
+        .collect();
     let mut order: Vec<Unit> = Vec::new();
     let mut emitted: HashSet<Unit> = HashSet::new();
     while let Some(p) = ready.pop() {
@@ -730,7 +855,11 @@ pub fn remote_gc_with(
         hook(GcPoint::BeforeDelete);
         match &u {
             Unit::Rewrite(stem) => {
-                let live: Vec<ObjectId> = view2.objects_of(&u).into_iter().filter(|o| keep.contains(o)).collect();
+                let live: Vec<ObjectId> = view2
+                    .objects_of(&u)
+                    .into_iter()
+                    .filter(|o| keep.contains(o))
+                    .collect();
                 let gone = dropped(&u);
                 let new_stem = if live.is_empty() {
                     None
