@@ -1,0 +1,31 @@
+1793855096.5 kill -9 server #1 (client publish/sync/clone processes in flight: 54)
+1793855096.8 server restarted
+1793855118.1 STALE gc/lock removed by harness (was: vcs-auto-compact pid 4127779 1793876555916)
+1793855118.1 gc#1 compact finished rc=1 in 0.01s error: remote compaction: another gc holds gc/lock until 1793876555916 (backend clock, unix ms)
+1793855323.5 kill -9 server #2 (client publish/sync/clone processes in flight: 5)
+1793855324.2 server restarted
+1793855358.1 STALE gc/lock removed by harness (was: vcs-auto-compact pid 17477 1793876722483)
+1793855358.1 gc#2 sweep finished rc=1 in 0.01s error: remote gc: another gc holds gc/lock until 1793876722483 (backend clock, unix ms)
+1793855388.3 AUDIT periodic: bad=0 {"why": "periodic", "t": 1793855388.3315108, "bad": 0, "acked_files": 1127, "acked_missing": 0, "acked_wrong_content": 0, "clone_rc": 0, "clone_s": 28.32, "fsck_rc": 0}
+1793855491.6 kill -9 server #3 (client publish/sync/clone processes in flight: 38)
+1793855492.5 server restarted
+1793855590.9 kill -9 server #4 (client publish/sync/clone processes in flight: 37)
+1793855591.6 server restarted
+1793855598.1 STALE gc/lock removed by harness (was: vcs-auto-compact pid 140734 1793876963429)
+1793855598.1 gc#3 compact finished rc=1 in 0.01s error: remote compaction: another gc holds gc/lock until 1793876963429 (backend clock, unix ms)
+1793855696.7 kill -9 server #5 (client publish/sync/clone processes in flight: 25)
+1793855697.0 server restarted
+1793855838.1 STALE gc/lock removed by harness (was: vcs-auto-compact pid 378113 1793877201691)
+1793855838.1 gc#4 sweep finished rc=1 in 0.00s error: remote gc: another gc holds gc/lock until 1793877201691 (backend clock, unix ms)
+1793855840.1 AUDIT periodic: bad=0 {"why": "periodic", "t": 1793855840.0510263, "bad": 0, "acked_files": 4574, "acked_missing": 0, "acked_wrong_content": 0, "clone_rc": 0, "clone_s": 28.51, "fsck_rc": 0}
+1793855876.8 kill -9 server #6 (client publish/sync/clone processes in flight: 35)
+1793855877.1 server restarted
+1793856014.7 kill -9 server #7 (client publish/sync/clone processes in flight: 33)
+1793856015.5 server restarted
+1793856078.1 STALE gc/lock removed by harness (was: vcs-auto-compact pid 642794 1793877441254)
+1793856078.1 gc#5 compact finished rc=1 in 0.01s error: remote compaction: another gc holds gc/lock until 1793877441254 (backend clock, unix ms)
+1793856288.9 AUDIT periodic: bad=0 {"why": "periodic", "t": 1793856288.8654404, "bad": 0, "acked_files": 6640, "acked_missing": 0, "acked_wrong_content": 0, "clone_rc": 0, "clone_s": 25.48, "fsck_rc": 0}
+1793856305.2 kill -9 server #8 (client publish/sync/clone processes in flight: 11)
+1793856305.8 server restarted
+1793856318.1 STALE gc/lock removed by harness (was: vcs-auto-compact pid 883447 1793877678123)
+1793856318.1 gc#6 sweep finished rc=1 in 0.00s error: remote gc: another gc holds gc/lock until 1793877678123 (backend clock, unix ms)

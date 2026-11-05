@@ -1,0 +1,405 @@
+{
+ "span_s": 739,
+ "ops": {
+  "add": {
+   "n_ok": 3813,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 5.16,
+   "p50_ms": 9.6,
+   "p95_ms": 28.8,
+   "p99_ms": 48.7,
+   "max_ms": 259.2
+  },
+  "add_big": {
+   "n_ok": 63,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.09,
+   "p50_ms": 146.9,
+   "p95_ms": 211.7,
+   "p99_ms": 274.4,
+   "max_ms": 274.4
+  },
+  "branch_create": {
+   "n_ok": 377,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.51,
+   "p50_ms": 5.0,
+   "p95_ms": 11.8,
+   "p99_ms": 16.8,
+   "max_ms": 23.4
+  },
+  "branch_delete": {
+   "n_ok": 377,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.51,
+   "p50_ms": 4.5,
+   "p95_ms": 9.8,
+   "p99_ms": 18.9,
+   "max_ms": 37.4
+  },
+  "branch_switch": {
+   "n_ok": 754,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 1.02,
+   "p50_ms": 5.6,
+   "p95_ms": 14.9,
+   "p99_ms": 27.5,
+   "max_ms": 57.8
+  },
+  "clone_fresh": {
+   "n_ok": 226,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.31,
+   "p50_ms": 14270.1,
+   "p95_ms": 24007.4,
+   "p99_ms": 25298.5,
+   "max_ms": 27171.9
+  },
+  "clone_initial": {
+   "n_ok": 64,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.09,
+   "p50_ms": 13556.8,
+   "p95_ms": 26219.9,
+   "p99_ms": 26793.7,
+   "max_ms": 26793.7
+  },
+  "commit": {
+   "n_ok": 3813,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 5.16,
+   "p50_ms": 9.4,
+   "p95_ms": 23.7,
+   "p99_ms": 36.8,
+   "max_ms": 184.7
+  },
+  "commit_big": {
+   "n_ok": 63,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.09,
+   "p50_ms": 67.7,
+   "p95_ms": 159.8,
+   "p99_ms": 209.7,
+   "max_ms": 209.7
+  },
+  "fsck_clone": {
+   "n_ok": 64,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.09,
+   "p50_ms": 127.1,
+   "p95_ms": 312.2,
+   "p99_ms": 381.0,
+   "max_ms": 381.0
+  },
+  "lock": {
+   "n_ok": 470,
+   "n_expected_fail": 155,
+   "n_error": 0,
+   "per_s": 0.85,
+   "p50_ms": 8.1,
+   "p95_ms": 248.9,
+   "p99_ms": 787.5,
+   "max_ms": 1372.1
+  },
+  "merge": {
+   "n_ok": 879,
+   "n_expected_fail": 0,
+   "n_error": 903,
+   "per_s": 2.41,
+   "p50_ms": 1735.7,
+   "p95_ms": 8762.4,
+   "p99_ms": 14370.9,
+   "max_ms": 26034.4
+  },
+  "publish": {
+   "n_ok": 860,
+   "n_expected_fail": 1212,
+   "n_error": 0,
+   "per_s": 2.8,
+   "p50_ms": 15.2,
+   "p95_ms": 433.2,
+   "p99_ms": 977.6,
+   "max_ms": 1523.2
+  },
+  "publish_auto": {
+   "n_ok": 366,
+   "n_expected_fail": 156,
+   "n_error": 12,
+   "per_s": 0.72,
+   "p50_ms": 177.9,
+   "p95_ms": 22417.8,
+   "p99_ms": 57102.7,
+   "max_ms": 69893.3
+  },
+  "publish_lock": {
+   "n_ok": 444,
+   "n_expected_fail": 126,
+   "n_error": 30,
+   "per_s": 0.81,
+   "p50_ms": 1424.9,
+   "p95_ms": 22014.2,
+   "p99_ms": 67591.3,
+   "max_ms": 123414.2
+  },
+  "rd_blame": {
+   "n_ok": 5,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.01,
+   "p50_ms": 6.4,
+   "p95_ms": 13.9,
+   "p99_ms": 13.9,
+   "max_ms": 13.9
+  },
+  "rd_clone": {
+   "n_ok": 1,
+   "n_expected_fail": 0,
+   "n_error": 2,
+   "per_s": 0.0,
+   "p50_ms": 8742.5,
+   "p95_ms": 8742.5,
+   "p99_ms": 8742.5,
+   "max_ms": 8742.5
+  },
+  "rd_clone_fresh": {
+   "n_ok": 1,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.0,
+   "p50_ms": 11374.0,
+   "p95_ms": 11374.0,
+   "p99_ms": 11374.0,
+   "max_ms": 11374.0
+  },
+  "rd_fsck": {
+   "n_ok": 2,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.0,
+   "p50_ms": 54.9,
+   "p95_ms": 54.9,
+   "p99_ms": 54.9,
+   "max_ms": 54.9
+  },
+  "rd_gc_remote_dry": {
+   "n_ok": 0,
+   "n_expected_fail": 0,
+   "n_error": 1,
+   "per_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "max_ms": null
+  },
+  "rd_log_path": {
+   "n_ok": 5,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.01,
+   "p50_ms": 3.2,
+   "p95_ms": 9.1,
+   "p99_ms": 9.1,
+   "max_ms": 9.1
+  },
+  "rd_status": {
+   "n_ok": 8,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.01,
+   "p50_ms": 5.1,
+   "p95_ms": 7.1,
+   "p99_ms": 7.1,
+   "max_ms": 7.1
+  },
+  "rd_sync": {
+   "n_ok": 11,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.01,
+   "p50_ms": 427.8,
+   "p95_ms": 657.6,
+   "p99_ms": 657.6,
+   "max_ms": 657.6
+  },
+  "sync": {
+   "n_ok": 3823,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 5.17,
+   "p50_ms": 428.0,
+   "p95_ms": 737.2,
+   "p99_ms": 905.3,
+   "max_ms": 1446.0
+  },
+  "undo": {
+   "n_ok": 305,
+   "n_expected_fail": 0,
+   "n_error": 0,
+   "per_s": 0.41,
+   "p50_ms": 9.2,
+   "p95_ms": 34.2,
+   "p99_ms": 69.0,
+   "max_ms": 110.0
+  },
+  "unlock": {
+   "n_ok": 469,
+   "n_expected_fail": 0,
+   "n_error": 1,
+   "per_s": 0.64,
+   "p50_ms": 7.1,
+   "p95_ms": 93.1,
+   "p99_ms": 471.2,
+   "max_ms": 827.3
+  }
+ },
+ "errors": [
+  {
+   "op": "merge",
+   "msg": "error: zone \"zN\" has uncommitted changes (N staged, N unstaged); commit or revert them first",
+   "n": 825
+  },
+  {
+   "op": "publish_lock",
+   "msg": "error: zone \"zN\" has uncommitted changes (N staged, N unstaged); commit or revert them first",
+   "n": 26
+  },
+  {
+   "op": "merge",
+   "msg": "fetched missing object <id>\nerror: zone \"zN\" has uncommitted changes (N staged, N unstaged); commit or revert them first",
+   "n": 20
+  },
+  {
+   "op": "merge",
+   "msg": "issing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched m",
+   "n": 18
+  },
+  {
+   "op": "merge",
+   "msg": "missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched ",
+   "n": 16
+  },
+  {
+   "op": "merge",
+   "msg": "fetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\n",
+   "n": 10
+  },
+  {
+   "op": "merge",
+   "msg": "fetched missing object <id>\nfetched missing object <id>\nerror: zone \"zN\" has uncommitted changes (N staged, N unstaged); commit or revert th",
+   "n": 7
+  },
+  {
+   "op": "publish_auto",
+   "msg": "error: zone \"zN\" has uncommitted changes (N staged, N unstaged); commit or revert them first",
+   "n": 5
+  },
+  {
+   "op": "merge",
+   "msg": "fetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nerror: zone \"zN\" has uncommi",
+   "n": 4
+  },
+  {
+   "op": "publish_auto",
+   "msg": "missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched ",
+   "n": 3
+  },
+  {
+   "op": "merge",
+   "msg": "fetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nerror: zone \"zN\" has uncommitted changes (N staged, N un",
+   "n": 3
+  },
+  {
+   "op": "publish_lock",
+   "msg": "fetched missing object <id>\nauto-merged remote art/main (attempt N)\nerror: zone \"zN\" has uncommitted changes (N staged, N unstaged); commit ",
+   "n": 2
+  },
+  {
+   "op": "rd_clone",
+   "msg": "timeout",
+   "n": 2
+  },
+  {
+   "op": "publish_auto",
+   "msg": "issing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched m",
+   "n": 2
+  },
+  {
+   "op": "publish_auto",
+   "msg": "ched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfet",
+   "n": 1
+  },
+  {
+   "op": "publish_lock",
+   "msg": "fetched missing object <id>\nfetched missing object <id>\nauto-merged remote art/main (attempt N)\nfetched missing object <id>\nerror: zone \"zN\"",
+   "n": 1
+  },
+  {
+   "op": "publish_lock",
+   "msg": "e art/main (attempt N)\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nauto-merged remote art/main (atte",
+   "n": 1
+  },
+  {
+   "op": "unlock",
+   "msg": "error: art/fN.bin is not locked",
+   "n": 1
+  },
+  {
+   "op": "publish_auto",
+   "msg": "fetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nfetched missing object <id>\nerror: zone \"zN\" has uncommi",
+   "n": 1
+  },
+  {
+   "op": "rd_gc_remote_dry",
+   "msg": "timeout",
+   "n": 1
+  }
+ ],
+ "resources": {
+  "rss_kb": {
+   "first_quartile_mean": 1788633.3,
+   "last_quartile_mean": 6355449.1,
+   "max": 7038044.0,
+   "last": 6991424.0
+  },
+  "cpu_pct": {
+   "first_quartile_mean": 200.8,
+   "last_quartile_mean": 419.1,
+   "max": 567.0,
+   "last": 7.6
+  },
+  "fds": {
+   "first_quartile_mean": 23.4,
+   "last_quartile_mean": 41.8,
+   "max": 101.0,
+   "last": 4.0
+  },
+  "threads": {
+   "first_quartile_mean": 20.6,
+   "last_quartile_mean": 35.4,
+   "max": 98.0,
+   "last": 4.0
+  },
+  "manifest_bytes": {
+   "first_quartile_mean": 16032.5,
+   "last_quartile_mean": 80556.1,
+   "max": 86965.0,
+   "last": 86965.0
+  },
+  "packs": {
+   "first_quartile_mean": 187.2,
+   "last_quartile_mean": 1744.7,
+   "max": 1969.0,
+   "last": 1969.0
+  }
+ }
+}

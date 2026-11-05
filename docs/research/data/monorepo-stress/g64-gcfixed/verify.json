@@ -1,0 +1,77 @@
+{
+ "clone_rc": 0,
+ "clone_s": 15.3,
+ "big_acked_files": 5,
+ "big_bad": 0,
+ "big_newer_than_ack": 0,
+ "acked_files": 7091,
+ "acked_missing": 0,
+ "acked_wrong_content": 0,
+ "last_wins_files": 61,
+ "last_wins_mismatch": 0,
+ "last_wins_newer_than_ack": 0,
+ "locks_at_end": {
+  "rc": 0,
+  "out": "no locks"
+ },
+ "fresh_clone_fsck": {
+  "rc": 0,
+  "out": "checked 24610 objects\n4240 object(s) not cached locally; they are on the remote and will be refetched on demand\nok",
+  "err": "",
+  "s": 0.9
+ },
+ "server_alive_at_end": true,
+ "final_manifest_bytes": 109077,
+ "final_packs": 1588,
+ "store_bytes": 70642250975,
+ "audits": [
+  {
+   "why": "after gc kill #1 (compact)",
+   "t": 1793867209.2604692,
+   "bad": 0,
+   "acked_files": 70,
+   "acked_missing": 0,
+   "acked_wrong_content": 0,
+   "clone_rc": 0,
+   "clone_s": 23.08,
+   "fsck_rc": 0
+  },
+  {
+   "why": "after gc kill #4 (sweep)",
+   "t": 1793867429.2160118,
+   "bad": 0,
+   "acked_files": 1976,
+   "acked_missing": 0,
+   "acked_wrong_content": 0,
+   "clone_rc": 0,
+   "clone_s": 21.21,
+   "fsck_rc": 0
+  },
+  {
+   "why": "periodic",
+   "t": 1793867452.993044,
+   "bad": 0,
+   "acked_files": 2186,
+   "acked_missing": 0,
+   "acked_wrong_content": 0,
+   "clone_rc": 0,
+   "clone_s": 22.12,
+   "fsck_rc": 0
+  },
+  {
+   "why": "periodic",
+   "t": 1793867781.1552682,
+   "bad": 0,
+   "acked_files": 5089,
+   "acked_missing": 0,
+   "acked_wrong_content": 0,
+   "clone_rc": 0,
+   "clone_s": 25.47,
+   "fsck_rc": 0
+  }
+ ],
+ "stale_gc_locks_cleared": 2,
+ "gc_lock_held_by_live_process": 0,
+ "stale_cas_locks_cleared_age_s": [],
+ "audits_bad": 0
+}

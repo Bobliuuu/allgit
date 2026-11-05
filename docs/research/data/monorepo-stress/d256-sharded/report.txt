@@ -1,0 +1,73 @@
+span 1560s
+op,n_ok,n_expected_fail,n_error,ops_per_s,p50_ms,p95_ms,p99_ms,max_ms
+add,5033,0,0,3.23,9.6,34.8,79.0,1200.1
+add_big,100,0,0,0.06,124.8,210.8,264.4,264.4
+branch_create,542,0,0,0.35,4.5,12.5,19.1,25.0
+branch_delete,542,0,0,0.35,4.0,11.3,16.9,24.6
+branch_switch,1084,0,0,0.69,4.9,15.2,34.2,149.8
+clone_fresh,201,0,109,0.2,15836.7,25555.8,30962.9,36571.2
+clone_initial,148,0,540,0.44,15395.3,40110.0,50112.4,52038.1
+commit,5033,0,0,3.23,8.8,27.3,42.6,793.0
+commit_big,100,0,0,0.06,54.0,128.6,174.0,174.0
+fsck_clone,68,0,0,0.04,48.4,312.9,330.7,330.7
+lock,264,337,264,0.55,12.3,2785.6,4734.9,15455.0
+merge,2873,0,1744,2.96,6147.0,66219.2,107047.2,263248.7
+publish,738,3215,671,2.96,53.3,4828.3,13770.8,17113.7
+publish_auto,314,624,356,0.83,2237.0,79152.8,148971.4,230432.8
+publish_lock,190,302,148,0.41,3914.8,76124.2,140075.2,176134.9
+rd_clone,0,0,3,0.0,nan,nan,nan,None
+sync,6108,0,530,4.26,275.1,773.4,1527.3,2520.1
+undo,448,0,0,0.29,8.6,28.5,46.5,83.0
+unlock,223,0,41,0.17,10.3,911.3,10156.5,12956.3
+ERR 1404x [merge] error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 670x [publish] error: backend unavailable: http://N.N.N.N:N/vN/o/manifest: Connection Failed: Connect error: Connection refused (os error N)
+ERR 525x [sync] error: backend unavailable: http://N.N.N.N:N/vN/o/manifest: Connection Failed: Connect error: Connection refused (os error N)
+ERR 523x [clone_initial] error: backend unavailable: http://N.N.N.N:N/vN/o/manifest: Connection Failed: Connect error: Connection refused (os error N)
+ERR 264x [lock] error: outcome unknown after N retries (last error: http://N.N.N.N:N/vN/o/tx/<id>: Connection Failed: Connect error: Connection refused (os 
+ERR 260x [publish_auto] error: backend unavailable: http://N.N.N.N:N/vN/o/manifest: Connection Failed: Connect error: Connection refused (os error N)
+ERR 100x [merge] sing object <id>
+fetched missing object <id>
+fetched missing object <id>
+error: backend unavailable: http://N.N.N.N:N/vN/o/packs/pack-<id>.i
+ERR 99x [clone_fresh] error: backend unavailable: http://N.N.N.N:N/vN/o/manifest: Connection Failed: Connect error: Connection refused (os error N)
+ERR 59x [merge] fetched missing object <id>
+error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 58x [publish_lock] error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 48x [merge] issing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched m
+ERR 43x [merge] error: untracked path "zN/uN/fN.txt" would be overwritten; move or remove it first
+ERR 42x [publish_auto] sing object <id>
+fetched missing object <id>
+fetched missing object <id>
+error: backend unavailable: http://N.N.N.N:N/vN/o/packs/pack-<id>.i
+ERR 40x [publish_lock] error: backend unavailable: http://N.N.N.N:N/vN/o/manifest: Connection Failed: Connect error: Connection refused (os error N)
+ERR 28x [merge] missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched 
+ERR 22x [unlock] error: art/fN.bin is not locked
+ERR 17x [clone_initial] error: backend unavailable: http://N.N.N.N:N/vN/o/packs/pack-<id>.pack?offset=N&len=N: Connection Failed: Connect error: Connection refused 
+ERR 15x [publish_auto] error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 14x [publish_lock] sing object <id>
+fetched missing object <id>
+fetched missing object <id>
+error: backend unavailable: http://N.N.N.N:N/vN/o/packs/pack-<id>.i
+ERR 11x [merge] fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+error: zone "zN" has uncommi
+ERR 11x [unlock] error: fN.bin in zone art is locked by uN; only the holder can release it
+ERR 8x [unlock] error: backend unavailable: http://N.N.N.N:N/vN/o/manifest: Connection Failed: Connect error: Connection refused (os error N)
+ERR 8x [merge] error: backend unavailable: http://N.N.N.N:N/vN/o/packs/pack-<id>.idx: Connection Failed: Connect error: Connection refused (os error N)
+ERR 8x [clone_fresh] error: backend unavailable: http://N.N.N.N:N/vN/o/packs/pack-<id>.pack?offset=N&len=N: Connection Failed: Connect error: Connection refused 
+ERR 7x [merge] fetched missing object <id>
+fetched missing object <id>
+error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert th
+resources: {"rss_kb": {"first_quartile_mean": 4329802.7, "last_quartile_mean": 4915429.6, "max": 10517656.0, "last": 2538940.0}, "cpu_pct": {"first_quartile_mean": 375.4, "last_quartile_mean": 645.7, "max": 1210.7, "last": 7.2}, "fds": {"first_quartile_mean": 74.7, "last_quartile_mean": 46.6, "max": 246.0, "last": 4.0}, "threads": {"first_quartile_mean": 68.5, "last_quartile_mean": 39.1, "max": 237.0, "last": 4.0}, "manifest_bytes": {"first_quartile_mean": 6.0, "last_quartile_mean": 6.0, "max": 6.0, "last": 6.0}, "packs": {"first_quartile_mean": 268.1, "last_quartile_mean": 1501.6, "max": 1517.0, "last": 1517.0}}

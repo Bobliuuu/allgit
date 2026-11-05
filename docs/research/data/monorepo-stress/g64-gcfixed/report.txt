@@ -1,0 +1,128 @@
+span 859s
+op,n_ok,n_expected_fail,n_error,ops_per_s,p50_ms,p95_ms,p99_ms,max_ms
+add,4725,0,0,5.5,8.7,29.7,48.6,226.5
+add_big,76,0,0,0.09,116.1,207.2,245.1,245.1
+branch_create,449,0,0,0.52,4.6,9.4,14.7,16.2
+branch_delete,441,0,8,0.52,3.8,8.5,13.7,17.1
+branch_switch,890,0,8,1.05,5.1,12.6,20.6,30.5
+clone_fresh,294,0,0,0.34,13201.1,17592.6,24859.5,25405.9
+clone_initial,64,0,0,0.07,12354.4,24397.2,25216.9,25216.9
+commit,4658,0,67,5.5,8.4,24.0,39.0,131.4
+commit_big,67,0,9,0.09,46.9,161.6,243.1,243.1
+fsck_clone,90,0,0,0.1,158.1,370.2,591.5,591.5
+lock,626,145,0,0.9,7.6,25.7,175.8,709.6
+merge,990,0,1142,2.48,1110.9,7377.9,12303.8,23087.9
+publish,1022,1474,0,2.91,12.2,116.8,380.8,892.0
+publish_auto,465,210,25,0.82,53.4,25634.1,74397.2,185761.6
+publish_lock,602,96,24,0.84,451.9,16427.0,52719.9,158893.2
+sync,4644,0,0,5.41,519.8,986.3,1153.4,1445.3
+undo,365,0,0,0.43,8.0,26.6,50.1,99.4
+unlock,626,0,0,0.73,7.0,18.2,40.7,1076.4
+ERR 815x [merge] error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 236x [merge] error: a merge of origin/main into zN/main is already in progress
+
+Options:
+  vcs conflict list
+  vcs merge --abort
+ERR 41x [commit] t lockable file(s) without a lock (see .vcsattributes):
+  art/fN.bin
+  art/fN.bin
+
+Options:
+  vcs lock <path> --lease-secs <n>   take the lo
+ERR 32x [merge] fetched missing object <id>
+error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 22x [merge] missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched 
+ERR 21x [publish_lock] error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 16x [merge] issing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched m
+ERR 16x [publish_auto] error: a merge of origin/main into zN/main is already in progress
+
+Options:
+  vcs conflict list
+  vcs merge --abort
+ERR 13x [commit] using to commit lockable file(s) without a lock (see .vcsattributes):
+  art/fN.bin
+
+Options:
+  vcs lock <path> --lease-secs <n>   take the l
+ERR 10x [commit] error: cannot commit: merge of origin/main into zN/main has N unresolved conflict(s):
+  zN/uN/log.txt (modify/modify)
+
+Options:
+  edit the f
+ERR 8x [branch_switch] error: zone "zN" is in the middle of a merge; resolve and commit, or `vcs merge --abort`
+ERR 8x [branch_delete] error: zone "zN" is in the middle of a merge; resolve or `vcs merge --abort` first
+ERR 6x [merge] fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+
+ERR 5x [merge] fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+error: zone "zN" has uncommi
+ERR 5x [commit_big] t lockable file(s) without a lock (see .vcsattributes):
+  art/fN.bin
+  art/fN.bin
+
+Options:
+  vcs lock <path> --lease-secs <n>   take the lo
+ERR 4x [merge] fetched missing object <id>
+fetched missing object <id>
+error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert th
+ERR 4x [merge] fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+error: zone "zN" has uncommitted changes (N staged, N un
+ERR 3x [publish_auto] error: zone "zN" has uncommitted changes (N staged, N unstaged); commit or revert them first
+ERR 2x [publish_auto] missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched 
+ERR 2x [commit_big] error: cannot commit: merge of origin/main into zN/main has N unresolved conflict(s):
+  zN/uN/log.txt (modify/modify)
+
+Options:
+  edit the f
+ERR 2x [commit] e(s) without a lock (see .vcsattributes):
+  art/fN.bin
+  art/fN.bin
+  art/fN.bin
+
+Options:
+  vcs lock <path> --lease-secs <n>   take the loc
+ERR 1x [publish_auto] fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+error: zone "zN" has uncommitted changes (N staged, N un
+ERR 1x [publish_lock] missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched missing object <id>
+fetched 
+ERR 1x [publish_lock] ng object <id>
+fetched missing object <id>
+auto-merged remote art/main (attempt N)
+fetched missing object <id>
+fetched missing object <id>
+f
+ERR 1x [publish_lock] fetched missing object <id>
+fetched missing object <id>
+auto-merged remote art/main (attempt N)
+error: zone "zN" has uncommitted changes (N 
+resources: {"rss_kb": {"first_quartile_mean": 1853160.6, "last_quartile_mean": 4749203.3, "max": 4974408.0, "last": 4756032.0}, "cpu_pct": {"first_quartile_mean": 202.6, "last_quartile_mean": 352.2, "max": 536.8, "last": 0.0}, "fds": {"first_quartile_mean": 21.9, "last_quartile_mean": 46.5, "max": 98.0, "last": 4.0}, "threads": {"first_quartile_mean": 19.4, "last_quartile_mean": 41.0, "max": 94.0, "last": 4.0}, "manifest_bytes": {"first_quartile_mean": 18559.2, "last_quartile_mean": 100851.4, "max": 109077.0, "last": 109077.0}, "packs": {"first_quartile_mean": 157.0, "last_quartile_mean": 1409.2, "max": 1588.0, "last": 1588.0}}

@@ -22,6 +22,7 @@ ap.add_argument("--dirs", type=int, default=20)
 ap.add_argument("--subdirs", type=int, default=20)
 ap.add_argument("--files", type=int, default=50)
 ap.add_argument("--seed", type=int, default=1)
+ap.add_argument("--lines", type=int, default=40, help="lines per file in the initial commit")
 ap.add_argument("--branch-prob", type=float, default=0.08)
 ap.add_argument("--tag-every", type=int, default=1000)
 a = ap.parse_args()
@@ -38,7 +39,7 @@ for d in range(a.dirs):
     for s in range(a.subdirs):
         for f in range(a.files):
             p = "d%02d/s%02d/f%03d.txt" % (d, s, f)
-            files[p] = ["p%d_%d_%d line %d v0" % (d, s, f, i) for i in range(40)]
+            files[p] = ["p%d_%d_%d line %d v0" % (d, s, f, i) for i in range(a.lines)]
             paths.append(p)
 HOT = "hot/app.txt"
 OLD = "hot/old_name.txt"
