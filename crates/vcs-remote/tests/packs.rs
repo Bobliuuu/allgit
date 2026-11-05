@@ -392,3 +392,41 @@ fn conditional_get_costs_one_request_and_no_body_when_unchanged() {
     let (m3, _) = refresh_manifest(&mem, Some((m, "stale".into()))).unwrap();
     assert_eq!(m3.head("z", "main"), Some(c2));
 }
+
+/// A transaction bigger than `max_pack_bytes` is uploaded as several packs (a server refuses a request body over
+/// its `max_body`, 1 GiB by default, and a 4 GiB file is 4 GiB of chunks); every pack is visible only after the
+/// manifest CAS, and a fetch gets all of it.
+#[test]
+fn big_transaction_is_split_into_packs_below_the_limit() {
+    let s = MemoryStore::new();
+    let es: Vec<TreeEntry> = (0..40)
+        .map(|i| file(format!("f{i:02}"), s.put_blob(format!("{i} ").repeat(2000).as_bytes()).unwrap()))
+        .collect();
+    let root = s.put(&Object::Tree(Tree::new(es).unwrap())).unwrap();
+    let c = commit(&s, "z", vec![], root, 1);
+    let mem = MemBackend::new();
+    Publisher::new(&mem, &s, tx("z", None, c))
+        .with_max_pack_bytes(16 << 10)
+        .run()
+        .unwrap();
+    let keys = mem.list("packs/").unwrap();
+    let packs: Vec<&String> = keys.iter().filter(|k| k.ends_with(".pack")).collect();
+    let idxs = keys.iter().filter(|k| k.ends_with(".idx")).count();
+    assert!(
+        packs.len() >= 4,
+        "~200 KiB at 16 KiB per pack must give several packs, got {}",
+        packs.len()
+    );
+    assert_eq!(packs.len(), idxs, "every pack has its index");
+    for k in &packs {
+        let len = mem.get(k).unwrap().unwrap().data.len();
+        assert!(len <= 20 << 10, "pack {k} is {len} bytes");
+    }
+    let dst = MemoryStore::new();
+    fetch_heads(&mem, &dst, None).unwrap();
+    assert_closure(&dst, c);
+    // the same transaction with the default limit is one pack
+    let one = MemBackend::new();
+    Publisher::new(&one, &s, tx("z", None, c)).run().unwrap();
+    assert_eq!(one.list("packs/").unwrap().len(), 2, "default limit: one pack and its index");
+}
