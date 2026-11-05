@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # One big binary (a copy of a file of the stress base, 1-5 GiB), git against vcs (through vcs-server) on the same bytes:
 # add, commit, push of v1; then 3 MiB overwritten and 1 MiB inserted -> v2: add, commit, push; clone of v2; store sizes.
-#   bigfile_cmp.sh BASEDIR OUTDIR FILE     (FILE e.g. $BASE/seed/big/big03.bin)    env: VCS_BIN
+#   bigfile_cmp.sh BASEDIR OUTDIR FILE     (FILE e.g. $BASE/seed/big/big03.bin)    env: VCS_BIN, ONLY_VCS=1 (append the vcs rows to an existing OUTDIR)
 set -uo pipefail
 B=${1:?base}; O=${2:?out}; F=${3:?file}; export PATH=${VCS_BIN:?VCS_BIN}:$PATH
 export VCS_AUTHOR_NAME=b VCS_AUTHOR_EMAIL=b@x VCS_TOKEN=tok-admin VCS_PRINCIPAL=admin GIT_AUTHOR_NAME=b GIT_AUTHOR_EMAIL=b@x GIT_COMMITTER_NAME=b GIT_COMMITTER_EMAIL=b@x
-export XDG_CACHE_HOME=$O/cache; rm -rf "$O"; mkdir -p "$O"; R=$O/results.tsv; : > "$R"
+export XDG_CACHE_HOME=$O/cache; [ -n "${ONLY_VCS:-}" ] || rm -rf "$O"; mkdir -p "$O"; R=$O/results.tsv; [ -n "${ONLY_VCS:-}" ] || : > "$R"
 m() { local tool=$1 op=$2; shift 2; /usr/bin/time -f "$tool\t$op\t%e\t%U\t%S\t%M\t%x" -a -o "$R" "$@" > "$O/$tool-$op.out" 2> "$O/$tool-$op.err" || true; }
 mutate() { python3 - "$1" <<'PY'
 import os,sys,random
@@ -24,7 +24,16 @@ with open(p,"rb") as a, open(tmp,"wb") as b:
 os.replace(tmp,p)
 PY
 }
+sha() { python3 - "$1" <<'PY'
+import hashlib,sys
+x=hashlib.sha256()
+with open(sys.argv[1],'rb') as f:
+    for b in iter(lambda:f.read(16<<20),b''): x.update(b)
+print(x.hexdigest())
+PY
+}
 # ---- git
+if [ -z "${ONLY_VCS:-}" ]; then
 git init -q --bare "$O/git-remote.git"; mkdir "$O/g"; cd "$O/g"; git init -q -b main; git remote add origin "$O/git-remote.git"
 cp "$F" big.bin
 m git add_v1 git add big.bin
@@ -36,7 +45,9 @@ m git commit_v2 git commit -qm v2
 m git push_v2 git push -q origin main
 m git clone_v2 git clone -q "file://$O/git-remote.git" "$O/g-clone"
 du -sk "$O/git-remote.git" | awk '{print "git\tremote_kb\t" $1}' >> "$R"
-rm -rf "$O/g-clone"
+[ "$(sha "$O/g/big.bin")" = "$(sha "$O/g-clone/big.bin")" ] && echo -e "git\tclone_hash_equal\tTrue" >> "$R" || echo -e "git\tclone_hash_equal\tFalse" >> "$R"
+rm -rf "$O/g-clone" "$O/g" "$O/git-remote.git"
+fi
 # ---- vcs through a server
 cd "$O"; vcs-server --root "$O/vcs-store" --tokens "$B/tokens" --listen 127.0.0.1:8494 >"$O/server.log" 2>&1 & SP=$!
 until curl -sf http://127.0.0.1:8494/healthz >/dev/null; do sleep 0.2; done
@@ -51,14 +62,6 @@ m vcs commit_v2 vcs commit -m v2
 m vcs push_v2 vcs publish
 m vcs clone_v2 vcs clone http://127.0.0.1:8494 "$O/v-clone"
 du -sk "$O/vcs-store" | awk '{print "vcs\tremote_kb\t" $1}' >> "$R"
-python3 - "$O/g/big.bin" "$O/v-clone/big.bin" <<'PY' >> "$R"
-import hashlib,sys
-def sha(p):
-    x=hashlib.sha256()
-    with open(p,'rb') as f:
-        for b in iter(lambda:f.read(16<<20),b''): x.update(b)
-    return x.hexdigest()
-a,b=sha(sys.argv[1]),sha(sys.argv[2]); print("both\tclone_hash_equal\t%s"%(a==b))
-PY
-kill $SP; wait $SP 2>/dev/null; rm -rf "$O/v-clone" "$O/v" "$O/g" "$O/vcs-store" "$O/git-remote.git"
+[ "$(sha "$O/v/big.bin")" = "$(sha "$O/v-clone/big.bin")" ] && echo -e "vcs\tclone_hash_equal\tTrue" >> "$R" || echo -e "vcs\tclone_hash_equal\tFalse" >> "$R"
+kill $SP; wait $SP 2>/dev/null; rm -rf "$O/v-clone" "$O/v" "$O/vcs-store"
 cat "$R"
