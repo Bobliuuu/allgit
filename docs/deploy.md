@@ -28,11 +28,35 @@ Bucket policy (no secrets; replace `BUCKET`, `PREFIX` and the server role ARN):
 
 ```json
 {"Version":"2012-10-17","Statement":[{
-  "Sid":"OnlyTheServerWritesTheManifest","Effect":"Deny",
-  "NotPrincipal":{"AWS":"arn:aws:iam::ACCOUNT:role/vcs-server"},
+  "Sid":"OnlyTheServerWritesTheManifest","Effect":"Deny","Principal":"*",
   "Action":["s3:PutObject","s3:DeleteObject","s3:AbortMultipartUpload"],
-  "Resource":["arn:aws:s3:::BUCKET/PREFIX/manifest"]}]}
+  "Resource":["arn:aws:s3:::BUCKET/PREFIX/manifest"],
+  "Condition":{"ArnNotEquals":{"aws:PrincipalArn":"arn:aws:iam::ACCOUNT:role/vcs-server"}}}]}
 ```
+
+(AWS recommends this `Principal:"*"` + `aws:PrincipalArn` form over `NotPrincipal` with `Deny`, which also needs the role's
+assumed-role session ARNs listed; [IAM: NotPrincipal](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_notprincipal.html).
+This form was reviewed against AWS documentation, not run against real AWS S3 here; use the self-check below.)
+
+**Least-privilege IAM policy for the server role** (attach to `vcs-server`; replace `BUCKET` and `PREFIX`; GC needs the
+`DeleteObject` line and the CopyObject-onto-itself `touch` needs Get+Put, so a read-only mirror can drop Put/Delete):
+
+```json
+{"Version":"2012-10-17","Statement":[
+ {"Sid":"List","Effect":"Allow","Action":"s3:ListBucket","Resource":"arn:aws:s3:::BUCKET","Condition":{"StringLike":{"s3:prefix":"PREFIX/*"}}},
+ {"Sid":"Objects","Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":"arn:aws:s3:::BUCKET/PREFIX/*"}]}
+```
+
+The server needs no `s3:CreateBucket`, no `s3:GetBucket*`, and no `s3:PutBucketPolicy`; do not hand it `s3:*`. Add a bucket-policy
+`Deny` with `aws:SecureTransport=false` so nothing can use plain HTTP. AWS also supports a bucket policy that rejects any
+`PutObject` lacking `If-None-Match` / `If-Match` ([AWS storage blog](https://aws.amazon.com/blogs/storage/building-multi-writer-applications-on-amazon-s3-using-native-controls/));
+vcs only ever writes conditionally, so that is a cheap second guard (untested here).
+
+**Credentials are static.** `vcs-server` reads `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` once at start-up;
+there is no IMDS, IRSA, ECS task-role or SSO provider chain and SIGHUP does not reload them. A role's temporary credentials
+(1 to 12 h) therefore make the server fail every backend call with 403 when they expire. Use a long-lived IAM user key
+limited by the policy above and rotate it by restarting (the shipped unit reads `/etc/vcs/server.env`), until the provider
+chain exists (tracked in the issue linked from [research/infra-review.md](research/infra-review.md)).
 
 (`NotPrincipal` with `Deny` is AWS syntax; MinIO/RustFS-style stores that lack it can use `Principal:"*"` and a separate
 allow for the server's credential, or an IAM policy on the client user. Verify with the self-check below, not by reading the policy.)
@@ -104,7 +128,7 @@ The model checker (`crates/vcs-remote/tests/model_locks.rs`) covers this with re
 sudo useradd --system --home-dir /var/lib/vcs --shell /usr/sbin/nologin vcs
 sudo install -m 0755 target/release/vcs-server /usr/local/bin/vcs-server
 sudo install -d -o vcs -g vcs /var/lib/vcs/data
-sudo install -d /etc/vcs && sudo install -m 0640 -g vcs deploy/tokens.example /etc/vcs/tokens   # then edit
+sudo install -d /etc/vcs && sudo install -m 0640 -g vcs deploy/tokens.example /etc/vcs/tokens   # then REPLACE every line: the server refuses the example hashes
 sudo install -m 0644 deploy/policy.example /etc/vcs/policy                                       # then edit
 head -c 24 /dev/urandom | base64 | tr -d '=+/' | sudo install -m 0640 -g vcs /dev/stdin /etc/vcs/metrics-token   # >= 16 chars; the unit reads it
 sudo install -m 0644 deploy/vcs-server.service /etc/systemd/system/
@@ -250,7 +274,16 @@ count towards the breaker.
 
 * Directory backend: stop writes or snapshot the filesystem; everything is under `--root`. The `manifest` file is the
   single linearization point; objects are immutable.
-* S3 backend: enable bucket versioning if you want point-in-time recovery of `manifest`.
+* S3 backend: enable bucket versioning (on the whole bucket, not only `manifest`) plus a lifecycle rule that expires
+  noncurrent versions after your recovery window, and consider cross-region replication. Objects and packs are immutable and the
+  manifest is the only mutable key, but remote GC deletes unreachable objects: restoring an old `manifest` version is
+  only safe if GC has not swept what that version references (versioning keeps the bytes; a delete marker is undone by deleting
+  it). Take the manifest version you intend to restore from before the last `vcs gc --remote` run. Nothing in the tool
+  automates or tests restore yet; rehearse it once on a copy (`aws s3 sync` of the prefix, then point a server at the copy).
+* Upgrades and rollback: there is no minimum-reader marker. A manifest over a size threshold is rewritten in the v5 layout and
+  `migrate-sharded` is one-way, so an older `vcs-server` cannot read a manifest a newer one wrote. Roll back by restoring the
+  manifest version written before the upgrade (above), not by only swapping the binary; upgrade one replica first and keep
+  the previous manifest version until you are satisfied.
 * The server is stateless between requests; restarting loses nothing.
 * `curl -H "Authorization: Bearer $VCS_TOKEN" http://host:8480/v1/whoami` shows how the server sees you.
 
