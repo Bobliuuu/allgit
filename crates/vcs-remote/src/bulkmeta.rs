@@ -85,6 +85,7 @@ struct Ctx {
 struct Worker {
     recent: Vec<Option<ObjectId>>,
     unresolved: Vec<ObjectId>,
+    compact_at: usize,
     out: Vec<(ObjectId, Vec<u8>)>,
     out_bytes: usize,
 }
@@ -94,6 +95,7 @@ impl Worker {
         Self {
             recent: vec![None; 1 << 14],
             unresolved: Vec::new(),
+            compact_at: 1 << 20,
             out: Vec::new(),
             out_bytes: 0,
         }
@@ -108,6 +110,13 @@ impl Worker {
             self.recent[slot] = Some(*d);
         } else {
             self.unresolved.push(*d);
+            // Dependencies in a pack that is read later pile up (many small incremental packs): keep the list distinct.
+            if self.unresolved.len() >= self.compact_at {
+                self.unresolved.sort_unstable();
+                self.unresolved.dedup();
+                self.unresolved.retain(|u| !ctx.known.contains(u));
+                self.compact_at = (self.unresolved.len() * 2).max(1 << 20);
+            }
         }
     }
 }
