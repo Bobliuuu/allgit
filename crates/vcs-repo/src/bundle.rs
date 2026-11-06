@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use vcs_objects::names::{validate_branch_name, validate_path, validate_zone_name};
+use vcs_objects::names::{validate_branch_name, validate_path, validate_zone_name, NOTES_BRANCH};
 use vcs_objects::{id_of_encoded, Object, ObjectId, RefUpdate, Signature, Transaction};
 use vcs_store::pack::{decode_payload_max, encode_payload_at, PackFormat, PACK_MAGIC, PACK_MAGIC_V2, RAW_SMALL};
 use vcs_store::ObjectStore;
@@ -476,6 +476,9 @@ fn select_heads(repo: &Repo, selectors: &[String]) -> Result<Vec<(String, String
                 return msg(format!("zone {s:?} has no branches to bundle"));
             }
             out.extend(bs.into_iter().map(|(b, id)| ((zone.clone(), b), id)));
+            if let Some(n) = refs.notes_head(&zone) {
+                out.insert((zone.clone(), NOTES_BRANCH.to_owned()), n); // notes travel with their zone
+            }
         } else if let Some(id) = refs.head(ROOT_ZONE, s) {
             out.insert((ROOT_ZONE.to_owned(), s.clone()), id);
         } else {
@@ -779,6 +782,10 @@ impl Repo {
         let _l = self.lock()?;
         let p = self.bundle_prepare(file)?;
         self.bundle_commit(file, &p, author)?;
+        // notes are not branches the user manages: fold the bundle's notes into the local ones, as `fetch` does
+        for u in p.updates.iter().filter(|u| u.branch == NOTES_BRANCH) {
+            self.notes_reconcile(&u.zone, u.new)?;
+        }
         Ok(BundleFetchReport {
             updated: p.updates.iter().map(|u| (u.zone.clone(), u.branch.clone(), u.old, u.new)).collect(),
             objects: p.header.info.objects,
@@ -828,7 +835,7 @@ impl Repo {
                 repo.save_ws(&Workspace::default())?;
             }
             let mut pick: BTreeMap<&str, &str> = BTreeMap::new();
-            for h in &info.heads {
+            for h in info.heads.iter().filter(|h| h.branch != NOTES_BRANCH) {
                 let e = pick.entry(h.zone.as_str()).or_insert(h.branch.as_str());
                 if h.branch == DEFAULT_BRANCH {
                     *e = DEFAULT_BRANCH;

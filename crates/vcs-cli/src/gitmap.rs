@@ -651,6 +651,7 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
         }
         "stash" => translate_stash(rest)?,
         "tag" => translate_tag(rest)?,
+        "notes" => translate_notes(rest)?,
         "remote" => {
             let mut p = parse(cmd, rest, &[]);
             let verbose = p.take(&["-v", "--verbose"]);
@@ -1253,7 +1254,7 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
         "lfs" => return Err(missing(cmd, "large files are native", "files are chunked automatically; see docs/guide/06-large-files.md")),
         "filter-branch" => translate_filter_branch(rest)?,
         "filter-repo" => translate_filter_repo(rest)?,
-        "replace" | "notes" | "rerere" | "range-diff" | "show-branch" | "stripspace" => {
+        "replace" | "rerere" | "range-diff" | "show-branch" | "stripspace" => {
             return Err(missing(cmd, "annotation and ref-substitution tools are not implemented", "`vcs rebase`, `vcs op undo`; history rewriting by path, message, author or tree is `vcs rewrite`"))
         }
         "ls-remote" | "for-each-ref" | "show-ref" | "name-rev" | "update-ref" | "update-index" | "hash-object" | "write-tree" | "read-tree" | "commit-tree" | "count-objects" | "prune" | "pack-objects" | "index-pack" | "unpack-objects" | "check-ignore" | "check-attr" | "var" | "mktag" => {
@@ -2186,6 +2187,109 @@ fn translate_stash(rest: &[String]) -> Result<Vec<Step>, Error> {
                 &format!("stash {other}"),
                 "only push|pop|apply|list|drop exist",
                 "`vcs stash list`, then `vcs stash pop N`; to inspect a stash entry apply it with `vcs stash apply N`",
+            ))
+        }
+    })
+}
+
+fn translate_notes(rest: &[String]) -> Result<Vec<Step>, Error> {
+    let native = "`vcs notes [add|show|list|append|remove]` (one notes ref, no editor)";
+    let sub = rest.first().map(String::as_str).filter(|s| !s.starts_with('-'));
+    let args = if sub.is_some() { &rest[1..] } else { rest };
+    let mut p = parse(
+        "notes",
+        args,
+        &[
+            "-m",
+            "--message",
+            "-F",
+            "--file",
+            "--ref",
+            "-C",
+            "-c",
+            "--reuse-message",
+            "--reedit-message",
+        ],
+    );
+    if p.val(&["--ref"]).is_some() {
+        return Err(missing(
+            "notes --ref",
+            "vcs keeps one notes ref per zone (the equivalent of refs/notes/commits)",
+            native,
+        ));
+    }
+    let msgs = p.vals(&["-m", "--message"]);
+    let file = p.val(&["-F", "--file"]);
+    let force = p.take(&["-f", "--force"]);
+    p.take(&["-q", "--quiet"]);
+    if p.take(&["-C", "-c", "--reuse-message", "--reedit-message"]) {
+        return Err(missing("notes -C/-c", "reusing an existing blob", "`vcs notes add -F <file>`"));
+    }
+    let step = |a: Vec<String>| vec![Step::Vcs(a)];
+    let with_msg = |mut a: Vec<String>, msgs: &[String], file: &Option<String>| {
+        for m in msgs {
+            a.extend(["-m".to_owned(), m.clone()]);
+        }
+        if let Some(f) = file {
+            a.extend(["-F".to_owned(), f.clone()]);
+        }
+        a
+    };
+    Ok(match sub {
+        None | Some("list") => {
+            p.finish(native)?;
+            let mut a = v(&["notes", "list"]);
+            a.extend(p.pos.iter().take(1).cloned());
+            step(a)
+        }
+        Some("add") => {
+            if p.take(&["--allow-empty"]) {
+                return Err(missing("notes add --allow-empty", "empty notes", "`vcs notes remove`"));
+            }
+            p.finish(native)?;
+            if msgs.is_empty() && file.is_none() {
+                return Err(missing("notes add without -m/-F", "the editor prompt", "`vcs notes add -m <text> [rev]`"));
+            }
+            let mut a = v(&["notes", "add"]);
+            if force {
+                a.push("--force".into());
+            }
+            let mut a = with_msg(a, &msgs, &file);
+            a.extend(p.pos.iter().take(1).cloned());
+            step(a)
+        }
+        Some("append") => {
+            if p.take(&["--allow-empty"]) {
+                return Err(missing("notes append --allow-empty", "empty notes", "`vcs notes remove`"));
+            }
+            p.finish(native)?;
+            if msgs.is_empty() && file.is_none() {
+                return Err(missing("notes append without -m/-F", "the editor prompt", "`vcs notes append -m <text> [rev]`"));
+            }
+            let mut a = with_msg(v(&["notes", "append"]), &msgs, &file);
+            a.extend(p.pos.iter().take(1).cloned());
+            step(a)
+        }
+        Some("show") => {
+            p.finish(native)?;
+            let mut a = v(&["notes", "show"]);
+            a.extend(p.pos.iter().take(1).cloned());
+            step(a)
+        }
+        Some("remove") => {
+            if p.take(&["--ignore-missing"]) || p.take(&["--stdin"]) {
+                return Err(missing("notes remove --ignore-missing/--stdin", "tolerating missing notes or reading objects from stdin", native));
+            }
+            p.finish(native)?;
+            let mut a = v(&["notes", "remove"]);
+            a.extend(p.pos.iter().cloned());
+            step(a)
+        }
+        Some(other) => {
+            return Err(missing(
+                &format!("notes {other}"),
+                "only add|show|list|append|remove exist",
+                "`vcs notes list`, then `vcs notes add -f -m <text> <rev>` to rewrite a note (edit, copy, merge and prune have no equivalent; `vcs fetch` merges notes itself)",
             ))
         }
     })

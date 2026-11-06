@@ -13,7 +13,9 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use vcs_objects::names::{validate_branch_name, validate_component, validate_path, validate_zone_name, META_DIR};
+use vcs_objects::names::{
+    validate_branch_name, validate_component, validate_path, validate_user_branch_name, validate_zone_name, META_DIR,
+};
 use vcs_objects::{ChangeId, Commit, EntryMode, Object, ObjectId, RefUpdate, Signature, Snapshot, Transaction};
 use vcs_store::{LocalStore, ObjectStore};
 
@@ -297,7 +299,7 @@ impl Repo {
 
     /// Like [`Repo::init`]; the root zone starts on `branch` (no commit yet) instead of `main`.
     pub fn init_with_branch(path: &Path, branch: &str) -> Result<Repo> {
-        validate_branch_name(branch)?;
+        validate_user_branch_name(branch)?;
         io(path, fs::create_dir_all(path))?;
         let worktree = io(path, path.canonicalize())?;
         let vcs = worktree.join(META_DIR);
@@ -2278,7 +2280,7 @@ impl Repo {
     pub fn create_branch(&self, zone: &str, branch: &str) -> Result<ObjectId> {
         let zone = self.resolve_zone(zone)?;
         let zone = zone.as_str();
-        validate_branch_name(branch)?;
+        validate_user_branch_name(branch)?;
         let _l = self.lock()?;
         let zones = self.zones()?;
         if !zones.exists(zone) {
@@ -2307,7 +2309,7 @@ impl Repo {
     pub fn create_branch_at(&self, zone: &str, branch: &str, at: &str) -> Result<ObjectId> {
         let zone = self.resolve_zone(zone)?;
         let zone = zone.as_str();
-        validate_branch_name(branch)?;
+        validate_user_branch_name(branch)?;
         let _l = self.lock()?;
         let mut refs = self.refs()?;
         if refs.head(zone, branch).is_some() {
@@ -2358,7 +2360,7 @@ impl Repo {
     pub fn checkout(&self, zone: &str, branch: &str) -> Result<()> {
         let zone = self.resolve_zone(zone)?;
         let zone = zone.as_str();
-        validate_branch_name(branch)?;
+        validate_user_branch_name(branch)?;
         let _l = self.lock()?;
         let zones = self.zones()?;
         let mut ws = self.workspace()?;
@@ -2496,7 +2498,7 @@ impl Repo {
             return msg(format!("zone {zone:?} is already subscribed"));
         }
         let branch = branch.unwrap_or(DEFAULT_BRANCH);
-        validate_branch_name(branch)?;
+        validate_user_branch_name(branch)?;
         self.require_branch_free(zone, branch)?;
         self.adopt_tracking(&mut refs, zone, branch)?;
         let head = refs.head(zone, branch);

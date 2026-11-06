@@ -18,7 +18,7 @@
 use crate::error::{msg, Result};
 use crate::repo::{Repo, StatusOpts};
 use crate::treeops;
-use vcs_objects::names::{validate_branch_name, DETACHED_BRANCH};
+use vcs_objects::names::{validate_user_branch_name, DETACHED_BRANCH};
 use vcs_objects::{ObjectId, RefUpdate};
 
 impl Repo {
@@ -82,7 +82,7 @@ impl Repo {
         };
         let zone = self.resolve_zone(zone)?;
         let zone = zone.as_str();
-        validate_branch_name(branch)?;
+        validate_user_branch_name(branch)?;
         let target = self.resolve_rev(zone, rev)?;
         let _l = self.lock()?;
         let mut refs = self.refs()?;
@@ -109,8 +109,8 @@ impl Repo {
     pub fn branch_rename(&self, zone: &str, old: &str, new: &str, force: bool) -> Result<Option<ObjectId>> {
         let zone = self.resolve_zone(zone)?;
         let zone = zone.as_str();
-        validate_branch_name(old)?;
-        validate_branch_name(new)?;
+        validate_user_branch_name(old)?;
+        validate_user_branch_name(new)?;
         let _l = self.lock()?;
         let mut ws = self.workspace()?;
         let mut refs = self.refs()?;
