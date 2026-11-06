@@ -878,10 +878,31 @@ impl Repo {
     /// re-encode or re-hash for plain file blobs). The local store writes a large batch as one pack.
     pub(crate) fn prefetch_ids_with(&self, backend: &dyn Backend, cat: &PackCatalog, files: BTreeSet<ObjectId>) -> Result<usize> {
         use vcs_store::ObjectStore;
+        // A large batch is written as bounded local packs while it arrives (no per-object pending map, ordering map or
+        // barrier: 1e8 files); a small one takes the ordinary store path.
+        const STREAM_MIN: usize = 20_000;
+        const SEG_OBJECTS: usize = 400_000;
+        const SEG_BYTES: usize = 1 << 29;
+        // Objects at least this big keep the store's own path (written straight to files, outside the memory budget).
+        const BIG: usize = 1 << 20;
         let mut total = 0;
         let mut batch: Vec<ObjectId> = files.into_iter().collect();
+        let stream = batch.len() >= STREAM_MIN;
         while !batch.is_empty() {
             let mut next = Vec::new();
+            let mut seg: Vec<(ObjectId, Vec<u8>)> = Vec::new();
+            let mut seg_bytes = 0usize;
+            let flush = |seg: &mut Vec<(ObjectId, Vec<u8>)>, seg_bytes: &mut usize| -> Result<()> {
+                if !seg.is_empty() {
+                    self.store.add_streamed_pack(
+                        seg.len(),
+                        seg.iter().map(|(i, b)| Ok((*i, std::borrow::Cow::Borrowed(b.as_slice())))),
+                    )?;
+                    seg.clear();
+                    *seg_bytes = 0;
+                }
+                Ok(())
+            };
             packfetch::fetch_many_each::<PublishError>(backend, cat, &batch, &mut |id, enc| {
                 let plain_blob = enc.len() >= 2 && enc[0] == vcs_objects::Kind::Blob as u8 && enc[1] == vcs_objects::FORMAT_VERSION;
                 if !plain_blob {
@@ -895,11 +916,20 @@ impl Repo {
                         }
                     }
                 }
-                self.store.put_encoded_prehashed(&id, &enc)?;
                 total += 1;
+                if stream && enc.len() < BIG {
+                    seg_bytes += enc.len();
+                    seg.push((id, enc));
+                    if seg.len() >= SEG_OBJECTS || seg_bytes >= SEG_BYTES {
+                        flush(&mut seg, &mut seg_bytes).map_err(|e| PublishError::Remote(e.to_string()))?;
+                    }
+                } else {
+                    self.store.put_encoded_prehashed(&id, &enc)?;
+                }
                 Ok(())
             })
             .map_err(publish_err)?;
+            flush(&mut seg, &mut seg_bytes)?;
             batch = next;
         }
         self.store.sync()?;
