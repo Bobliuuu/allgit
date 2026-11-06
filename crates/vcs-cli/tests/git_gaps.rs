@@ -191,8 +191,7 @@ fn apply_three_way_merges_drifted_context_and_marks_overlaps() {
     assert!(e.contains("conflict") && e.contains("f"), "{e}");
     let f = read(&d2, "f");
     assert!(
-        f.contains("<<<<<<< ours") && f.contains("LOCAL") && f.contains("SIX") && f.contains(">>>>>>> theirs (patch)"),
-        "{f}"
+        f.contains("        "{f}"
     );
 
     // already applied: a no-op, not a conflict
@@ -333,6 +332,7 @@ fn publish_mirror_forces_with_lease_prunes_and_sends_tags() {
     assert!(!vcs(&b, &["publish", "--mirror", "--tags"]).status.success());
 }
 
+<<<<<<< HEAD
 #[test]
 fn symmetric_difference_in_cherry_pick_and_format_patch() {
     let t = tempfile::tempdir().unwrap();
@@ -367,4 +367,136 @@ fn symmetric_difference_in_cherry_pick_and_format_patch() {
     );
     // a symmetric range with a missing side is an error naming it
     assert!(fail(&d, &["cherry-pick", "main...nosuchbranch"]).contains("nosuchbranch"));
+}
+
+/// main: base. v1: p1 p2 p3. v2: p1 (same), p2 (edited), p4 (new, big); p3 dropped.
+fn rd_repo(t: &Path) -> std::path::PathBuf {
+    let d = t.join("r");
+    ok(t, &["init", "r"]);
+    commit_file(&d, "base.txt", "base\n", "base");
+    ok(&d, &["switch", "-c", "v1"]);
+    commit_file(&d, "a.txt", "a\n", "p1");
+    commit_file(&d, "b.txt", "b\n", "p2");
+    commit_file(&d, "c.txt", "c\n", "p3");
+    ok(&d, &["switch", "main"]);
+    ok(&d, &["switch", "-c", "v2"]);
+    commit_file(&d, "a.txt", "a\n", "p1");
+    commit_file(&d, "b.txt", "b changed\n", "p2");
+    let big: String = (0..30).map(|i| format!("line {i}\n")).collect();
+    commit_file(&d, "d.txt", &big, "p4");
+    d
+}
+
+#[test]
+fn range_diff_pairs_by_patch() {
+    let t = tempfile::tempdir().unwrap();
+    let d = rd_repo(t.path());
+    let out = ok(&d, &["range-diff", "main..v1", "main..v2"]);
+    let l: Vec<&str> = out.lines().collect();
+    assert!(l[0].starts_with("1:  ") && l[0].contains(" = 1:  ") && l[0].ends_with(" p1"), "{out}");
+    assert!(l[1].starts_with("2:  ") && l[1].contains(" ! 2:  ") && l[1].ends_with(" p2"), "{out}");
+    assert!(l.iter().any(|x| x.starts_with("    @@ b.txt")), "{out}");
+    assert!(l.iter().any(|x| x.starts_with("    -") && x.ends_with("b")), "{out}");
+    assert!(l.iter().any(|x| x.starts_with("    +") && x.ends_with("b changed")), "{out}");
+    assert!(l.iter().any(|x| x.starts_with("3:  ") && x.contains(" < -:  ------- p3")), "{out}");
+    assert!(l.iter().any(|x| x.starts_with("-:  ------- > 3:  ") && x.ends_with(" p4")), "{out}");
+    // the three-argument form is the same comparison
+    assert_eq!(ok(&d, &["range-diff", "main", "v1", "v2"]), out);
+    // -s drops the inner diff
+    let s = ok(&d, &["range-diff", "-s", "main..v1", "main..v2"]);
+    assert_eq!(s.lines().count(), 4, "{s}");
+    assert!(!s.contains("@@"), "{s}");
+    // identical ranges: all `=`
+    let same = ok(&d, &["range-diff", "main..v1", "main..v1"]);
+    assert_eq!(same.lines().count(), 3);
+    assert!(same.lines().all(|x| x.contains(" = ")), "{same}");
+    // the symmetric form runs, and a malformed call is refused
+    ok(&d, &["range-diff", "v1...v2"]);
+    assert!(fail(&d, &["range-diff", "main..v1"]).contains("usage"));
+    // `vcs git range-diff` translates
+    assert_eq!(ok(&d, &["git", "range-diff", "main..v1", "main..v2"]), out);
+}
+
+#[test]
+fn range_diff_creation_factor_pairs_more() {
+    let t = tempfile::tempdir().unwrap();
+    let d = t.path().join("r");
+    ok(t.path(), &["init", "r"]);
+    commit_file(&d, "base.txt", "base\n", "base");
+    ok(&d, &["switch", "-c", "x"]);
+    commit_file(&d, "f.txt", "one\ntwo\nthree\n", "work");
+    ok(&d, &["switch", "main"]);
+    ok(&d, &["switch", "-c", "y"]);
+    commit_file(&d, "f.txt", "one\ntwo\nthree\nfour\n", "work again");
+    // default factor 60: a small edit is paired
+    let out = ok(&d, &["range-diff", "-s", "main..x", "main..y"]);
+    assert!(out.contains(" ! 1:  "), "{out}");
+    // factor 0: leaving a commit unpaired is free, so nothing is paired
+    let out = ok(&d, &["range-diff", "-s", "--creation-factor", "0", "main..x", "main..y"]);
+    assert!(out.contains(" < ") && out.contains(" > "), "{out}");
+}
+
+#[test]
+fn show_branch_matrix() {
+    let t = tempfile::tempdir().unwrap();
+    let d = t.path().join("r");
+    ok(t.path(), &["init", "r"]);
+    commit_file(&d, "base.txt", "base\n", "base");
+    ok(&d, &["switch", "-c", "topic"]);
+    commit_file(&d, "t1.txt", "1\n", "t1");
+    commit_file(&d, "t2.txt", "2\n", "t2");
+    ok(&d, &["switch", "main"]);
+    commit_file(&d, "m1.txt", "m\n", "m1");
+    let out = ok(&d, &["show-branch", "main", "topic"]);
+    let l: Vec<&str> = out.lines().collect();
+    assert_eq!(l[0], "* [main] m1", "{out}");
+    assert_eq!(l[1], " ! [topic] t2", "{out}");
+    assert_eq!(l[2], "--", "{out}");
+    let rows = &l[3..];
+    assert!(rows.contains(&"*  [main] m1"), "{out}");
+    assert!(rows.contains(&" + [topic] t2"), "{out}");
+    assert!(rows.contains(&" + [topic^] t1"), "{out}");
+    assert!(rows.contains(&"*+ [main^] base"), "{out}");
+    assert_eq!(rows.len(), 4, "{out}");
+    // default: every local branch
+    assert_eq!(ok(&d, &["show-branch"]), out);
+    // --list: heads only
+    assert_eq!(ok(&d, &["show-branch", "--list"]), "* [main] m1\n  [topic] t2\n");
+    // --sha1-name and --no-name
+    let s = ok(&d, &["show-branch", "--sha1-name", "main", "topic"]);
+    assert!(!s.lines().skip(3).any(|x| x.contains("main^")), "{s}");
+    let n = ok(&d, &["show-branch", "--no-name", "main", "topic"]);
+    assert!(n.lines().skip(3).any(|x| x == " + t2"), "{n}");
+    // --merge-base is `merge-base`, --independent drops ancestors
+    let mb = ok(&d, &["merge-base", "main", "topic"]);
+    assert_eq!(ok(&d, &["show-branch", "--merge-base", "main", "topic"]), mb);
+    let ind = ok(&d, &["show-branch", "--independent", "main", "main~1", "topic"]);
+    assert_eq!(ind.lines().count(), 2, "{ind}");
+    // --more goes past the common ancestor
+    let more = ok(&d, &["show-branch", "--more", "1", "main", "topic"]);
+    assert_eq!(more.lines().count(), out.lines().count(), "root commit has no parent: {more}");
+    // a single revision: its history, no matrix header
+    let one = ok(&d, &["show-branch", "--more", "1", "topic"]);
+    assert_eq!(one, "[topic] t2\n[topic^] t1\n", "{one}");
+    // `vcs git show-branch` translates, and refuses what is not implemented
+    assert_eq!(ok(&d, &["git", "show-branch", "main", "topic"]), out);
+    assert!(fail(&d, &["git", "show-branch", "-r"]).contains("no vcs equivalent"));
+}
+
+#[test]
+fn show_branch_merge_shows_dash_and_second_parent_names() {
+    let t = tempfile::tempdir().unwrap();
+    let d = t.path().join("r");
+    ok(t.path(), &["init", "r"]);
+    commit_file(&d, "base.txt", "base\n", "base");
+    ok(&d, &["switch", "-c", "side"]);
+    commit_file(&d, "s.txt", "s\n", "s1");
+    ok(&d, &["switch", "main"]);
+    commit_file(&d, "m.txt", "m\n", "m1");
+    ok(&d, &["merge", "side", "-m", "join"]);
+    ok(&d, &["switch", "-c", "old", "main~2"]);
+    ok(&d, &["switch", "main"]);
+    let out = ok(&d, &["show-branch", "main", "old"]);
+    assert!(out.lines().any(|x| x == "*  [main] join" || x == "-  [main] join"), "{out}");
+    assert!(out.contains("[main^2] s1") && out.contains("[main^] m1"), "{out}");
 }
