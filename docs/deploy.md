@@ -13,7 +13,7 @@ host (or container runtime) and, optionally, an S3-compatible bucket. Files: [`d
 | Flag | Where the data lives | Notes |
 | --- | --- | --- |
 | `--root /var/lib/vcs/data` (or `--backend /path`) | local directory (`FsBackend`) | one server process per directory; fine for a single host |
-| `--backend 's3://bucket/prefix?endpoint=URL&region=R'` | S3-compatible bucket | refuses at start-up if the store ignores conditional writes (`If-None-Match`, `If-Match`); credentials only from `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (+ `AWS_SESSION_TOKEN`), never the URL |
+| `--backend 's3://bucket/prefix?endpoint=URL&region=R'` | S3-compatible bucket | refuses at start-up if the store ignores conditional writes (`If-None-Match`, `If-Match`); credentials never in the URL: env keys, else container or instance role (see Credential chain below); optional `&timeout=SECS&retries=N` |
 
 With S3 you may run several server processes against one bucket; set `--skew-epsilon-ms` (below).
 
@@ -52,11 +52,14 @@ The server needs no `s3:CreateBucket`, no `s3:GetBucket*`, and no `s3:PutBucketP
 `PutObject` lacking `If-None-Match` / `If-Match` ([AWS storage blog](https://aws.amazon.com/blogs/storage/building-multi-writer-applications-on-amazon-s3-using-native-controls/));
 vcs only ever writes conditionally, so that is a cheap second guard (untested here).
 
-**Credentials are static.** `vcs-server` reads `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` once at start-up;
-there is no IMDS, IRSA, ECS task-role or SSO provider chain and SIGHUP does not reload them. A role's temporary credentials
-(1 to 12 h) therefore make the server fail every backend call with 403 when they expire. Use a long-lived IAM user key
-limited by the policy above and rotate it by restarting (the shipped unit reads `/etc/vcs/server.env`), until the provider
-chain exists (tracked in the issue linked from [research/infra-review.md](research/infra-review.md)).
+**Credential chain.** `vcs-server` takes S3 credentials from, in order: `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` /
+`AWS_SESSION_TOKEN` (static, read once); the container credentials endpoint (`AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` or
+`AWS_CONTAINER_CREDENTIALS_FULL_URI`, with `AWS_CONTAINER_AUTHORIZATION_TOKEN[_FILE]`: ECS task role, EKS pod identity); EC2
+instance metadata (IMDSv2; `AWS_EC2_METADATA_SERVICE_ENDPOINT` overrides the address, `AWS_EC2_METADATA_DISABLED=true` turns it off).
+Role credentials are cached and refetched 5 minutes before their `Expiration`; if a refetch fails the cached keys are used until they
+really expire, and a 403 `ExpiredToken` answer forces one immediate refetch. Not implemented: web identity (IRSA, needs an STS call)
+and the SSO cache; on EKS use pod identity or the node role. A 403 on the readiness probe (expired or revoked credentials that
+cannot be renewed) makes `/readyz` fail, so the orchestrator stops sending traffic. Static keys are still never reloaded by SIGHUP.
 
 (`NotPrincipal` with `Deny` is AWS syntax; MinIO/RustFS-style stores that lack it can use `Principal:"*"` and a separate
 allow for the server's credential, or an IAM policy on the client user. Verify with the self-check below, not by reading the policy.)
@@ -233,15 +236,20 @@ the long flag names, see `deploy/server.toml.example`). Flags override the file.
 **Probes** (no token, constant bodies, nothing about the backend leaks):
 `GET /healthz` is liveness (always 200 while the process answers). `GET /readyz` is 200 `ready` when a HEAD of the manifest
 key succeeds on the backend (an absent manifest counts as reachable), else 503 `not ready`; the result is cached for 2 s, so
-probes cannot load the backend, and an open circuit breaker reports not ready without calling it. The Docker image's
-`HEALTHCHECK` uses `/readyz`.
+probes cannot load the backend, and an open circuit breaker reports not ready without calling it. A throttled answer (S3 503
+SlowDown) still counts as reachable; a 403 from S3 does not. Probes do not share the connection cap: connections beyond
+`max_connections` go to a small probe-only lane (`Config::probe_reserve`, default 32) that serves `/healthz` and `/readyz` and answers
+503 to anything else, so a saturated node still passes its health checks. The Docker image's `HEALTHCHECK` uses `/readyz`.
 
 **Metrics.** `GET /metrics` returns Prometheus text (version 0.0.4) for an admin token, or for the token given with
 `--metrics-token <token|@file>` (at least 16 characters; it can read nothing else, other roles get 403). Families:
 `vcs_server_requests_total{method,status,role}`, `vcs_server_request_duration_seconds` (histogram),
 `vcs_server_request_bytes_total`, `vcs_server_response_bytes_total`, `vcs_server_auth_failures_total`,
 `vcs_server_rate_limited_total`, `vcs_server_lock_conflicts_total`, `vcs_server_audit_appends_total`,
-`vcs_server_audit_errors_total`, `vcs_server_backend_errors_total{kind=unavailable|other|timeout|circuit_open}`,
+`vcs_server_audit_errors_total`, `vcs_server_backend_errors_total{kind=unavailable|other|timeout|circuit_open|slowdown}`,
+`vcs_s3_requests_total{method}`, `vcs_s3_slowdown_total`, `vcs_s3_conflicts_409_total`, `vcs_s3_cas_losses_total`, `vcs_s3_server_errors_total`,
+`vcs_s3_timeouts_total`, `vcs_s3_retries_total`, `vcs_s3_inflight_bytes` (gauge), `vcs_s3_credential_refreshes_total`,
+`vcs_s3_credential_refresh_errors_total`, `vcs_s3_credentials_rejected` (gauge, 1 while S3 answers 403),
 `vcs_server_backend_retries_total`, `vcs_server_backend_breaker_trips_total`, `vcs_server_backend_circuit_open`,
 `vcs_server_open_connections`, `vcs_server_uptime_seconds`, `vcs_server_build_info{version,tls}`. Counters are per process
 and reset on restart (use `rate()`/`increase()`). `deploy/prometheus.yml`, `deploy/vcs-server.rules.yml` (alerts) and
@@ -268,7 +276,14 @@ failed backend operations (default 5, 0 = off) the breaker opens for `--breaker-
 answer 503 with `Retry-After` immediately, `/readyz` fails, then one probe call decides whether it closes. Retried writes are
 safe because every protocol step is idempotent; the worst case of a write that did apply but whose reply was lost is a
 spurious 412, which clients already handle by re-reading. Errors the backend answered deliberately (`Other`) are not retried and do not
-count towards the breaker.
+count towards the breaker. Neither does an exhausted S3 throttle (503 SlowDown, 429): it is counted as
+`vcs_server_backend_errors_total{kind="slowdown"}`, answered 503, and leaves the breaker alone, so a bucket ramping up does not
+turn into a fail-fast outage for cache hits. The S3 client itself retries before the server sees an error: up to 4 times
+(`?retries=N` on the backend URL or `VCS_S3_RETRIES`), full-jitter exponential backoff from 100 ms (`VCS_S3_RETRY_BASE_MS`) to
+5 s (`VCS_S3_RETRY_MAX_MS`; throttles wait four times longer, up to twice the cap, and honour `Retry-After`). Reads and deletes are
+retried on 5xx, timeouts and dropped connections; writes only on 503/429, which S3 answers before applying anything, because a 500 or
+timeout on a conditional write may have applied and is resolved by the caller's read-back. The request timeout is
+`VCS_S3_TIMEOUT_SECS` / `?timeout=SECS` (default 30) plus one second per 4 MiB of request body.
 
 ## Backups and operations
 
