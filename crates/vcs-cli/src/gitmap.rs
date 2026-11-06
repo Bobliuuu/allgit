@@ -67,6 +67,9 @@ pub enum Step {
     FromRev { rev: String, paths: Vec<String>, stage: bool },
     /// `checkout X`: a branch (switch), or paths (restore) when X names a file and no branch.
     CheckoutAuto { target: String, paths: Vec<String> },
+    /// `pull --rebase`: fetch, then replay the checked-out branch onto its remote-tracking head
+    /// (`origin/<branch>`).
+    PullRebase,
     /// Printed on stderr before running (a stated semantic difference).
     Note(String),
 }
@@ -101,6 +104,7 @@ impl Step {
             Step::CheckoutAuto { target, .. } => {
                 format!("vcs switch {target}  (or vcs switch --detach for a tag or commit, vcs restore for a file)")
             }
+            Step::PullRebase => "vcs fetch ; vcs rebase origin/<current branch>".into(),
             Step::Note(_) => String::new(),
         }
     }
@@ -490,7 +494,12 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             let x = p.take(&["-x"]);
             let noedit = p.take(&["--no-edit", "-e", "--edit", "-s", "--signoff"]);
             let _ = noedit;
-            p.finish(&format!("`vcs {cmd} <rev>`{}; no -n/--no-commit, -m, --skip, --quit", if cmd == "cherry-pick" { " or `A..B`" } else { ", no ranges" }))?;
+            let no_commit = cmd == "revert" && p.take(&["-n", "--no-commit"]);
+            p.finish(&format!(
+                "`vcs {cmd} <rev>`{}; no {}-m, --skip, --quit",
+                if cmd == "cherry-pick" { " or `A..B`" } else { ", no ranges" },
+                if cmd == "cherry-pick" { "-n/--no-commit, " } else { "" }
+            ))?;
             if cont {
                 return Ok(vec![note("a stopped pick/revert is finished with `vcs commit`"), Step::Vcs(v(&["commit"]))]);
             }
@@ -514,7 +523,11 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
                 if r.contains("..") && cmd == "revert" {
                     return Err(missing(cmd, "commit ranges", &format!("`vcs {cmd} <rev>` once per commit (see `vcs log`)")));
                 }
-                out.push(Step::Vcs(v(&[cmd, r])));
+                if no_commit {
+                    out.push(Step::Vcs(v(&[cmd, "--no-commit", r])));
+                } else {
+                    out.push(Step::Vcs(v(&[cmd, r])));
+                }
             }
             out
         }
@@ -599,9 +612,6 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
                 vec![Step::Vcs(a)]
             } else {
                 match p.pos.as_slice() {
-                    [b] if b.starts_with("origin/") => {
-                        return Err(missing(cmd, "rebasing onto a remote-tracking branch", "`vcs sync` then `vcs rebase <local branch>`"))
-                    }
                     [b] => {
                         let mut a = v(&["rebase"]);
                         if interactive {
@@ -684,12 +694,11 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             let rebase = p.take(&["--rebase", "-r"]);
             p.take(&["-q", "--quiet", "--ff-only", "--no-rebase", "--ff", "-v", "--verbose", "--no-edit", "--autostash", "--all", "--tags"]);
             p.finish("`vcs sync` (fetch + fast-forward); `vcs merge --remote <branch>` for a real merge")?;
+            if p.pos.len() > 1 || p.pos.first().is_some_and(|r| r != "origin") {
+                return Err(missing(cmd, "pulling a named branch", "`vcs sync` updates every branch it can fast-forward"));
+            }
             if rebase {
-                return Err(missing(
-                    "pull --rebase",
-                    "rebase onto a remote-tracking branch",
-                    "`vcs fetch`, `vcs merge --remote <branch>` (or `vcs sync`, then `vcs rebase <branch>`)",
-                ));
+                return Ok(vec![Step::PullRebase]);
             }
             if p.pos.len() > 1 || p.pos.first().is_some_and(|r| r != "origin") {
                 return Err(missing(cmd, "pulling a named branch", "`vcs sync` updates every branch it can fast-forward"));
@@ -2215,6 +2224,15 @@ fn exec(s: &Step, json: bool) -> Result<(), Error> {
         Step::Diff { staged, specs, flags } => diff_specs(*staged, specs, flags),
         Step::LogPatch { log_argv, stat } => log_patch(log_argv, *stat),
         Step::FromRev { rev, paths, stage } => from_rev(rev, paths, *stage),
+        Step::PullRebase => {
+            native(&v(&["fetch"]), json)?;
+            let (repo, cwd) = open()?;
+            let zone = zone_of_cwd(&repo, &cwd, None)?;
+            let Some(branch) = repo.current_branch(&zone)? else {
+                return Err(Error::Msg("pull --rebase needs a checked-out branch (HEAD is detached)".into()));
+            };
+            native(&["rebase".to_owned(), format!("origin/{branch}")], json)
+        }
         Step::CheckoutAuto { target, paths } => checkout_auto(target, paths),
     }
 }

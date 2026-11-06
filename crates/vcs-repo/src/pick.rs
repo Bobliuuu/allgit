@@ -119,6 +119,14 @@ impl Repo {
         self.pick(zone, rev, PickKind::Revert, author)
     }
 
+    /// Like [`Repo::revert`] but record nothing: the undoing change is left staged in the index and
+    /// the working tree (`git revert -n`). Returns `Squashed { changed }`; conflicts stop as usual.
+    pub fn revert_no_commit(&self, zone: &str, rev: &str, author: Signature) -> Result<MergeOutcome> {
+        let zone = self.resolve_zone(zone)?;
+        let target = self.resolve_commit(&zone, rev)?;
+        self.pick_id_opts(&zone, target, PickKind::Revert, author, true)
+    }
+
     /// [`Repo::cherry_pick`] for a commit id that is already resolved.
     pub fn cherry_pick_id(&self, zone: &str, target: ObjectId, author: Signature) -> Result<MergeOutcome> {
         self.pick_id(zone, target, PickKind::CherryPick, author)
@@ -131,6 +139,10 @@ impl Repo {
     }
 
     fn pick_id(&self, zone: &str, target: ObjectId, kind: PickKind, author: Signature) -> Result<MergeOutcome> {
+        self.pick_id_opts(zone, target, kind, author, false)
+    }
+
+    fn pick_id_opts(&self, zone: &str, target: ObjectId, kind: PickKind, author: Signature, no_commit: bool) -> Result<MergeOutcome> {
         let zone = self.resolve_zone(zone)?;
         let zone = zone.as_str();
         let _l = self.lock()?;
@@ -230,6 +242,13 @@ impl Repo {
         if recs.is_empty() {
             if new_root == ours_root {
                 return msg(format!("{verb} of {} changes nothing here (already applied?)", target.short()));
+            }
+            if no_commit {
+                let changed = diff.old.keys().chain(diff.new.keys()).collect::<BTreeSet<_>>().len();
+                self.transition_diff(zone, &zones, &diff, &mut ix)?;
+                self.save_index(&mut ix)?;
+                self.record_op(&format!("{verb} --no-commit {} on {zone}/{branch}", target.short()), None)?;
+                return Ok(MergeOutcome::Squashed { changed });
             }
             let root = new_root;
             let commit = Commit {
