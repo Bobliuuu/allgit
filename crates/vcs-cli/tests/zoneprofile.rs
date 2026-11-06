@@ -59,8 +59,7 @@ fn noise(seed: u64, n: usize) -> Vec<u8> {
 fn stats(out: &str) -> (u64, u64) {
     let l = out
         .lines()
-        .filter(|l| l.contains("requests ") || l.contains("requests:"))
-        .last()
+        .rfind(|l| l.contains("requests ") || l.contains("requests:"))
         .unwrap_or_else(|| panic!("no stats line in {out}"));
     let num = |after: &str| -> u64 {
         let i = l.find(after).unwrap() + after.len();
@@ -547,7 +546,11 @@ fn a_command_that_names_a_skipped_zone_fetches_it_transparently() {
         .env("VCS_NO_CACHE", "1")
         .output()
         .unwrap();
-    assert!(!c.join("crates/legacy/src/f0.rs").exists(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(
+        !c.join("crates/legacy/src/f0.rs").exists(),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
     assert!(ok(&c, &["profile", "skipped"]).contains("legacy"));
 
     // a path inside the skipped zone: fetched, subscribed, then the command runs
@@ -559,7 +562,11 @@ fn a_command_that_names_a_skipped_zone_fetches_it_transparently() {
 
     // `zone checkout` names a zone
     let o = vcs(&c, &["zone", "checkout", "legacy", "main"]);
-    assert!(String::from_utf8_lossy(&o.stderr).contains("legacy was skipped by --auto"), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(
+        String::from_utf8_lossy(&o.stderr).contains("legacy was skipped by --auto"),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
     assert!(c.join("crates/legacy/src/f0.rs").exists());
     // once subscribed it is silent
     let o = vcs(&c, &["blame", "crates/legacy/src/f1.rs"]);

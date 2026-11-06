@@ -85,7 +85,7 @@ pub fn is_test_case(name: &str) -> bool {
     for b in name.bytes() {
         h = (h ^ b as u32).wrapping_mul(16777619);
     }
-    h % 5 == 0
+    h.is_multiple_of(5)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

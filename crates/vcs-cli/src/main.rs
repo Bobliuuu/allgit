@@ -2537,7 +2537,7 @@ fn publish_auto_merge(
         };
         let text = e.to_string();
         if attempt >= retries || !(text.contains("Remote branch advanced") || text.contains("moved from")) {
-            return Err(e.into());
+            return Err(e);
         }
         attempt += 1;
         let rep = repo.sync(backend)?;
@@ -2546,7 +2546,7 @@ fn publish_auto_merge(
                 match repo.merge_remote(zone, branch, author()?)? {
                     vcs_repo::MergeOutcome::Conflicted { .. } => {
                         repo.merge_abort()?;
-                        return Err(e.into());
+                        return Err(e);
                     }
                     _ => eprintln!("auto-merged remote {zone}/{branch} (attempt {attempt})"),
                 }
@@ -2708,15 +2708,12 @@ fn suggest_compaction(backend: &dyn vcs_remote::Backend, generation: u64) {
     if !generation.is_multiple_of(8) {
         return;
     }
-    match vcs_remote::autocompact::maybe_compact(backend, &format!("vcs-auto-compact pid {}", std::process::id())) {
-        Ok(Some(r)) => {
-            println!(
-                "compacted the remote's packs: {} -> {} (VCS_AUTO_COMPACT=0 turns this off)",
-                r.packs_before, r.packs_after
-            );
-            return;
-        }
-        Ok(None) | Err(_) => {}
+    if let Ok(Some(r)) = vcs_remote::autocompact::maybe_compact(backend, &format!("vcs-auto-compact pid {}", std::process::id())) {
+        println!(
+            "compacted the remote's packs: {} -> {} (VCS_AUTO_COMPACT=0 turns this off)",
+            r.packs_before, r.packs_after
+        );
+        return;
     }
     if let Ok(n) = vcs_remote::compact::count_packs(backend) {
         if n > vcs_remote::compact::SUGGEST_PACKS {

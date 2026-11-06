@@ -202,7 +202,7 @@ impl Repo {
             old: None,
             new: r,
         }])?;
-        self.write_refs(&refs)?;
+        self.write_refs(refs)?;
         Ok(true)
     }
 
@@ -754,7 +754,9 @@ impl Repo {
             let (refs, rr) = (self.refs()?, self.remote_refs()?);
             for z in zones {
                 let z = self.resolve_zone(z)?;
-                let head = refs.head(&z, crate::meta::DEFAULT_BRANCH).or(rr.head(&z, crate::meta::DEFAULT_BRANCH));
+                let head = refs
+                    .head(&z, crate::meta::DEFAULT_BRANCH)
+                    .or(rr.head(&z, crate::meta::DEFAULT_BRANCH));
                 if let Some(h) = head.filter(|h| self.store.contains(h).unwrap_or(false)) {
                     let root = self.commit_obj(&h)?.root;
                     self.collect_missing_files(root, defs.path_of(&z).unwrap_or(""), ws.sparse.get(&z), &mut files)?;
@@ -763,7 +765,10 @@ impl Repo {
             Ok(())
         };
         let idx = vcs_remote::IdxCacheBackend::new(backend, self.common.join("remote-idx"));
-        let batched = collect().and_then(|()| self.prefetch_ids_with(&idx, &self.counters.packs, std::mem::take(&mut files)).map(|_| ()));
+        let batched = collect().and_then(|()| {
+            self.prefetch_ids_with(&idx, &self.counters.packs, std::mem::take(&mut files))
+                .map(|_| ())
+        });
         zones
             .iter()
             .map(|z| {

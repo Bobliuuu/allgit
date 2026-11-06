@@ -220,7 +220,7 @@ fn origin_down_reads_from_cache_work_and_writes_fail_without_loss() {
     let body = b"warm object".to_vec();
     let k = obj_key(&body);
     mem.put_if_absent(&k, &body).unwrap();
-    mem.put_if_absent("packs/p.pack", &vec![1u8; 64]).unwrap();
+    mem.put_if_absent("packs/p.pack", &[1u8; 64]).unwrap();
     mem.put_if_absent("manifest", b"m1").unwrap();
     let up = Probe::new(mem.clone(), Duration::ZERO);
     let (strict, _d1) = peer(up.clone(), 0, 0);

@@ -564,9 +564,9 @@ fn run_cmd(c: &Cmd, cfg: &Config, tool: Tool) -> (bool, i32, String) {
 }
 
 fn run_killed(c: &Cmd, cfg: &Config, tool: Tool, ms: u64) {
-    use std::os::unix::process::CommandExt;
     let mut p = build(c, cfg, tool);
-    p.process_group(0);
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut p, 0);
     if let Ok(mut ch) = p.spawn() {
         std::thread::sleep(std::time::Duration::from_millis(ms));
         if let Ok(None) = ch.try_wait() {

@@ -263,8 +263,10 @@ fn manifest_kind(flat: &Flat, zones: &Zones, zone: &str) -> Option<&'static str>
 
 // ------------------------------------------------------------------ owners
 
+type Owners = (String, Vec<(String, Vec<String>)>);
+
 /// CODEOWNERS rules (file order) from the first CODEOWNERS file found in any zone's head tree.
-fn codeowners(repo: &Repo, flat: &Flat) -> Option<(String, Vec<(String, Vec<String>)>)> {
+fn codeowners(repo: &Repo, flat: &Flat) -> Option<Owners> {
     for p in zd::CODEOWNERS_PATHS {
         if let Some((_, id)) = flat.get(*p) {
             if let Ok(t) = repo.content(id) {
@@ -683,7 +685,7 @@ fn graph(a: &GraphArgs, json: bool) -> Result<(), Error> {
     let names: Vec<String> = m.zones.names().map(str::to_owned).collect();
     let mut fwd: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut rev: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for ((x, y), _) in &deps.edges {
+    for (x, y) in deps.edges.keys() {
         fwd.entry(x.clone()).or_default().insert(y.clone());
         rev.entry(y.clone()).or_default().insert(x.clone());
     }
@@ -726,7 +728,7 @@ fn graph(a: &GraphArgs, json: bool) -> Result<(), Error> {
     notes.extend(deps.notes.iter().cloned());
     if !json {
         for e in &edges {
-            println!("{} -> {}  ({})", str_of(get(e, "from")), str_of(get(e, "to")), "depends_on");
+            println!("{} -> {}  (depends_on)", str_of(get(e, "from")), str_of(get(e, "to")));
         }
         if edges.is_empty() {
             println!("no dependencies between zones found");
@@ -1033,7 +1035,7 @@ fn changes(a: &ChangesArgs, json: bool) -> Result<(), Error> {
         touched.push(zones.label(z).to_owned());
         text.push_str(&format!("zone {} ({} commit(s))\n", zones.label(z), n));
         for (p, k) in &files {
-            text.push_str(&format!("  {} {p}\n", &k[..1].to_uppercase()));
+            text.push_str(&format!("  {} {p}\n", k[..1].to_uppercase()));
         }
         out.push(J::Obj(vec![
             ("zone", s(zones.label(z))),

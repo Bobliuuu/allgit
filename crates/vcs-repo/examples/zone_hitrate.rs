@@ -25,7 +25,20 @@ use std::process::Command;
 use vcs_repo::zoneprofile::{mine_cochange, rank, ChangeRec, Cochange, Event, Graph, Hints, Kind, Params, Profile};
 
 const WORKSPACE_DIRS: [&str; 14] = [
-    "crates", "packages", "apps", "libs", "services", "modules", "pkg", "plugins", "cmd", "internal", "src", "lib", "extensions", "examples",
+    "crates",
+    "packages",
+    "apps",
+    "libs",
+    "services",
+    "modules",
+    "pkg",
+    "plugins",
+    "cmd",
+    "internal",
+    "src",
+    "lib",
+    "extensions",
+    "examples",
 ];
 
 struct Commit {
@@ -45,12 +58,27 @@ fn zone_of(path: &str, depth: &str) -> Option<String> {
         "2" => parts.len() >= 3,
         _ => WORKSPACE_DIRS.contains(&parts[0]) && parts.len() >= 3,
     };
-    Some(if two { format!("{}/{}", parts[0], parts[1]) } else { parts[0].to_owned() })
+    Some(if two {
+        format!("{}/{}", parts[0], parts[1])
+    } else {
+        parts[0].to_owned()
+    })
 }
 
 fn history(dir: &str, depth: &str, max: usize) -> Vec<Commit> {
     let mut cmd = Command::new("git");
-    cmd.args(["-C", dir, "-c", "core.quotepath=off", "log", "--no-merges", "--no-renames", "--reverse", "--name-only", "--format=%x01%ae%x09%ct%x09%s"]);
+    cmd.args([
+        "-C",
+        dir,
+        "-c",
+        "core.quotepath=off",
+        "log",
+        "--no-merges",
+        "--no-renames",
+        "--reverse",
+        "--name-only",
+        "--format=%x01%ae%x09%ct%x09%s",
+    ]);
     if max > 0 {
         cmd.arg(format!("--max-count={max}"));
     }
@@ -62,7 +90,12 @@ fn history(dir: &str, depth: &str, max: usize) -> Vec<Commit> {
         if let Some(h) = l.strip_prefix('\u{1}') {
             let mut f = h.splitn(3, '\t');
             let (a, t, m) = (f.next().unwrap_or(""), f.next().unwrap_or("0"), f.next().unwrap_or(""));
-            v.push(Commit { author: a.to_owned(), ts: t.parse().unwrap_or(0), msg: m.to_owned(), zones: BTreeSet::new() });
+            v.push(Commit {
+                author: a.to_owned(),
+                ts: t.parse().unwrap_or(0),
+                msg: m.to_owned(),
+                zones: BTreeSet::new(),
+            });
         } else if !l.is_empty() {
             if let (Some(c), Some(z)) = (v.last_mut(), zone_of(l, depth)) {
                 c.zones.insert(z);
@@ -88,7 +121,14 @@ struct Acc {
     n: u32,
 }
 
-const NAMES: [&str; 6] = ["random", "recency", "frequency", "ours", "ours+cochange", "ours+cochange, filled to k"];
+const NAMES: [&str; 6] = [
+    "random",
+    "recency",
+    "frequency",
+    "ours",
+    "ours+cochange",
+    "ours+cochange, filled to k",
+];
 
 fn mean(v: &[f64]) -> f64 {
     if v.is_empty() {
@@ -97,7 +137,7 @@ fn mean(v: &[f64]) -> f64 {
         v.iter().sum::<f64>() / v.len() as f64
     }
 }
-fn pct(v: &mut Vec<f64>, q: f64) -> f64 {
+fn pct(v: &mut [f64], q: f64) -> f64 {
     if v.is_empty() {
         return 0.0;
     }
@@ -109,7 +149,11 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let dir = args.first().expect("usage: zone_hitrate <git-dir> [options]").clone();
     let opt = |name: &str, d: &str| -> String {
-        args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned().unwrap_or_else(|| d.to_owned())
+        args.iter()
+            .position(|a| a == name)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+            .unwrap_or_else(|| d.to_owned())
     };
     let k: usize = opt("--k", "6").parse().unwrap();
     let train: usize = opt("--train", "10").parse().unwrap();
@@ -122,10 +166,22 @@ fn main() {
     let tsv = args.iter().any(|a| a == "--tsv");
 
     let commits = history(&dir, &depth, max_commits);
-    let all_zones: Vec<String> = commits.iter().flat_map(|c| c.zones.iter().cloned()).collect::<BTreeSet<_>>().into_iter().collect();
+    let all_zones: Vec<String> = commits
+        .iter()
+        .flat_map(|c| c.zones.iter().cloned())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     let recs_all: Vec<ChangeRec> = commits
         .iter()
-        .flat_map(|c| c.zones.iter().map(|z| ChangeRec { zone: z.clone(), author: c.author.clone(), message: c.msg.clone(), ts: c.ts }))
+        .flat_map(|c| {
+            c.zones.iter().map(|z| ChangeRec {
+                zone: z.clone(),
+                author: c.author.clone(),
+                message: c.msg.clone(),
+                ts: c.ts,
+            })
+        })
         .collect();
     // co-change mined from everything before the start of the week, newest 300 commits per zone (what the CLI reads)
     let mut cache: HashMap<u64, Cochange> = HashMap::new();
@@ -158,7 +214,7 @@ fn main() {
     let mut seed = 0x9E37_79B9_7F4A_7C15u64;
     let (mut micro, mut authors_used, mut days_total) = (vec![Acc::default(); NAMES.len()], 0usize, 0usize);
     let mut per_author: Vec<[f64; 6]> = Vec::new();
-    for (_, cs) in &by_author {
+    for cs in by_author.values() {
         if cs.len() <= train {
             continue;
         }
@@ -177,8 +233,14 @@ fn main() {
             }
             if i >= train && !truth.is_empty() {
                 let now_ms = day * bucket_s * 1000;
-                let params = Params { now_ms, ..Params::default() };
-                let prof = Profile { disabled: false, events: events.clone() };
+                let params = Params {
+                    now_ms,
+                    ..Params::default()
+                };
+                let prof = Profile {
+                    disabled: false,
+                    events: events.clone(),
+                };
                 let hit = |hot: &[String]| truth.iter().filter(|z| hot.iter().any(|h| h == *z)).count() as f64 / truth.len() as f64;
                 let mut results = [0.0f64; 6];
                 // random
@@ -206,7 +268,10 @@ fn main() {
                         .collect()
                 };
                 results[3] = hit(&top(&Graph::default(), params.min_score));
-                let g = Graph { cochange: cochange_at(day * bucket_s / refresh_s), ..Graph::default() };
+                let g = Graph {
+                    cochange: cochange_at(day * bucket_s / refresh_s),
+                    ..Graph::default()
+                };
                 results[4] = hit(&top(&g, params.min_score));
                 results[5] = hit(&top(&g, 0.0));
                 for (a, r) in acc.iter_mut().zip(results) {
@@ -216,7 +281,12 @@ fn main() {
             }
             for c in &cs[i..j] {
                 for z in &c.zones {
-                    events.push(Event { ts_ms: c.ts * 1000, kind: Kind::Edit, zone: z.clone(), dir: String::new() });
+                    events.push(Event {
+                        ts_ms: c.ts * 1000,
+                        kind: Kind::Edit,
+                        zone: z.clone(),
+                        dir: String::new(),
+                    });
                     *counts.entry(z.clone()).or_default() += 1;
                     last.insert(z.clone(), c.ts);
                 }

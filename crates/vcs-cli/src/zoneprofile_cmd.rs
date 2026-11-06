@@ -231,7 +231,7 @@ fn normalize(h: &Hints, zones: &Zones, notes: &mut Vec<String>) -> Hints {
         }
         z
     };
-    let map = |v: &Vec<String>, f: &mut dyn FnMut(&String) -> Option<String>| v.iter().filter_map(|x| f(x)).collect::<Vec<_>>();
+    let map = |v: &Vec<String>, f: &mut dyn FnMut(&String) -> Option<String>| v.iter().filter_map(f).collect::<Vec<_>>();
     let mut out = h.clone();
     out.roles = h.roles.iter().map(|(k, v)| (k.clone(), map(v, &mut r))).collect();
     out.pin = map(&h.pin, &mut r);
@@ -946,7 +946,7 @@ fn run_inner(c: &ProfileCmd) -> Result<(), Error> {
                 let inv = autozone::inventory(&repo, Some(&ct), None, true)?;
                 let mut i = 0;
                 while i < want.len() {
-                    for ((f, t), _) in &inv.deps.edges {
+                    for (f, t) in inv.deps.edges.keys() {
                         if *f == want[i] && !want.contains(t) {
                             want.push(t.clone());
                         }
@@ -999,12 +999,20 @@ fn mark_auto(repo: &Repo) {
 }
 
 fn autofetch_off() -> bool {
-    crate::config::Config::load().ok().and_then(|c| c.get("profile.autofetch")).is_some_and(|v| matches!(v.as_str(), "off" | "false" | "0"))
+    crate::config::Config::load()
+        .ok()
+        .and_then(|c| c.get("profile.autofetch"))
+        .is_some_and(|v| matches!(v.as_str(), "off" | "false" | "0"))
 }
 
 /// Zones a command is about to need file contents of: `zone checkout Z`, and the zone that owns each path named by
 /// `add/rm/restore/mv/blame`. Pure, so it is unit tested: `owner` maps a repo-relative path to its zone.
-fn zones_needed(cmd: &Cmd, rel: &dyn Fn(&str) -> Option<String>, owner: &dyn Fn(&str) -> String, resolve: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
+fn zones_needed(
+    cmd: &Cmd,
+    rel: &dyn Fn(&str) -> Option<String>,
+    owner: &dyn Fn(&str) -> String,
+    resolve: &dyn Fn(&str) -> Option<String>,
+) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut path = |p: &str| {
         if let Some(r) = rel(p) {
@@ -1064,12 +1072,9 @@ pub fn ensure_access(cmd: &Cmd) -> Vec<String> {
 
 fn ensure_access_inner(repo: &Repo, cwd: &Path, cmd: &Cmd) -> Result<Vec<String>, Error> {
     let zones = repo.zones()?;
-    let want = zones_needed(
-        cmd,
-        &|p| repo.rel_path(cwd, p).ok(),
-        &|r| zones.owner(r).to_owned(),
-        &|n| zones.resolve(n),
-    );
+    let want = zones_needed(cmd, &|p| repo.rel_path(cwd, p).ok(), &|r| zones.owner(r).to_owned(), &|n| {
+        zones.resolve(n)
+    });
     let ws = repo.workspace()?;
     let rr = repo.remote_refs()?;
     let want: Vec<String> = want
@@ -1082,7 +1087,10 @@ fn ensure_access_inner(repo: &Repo, cwd: &Path, cmd: &Cmd) -> Result<Vec<String>
     let backend = remote::open_memo(&need_remote(repo)?, false)?;
     let mut done = Vec::new();
     for z in want {
-        eprintln!("zone {} was skipped by --auto; fetching it now (`vcs profile skipped` lists the others)", zones.label(&z));
+        eprintln!(
+            "zone {} was skipped by --auto; fetching it now (`vcs profile skipped` lists the others)",
+            zones.label(&z)
+        );
         repo.fetch(&backend, Some(std::slice::from_ref(&z)))?;
         repo.zone_add_fetching(&backend, &z, None)?;
         let _ = repo.profile_record(Kind::Read, now_ms(), &[(z.clone(), String::new())]);

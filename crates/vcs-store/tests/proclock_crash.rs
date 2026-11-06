@@ -31,6 +31,8 @@ fn spawn_holder(path: &std::path::Path) -> Child {
         }
         l.clear();
     }
+    let _ = c.kill();
+    let _ = c.wait();
     panic!("child never became ready");
 }
 

@@ -67,8 +67,10 @@ fn commit_for(r: &Repo, n: u64) -> ObjectId {
 }
 
 /// Known discrepancies (documented in docs/research/perforce-benchmark.md); skipped by the tree comparison:
+///
 /// * depot paths with p4-escaped characters (`%40` `%23` `%25` `%2A`): decoded since the p4-escaped-paths fix, and
 ///   checked by `real_escaped_names_are_decoded`,
+///
 /// (`utf16` content is converted back to UTF-16LE with BOM by the importer, issue #302.)
 fn known_diff(l: &str) -> bool {
     let p = path_of(l);
