@@ -33,3 +33,5 @@ Build `845610a`, git version 2.43.0, jj 0.46.0-7d382314f9420b4b8d932245b49c99492
 | clone (local remote, full history) | 1493.0 | 4962.4 | WIN (0.30/0.57) | 3167.0 | WIN (0.47/0.55) | 9 |
 | fetch/pull (1 new commit) | 22.8 | 117.1 | WIN (0.20/0.04) | 270.9 | WIN (0.08/0.07) | 9 |
 | gc (local) | 227.2 | 2503.0 | WIN (0.09/0.18) | n/a | N/A | 9 |
+
+Raw data: [data/jj-sl-final/](data/jj-sl-final/). Tables: `python3 scripts/jj_sl_final_summary.py docs/research/data/jj-sl-final/jjsl-flat.json docs/research/jj-sl-final.md`. Charts (`docs/img/scoreboard-jj.svg`, `scoreboard-sapling.svg`): `python3 scripts/jj_sl_scoreboard.py docs/research/data/jj-sl-final docs/img /tmp/tables.md`.
