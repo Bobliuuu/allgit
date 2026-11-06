@@ -111,6 +111,11 @@ pub struct Loaded {
 }
 
 impl Loaded {
+    /// The remote's packs: stem and index of each.
+    pub(crate) fn packs(&self) -> &[(String, PackIndex)] {
+        &self.packs
+    }
+
     /// `b`, except that reads of a pack this catalog holds whole are answered from memory.
     pub fn view<'a>(&self, b: &'a dyn Backend) -> crate::smallpack::BodyBackend<'a> {
         crate::smallpack::BodyBackend::new(b, self.bodies.clone())
@@ -728,7 +733,7 @@ fn min_read() -> u64 {
     })
 }
 /// Header of a pack: magic + u32 count; each entry is a u32 length then the encoded object.
-const PACK_HEADER: u64 = 12;
+pub(crate) const PACK_HEADER: u64 = 12;
 
 /// How much of a pack to read ahead the first time a walk needs something from it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
