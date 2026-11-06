@@ -74,7 +74,7 @@ control (fsync on every manifest write, so batching saves fsyncs) moved the same
 The disk "before" rows ran on a different c6i.4xlarge with the same harness, bucket-less, earlier the same day (the benchmark
 box was swapped under me mid-run), so they are an indication, not a paired comparison.
 
-Where it saturates now: not measured to a clean knee. Rows above show 215 to 350 pushes/s at 256 to 1024 writers on real S3
+Where it saturates now: not measured to a clean knee. Rows above show 157 to 348 pushes/s at 256 to 1024 writers (the 512-writer cells are 157.5 and 157.6, below their 256 and 1024 neighbours, so the curve is not monotone and one run per cell cannot say why; each writer made only 2 pushes, so ramp-up is a large part of every cell) on real S3
 with the driver sharing the box; the single manifest CAS is no longer the visible limit there (server 7 CPU seconds,
 132 to 149 MiB RSS). The remaining serial costs are one S3 PUT per batch (about 50 ms: bound 20 batches/s) times the batch size
 and the manifest size (108 KB at 1024 zones, about 106 bytes per zone-branch, re-encoded, re-validated and PUT per batch).
