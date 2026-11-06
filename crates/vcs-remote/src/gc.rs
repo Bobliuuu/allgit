@@ -41,6 +41,10 @@ use vcs_objects::{id_of_encoded, Object, ObjectId};
 use vcs_store::pack::{build_pack_blocks, PackIndex};
 
 pub const LOCK_KEY: &str = "gc/lock";
+/// Default lease of `gc/lock`. Short, because a heartbeat renews it while the holder lives (see
+/// [`LockGuard::with_heartbeat`]): a holder that dies leaves the lock for at most this long. It was 6 hours with no
+/// heartbeat, and a killed collector then blocked every later gc and compaction for that long.
+pub const DEFAULT_LOCK_TTL_MS: u64 = 10 * 60 * 1000;
 const TOMB_PREFIX: &str = "tomb/";
 const OBJECT_PREFIX: &str = "objects/";
 /// Default grace: 7 days (must exceed the publishers' hold time plus rate skew, A1).
@@ -95,7 +99,7 @@ impl Default for RemoteGcOptions {
             grace_ms: DEFAULT_GRACE_MS,
             hold_ms: DEFAULT_HOLD_MS,
             dry_run: true,
-            lock_ttl_ms: 6 * 3600 * 1000,
+            lock_ttl_ms: DEFAULT_LOCK_TTL_MS,
             owner: "gc".into(),
             allow_short_grace: false,
             rewrite_packs: true,
@@ -432,11 +436,17 @@ fn roots(b: &dyn Backend, quirks: &GcQuirks, now: u64) -> Result<Vec<ObjectId>, 
     Ok(r)
 }
 
-pub(crate) struct LockGuard<'a> {
+/// The lease record this process wrote to `gc/lock` and the means to extend it. Shared with the heartbeat thread,
+/// so every read-compare-write of the lock happens under `mine`'s mutex.
+struct Lease<'a> {
     b: &'a dyn Backend,
-    mine: std::cell::RefCell<Vec<u8>>,
+    mine: std::sync::Mutex<Vec<u8>>,
     owner: String,
     ttl_ms: u64,
+}
+
+pub(crate) struct LockGuard<'a> {
+    lease: Lease<'a>,
     _flock: Option<Box<dyn std::any::Any + Send>>,
 }
 /// How long a finished (or failed) collector keeps trying to release `gc/lock` when the backend is only briefly
@@ -450,8 +460,10 @@ impl Drop for LockGuard<'_> {
         // once left the lock for its whole lease (6 h), and every later gc or compaction was refused until an
         // operator removed it (seen on every `kill -9` of vcs-server during a client's auto-compaction).
         for attempt in 0..RELEASE_TRIES {
-            let step = match self.b.get(LOCK_KEY) {
-                Ok(Some(v)) if v.data == *self.mine.borrow() => self.b.delete(LOCK_KEY).map(|_| ()),
+            let step = match self.lease.b.get(LOCK_KEY) {
+                Ok(Some(v)) if v.data == *self.lease.mine.lock().unwrap_or_else(|e| e.into_inner()) => {
+                    self.lease.b.delete(LOCK_KEY).map(|_| ())
+                }
                 Ok(_) => return,
                 Err(e) => Err(e),
             };
@@ -474,28 +486,71 @@ fn lock_expiry(data: &[u8]) -> u64 {
         .unwrap_or(u64::MAX)
 }
 
-impl LockGuard<'_> {
+impl Lease<'_> {
     /// Extend the lease when less than half of it is left (always, if `force`). Compare-and-set on
     /// the tag of the lock we hold, so a lock taken over (or removed) since fails with
     /// [`GcError::LeaseLost`] instead of being overwritten.
-    pub(crate) fn renew(&self, force: bool) -> Result<(), GcError> {
+    fn renew(&self, force: bool) -> Result<(), GcError> {
+        let mut mine = self.mine.lock().unwrap_or_else(|e| e.into_inner());
         let now = self.b.now_ms()?;
-        let exp = lock_expiry(&self.mine.borrow());
+        let exp = lock_expiry(&mine);
         if !force && exp.saturating_sub(now) > self.ttl_ms / 2 {
             return Ok(());
         }
         let cur = self.b.get(LOCK_KEY)?.ok_or(GcError::LeaseLost)?;
-        if cur.data != *self.mine.borrow() {
+        if cur.data != *mine {
             return Err(GcError::LeaseLost);
         }
         let next = format!("{} {}", self.owner, now + self.ttl_ms).into_bytes();
         match self.b.put_if_match(LOCK_KEY, &next, &cur.tag)? {
             Some(_) => {
-                *self.mine.borrow_mut() = next;
+                *mine = next;
                 Ok(())
             }
             None => Err(GcError::LeaseLost),
         }
+    }
+}
+
+/// Wakes the heartbeat thread when dropped, also when the guarded closure panics.
+struct StopHeartbeat<'a>(&'a (std::sync::Mutex<bool>, std::sync::Condvar));
+
+impl Drop for StopHeartbeat<'_> {
+    fn drop(&mut self) {
+        *self.0 .0.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        self.0 .1.notify_all();
+    }
+}
+
+impl LockGuard<'_> {
+    pub(crate) fn renew(&self, force: bool) -> Result<(), GcError> {
+        self.lease.renew(force)
+    }
+
+    /// Run `f` while a helper thread keeps the lease alive, a tenth of the lease apart (at most a minute). The lease
+    /// can then be short: a holder that is killed (no flock to tell the others, as on an HTTP or S3 backend) frees the
+    /// lock after one lease instead of after hours, and a slow phase (a long walk, a big merge) cannot outlive it.
+    /// A failed beat is ignored here: the sweeper's own checks before every destructive step see `LeaseLost`.
+    pub(crate) fn with_heartbeat<R>(&self, f: impl FnOnce() -> R) -> R {
+        let every = std::time::Duration::from_millis((self.lease.ttl_ms / 10).clamp(20, 60_000));
+        let stop = (std::sync::Mutex::new(false), std::sync::Condvar::new());
+        let lease = &self.lease;
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let mut stopped = stop.0.lock().unwrap_or_else(|e| e.into_inner());
+                while !*stopped {
+                    stopped = stop.1.wait_timeout(stopped, every).unwrap_or_else(|e| e.into_inner()).0;
+                    if *stopped {
+                        break;
+                    }
+                    drop(stopped);
+                    let _ = lease.renew(false);
+                    stopped = stop.0.lock().unwrap_or_else(|e| e.into_inner());
+                }
+            });
+            let _wake = StopHeartbeat(&stop);
+            f()
+        })
     }
 }
 
@@ -510,10 +565,12 @@ pub(crate) fn acquire<'a>(b: &'a dyn Backend, owner: &str, ttl_ms: u64, now: u64
     };
     let mut flock = flock;
     let mut guard = |mine: Vec<u8>| LockGuard {
-        b,
-        mine: std::cell::RefCell::new(mine),
-        owner: owner.to_owned(),
-        ttl_ms,
+        lease: Lease {
+            b,
+            mine: std::sync::Mutex::new(mine),
+            owner: owner.to_owned(),
+            ttl_ms,
+        },
         _flock: flock.take(),
     };
     if b.put_if_absent(LOCK_KEY, &mine)? {
@@ -571,6 +628,23 @@ pub fn remote_gc_with(
         }
         Some(g)
     };
+    // The sweep runs under a heartbeat that keeps the (short) lease alive while we are busy.
+    match &lock {
+        Some(l) => l.with_heartbeat(|| sweep(b, opts, quirks, hook, lock.as_ref(), rep, now)),
+        None => sweep(b, opts, quirks, hook, None, rep, now),
+    }
+}
+
+/// The part of [`remote_gc_with`] that runs under the lock.
+fn sweep(
+    b: &dyn Backend,
+    opts: &RemoteGcOptions,
+    quirks: GcQuirks,
+    hook: &mut dyn FnMut(GcPoint),
+    lock: Option<&LockGuard<'_>>,
+    mut rep: RemoteGcReport,
+    now: u64,
+) -> Result<RemoteGcReport, GcError> {
     if !opts.dry_run {
         let g = crate::sharded::gc_decisions(b, opts.grace_ms).map_err(|e| GcError::Damaged(format!("sharded decisions: {e}")))?;
         rep.decisions_deleted = g.committed_deleted + g.aborted_deleted;
@@ -585,7 +659,7 @@ pub fn remote_gc_with(
         }
     }
     let grace = opts.grace_ms;
-    let renew = |force: bool| -> Result<(), GcError> { lock.as_ref().map_or(Ok(()), |l| l.renew(force)) };
+    let renew = |force: bool| -> Result<(), GcError> { lock.map_or(Ok(()), |l| l.renew(force)) };
 
     // 1. Candidates: units that are old and contain nothing reachable.
     // Roots BEFORE the listing: a push that lands between the two has its pack in the listing but its head
@@ -821,4 +895,11 @@ pub fn remote_gc_with(
 #[doc(hidden)]
 pub fn acquire_for_test(b: &dyn Backend, now: u64) -> Result<(), GcError> {
     acquire(b, "test-gc", 6 * 3600 * 1000, now).map(|_| ())
+}
+
+/// Take `gc/lock` with a lease of `ttl_ms`, run `f` under the heartbeat, then release it (tests).
+#[doc(hidden)]
+pub fn hold_lock_for_test<R>(b: &dyn Backend, owner: &str, ttl_ms: u64, f: impl FnOnce() -> R) -> Result<R, GcError> {
+    let g = acquire(b, owner, ttl_ms, b.now_ms()?)?;
+    Ok(g.with_heartbeat(f))
 }
