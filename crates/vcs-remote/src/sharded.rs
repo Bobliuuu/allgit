@@ -950,6 +950,8 @@ pub struct MigrateReport {
 /// error); 2. create-only one record per zone; 3. create-only the root record; 4. CAS the marker
 /// to "moved".
 pub fn migrate_to_sharded(b: &dyn Backend) -> Result<MigrateReport, ShardError> {
+    // Older binaries cannot read sharded manifests: say so in the marker before freezing (issue #567).
+    crate::format::raise(b, crate::format::LEVEL_SHARDED).map_err(|e| ShardError::Other(e.to_string()))?;
     for _ in 0..64 {
         let Some(cur) = b.get(KEY)? else {
             return Err(ShardError::Other("repository has no manifest to migrate".into()));

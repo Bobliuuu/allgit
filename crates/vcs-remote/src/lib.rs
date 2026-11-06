@@ -10,6 +10,7 @@ pub mod bulkmeta;
 pub mod clientcache;
 pub mod compact;
 pub mod diskcache;
+pub mod format;
 pub mod fsbackend;
 pub mod gc;
 pub mod idxcache;
