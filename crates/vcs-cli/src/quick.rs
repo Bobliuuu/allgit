@@ -71,6 +71,8 @@ fn show(rev: Option<String>) -> Cmd {
 fn cat_file(flag: &str, object: &str) -> Option<Cmd> {
     Some(Cmd::More(More::CatFile(CatFileArgs {
         object: pos(object)?,
+        batch: false,
+        batch_check: false,
         type_: flag == "-t",
         size: flag == "-s",
         print: flag == "-p",
@@ -83,6 +85,7 @@ fn ls_files(stage: bool, rev: Option<String>) -> Cmd {
         stage,
         rev,
         depth: None,
+        others: false,
         paths: Vec::new(),
     }))
 }

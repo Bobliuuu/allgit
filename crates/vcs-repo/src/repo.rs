@@ -1732,6 +1732,68 @@ impl Repo {
         self.scan_untracked(opts, &ix, &zones, &ws)
     }
 
+    /// Every untracked path of the working tree, one entry per FILE (a new directory is not
+    /// collapsed), as `(untracked, ignored)`. Files matched by `.vcsignore` go to `ignored`; an
+    /// ignored directory with nothing tracked below is one `dir/` entry there. Slower than
+    /// [`Repo::untracked_only`] (no cache, no threads): meant for `ls-files -o` and `clean -x`.
+    pub fn others(&self) -> Result<(Vec<String>, Vec<String>)> {
+        let ix = self.index()?;
+        let (zones, ws) = (self.zones()?, self.workspace()?);
+        let mut out = (Vec::new(), Vec::new());
+        self.walk_others("", &zones, &ws, &ix, &IgnoreStack::default(), &mut out)?;
+        Ok(out)
+    }
+
+    fn walk_others(
+        &self,
+        dir: &str,
+        zones: &Zones,
+        ws: &Workspace,
+        ix: &dyn crate::index::TrackedDirs,
+        parent: &IgnoreStack,
+        out: &mut (Vec<String>, Vec<String>),
+    ) -> Result<()> {
+        let stack = parent.descend(self.wfs.as_ref(), &self.worktree, dir)?;
+        let abs = if dir.is_empty() { self.worktree.clone() } else { self.worktree.join(dir) };
+        let mut ents = io(&abs, self.wfs.read_dir(dir))?;
+        ents.sort_by(|a, b| a.name.cmp(&b.name));
+        let ch = ix.tracked_children(dir)?;
+        for e in ents {
+            let name = e.name;
+            if name.eq_ignore_ascii_case(META_DIR) || validate_component(&name).is_err() {
+                continue;
+            }
+            let rel = if dir.is_empty() { name.clone() } else { format!("{dir}/{name}") };
+            if !ws.subs.contains_key(zones.owner(&rel)) {
+                continue;
+            }
+            match e.kind {
+                FileKind::Dir => {
+                    let tracked_below = ch.dirs.binary_search(&name).is_ok();
+                    let ignored = stack.is_ignored(&rel, true);
+                    if ignored && !tracked_below {
+                        out.1.push(format!("{rel}/"));
+                        continue;
+                    }
+                    let child = if ignored { stack.inherit() } else { stack.clone() };
+                    self.walk_others(&rel, zones, ws, ix, &child, out)?;
+                }
+                FileKind::Other => {}
+                _ => {
+                    if ch.files.binary_search(&name).is_ok() {
+                        continue;
+                    }
+                    if stack.is_ignored(&rel, false) {
+                        out.1.push(rel);
+                    } else {
+                        out.0.push(rel);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Working-tree changes of the tracked `entries`, in entry order, plus the paths whose
     /// content was read and found clean (racy entries). The per-file `lstat` (and re-hash of
     /// racy/changed files) is independent per path, so a big list is split across at most 8

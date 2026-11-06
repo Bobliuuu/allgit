@@ -1034,6 +1034,15 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
             ],
         ),
         (
+            "plumbing",
+            vec![
+                W("f.txt", "1\n"),
+                G("git add f.txt"),
+                commit(),
+                V("git rev-parse --git-dir", ".vcs"),
+            ],
+        ),
+        (
             "clean",
             vec![
                 W("f.txt", "1\n"),
@@ -1042,7 +1051,19 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
                 W("junk.txt", "x\n"),
                 W("tmp/j.txt", "y\n"),
                 GC("git clean -n", "junk.txt"),
+                L("git ls-files -o"),
                 G("git clean -fd"),
+                W(".gitignore", "*.log\n"),
+                W(".vcsignore", "*.log\n"),
+                G("git add .gitignore .vcsignore"),
+                commit(),
+                W("a.log", "x\n"),
+                W("sub/b.log", "y\n"),
+                W("sub/c.txt", "z\n"),
+                L("git ls-files -o --exclude-standard"),
+                G("git clean -fd"),
+                G("git clean -fx"),
+                G("git clean -fdx"),
             ],
         ),
         (
@@ -1359,4 +1380,46 @@ fn cover_letter_has_gits_layout() {
         assert!(cover.contains(" a.txt |") && cover.contains(" b.txt |"), "{cover}");
         assert!(cover.contains("2 files changed, 2 insertions(+)"), "{cover}");
     }
+}
+
+#[test]
+fn cat_file_batch_reads_names_from_stdin() {
+    use std::io::Write;
+    let t = tempfile::tempdir().unwrap();
+    let vcs = |args: &[&str], input: &str| {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_vcs"))
+            .arg("git")
+            .args(args)
+            .current_dir(t.path())
+            .env("VCS_AUTHOR_NAME", "Dev")
+            .env("VCS_AUTHOR_EMAIL", "dev@example.com")
+            .env("VCS_GIT_QUIET", "1")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        c.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+        let o = c.wait_with_output().unwrap();
+        assert!(o.status.success(), "{args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    };
+    vcs(&["init"], "");
+    std::fs::write(t.path().join("f.txt"), "hello\n").unwrap();
+    vcs(&["add", "f.txt"], "");
+    vcs(&["commit", "-m", "base"], "");
+    let out = vcs(&["cat-file", "--batch"], "HEAD:f.txt\nnope\nHEAD\n");
+    let mut it = out.lines();
+    let head = it.next().unwrap();
+    let parts: Vec<&str> = head.split(' ').collect();
+    assert_eq!((parts.len(), parts[1], parts[2]), (3, "blob", "6"), "{out}");
+    assert_eq!(parts[0].len(), 64);
+    assert_eq!(it.next(), Some("hello"));
+    assert_eq!(it.next(), Some(""), "the content is followed by a newline of its own");
+    assert_eq!(it.next(), Some("nope missing"));
+    let c = it.next().unwrap();
+    assert!(c.len() > 65 && &c[64..72] == " commit ", "{c}");
+    let check = vcs(&["cat-file", "--batch-check"], "HEAD:f.txt\n");
+    assert_eq!(check.lines().count(), 1);
+    assert!(check.trim_end().ends_with(" blob 6"), "{check}");
 }
