@@ -67,6 +67,7 @@ How to read it:
 | `vcs describe` | `git describe` | none | names a commit after the nearest tag |
 | `vcs archive` | `git archive` | none | tar or zip of a revision |
 | `vcs bisect` | `git bisect` | none | |
+| `vcs rerere` | `git rerere` | none | record and replay conflict resolutions; `rerere.enabled` |
 | `vcs fsck` | `git fsck` | `p4 verify` | |
 
 ## Branches, merging, tags

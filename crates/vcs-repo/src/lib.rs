@@ -54,6 +54,7 @@ mod recbase;
 pub(crate) mod refsdelta;
 pub mod reftags;
 pub mod repo;
+pub mod rerere;
 pub mod reset;
 pub mod revrange;
 #[cfg(feature = "scaling-probe")]

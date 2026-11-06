@@ -101,6 +101,7 @@ pub struct Repo {
     pub(crate) store: LocalStore,
     pub(crate) structural: bool,
     pub(crate) renames: bool,
+    pub(crate) rerere: crate::rerere::RerereCfg,
     pub(crate) use_commit_graph: bool,
     pub(crate) use_reach_cache: bool,
     /// Width of the index "racy" window (ns); only tests shorten it.
@@ -317,6 +318,7 @@ impl Repo {
             store,
             structural: true,
             renames: false,
+            rerere: Default::default(),
             use_commit_graph: true,
             use_reach_cache: true,
             index_racy_ns: RACY_NS,
@@ -361,6 +363,7 @@ impl Repo {
                     store,
                     structural: true,
                     renames: false,
+                    rerere: Default::default(),
                     use_commit_graph: true,
                     use_reach_cache: true,
                     index_racy_ns: RACY_NS,
@@ -940,7 +943,7 @@ impl Repo {
     /// the index's racy window, is not read at all. Otherwise it is read; if the content hash
     /// equals the entry's id the object is already stored and is not written again. Returns the
     /// paths whose content is known to match the entry recorded after their racy window closed.
-    fn stage_files(&self, files: &[String], ix: &mut Index) -> Result<BTreeSet<String>> {
+    pub(crate) fn stage_files(&self, files: &[String], ix: &mut Index) -> Result<BTreeSet<String>> {
         let racy = self.index_racy_ns;
         let old_w = ix.written_ns;
         let prev = &ix.entries;

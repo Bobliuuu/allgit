@@ -121,8 +121,7 @@ From the final scoreboard ([research/command-scoreboard.md](research/command-sco
   the parking name must be free (the command refuses before changing anything
   otherwise).
 - **`cherry-pick -m N`, `A...B` in `cherry-pick` and `format-patch` work.**
-  Still missing: `revert -m` (a merge commit cannot be reverted) and
-  `rebase --rebase-merges`.
+  Still missing: `revert -m` (a merge commit cannot be reverted).
 - **Symmetric ranges order commits by author time** (the `log` order,
   reversed), not by topology, so two commits with the same timestamp are
   picked in id order.
@@ -142,6 +141,10 @@ From the final scoreboard ([research/command-scoreboard.md](research/command-sco
   all data keys including uncollected garbage, holds a pack in memory per worker, flattens a sharded manifest, and is tested on
   directory and in-memory backends only, not real S3. The server audit log is not replicated.
 
+- `vcs rerere` records and replays text-conflict resolutions for merge,
+  cherry-pick, revert and rebase. It does not cover binary or delete/modify
+  conflicts, `stash apply`, `apply -3` or `am -3`, and its cache is not
+  git-compatible ([rerere.md](rerere.md)).
 - Merge assist is verified on 77 real conflicts with parse checks only, not
   the projects' own tests; the HTTP API path is mock-tested only
   ([assist.md](assist.md)).

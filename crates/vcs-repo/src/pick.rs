@@ -327,6 +327,8 @@ impl Repo {
             self.clear_merge_state()?;
             return Err(e);
         }
+        let mut state = state;
+        self.rerere_on_conflicts(&mut state, &mut ix)?;
         self.save_index(&mut ix)?;
         Ok(MergeOutcome::Conflicted {
             paths: state.conflicts.iter().map(|c| c.path.clone()).collect(),
