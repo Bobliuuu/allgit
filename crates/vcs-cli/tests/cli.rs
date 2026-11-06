@@ -354,3 +354,47 @@ fn auto_pack_limit_config_and_repack_auto() {
     assert!(ok(&d, &["fsck"]).contains("ok"));
     assert!(ok(&d, &["log"]).contains("one"));
 }
+
+/// #545: a reader that closes the pipe early (`vcs log | head -1`) ends the command quietly, like git:
+/// no panic message, no `error:` line on stderr.
+#[cfg(unix)]
+#[test]
+fn closed_stdout_pipe_exits_quietly() {
+    use std::io::Read;
+    use std::process::Stdio;
+    let t = tempfile::tempdir().unwrap();
+    ok(t.path(), &["init", "demo"]);
+    let d = t.path().join("demo");
+    // enough output that the writer is still writing when the reader goes away
+    // (well over a pipe buffer of 64 KiB of status output)
+    for i in 0..3000 {
+        std::fs::write(d.join(format!("a-rather-long-file-name-to-fill-the-pipe-{i:05}.txt")), "x\n").unwrap();
+    }
+    ok(&d, &["add", "."]);
+    for args in [&["status"][..], &["diff", "--staged"][..]] {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_vcs"))
+            .args(args)
+            .current_dir(&d)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        // read a little, then close our end while the child still has output to write
+        let mut out = c.stdout.take().unwrap();
+        let mut first = [0u8; 16];
+        out.read_exact(&mut first).unwrap();
+        drop(out);
+        let mut err = String::new();
+        c.stderr.take().unwrap().read_to_string(&mut err).unwrap();
+        let st = c.wait().unwrap();
+        assert!(
+            !err.contains("panicked") && !err.contains("error:"),
+            "noisy stderr for {args:?}: {err}"
+        );
+        use std::os::unix::process::ExitStatusExt;
+        assert!(
+            st.signal() == Some(libc::SIGPIPE) || st.code() == Some(141) || st.success(),
+            "{st:?}"
+        );
+    }
+}
