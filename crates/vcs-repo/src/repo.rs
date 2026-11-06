@@ -1,5 +1,5 @@
 use crate::diff;
-use crate::dircache::{stamp_of, DirCache, Kind, Listing};
+use crate::dircache::{stamp_of, DirCache, Kind, Listing, Names};
 use crate::error::{io, msg, Error, Result};
 use crate::fsmonitor::{self, Changed, FsMonitor};
 use crate::ignore::IgnoreStack;
@@ -1882,7 +1882,6 @@ impl Repo {
         parent_stack: &IgnoreStack,
         ctx: &WalkCtx,
     ) -> Result<WalkOut> {
-        let stack = parent_stack.descend(self.wfs.as_ref(), &self.worktree, dir)?;
         enum Item {
             Unsupported(String),
             File(String),
@@ -1906,7 +1905,7 @@ impl Repo {
             _ => None,
         };
         let listed;
-        let entries: &Vec<(String, Kind)> = match cached {
+        let entries: &Names = match cached {
             Some(e) => {
                 out.hits.push(dir.to_owned());
                 e
@@ -1914,7 +1913,7 @@ impl Repo {
             None => {
                 let mut ents = io(&abs(), self.wfs.read_dir(dir))?;
                 ents.sort_by(|a, b| a.name.cmp(&b.name));
-                let mut v = Vec::with_capacity(ents.len());
+                let mut v = Names::with_capacity(ents.len());
                 for e in ents {
                     let name = e.name;
                     if name.eq_ignore_ascii_case(META_DIR) || validate_component(&name).is_err() {
@@ -1925,7 +1924,7 @@ impl Repo {
                         FileKind::Dir => Kind::Dir,
                         _ => Kind::File,
                     };
-                    v.push((name, kind));
+                    v.push(&name, kind);
                 }
                 out.scanned += 1;
                 // Trust the stamp only if it was identical before and after the listing.
@@ -1949,29 +1948,36 @@ impl Repo {
                 &listed
             }
         };
+        // Look for the ignore file only when the listing names one (any case): a directory without
+        // one costs no `open` that fails with ENOENT.
+        let stack = if entries.iter().any(|(n, _)| n.eq_ignore_ascii_case(crate::ignore::IGNORE_FILE)) {
+            parent_stack.descend(self.wfs.as_ref(), &self.worktree, dir)?
+        } else {
+            parent_stack.clone()
+        };
         let mut items = Vec::new();
         // Tracked names directly in this directory, as two sorted lists: matching the (sorted)
         // listing against them is a linear merge, with no per-name lookup or path allocation.
         let ch = ix.tracked_children(dir)?;
         let mut fp = 0usize;
-        for (name, kind) in entries {
-            while fp < ch.files.len() && ch.files[fp].as_str() < name.as_str() {
+        for (name, kind) in entries.iter() {
+            while fp < ch.files.len() && ch.files[fp].as_str() < name {
                 fp += 1;
             }
-            let file_tracked = fp < ch.files.len() && ch.files[fp].as_str() == name.as_str();
-            if file_tracked && *kind == Kind::File {
+            let file_tracked = fp < ch.files.len() && ch.files[fp].as_str() == name;
+            if file_tracked && kind == Kind::File {
                 continue; // tracked file: nothing to report whichever zone owns it
             }
-            let rel = if dir.is_empty() { name.clone() } else { format!("{dir}/{name}") };
-            if *kind == Kind::Other {
+            let rel = if dir.is_empty() { name.to_owned() } else { format!("{dir}/{name}") };
+            if kind == Kind::Other {
                 items.push(Item::Unsupported(rel));
                 continue;
             }
             if !ws.subs.contains_key(zones.owner(&rel)) {
                 continue;
             }
-            if *kind == Kind::Dir {
-                let tracked_below = file_tracked || ch.dirs.binary_search_by(|d| d.as_str().cmp(name.as_str())).is_ok();
+            if kind == Kind::Dir {
+                let tracked_below = file_tracked || ch.dirs.binary_search_by(|d| d.as_str().cmp(name)).is_ok();
                 let ignored = stack.is_ignored(&rel, true);
                 if ignored && !tracked_below {
                     continue;

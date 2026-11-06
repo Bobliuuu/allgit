@@ -703,6 +703,34 @@ impl crate::index::TrackedDirs for IndexImage {
     fn tracked_children(&self, dir: &str) -> Result<crate::index::TrackedChildren> {
         let prefix = if dir.is_empty() { String::new() } else { format!("{dir}/") };
         let mut out = crate::index::TrackedChildren::default();
+        if let Some(b) = self.base5() {
+            // No logged edit inside this directory: its tracked names are exactly the base records
+            // in `[prefix, prefix+"0")`, read in place one after the other. A file is the next record;
+            // a subdirectory is skipped with one search. (`next_ge` below decodes a whole entry,
+            // allocates its path and searches from the top for every single name.)
+            let hi = prefix.strip_suffix('/').map(|d| format!("{d}0"));
+            if self.overlay_range(Some(&prefix), hi.as_deref()).next().is_none() {
+                let mut i = b.lower_bound(&prefix)?;
+                while i < b.n {
+                    let Some(rest) = b.path(i)?.strip_prefix(prefix.as_str()) else {
+                        break;
+                    };
+                    match rest.find('/') {
+                        None => {
+                            out.files.push(rest.to_owned());
+                            i += 1;
+                        }
+                        Some(j) => {
+                            out.dirs.push(rest[..j].to_owned());
+                            i = b.lower_bound(&format!("{prefix}{}0", &rest[..j]))?;
+                            // '0' == '/' + 1
+                        }
+                    }
+                }
+                out.dirs.sort_unstable();
+                return Ok(out);
+            }
+        }
         let mut cur = prefix.clone();
         while let Some((k, _)) = self.next_ge(&cur)? {
             let Some(rest) = k.strip_prefix(prefix.as_str()) else { break };
@@ -797,6 +825,39 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         write_full(d.path(), ix).unwrap();
         d
+    }
+
+    /// The in-place scan of one directory's tracked names agrees with the decoded index, with and
+    /// without logged edits, for names that sort next to `/` (`a-b`, `a.c`, `a0`).
+    #[test]
+    fn tracked_children_fast_path_matches_the_decoded_index() {
+        use crate::index::TrackedDirs;
+        let mut ix = Index::default();
+        for p in ["a-b", "a.c", "a/x", "a/y/z", "a/y/w", "a/y0", "a/zz/q", "a0", "b/c/d", "top", "z"] {
+            ix.insert(p, en(1, 7)).unwrap();
+        }
+        let d = dir_with(&ix);
+        let check = |img: &IndexImage, want: &Index| {
+            for dir in ["", "a", "a/y", "a/zz", "b", "b/c", "nope", "a/x"] {
+                let (got, exp) = (img.tracked_children(dir).unwrap(), want.tracked_children(dir).unwrap());
+                assert_eq!((got.files, got.dirs), (exp.files, exp.dirs), "dir {dir:?}");
+            }
+        };
+        let img = IndexImage::load(d.path()).unwrap();
+        assert!(img.base5().is_some());
+        check(&img, &ix);
+        // with a log: a new file in `a`, a removed directory `b/c`, a new directory `n`
+        let ops = vec![
+            Op::Set("a/new".into(), en(2, 8)),
+            Op::Remove("b/c/d".into()),
+            Op::Set("n/m".into(), en(3, 9)),
+        ];
+        img.commit(d.path(), ops).unwrap();
+        let mut want = ix.clone();
+        want.insert("a/new", en(2, 8)).unwrap();
+        want.entries.remove("b/c/d");
+        want.insert("n/m", en(3, 9)).unwrap();
+        check(&IndexImage::load(d.path()).unwrap(), &want);
     }
 
     #[test]

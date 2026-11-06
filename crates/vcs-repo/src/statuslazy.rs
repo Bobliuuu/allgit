@@ -87,7 +87,22 @@ impl Repo {
             vcs_objects::names::validate_path(p)?;
             Ok(Some((zi, Change { path: p.to_owned(), kind })))
         };
-        let changed = view.par_filter_map(&blocks, threads, &work)?;
+        // The untracked walk (cache load, one `stat` per directory) and the stat of every tracked file
+        // are independent: run them side by side. Both only read; the racy-entry refresh below runs
+        // after the scan, as before. `VCS_SERIAL_STATUS=1` restores the one-after-the-other order.
+        let serial = std::env::var_os("VCS_SERIAL_STATUS").is_some();
+        let (changed, walk) = if serial {
+            let c = view.par_filter_map(&blocks, threads, &work);
+            (c, None)
+        } else {
+            std::thread::scope(|sc| {
+                let (img, zones, ws) = (&img, &zones, &ws);
+                let w = sc.spawn(move || self.scan_untracked(opts, img, zones, ws));
+                let c = view.par_filter_map(&blocks, threads, &work);
+                (c, Some(w.join().expect("untracked walk panicked")))
+            })
+        };
+        let changed = changed?;
         let mut unstaged: Vec<Vec<Change>> = (0..zone_names.len()).map(|_| Vec::new()).collect();
         for (zi, c) in changed {
             unstaged[zi].push(c);
@@ -136,7 +151,10 @@ impl Repo {
             }
         }
 
-        let (untracked, unsupported) = self.scan_untracked(opts, &img, &zones, &ws)?;
+        let (untracked, unsupported) = match walk {
+            Some(w) => w?,
+            None => self.scan_untracked(opts, &img, &zones, &ws)?,
+        };
         st.untracked = untracked;
         st.unsupported = unsupported;
         st.merging = self.merge_state()?;
