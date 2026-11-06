@@ -439,6 +439,9 @@ enum Cmd {
         /// Zone (default: the zone containing the current directory)
         #[arg(long)]
         zone: Option<String>,
+        /// Leave the undoing change staged in the index and working tree instead of committing it
+        #[arg(short = 'n', long)]
+        no_commit: bool,
     },
     /// Replay the checked-out branch onto another branch, keeping each change id
     Rebase {
@@ -1782,9 +1785,18 @@ fn run(cli: Cli) -> Result<(), Error> {
                 }
             }
         }
-        Cmd::Revert { rev, zone } => {
+        Cmd::Revert { rev, zone, no_commit } => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
+            if no_commit {
+                match repo.revert_no_commit(&zone, &rev, author()?)? {
+                    MergeOutcome::Squashed { changed } => {
+                        println!("{zone}: reverted {rev} in the working tree and index ({changed} file(s) staged); record it with `vcs commit`");
+                    }
+                    out => print_pick(&zone, out, "revert")?,
+                }
+                return Ok(());
+            }
             let out = repo.revert(&zone, &rev, author()?)?;
             print_pick(&zone, out, "revert")?;
         }

@@ -144,7 +144,7 @@ Status: exact (same command and flags), renamed (other spelling, same meaning), 
 semantics differ as the notes say), missing (no equivalent; the notes name the native route).
 
 <!-- BEGIN GENERATED TABLE -->
-261 rows: 154 exact, 41 renamed, 40 different, 26 missing.
+261 rows: 156 exact, 41 renamed, 41 different, 23 missing.
 
 | git | vcs | status | notes | test |
 |---|---|---|---|---|
@@ -262,7 +262,7 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git reset --hard HEAD@{1}` | none | missing | `vcs op log`, then `vcs op undo` / `vcs op restore <id>` | translation |
 | `git revert HEAD` | `vcs revert HEAD` | exact |  | `pick` |
 | `git revert --no-edit HEAD~2` | `vcs revert HEAD~2` | exact |  | `pick` |
-| `git revert -n HEAD` | none | missing | a revert always commits | translation |
+| `git revert -n HEAD` | `vcs revert --no-commit HEAD` | exact | the undoing change is left staged; record it with `vcs commit` | `pick` |
 | `git cherry-pick feature` | `vcs cherry-pick feature` | exact |  | `pick` |
 | `git cherry-pick --continue` | `vcs commit` | exact |  | translation |
 | `git cherry-pick A..B` | `vcs cherry-pick A..B` | exact | oldest first in one run; merge commits in the range are refused up front; a pick that changes nothing is skipped; a conflict stops the run, prints the commits left to pick, and is finished with `vcs commit` | translation |
@@ -285,7 +285,7 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git rebase --onto main A` | `vcs rebase --onto main A` | exact | replays the commits A lacks onto main (any revision); not combinable with -i/-x; the branch to rebase must be checked out | translation |
 | `git rebase --onto main --root` | `vcs rebase --onto main --root` | exact | replays the whole branch, root commit included; linear history only | translation |
 | `git rebase --rebase-merges main` | none | missing | replay is linear: a range containing a merge commit is refused before anything changes; rebase each linear side, or `vcs merge` | translation |
-| `git rebase origin/main` | none | missing | `vcs sync`, then `vcs rebase <local branch>` | translation |
+| `git rebase origin/main` | `vcs rebase origin/main` | exact | origin/<branch> is the remote-tracking head as of the last `vcs fetch` | translation |
 | `git stash` | `vcs stash push` | exact | tracked changes only; untracked files stay | `stash` |
 | `git stash push -m wip` | `vcs stash push -m wip` | exact |  | `stash` |
 | `git stash pop` | `vcs stash pop` | different | the restored changes come back STAGED (git leaves them unstaged) | `stash` |
@@ -309,7 +309,7 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git fetch origin` | `vcs fetch` | exact |  | translation |
 | `git fetch --depth 1` | none | missing | no shallow fetch | translation |
 | `git pull` | `vcs sync` | different | fetch + fast-forward only; diverged branches are left alone, nothing is merged (`vcs merge --remote <branch>`) | translation |
-| `git pull --rebase` | none | missing | `vcs fetch`, `vcs merge --remote <branch>`, or `vcs sync` then `vcs rebase <branch>` | translation |
+| `git pull --rebase` | `vcs fetch ; vcs rebase origin/<current branch>` | different | a conflict stops with the usual rebase workflow (`--continue`/`--abort`); no autostash; the remote is always `origin` | translation |
 | `git push` | `vcs publish` | different | publishes ALL checked-out branches in one atomic transaction; fast-forward only | translation |
 | `git push -u origin main` | `vcs publish main` | different | publishes only the named branch; no upstream tracking setting | translation |
 | `git push --force` | `vcs publish --force` | different | a lease, never a blind overwrite: replaces a diverged remote branch only if it is still the head you last fetched, else refuses with nothing changed. Records the replaced head in the op log and the server audit log | `push-force` |
