@@ -233,21 +233,16 @@ pub fn put_file_incremental(
         let (mut known, mut start) = (s, s);
         let mut cuts: Vec<u64> = Vec::new();
         let rejoin = 'outer: loop {
-            loop {
-                match large_next_cut(start, &cands, known, known == len, len) {
-                    Some(c) => {
-                        cuts.push(c);
-                        start = c;
-                        if c >= min_end {
-                            if let Ok(k) = ends.binary_search(&c) {
-                                break 'outer Some(k);
-                            }
-                        }
-                        if c >= len {
-                            break 'outer None;
-                        }
+            while let Some(c) = large_next_cut(start, &cands, known, known == len, len) {
+                cuts.push(c);
+                start = c;
+                if c >= min_end {
+                    if let Ok(k) = ends.binary_search(&c) {
+                        break 'outer Some(k);
                     }
-                    None => break,
+                }
+                if c >= len {
+                    break 'outer None;
                 }
             }
             if known - s > INCREMENTAL_MAX {
@@ -451,9 +446,9 @@ pub fn write_manifest_to<S: ObjectStore + ?Sized>(store: &S, id: &ObjectId, m: &
     let res = par_map_with(WRITERS, g.len(), |k| -> Result<(), StoreError> {
         let (a, b) = g[k];
         // one pwrite per chunk straight from the verified chunk: no group buffer, no second copy
-        for i in a..b {
-            let chunk = fetch_chunk(store, id, &m.chunks[i])?;
-            write_all_at(f, &chunk, offs[i]).map_err(|e| ioerr("<file>", e))?;
+        for (cref, &off) in m.chunks[a..b].iter().zip(&offs[a..b]) {
+            let chunk = fetch_chunk(store, id, cref)?;
+            write_all_at(f, &chunk, off).map_err(|e| ioerr("<file>", e))?;
         }
         Ok(())
     });
@@ -510,7 +505,8 @@ mod tests {
         // unchanged -> same id, nothing written
         let f = file_of(&d, "same", &base);
         assert_eq!(put_file_incremental(&s, &f, n as u64, &id, &old).unwrap(), Some(id));
-        let edits: Vec<(&str, Box<dyn Fn(&mut Vec<u8>)>)> = vec![
+        type Edit = Box<dyn Fn(&mut Vec<u8>)>;
+        let edits: Vec<(&str, Edit)> = vec![
             ("first byte", Box::new(|v| v[0] ^= 1)),
             ("last byte", Box::new(|v| *v.last_mut().unwrap() ^= 1)),
             ("middle byte", Box::new(|v| v[33 << 20] ^= 1)),

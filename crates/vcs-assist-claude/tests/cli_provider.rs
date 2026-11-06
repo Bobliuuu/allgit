@@ -156,5 +156,5 @@ fn split_is_deterministic_and_partitions_the_corpus() {
     let (dev, test, all) = (n("dev"), n("test"), n("all"));
     assert_eq!(all, 50);
     assert_eq!(dev + test, 50);
-    assert!(test >= 3 && test <= 20, "{test}");
+    assert!((3..=20).contains(&test), "{test}");
 }

@@ -109,10 +109,8 @@ fn kill_9_during_ref_ops_never_corrupts() {
         let finished = matches!(ch.try_wait(), Ok(Some(s)) if s.success());
         let _ = ch.kill(); // SIGKILL
         let st = ch.wait().unwrap();
-        if finished || st.success() {
-            if i % 3 == 0 {
-                done.push(name);
-            }
+        if (finished || st.success()) && i % 3 == 0 {
+            done.push(name);
         }
         let f = ok(&d, &["fsck"]);
         assert!(f.contains("ok"), "iteration {i}: fsck: {f}");

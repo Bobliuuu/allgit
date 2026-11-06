@@ -609,7 +609,7 @@ impl<'a> Publisher<'a> {
     /// shared loss count. Only liveness depends on it, never safety.
     fn backoff_ms(&mut self) -> u64 {
         const BASE: u64 = 4;
-        let hi = (self.prev_backoff_ms.max(BASE) * 3).min(CAS_BACKOFF_CAP_MS).max(BASE + 1);
+        let hi = (self.prev_backoff_ms.max(BASE) * 3).clamp(BASE + 1, CAS_BACKOFF_CAP_MS);
         let mut h = blake3::Hasher::new();
         h.update(self.txid.as_bytes()).update(&self.cas_losses.to_le_bytes());
         h.update(
@@ -1616,7 +1616,7 @@ fn fetch_heads_impl(
     let roots: Vec<ObjectId> = m
         .branches
         .iter()
-        .filter(|((a, _), _)| !zones.is_some_and(|w| !w.iter().any(|x| x == a)))
+        .filter(|((a, _), _)| zones.is_none_or(|w| w.iter().any(|x| x == a)))
         .map(|(_, id)| *id)
         .collect();
     let mut src = packfetch::RemoteSource::new(backend, ahead)

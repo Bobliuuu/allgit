@@ -320,10 +320,7 @@ fn publish_mirror_forces_with_lease_prunes_and_sends_tags() {
     ok(&b, &["fetch"]);
     let out = ok(&b, &["publish", "--mirror"]);
     assert!(out.contains("FORCED") && out.contains("tag root/bob-tag"), "{out}");
-    assert!(
-        out.contains("deleted remote branch root/extra") == false,
-        "extra exists locally: {out}"
-    );
+    assert!(!out.contains("deleted remote branch root/extra"), "extra exists locally: {out}");
     ok(&b, &["branch", "-d", "extra", "--force"]);
     let out = ok(&b, &["publish", "--mirror"]);
     assert!(out.contains("deleted remote branch root/extra"), "{out}");

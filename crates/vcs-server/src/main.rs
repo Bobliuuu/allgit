@@ -110,13 +110,8 @@ fn main() {
     let mut check_client = false;
     let mut no_group = false;
     let (mut cache_dir, mut cache_size): (Option<String>, Option<String>) = (None, None);
-    let (mut upstream, mut up_token, mut up_ca, mut up_ttl, mut up_stale): (
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-    ) = (None, None, None, None, None);
+    let (mut upstream, mut up_token, mut up_ca, mut up_ttl, mut up_stale) =
+        (None::<String>, None::<String>, None::<String>, None::<String>, None::<String>);
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         let mut val = |n: &str| it.next().unwrap_or_else(|| die(&format!("{n} needs a value")));

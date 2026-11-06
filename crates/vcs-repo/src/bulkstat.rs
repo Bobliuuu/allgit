@@ -51,7 +51,13 @@ pub(crate) fn stat_dir(fd: RawFd) -> Option<HashMap<Box<[u8]>, FsStat>> {
     loop {
         // SAFETY: `al` and `buf` outlive the call; `fd` is an open directory.
         let n = unsafe {
-            libc::getattrlistbulk(fd, (&mut al as *mut libc::attrlist).cast(), buf.as_mut_ptr().cast(), buf.len(), libc::FSOPT_PACK_INVAL_ATTRS as u64)
+            libc::getattrlistbulk(
+                fd,
+                (&mut al as *mut libc::attrlist).cast(),
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+                libc::FSOPT_PACK_INVAL_ATTRS as u64,
+            )
         };
         if n < 0 {
             return None;
@@ -99,7 +105,11 @@ fn parse(rec: &[u8]) -> Option<(Box<[u8]>, FsStat)> {
             len,
             mtime_ns,
             ctime_ns,
-            mode: if mode & 0o111 != 0 { EntryMode::Executable } else { EntryMode::File },
+            mode: if mode & 0o111 != 0 {
+                EntryMode::Executable
+            } else {
+                EntryMode::File
+            },
             ino,
         },
     ))

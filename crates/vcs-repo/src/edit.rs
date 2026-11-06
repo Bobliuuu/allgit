@@ -46,6 +46,9 @@ fn under(path: &str, prefix: &str) -> bool {
     prefix.is_empty() || path == prefix || (path.starts_with(prefix) && path.as_bytes().get(prefix.len()) == Some(&b'/'))
 }
 
+/// A lazily parsed index file with the few entries the specs cover.
+type SmallView = (crate::index_file::IndexFile, Index, BTreeMap<String, IndexEntry>);
+
 impl Repo {
     fn require_subscribed(&self, zones: &Zones, ws: &Workspace, p: &str) -> Result<()> {
         if p.is_empty() {
@@ -113,6 +116,7 @@ impl Repo {
     }
 
     /// Tracked, subscribed index paths matched by each pathspec; every pathspec must match.
+    #[allow(dead_code)]
     fn match_index(&self, specs: &[String], zones: &Zones, ws: &Workspace, ix: &Index, what: &str) -> Result<BTreeSet<String>> {
         let mut out = BTreeSet::new();
         for p in specs {
@@ -242,7 +246,7 @@ impl Repo {
     /// The index entries at or under `specs`, as a small [`Index`] (plus a copy to diff against), read
     /// from the lazily parsed index file. `None` when a spec is empty (the whole tree), the index is
     /// in an older layout, or the specs cover more than a few thousand entries: those take the full path.
-    fn small_index_view(&self, specs: &[String]) -> Result<Option<(crate::index_file::IndexFile, Index, BTreeMap<String, IndexEntry>)>> {
+    fn small_index_view(&self, specs: &[String]) -> Result<Option<SmallView>> {
         const MAX: usize = 2048;
         if specs.iter().any(|p| p.is_empty()) {
             return Ok(None);
@@ -354,7 +358,12 @@ impl Repo {
 
     /// `restore --staged`: put the index entries under `specs` back to what HEAD has. Works on the
     /// lazily read index file and looks HEAD up per path, so one file costs a block, not the tree.
-    fn restore_staged(&self, specs: &[String], zones: &Zones, ws: &Workspace) -> Result<(usize, Option<(crate::index_file::IndexFile, crate::index_file::Patch)>)> {
+    fn restore_staged(
+        &self,
+        specs: &[String],
+        zones: &Zones,
+        ws: &Workspace,
+    ) -> Result<(usize, Option<(crate::index_file::IndexFile, crate::index_file::Patch)>)> {
         let refs = self.refs()?;
         let f = self.index_file()?;
         let mut roots: BTreeMap<String, Option<ObjectId>> = BTreeMap::new();

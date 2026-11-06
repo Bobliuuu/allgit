@@ -79,7 +79,8 @@ jobs:
         env:
           VCS_TEST_S3_ENDPOINT: http://127.0.0.1:9000
 
-  # Advisory: compile-only on Windows (not in ci-ok). Nothing is executed on Windows here.
+  # Advisory: compile-only on Windows (not in ci-ok). Nothing is executed on Windows here. Libraries and binaries
+  # only: the test suites and the vcs-bench tools use Unix-only APIs (permissions, process groups, st_blocks).
   windows-check:
     name: windows-check (advisory)
     runs-on: windows-latest
@@ -90,7 +91,7 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@v2.7.8
-      - run: cargo check --workspace --all-targets --target x86_64-pc-windows-msvc
+      - run: cargo check --workspace --exclude vcs-bench --lib --bins --target x86_64-pc-windows-msvc
 
   ci-ok:
     name: ci-ok

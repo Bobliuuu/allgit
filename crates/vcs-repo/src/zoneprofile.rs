@@ -258,7 +258,10 @@ impl Repo {
         let rr = self.remote_refs()?;
         let mut out = Vec::new();
         for z in self.zones()?.names() {
-            let Some(head) = refs.head(z, crate::meta::DEFAULT_BRANCH).or(rr.head(z, crate::meta::DEFAULT_BRANCH)) else {
+            let Some(head) = refs
+                .head(z, crate::meta::DEFAULT_BRANCH)
+                .or(rr.head(z, crate::meta::DEFAULT_BRANCH))
+            else {
                 continue;
             };
             let mut cur = Some(head);
@@ -711,7 +714,8 @@ pub fn rank(profile: &Profile, hints: &Hints, graph: &Graph, zones: &[String], p
                 let add = w * p.cochange_factor * cond;
                 if let Some(r) = out.get_mut(b.as_str()) {
                     r.cochange += add;
-                    r.reasons.push(format!("committed together with {a} ({n} of {t} changes, +{add:.3})"));
+                    r.reasons
+                        .push(format!("committed together with {a} ({n} of {t} changes, +{add:.3})"));
                 }
             }
         }
@@ -1179,10 +1183,20 @@ mod tests {
         let c = mine_cochange(&recs, 120, 8);
         assert_eq!(c.groups, 1, "the import is dropped");
         assert!(!c.changes.contains_key("z0"));
-        let prof = Profile { disabled: false, events: vec![ev(99, Kind::Edit, "api")] };
-        let g = Graph { cochange: c, ..Graph::default() };
+        let prof = Profile {
+            disabled: false,
+            events: vec![ev(99, Kind::Edit, "api")],
+        };
+        let g = Graph {
+            cochange: c,
+            ..Graph::default()
+        };
         let r = rank(&prof, &Hints::default(), &g, &zs(&["api", "web"]), &params(100));
-        assert_eq!(r.iter().find(|x| x.zone == "web").unwrap().cochange, 0.0, "one shared group is below the support threshold");
+        assert_eq!(
+            r.iter().find(|x| x.zone == "web").unwrap().cochange,
+            0.0,
+            "one shared group is below the support threshold"
+        );
     }
 
     #[test]
@@ -1206,7 +1220,10 @@ mod tests {
         let by = |z: &str| r.iter().find(|x| x.zone == z).unwrap();
         assert!(by("schema").cochange > 0.2, "{:?}", by("schema"));
         assert!(by("schema").score >= Params::default().min_score);
-        assert!(by("schema").reasons.iter().any(|x| x.contains("committed together with api (10 of 10")));
+        assert!(by("schema")
+            .reasons
+            .iter()
+            .any(|x| x.contains("committed together with api (10 of 10")));
         assert_eq!(by("other").cochange, 0.0);
         assert_eq!(by("idle").score, 0.0);
         assert_eq!(r, rank(&prof, &Hints::default(), &g, &zones, &params(100)));

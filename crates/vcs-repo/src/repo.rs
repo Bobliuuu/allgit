@@ -1617,7 +1617,7 @@ impl Repo {
             let mine = || -> Vec<(&String, &IndexEntry)> {
                 ix.entries
                     .iter()
-                    .filter(|(p, _)| only.map_or(true, |o| o.contains(p.as_str())))
+                    .filter(|(p, _)| only.is_none_or(|o| o.contains(p.as_str())))
                     .filter(|(p, _)| (single_zone || zones.owner(p) == zone) && !ws.skips(zone, p))
                     .collect()
             };
@@ -1633,7 +1633,7 @@ impl Repo {
                 .into_iter()
                 .map(|(path, kind)| Change { path, kind })
                 .collect();
-            let staged = self.drop_layout_only(staged, head_root, &zones, zone, &ix)?;
+            let staged = self.drop_layout_only(staged, head_root, &zones, zone, ix)?;
             let (unstaged, clean) = match inc {
                 Some(i) => (
                     i.dirty

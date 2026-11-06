@@ -92,9 +92,11 @@ enum Pred {
     OursNoDeps,
     Ours,
     OursDep(f64),
+    #[allow(dead_code)]
     Oracle,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn hot_set(
     p: Pred,
     k: usize,

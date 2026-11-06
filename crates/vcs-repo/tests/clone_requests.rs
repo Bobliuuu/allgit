@@ -88,10 +88,10 @@ fn packs_on(remote: &MemBackend) -> usize {
     remote.list("packs/").unwrap().iter().filter(|k| k.ends_with(".idx")).count()
 }
 
-/// Latency 1 ms so the timeline can tell parallel requests from a chain.
+/// Latency 25 ms (well above scheduler noise on a loaded runner) so the timeline can tell parallel requests from a chain.
 fn timed(remote: &Arc<MemBackend>) -> TimelineBackend {
     let inner: Arc<dyn Backend> = remote.clone();
-    TimelineBackend::new(inner, Duration::from_millis(1))
+    TimelineBackend::new(inner, Duration::from_millis(25))
 }
 
 #[test]

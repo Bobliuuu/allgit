@@ -897,18 +897,35 @@ mod tests {
         let mut paths = Vec::new();
         for i in 0..40 {
             let p = format!("big/f{i:03}.txt");
-            fs_.write(&p, &vec![b'x'; i * 37], if i % 5 == 0 { EntryMode::Executable } else { EntryMode::File }).unwrap();
+            fs_.write(
+                &p,
+                &vec![b'x'; i * 37],
+                if i % 5 == 0 { EntryMode::Executable } else { EntryMode::File },
+            )
+            .unwrap();
             paths.push(p);
         }
         for p in ["big/\u{e9}t\u{e9}.txt", "big/with space", "big/empty"] {
-            fs_.write(p, if p.ends_with("empty") { b"" } else { b"data" }, EntryMode::File).unwrap();
+            fs_.write(p, if p.ends_with("empty") { b"" } else { b"data" }, EntryMode::File)
+                .unwrap();
             paths.push(p.to_string());
         }
         fs_.symlink(b"f000.txt", "big/link").unwrap();
         fs_.create_dir_all("big/sub").unwrap();
         fs_.write("small/a", b"a", EntryMode::File).unwrap();
         fs_.write("small/b", b"bb", EntryMode::File).unwrap();
-        paths.extend(["big/link", "big/sub", "big/missing", "small/a", "small/b", "small/none", "big/f000.txt/x"].map(String::from));
+        paths.extend(
+            [
+                "big/link",
+                "big/sub",
+                "big/missing",
+                "small/a",
+                "small/b",
+                "small/none",
+                "big/f000.txt/x",
+            ]
+            .map(String::from),
+        );
         paths.sort();
         let mut cur = StatCursor::default();
         for round in 0..2 {
