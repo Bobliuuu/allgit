@@ -9,6 +9,7 @@ pub mod bigfile;
 mod compact;
 pub mod delta;
 pub mod layout;
+pub mod mapfile;
 pub mod pack;
 pub mod proclock;
 pub use compact::LocalCompaction;
