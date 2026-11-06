@@ -39,6 +39,15 @@ enum GcClock {
 
 const REANCHOR: Duration = Duration::from_secs(600);
 
+/// The server clock `ms` read at the instant `at` (the request was sent), advanced to now. Both the server's reading
+/// and the elapsed time are truncated to whole milliseconds, which could leave the estimate a millisecond behind a
+/// modification time the server stamped a moment later (the conformance check `now_ms() >= modified_ms()` failed
+/// that way about once in a few hundred CI runs). One extra millisecond keeps it from ever lagging; it is the
+/// safe direction for an age computation.
+fn anchored_ms(ms: u64, at: std::time::Instant) -> u64 {
+    ms + at.elapsed().as_millis() as u64 + 1
+}
+
 impl HttpBackend {
     /// `base` is `http://host:port` or (feature `tls`) `https://host:port`; an optional trailing slash is ignored.
     pub fn new(base: &str, token: &str) -> Result<Self, BackendError> {
@@ -234,7 +243,7 @@ impl HttpBackend {
         let cur = *self.gc.lock().unwrap_or_else(|e| e.into_inner());
         match cur {
             GcClock::Unsupported => return None,
-            GcClock::Anchored(ms, at) if at.elapsed() < REANCHOR => return Some(ms + at.elapsed().as_millis() as u64),
+            GcClock::Anchored(ms, at) if at.elapsed() < REANCHOR => return Some(anchored_ms(ms, at)),
             _ => {}
         }
         let before = std::time::Instant::now();
@@ -251,7 +260,7 @@ impl HttpBackend {
         };
         *self.gc.lock().unwrap_or_else(|e| e.into_inner()) = next;
         match next {
-            GcClock::Anchored(ms, at) => Some(ms + at.elapsed().as_millis() as u64),
+            GcClock::Anchored(ms, at) => Some(anchored_ms(ms, at)),
             _ => None,
         }
     }
