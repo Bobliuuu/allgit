@@ -144,7 +144,7 @@ Status: exact (same command and flags), renamed (other spelling, same meaning), 
 semantics differ as the notes say), missing (no equivalent; the notes name the native route).
 
 <!-- BEGIN GENERATED TABLE -->
-261 rows: 150 exact, 40 renamed, 36 different, 35 missing.
+261 rows: 152 exact, 40 renamed, 36 different, 33 missing.
 
 | git | vcs | status | notes | test |
 |---|---|---|---|---|
@@ -325,7 +325,7 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git blame f.txt` | `vcs blame f.txt` | exact |  | `history` |
 | `git blame -M f.txt` | `vcs blame -M f.txt` | exact |  | `history` |
 | `git blame HEAD~1 -- f.txt` | `vcs blame --rev HEAD~1 f.txt` | exact |  | `history` |
-| `git blame -L 1,5 f.txt` | none | missing | no line range; pipe `vcs blame` through sed | translation |
+| `git blame -L 1,5 m.txt` | `vcs blame -L 1,5 m.txt` | exact | numeric ranges only (`N,M`, `N,+K`, `N,-K`, `N`, `,M`, `N,`); no regex or function ranges | `history` |
 | `git bisect start HEAD HEAD~5` | `vcs bisect start HEAD HEAD~5` | exact |  | translation |
 | `git bisect good` | `vcs bisect good` | exact |  | translation |
 | `git bisect bad` | `vcs bisect bad` | exact |  | translation |
@@ -344,7 +344,7 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git grep --cached x` | none | missing | searches the working tree or a revision only | translation |
 | `git describe --tags` | `vcs describe --tags` | exact |  | `tags` |
 | `git describe --always` | `vcs describe --always` | exact |  | `tags` |
-| `git describe --dirty` | none | missing | no --dirty suffix | translation |
+| `git describe --dirty` | `vcs describe --dirty` | exact | tracked changes only (staged or unstaged), as git; HEAD only | `tags` |
 | `git archive -o out.tar HEAD` | `vcs archive -o out.tar HEAD` | exact |  | translation |
 | `git archive --format=zip --prefix=p/ HEAD` | `vcs archive --format zip --prefix p/ HEAD` | exact |  | translation |
 | `git worktree add ../wt feature` | `vcs worktree add ../wt feature` | exact |  | translation |

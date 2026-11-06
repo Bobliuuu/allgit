@@ -24,6 +24,9 @@ pub struct DescribeArgs {
     pub always: bool,
     #[arg(long)]
     pub zone: Option<String>,
+    /// Append MARK (default `-dirty`) when tracked files differ from HEAD (staged or unstaged); HEAD only
+    #[arg(long, value_name = "MARK", num_args = 0..=1, require_equals = true, default_missing_value = "-dirty")]
+    pub dirty: Option<String>,
 }
 
 /// `(tag name, distance)` of the nearest tag, or `None`.
@@ -63,10 +66,24 @@ pub fn run(a: &DescribeArgs) -> Result<(), Error> {
     let (repo, cwd) = open()?;
     let zone = repo.resolve_zone(&zone_of_cwd(&repo, &cwd, a.zone.clone())?)?;
     let id = repo.resolve_rev(&zone, a.rev.as_deref().unwrap_or("HEAD"))?;
+    let mark = match &a.dirty {
+        Some(m) => {
+            if a.rev.is_some() {
+                return Err(Error::Msg("--dirty is incompatible with a revision; it describes HEAD".into()));
+            }
+            let st = repo.status()?;
+            if st.zones.iter().any(|z| !z.staged.is_empty() || !z.unstaged.is_empty()) {
+                m.as_str()
+            } else {
+                ""
+            }
+        }
+        None => "",
+    };
     match nearest(&repo, &zone, id, a.tags)? {
-        Some((name, 0)) => println!("{name}"),
-        Some((name, n)) => println!("{name}-{n}-g{}", id.short()),
-        None if a.always => println!("{}", id.short()),
+        Some((name, 0)) => println!("{name}{mark}"),
+        Some((name, n)) => println!("{name}-{n}-g{}{mark}", id.short()),
+        None if a.always => println!("{}{mark}", id.short()),
         None => {
             return Err(Error::Msg(if a.tags {
                 "no tags can describe this commit; try --always".into()
