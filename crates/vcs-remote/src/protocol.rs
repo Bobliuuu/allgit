@@ -73,8 +73,18 @@ pub enum PublishError {
     NotHolder { zone: String, path: String, holder: String },
     #[error("zone definition conflict: {0}")]
     ZoneConflict(String),
+    /// The repository needs a newer binary than this one (never a transient backend error).
     #[error(transparent)]
-    Format(#[from] crate::format::FormatError),
+    Format(crate::format::FormatError),
+}
+
+impl From<crate::format::FormatError> for PublishError {
+    fn from(e: crate::format::FormatError) -> Self {
+        match e {
+            crate::format::FormatError::Backend(b) => PublishError::Backend(b),
+            other => PublishError::Format(other),
+        }
+    }
 }
 
 fn fmt_id(i: &Option<ObjectId>) -> String {
@@ -963,6 +973,17 @@ impl<'a> Publisher<'a> {
     }
 
     pub fn step(&mut self) -> Result<Step, PublishError> {
+        if matches!(self.state, State::Collect) {
+            // Refuse before uploading anything when the repository needs a newer binary (issue #567).
+            match crate::format::check(self.backend) {
+                Ok(()) => {}
+                Err(crate::format::FormatError::Backend(e)) => return self.retry(e),
+                Err(e) => {
+                    self.state = State::Finished;
+                    return Err(e.into());
+                }
+            }
+        }
         match std::mem::replace(&mut self.state, State::Finished) {
             State::Finished => Ok(Step::Continue),
             State::Collect if self.packed => {
@@ -1006,18 +1027,6 @@ impl<'a> Publisher<'a> {
                 }
             }
             State::Collect => {
-                // Refuse before uploading anything when the repository needs a newer binary (issue #567).
-                match crate::format::check(self.backend) {
-                    Ok(()) => {}
-                    Err(crate::format::FormatError::Backend(e)) => {
-                        self.state = State::Collect;
-                        return self.retry(e);
-                    }
-                    Err(e) => {
-                        self.state = State::Finished;
-                        return Err(e.into());
-                    }
-                }
                 let gc = self.backend.supports_gc();
                 if gc {
                     match self.backend.now_ms() {
@@ -1105,7 +1114,15 @@ impl<'a> Publisher<'a> {
                 let b = &self.cur_pack.as_ref().expect("built above").1;
                 if b.pack.starts_with(vcs_store::pack::PACK_MAGIC_V3) {
                     // VCS_PACK_FORMAT=v3 publishes: older binaries cannot read this pack (issue #567)
-                    crate::format::raise(self.backend, crate::format::LEVEL_COMPACT).map_err(PublishError::Format)?;
+                    if let Err(e) = crate::format::raise(self.backend, crate::format::LEVEL_COMPACT) {
+                        return match e {
+                            crate::format::FormatError::Backend(be) => {
+                                self.state = State::PutPack(pi);
+                                self.retry(be)
+                            }
+                            other => Err(other.into()),
+                        };
+                    }
                 }
                 let (name, pack) = (b.name.clone(), &b.pack);
                 let key = format!("{}{name}.pack", packfetch::PACK_PREFIX);
@@ -1369,7 +1386,15 @@ impl<'a> Publisher<'a> {
                 if bytes.get(4) == Some(&5) {
                     // The compact layout is unreadable to older binaries: raise the marker first, so a crash
                     // between the two writes leaves it too high (safe), never too low.
-                    crate::format::raise(self.backend, crate::format::LEVEL_COMPACT).map_err(PublishError::Format)?;
+                    if let Err(e) = crate::format::raise(self.backend, crate::format::LEVEL_COMPACT) {
+                        return match e {
+                            crate::format::FormatError::Backend(be) => {
+                                self.state = State::Cas { expected_tag, new };
+                                self.retry(be)
+                            }
+                            other => Err(other.into()),
+                        };
+                    }
                 }
                 let r = match &expected_tag {
                     None => self
