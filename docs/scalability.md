@@ -171,14 +171,55 @@ What changed:
   write when the 32-bit offsets of the format would overflow (about 1.4e8 commits of 30-byte records; this limit is NOT
   lifted, see open work).
 
-Measured on the shared trillion box (i4i.8xlarge, release build, synthetic structures from `scalebench`, one run per cell, page
-cache warm because the files had just been written; "before" is the commit before the change, same box and same day):
+Measured on the shared trillion box (i4i.8xlarge, release build, synthetic structures from `scalebench`, single runs, so read
+differences under 10 percent as noise; the files had been written shortly before, so most of each file was in page cache):
 
-RESULTS_TABLE
+**1e8 elements, before vs after, both under `flock /tmp/box-timing.lock`, one run each** (`scalebench cgraph|reach|pfilter`;
+before = parent commit `4aeb6ab^`, after = this change; times are p50 of the samples named in `scalebench`, memory is anonymous):
+
+| structure, operation | before | after |
+|---|---|---|
+| commit-graph, open | decode 5.83 s | **0.25 ms** (file mapped, header and length checked) |
+| commit-graph, anonymous memory | 9.94 GB peak, 5.1 GB resident | **0.14 MB at open, 2.1 MB after all the queries below** |
+| commit-graph, explicit full validation (fsck) | included in decode | 1.50 s, +1.8 MB (checksum on all cores, then structure) |
+| commit-graph `index_of` | 2.2 us | 2.1 us |
+| commit-graph `merge_base`, fork distance 1 / 100 / 1e4 / 1e6 | 305 us / 744 us / 49.0 ms / 401 ms | 329 us / 758 us / 49.2 ms / **435 ms (+8 percent)** |
+| commit-graph `range_ids` (1000 commits) | 2.20 ms | 2.19 ms |
+| commit-graph `count_reachable_not_from` (1000 commits) | **21.7 s** | **2.19 ms** (same answer, property-tested) |
+| reach cache, open (`load_verify` before) | 2.79 s, 3.15 GB | **0.30 ms, 0 anonymous** |
+| reach cache, `member_lookup` / `member_miss` / `roots_within_256` | 1.3 / 1.1 / 0.2 us | 1.2 / 1.2 / 0.2 us |
+| reach cache, explicit full verify (what gc now runs before trusting it) | included in load | 3.6 s cold from NVMe (42 ms with the file in page cache), +2.2 MB |
+| path filters, open (`load_parse` before) | 8.18 s, 6.35 GB | **0.27 ms, 0 anonymous** |
+| path filters, lookup | 1.8 us | 1.8 us |
+| path filters, explicit full verify (fsck) | included in load | 1.76 s, +1.8 MB |
+
+**1e9 elements, after only** (the file was written by the same program a few minutes earlier, first run, NOT under the lock;
+the "before" at 1e9 is the earlier measurement in `docs/research/trillion-scaling-findings.md`: commit-graph 55.3 s and 99 GB
+anonymous, reach cache 19.1 s and 32.3 GB):
+
+| structure, operation | after |
+|---|---|
+| commit-graph (52.4 GB file), open | **0.17 ms**, 0 bytes anonymous; 0.35 MB anonymous after all the queries below |
+| commit-graph `count_reachable_not_from` (1000 commits) | 2.7 ms (was 280 s) |
+| commit-graph `merge_base`, fork distance 1 / 100 / 1e4 / 1e6, `range_ids` | 0.33 ms / 0.97 ms / 50.7 ms / 1.66 s, 2.8 ms (the file was not fully in page cache: the first touches paid NVMe latency, p95 of the 1e6 case was 43 s; the 11 GB mapped resident after the queries is page cache) |
+| commit-graph `index_of`, cold | p50 0.94 ms (page faults on a partly evicted file; 2 us once resident, as at 1e8) |
+| reach cache (32.3 GB file), open | **0.12 ms**, 0 anonymous; full verify 23.8 s streaming over the mapping, +2.9 MB anonymous |
+| reach cache `member_lookup` / `member_miss` | 1.7 / 1.7 us |
 
 Notes: RSS of the "after" rows includes mapped file pages (reclaimable page cache); the anonymous column is `RssAnon`.
 Cold point queries are bounded by the disk, not by this change: right after the 1e9 file was written and partly evicted,
-`index_of` p50 was 0.94 ms (about 17 page faults per lookup on NVMe) instead of 2 us.
+`index_of` p50 was 0.94 ms (about 17 page faults per lookup on NVMe) instead of 2 us. The one slowdown, +8 percent on the
+deepest merge-base walk (1e6 commits, 1e8 graph), was seen in both the locked run and an unlocked run (446 ms) and is probably
+TLB misses: random reads of a file mapping use 4 KiB pages where the old heap vectors got transparent huge pages. The
+per-parent generation check that makes lazy reading safe is paid only when a parent is pushed (an earlier version read it for
+every edge and measured the same +8 percent, so it is not the cause).
+
+Open work: the commit-graph and path-filter files are still rewritten whole when they grow (`extend` is O(n) and builds the
+new image in memory); `fsck` still compares every graph entry with its real commit; the path-filter format has 32-bit data
+offsets (writing is refused past about 1.4e8 commits, readers are fine); a bit flip inside a lazily opened body that keeps the
+structure valid (a commit time, a Bloom filter byte, a reach bit) is found only by `fsck` or, for the reach cache, by gc's own
+check; a graph that a query finds self-contradicting is deleted and rebuilt on next use. Test hook:
+`VCS_CACHE_EAGER_VERIFY_MAX` (bytes) changes the size up to which a commit-graph is verified completely at open (default 4 MiB).
 
 ## Designs and open work
 
