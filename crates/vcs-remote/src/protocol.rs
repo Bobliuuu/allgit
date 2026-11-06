@@ -860,7 +860,7 @@ impl<'a> Publisher<'a> {
         }
         // Commits and trees first: a clone reads that prefix of the pack in a few big requests.
         // Stable, and within a group still dependencies-first.
-        out.sort_by_key(|s| match Some(s.kind).filter(|_| s.len > 0) {
+        out.sort_by_key(|s| match (s.len > 0).then_some(s.kind) {
             Some(3) => 0u8,
             Some(2) => 1,
             _ => 2,
@@ -1085,11 +1085,8 @@ impl<'a> Publisher<'a> {
                     // build this pack now, from the objects planned for it; the previous one is already gone
                     self.cur_pack = None;
                     let group = std::mem::take(&mut self.groups[pi]);
-                    let built = materialize(self.local, group).and_then(|objs| try_build_pack(objs).map_err(PublishError::from));
-                    match built {
-                        Ok(b) => self.cur_pack = Some((pi, b)),
-                        Err(e) => return Err(e),
-                    }
+                    let built = materialize(self.local, group).and_then(|objs| try_build_pack(objs).map_err(PublishError::from))?;
+                    self.cur_pack = Some((pi, built));
                 }
                 let b = &self.cur_pack.as_ref().expect("built above").1;
                 let (name, pack) = (b.name.clone(), &b.pack);
