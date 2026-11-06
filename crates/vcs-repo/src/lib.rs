@@ -44,6 +44,7 @@ pub mod rebase_todo;
 pub mod repo;
 pub mod reset;
 pub mod revrange;
+pub mod shallow;
 pub mod shelve;
 pub mod sparse;
 pub mod stash;

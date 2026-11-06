@@ -20,6 +20,8 @@ pub struct LogWalk<'a> {
     heap: BinaryHeap<(u64, ObjectId)>,
     cache: BTreeMap<ObjectId, Commit>,
     failed: bool,
+    /// Shallow boundary: these commits may have parents that are not stored.
+    shallow: BTreeSet<ObjectId>,
 }
 
 impl Iterator for LogWalk<'_> {
@@ -47,7 +49,11 @@ impl LogWalk<'_> {
                 continue;
             }
             let c = self.cache.remove(&id).expect("cached");
+            let edge = self.shallow.contains(&id);
             for p in &c.parents {
+                if edge && !self.repo.store.contains(p)? {
+                    continue; // the history ends here: a recorded shallow boundary
+                }
                 if !self.seen.contains(p) && !self.cache.contains_key(p) {
                     let pc = self.repo.commit_obj(p)?;
                     if pc.zone != c.zone {
@@ -91,6 +97,7 @@ impl Repo {
             heap: BinaryHeap::new(),
             cache: BTreeMap::new(),
             failed: false,
+            shallow: self.shallow_boundary()?,
         };
         if let Some(h) = head {
             let c = self.commit_obj(&h)?;

@@ -235,7 +235,7 @@ impl Repo {
     }
 
     /// Resolve user-supplied zone names (display names or ids) of a publish/fetch filter to ids.
-    fn resolve_filter(&self, zones: Option<&[String]>) -> Result<Option<Vec<String>>> {
+    pub(crate) fn resolve_filter(&self, zones: Option<&[String]>) -> Result<Option<Vec<String>>> {
         let defs = self.zones()?;
         Ok(zones.map(|w| w.iter().map(|x| defs.resolve(x).unwrap_or_else(|| x.clone())).collect()))
     }
@@ -647,7 +647,7 @@ impl Repo {
         self.fetch_locked(backend, zones)
     }
 
-    fn fetch_locked(&self, backend: &dyn Backend, zones: Option<&[String]>) -> Result<Vec<(String, String, ObjectId)>> {
+    pub(crate) fn fetch_locked(&self, backend: &dyn Backend, zones: Option<&[String]>) -> Result<Vec<(String, String, ObjectId)>> {
         // Remote pack indexes never change: keep them locally so a fetch reads only the new ones.
         let idx_cache = vcs_remote::IdxCacheBackend::new(backend, self.common.join("remote-idx"));
         idx_cache.prune();

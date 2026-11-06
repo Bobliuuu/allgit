@@ -21,6 +21,7 @@ pub mod par;
 pub mod protocol;
 pub mod retry;
 #[cfg(feature = "sharded")]
+pub mod shallow;
 pub mod shard;
 pub mod shelf;
 pub mod smallpack;

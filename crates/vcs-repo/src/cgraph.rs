@@ -48,8 +48,8 @@ impl Repo {
     /// (disabled, no or mixed zones, or some history is missing or malformed); callers then
     /// walk objects, with the same result.
     pub(crate) fn commit_graph(&self, extra: &[ObjectId]) -> Option<CommitGraphFile> {
-        if !self.use_commit_graph {
-            return None;
+        if !self.use_commit_graph || self.is_shallow() {
+            return None; // a cache that cannot see past the boundary must not stand in for the history
         }
         let first = extra.first()?;
         let zone = self.commit_obj(first).ok()?.zone;
@@ -115,7 +115,13 @@ impl Repo {
                 .map_or_else(|| vcs_merge::merge_base(&g as &dyn CommitGraph, a, b), Ok),
             None => vcs_merge::merge_base(&vcs_merge::StoreGraph(&self.store), a, b),
         };
-        r.map_err(|e| Error::Msg(format!("merge base: {e}")))
+        r.map_err(|e| {
+            if self.is_shallow() {
+                Error::Msg(format!("merge base: {e}; {}", crate::shallow::SHALLOW_HINT))
+            } else {
+                Error::Msg(format!("merge base: {e}"))
+            }
+        })
     }
 
     /// Check every file under `.vcs/commit-graphs` against the real commits; one message per problem.
