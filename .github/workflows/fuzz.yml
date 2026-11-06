@@ -1,0 +1,58 @@
+name: Fuzz
+
+# Advisory smoke run of every cargo-fuzz target (fuzz/fuzz_targets), weekly and on demand. Short on purpose: the
+# 20-minute campaign in docs/security.md is the real one; this catches a decoder that regressed to a crash or hang.
+# Never a required check.
+
+on:
+  schedule:
+    - cron: "43 4 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: fuzz ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - assist_response
+          - audit_verify
+          - commit_graph
+          - config_parse
+          - http_request
+          - ignore_parse
+          - import_git
+          - import_p4
+          - index_decode
+          - manifest_decode
+          - object_decode
+          - p4_marshal
+          - pack_data
+          - pack_fetch
+          - pack_index
+          - policy_tokens
+          - remote_helper
+          - s3_list
+          - state_files
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2.7.8
+        with:
+          workspaces: fuzz
+      - run: cargo install cargo-fuzz --locked --version 0.13.2
+      - name: Run
+        working-directory: fuzz
+        run: cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=90 -timeout=10 -rss_limit_mb=4096
+      - name: Keep the crashing input
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}

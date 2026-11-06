@@ -16,7 +16,8 @@ jobs:
   deny:
     name: cargo-deny
     runs-on: ubuntu-latest
-    continue-on-error: true
+    # advisory on pull requests; a scheduled run that finds an advisory must show red
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2

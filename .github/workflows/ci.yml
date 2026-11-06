@@ -93,6 +93,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2.7.8
       - run: cargo check --workspace --exclude vcs-bench --lib --bins --target x86_64-pc-windows-msvc
 
+  # Advisory: the declared MSRV (workspace rust-version = 1.88). Not in ci-ok until it has been green for a while.
+  msrv:
+    name: msrv 1.88 (advisory)
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2.7.8
+      - run: cargo check --workspace --exclude vcs-bench --locked
+      - run: cargo check -p vcs-server --features tls --locked
+
   ci-ok:
     name: ci-ok
     if: always()
