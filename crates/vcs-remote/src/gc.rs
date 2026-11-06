@@ -38,7 +38,7 @@ use crate::protocol::{deps, load_manifest, object_key, pack_tomb_key, tomb_key, 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use vcs_objects::{id_of_encoded, Object, ObjectId};
-use vcs_store::pack::{build_pack_blocks, PackIndex};
+use vcs_store::pack::PackIndex;
 
 pub const LOCK_KEY: &str = "gc/lock";
 /// Default lease of `gc/lock`. Short, because a heartbeat renews it while the holder lives (see
@@ -370,7 +370,8 @@ fn rewrite_pack(b: &dyn Backend, stem: &str, live: &[ObjectId], hook: &mut dyn F
         return Err(GcError::Damaged(format!("{stem}: live objects missing from the pack")));
     }
     let objs = vcs_store::layout::locality_order(objs);
-    let built = build_pack_blocks(objs, vcs_store::pack::PackFormat::for_compaction(), vcs_store::pack::BLOCK_TARGET);
+    let built = vcs_store::pack::try_build_pack_blocks(objs, vcs_store::pack::PackFormat::for_compaction(), vcs_store::pack::BLOCK_TARGET)
+        .map_err(|e| GcError::Damaged(e.to_string()))?;
     let new_stem = format!("{PACK_PREFIX}{}", built.name);
     let (pk, ik) = (format!("{new_stem}.pack"), format!("{new_stem}.idx"));
     b.put_if_absent(&pk, &built.pack)?;

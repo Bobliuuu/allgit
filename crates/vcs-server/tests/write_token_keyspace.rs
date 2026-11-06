@@ -30,5 +30,9 @@ fn write_token_cannot_plant_gc_lock() {
     s.write_all(req.as_bytes()).unwrap();
     let mut out = String::new();
     let _ = s.read_to_string(&mut out);
-    assert!(out.starts_with("HTTP/1.1 403"), "write token planted gc/lock: {}", out.lines().next().unwrap_or(""));
+    assert!(
+        out.starts_with("HTTP/1.1 403"),
+        "write token planted gc/lock: {}",
+        out.lines().next().unwrap_or("")
+    );
 }

@@ -32,6 +32,10 @@ pub enum StoreError {
     Decode(#[from] DecodeError),
     #[error("i/o error at {path}: {source}")]
     Io { path: PathBuf, source: std::io::Error },
+    /// A length does not fit the pack format's 32-bit field (an object of 4 GiB or more, or more than
+    /// 2^32 entries in one pack). Nothing was written; split the object (chunking) or the pack.
+    #[error("{what} is {len} bytes/entries, over the pack format's 32-bit limit")]
+    TooLarge { what: String, len: u64 },
 }
 
 fn io<T>(path: &Path, r: std::io::Result<T>) -> Result<T, StoreError> {

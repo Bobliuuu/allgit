@@ -1179,12 +1179,18 @@ pub struct BuiltPack {
 /// Build pack and index bytes for `objects` (id, encoded bytes) in the default write format
 /// ([`PackFormat::from_env`]: v2, never v4). See [`build_pack_fmt`].
 pub fn build_pack(objects: Vec<(ObjectId, Vec<u8>)>) -> BuiltPack {
+    try_build_pack(objects).expect("pack field over 4 GiB; use try_build_pack")
+}
+
+/// [`build_pack`] that returns [`StoreError::TooLarge`] instead of panicking when an object (or the
+/// entry count) does not fit the format's 32-bit fields.
+pub fn try_build_pack(objects: Vec<(ObjectId, Vec<u8>)>) -> Result<BuiltPack, StoreError> {
     // Packs built here go to the network, where entries are fetched by range and delta bases cannot be resolved: never v4.
     let fmt = match PackFormat::from_env() {
         PackFormat::V4 => PackFormat::V2,
         f => f,
     };
-    build_pack_fmt(objects, fmt)
+    try_build_pack_fmt(objects, fmt)
 }
 
 /// Build pack and index bytes in an explicit format. Entries are laid out in the order given
@@ -1194,20 +1200,49 @@ pub fn build_pack_fmt(objects: Vec<(ObjectId, Vec<u8>)>, fmt: PackFormat) -> Bui
     build_pack_blocks(objects, fmt, BLOCK_TARGET)
 }
 
+/// Fallible [`build_pack_fmt`].
+pub fn try_build_pack_fmt(objects: Vec<(ObjectId, Vec<u8>)>, fmt: PackFormat) -> Result<BuiltPack, StoreError> {
+    try_build_pack_blocks(objects, fmt, BLOCK_TARGET)
+}
+
 /// [`build_pack_fmt`] with an explicit block size for v3 (ignored for v1/v2).
 pub fn build_pack_blocks(objects: Vec<(ObjectId, Vec<u8>)>, fmt: PackFormat, block_target: usize) -> BuiltPack {
+    try_build_pack_blocks(objects, fmt, block_target).expect("pack field over 4 GiB; use try_build_pack_blocks")
+}
+
+/// Fallible [`build_pack_blocks`].
+pub fn try_build_pack_blocks(objects: Vec<(ObjectId, Vec<u8>)>, fmt: PackFormat, block_target: usize) -> Result<BuiltPack, StoreError> {
     build_pack_at(objects, fmt, block_target, ZSTD_LEVEL)
 }
 
 /// [`build_pack_fmt`] with a zstd level for v2 entries (v1/v3/v4 ignore it): a lower level
 /// writes faster and larger; readers cannot tell the difference.
 pub fn build_pack_fast_v2(objects: Vec<(ObjectId, Vec<u8>)>, level: i32) -> BuiltPack {
-    build_pack_at(objects, PackFormat::V2, BLOCK_TARGET, level)
+    build_pack_at(objects, PackFormat::V2, BLOCK_TARGET, level).expect("pack field over 4 GiB")
 }
 
-fn build_pack_at(objects: Vec<(ObjectId, Vec<u8>)>, fmt: PackFormat, block_target: usize, level: i32) -> BuiltPack {
+/// Checked `usize` to the format's `u32` length field.
+fn len32(n: usize, what: &str) -> Result<u32, StoreError> {
+    u32::try_from(n).map_err(|_| StoreError::TooLarge {
+        what: what.to_owned(),
+        len: n as u64,
+    })
+}
+
+/// Largest encoded object a pack entry can hold: the entry length field is 32 bits and holds the codec byte too.
+const MAX_ENTRY_BYTES: usize = u32::MAX as usize - 1;
+
+fn build_pack_at(objects: Vec<(ObjectId, Vec<u8>)>, fmt: PackFormat, block_target: usize, level: i32) -> Result<BuiltPack, StoreError> {
     let mut seen = std::collections::HashSet::new();
     let objects: Vec<_> = objects.into_iter().filter(|o| seen.insert(o.0)).collect();
+    len32(objects.len(), "entry count")?;
+    // Every length written below is then either one of these (checked once, here) or a payload length (checked at the cast).
+    if let Some(o) = objects.iter().find(|o| o.1.len() > MAX_ENTRY_BYTES) {
+        return Err(StoreError::TooLarge {
+            what: format!("object {}", o.0),
+            len: o.1.len() as u64,
+        });
+    }
     let (order, planned): (Vec<usize>, Vec<Planned>) = if fmt == PackFormat::V4 {
         plan_v4(&objects)
     } else {
@@ -1224,17 +1259,18 @@ fn build_pack_at(objects: Vec<(ObjectId, Vec<u8>)>, fmt: PackFormat, block_targe
     if fmt == PackFormat::V3 {
         let blocks = split_blocks(&objects, block_target.max(1));
         let payloads = encode_blocks(&blocks);
-        pack.extend_from_slice(&(blocks.len() as u32).to_le_bytes());
+        pack.extend_from_slice(&len32(blocks.len(), "block count")?.to_le_bytes());
         for (blk, pl) in blocks.iter().zip(&payloads) {
-            pack.extend_from_slice(&(pl.len() as u32).to_le_bytes());
+            let pl32 = len32(pl.len(), "pack block")?;
+            pack.extend_from_slice(&pl32.to_le_bytes());
             let off = pack.len() as u64;
             for o in blk {
-                ents.push((o.0, off, pl.len() as u32));
+                ents.push((o.0, off, pl32));
             }
             pack.extend_from_slice(pl);
         }
     } else if fmt == PackFormat::V4 {
-        pack.extend_from_slice(&(objects.len() as u32).to_le_bytes());
+        pack.extend_from_slice(&len32(objects.len(), "entry count")?.to_le_bytes());
         let mut starts: Vec<u64> = Vec::with_capacity(order.len());
         for (k, &oi) in order.iter().enumerate() {
             let pl: std::borrow::Cow<[u8]> = match &planned[k] {
@@ -1256,17 +1292,19 @@ fn build_pack_at(objects: Vec<(ObjectId, Vec<u8>)>, fmt: PackFormat, block_targe
                     std::borrow::Cow::Owned(v)
                 }
             };
-            pack.extend_from_slice(&(pl.len() as u32).to_le_bytes());
+            let pl32 = len32(pl.len(), "pack entry")?;
+            pack.extend_from_slice(&pl32.to_le_bytes());
             starts.push(pack.len() as u64);
-            ents.push((objects[oi].0, pack.len() as u64, pl.len() as u32));
+            ents.push((objects[oi].0, pack.len() as u64, pl32));
             pack.extend_from_slice(&pl);
         }
     } else {
         let payloads = encode_all(&objects, fmt, level);
-        pack.extend_from_slice(&(objects.len() as u32).to_le_bytes());
+        pack.extend_from_slice(&len32(objects.len(), "entry count")?.to_le_bytes());
         for ((id, _), pl) in objects.iter().zip(&payloads) {
-            pack.extend_from_slice(&(pl.len() as u32).to_le_bytes());
-            ents.push((*id, pack.len() as u64, pl.len() as u32));
+            let pl32 = len32(pl.len(), "pack entry")?;
+            pack.extend_from_slice(&pl32.to_le_bytes());
+            ents.push((*id, pack.len() as u64, pl32));
             pack.extend_from_slice(pl);
         }
     }
@@ -1280,7 +1318,7 @@ fn build_pack_at(objects: Vec<(ObjectId, Vec<u8>)>, fmt: PackFormat, block_targe
         PackFormat::V2 => IDX_MAGIC_V2,
         PackFormat::V1 => IDX_MAGIC,
     });
-    idx.extend_from_slice(&(ents.len() as u32).to_le_bytes());
+    idx.extend_from_slice(&len32(ents.len(), "entry count")?.to_le_bytes());
     idx.extend_from_slice(&(pack.len() as u64).to_le_bytes());
     idx.extend_from_slice(&sum);
     if fmt != PackFormat::V1 {
@@ -1300,11 +1338,11 @@ fn build_pack_at(objects: Vec<(ObjectId, Vec<u8>)>, fmt: PackFormat, block_targe
         idx.extend_from_slice(&len.to_le_bytes());
     }
     idx.extend_from_slice(blake3::hash(&idx).as_bytes());
-    BuiltPack {
+    Ok(BuiltPack {
         name: format!("pack-{}", ObjectId::from_bytes(sum).to_hex()),
         pack,
         idx,
-    }
+    })
 }
 
 /// One planned pack entry: stored whole (finished payload) or as a delta against the entry at
@@ -1453,7 +1491,7 @@ pub fn write_pack_fmt(dir: &Path, tmp_dir: &Path, mut objects: Vec<(ObjectId, Ve
 /// order is another pack.
 pub fn write_pack_ordered(dir: &Path, tmp_dir: &Path, objects: Vec<(ObjectId, Vec<u8>)>, fmt: PackFormat) -> Result<Pack, StoreError> {
     io(dir, fs::create_dir_all(dir))?;
-    let built = build_pack_fmt(objects, fmt);
+    let built = try_build_pack_fmt(objects, fmt)?;
     let name = built.name.strip_prefix("pack-").unwrap_or(&built.name).to_owned();
     let (pp, ip) = (dir.join(format!("pack-{name}.pack")), dir.join(format!("pack-{name}.idx")));
     for (final_path, data) in [(&pp, &built.pack), (&ip, &built.idx)] {
@@ -1511,7 +1549,7 @@ pub fn write_pack_streaming<'a>(
             len: 0,
         };
         io(&tmp, w.put(PACK_MAGIC_V2))?;
-        io(&tmp, w.put(&(count as u32).to_le_bytes()))?;
+        io(&tmp, w.put(&len32(count, "entry count")?.to_le_bytes()))?;
         // Linux: start write-back of finished stretches while the rest is still being produced,
         // so the final fsync waits for little instead of flushing the whole pack at once.
         #[cfg(target_os = "linux")]
@@ -1519,8 +1557,10 @@ pub fn write_pack_streaming<'a>(
         for o in objects {
             let (id, enc) = o?;
             // v2 entry: codec byte (raw: these packs are written for speed) then the encoded object
-            io(&tmp, w.put(&(enc.len() as u32 + 1).to_le_bytes()))?;
-            ents.push((id, w.len, enc.len() as u32 + 1));
+            // checked: a 4 GiB object must fail the write, not wrap the length field and corrupt the pack
+            let elen = len32(enc.len() + 1, &format!("object {id}"))?;
+            io(&tmp, w.put(&elen.to_le_bytes()))?;
+            ents.push((id, w.len, elen));
             io(&tmp, w.put(&[CODEC_RAW]))?;
             io(&tmp, w.put(&enc))?;
             #[cfg(target_os = "linux")]
@@ -1550,7 +1590,7 @@ pub fn write_pack_streaming<'a>(
     ents.sort_by_key(|e| e.0);
     let mut idx = Vec::with_capacity(8 + 4 + 8 + 32 + ents.len() * IDX_ENTRY + 32);
     idx.extend_from_slice(IDX_MAGIC_V2);
-    idx.extend_from_slice(&(ents.len() as u32).to_le_bytes());
+    idx.extend_from_slice(&len32(ents.len(), "entry count")?.to_le_bytes());
     idx.extend_from_slice(&pack_len.to_le_bytes());
     idx.extend_from_slice(&sum);
     let mut counts = [0u32; 256];

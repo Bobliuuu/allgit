@@ -18,7 +18,7 @@ use std::path::Path;
 use vcs_objects::{Commit, EntryMode, Object, ObjectId, Signature};
 use vcs_remote::shelf::{self, ShelfMeta, ShelfPack, ShelfZone};
 use vcs_remote::Backend;
-use vcs_store::pack::{build_pack_fmt, PackFormat, PackIndex};
+use vcs_store::pack::{PackFormat, PackIndex};
 use vcs_store::ObjectStore;
 
 fn serr(e: shelf::ShelfError) -> Error {
@@ -132,7 +132,8 @@ impl Repo {
             children(&o, &mut stack);
             objs.insert(id, o.encode());
         }
-        let built = build_pack_fmt(objs.into_iter().collect(), PackFormat::V2);
+        let built = vcs_store::pack::try_build_pack_fmt(objs.into_iter().collect(), PackFormat::V2)
+            .map_err(|e| Error::Msg(format!("shelf pack: {e}")))?;
         let idx = PackIndex::parse(&built.idx, Path::new("shelf")).map_err(|e| Error::Msg(format!("shelf index: {e}")))?;
         let created = now_ms(b);
         let meta = ShelfMeta {
