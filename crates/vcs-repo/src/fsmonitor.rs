@@ -467,6 +467,31 @@ const AUTOWATCH_RETRY_SECS: u64 = 600;
 /// A watcher started by a command stops after this long without a query.
 pub const AUTOWATCH_IDLE_SECS: u64 = 1800;
 
+/// Mark every inherited descriptor above stderr close-on-exec. Meant for `pre_exec` of a detached
+/// daemon: a `flock`/lock fd inherited from the invoking shell would otherwise live as long as the
+/// daemon and keep that lock held. Only async-signal-safe calls (runs between fork and exec).
+#[cfg(unix)]
+pub fn set_inherited_fds_cloexec() {
+    #[cfg(target_os = "linux")]
+    {
+        const CLOSE_RANGE_CLOEXEC: libc::c_uint = 4;
+        // SAFETY: plain syscall; fails with ENOSYS/EINVAL on kernels before 5.11, then the loop runs.
+        let r = unsafe { libc::syscall(libc::SYS_close_range, 3 as libc::c_uint, libc::c_uint::MAX, CLOSE_RANGE_CLOEXEC) };
+        if r == 0 {
+            return;
+        }
+    }
+    for fd in 3..4096 {
+        // SAFETY: fcntl on an fd number we may not own is harmless (EBADF) and sets only FD_CLOEXEC.
+        unsafe {
+            let fl = libc::fcntl(fd, libc::F_GETFD);
+            if fl >= 0 {
+                libc::fcntl(fd, libc::F_SETFD, fl | libc::FD_CLOEXEC);
+            }
+        }
+    }
+}
+
 impl crate::repo::Repo {
     /// Start a detached `<exe> watch --idle-exit N` for this repository when it is big enough that
     /// `status` benefits, none is running, and none was tried in the last ten minutes. Never fails
@@ -497,7 +522,15 @@ impl crate::repo::Repo {
             if fs::write(&stamp, b"").is_err() {
                 return;
             }
-            let _ = std::process::Command::new(exe)
+            let mut cmd = std::process::Command::new(exe);
+            // SAFETY: only async-signal-safe libc calls between fork and exec.
+            unsafe {
+                cmd.pre_exec(|| {
+                    set_inherited_fds_cloexec();
+                    Ok(())
+                });
+            }
+            let _ = cmd
                 .arg("watch")
                 .arg("--idle-exit")
                 .arg(AUTOWATCH_IDLE_SECS.to_string())
