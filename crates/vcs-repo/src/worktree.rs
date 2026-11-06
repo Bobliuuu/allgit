@@ -398,14 +398,17 @@ impl Repo {
 
     /// fsck: registry entries must point at readable worktrees, and a branch must be checked out
     /// in at most one of them. Also returns every worktree's index entries for the blob check.
-    pub(crate) fn fsck_worktrees(&self, problems: &mut Vec<String>) -> Vec<(String, Index)> {
+    /// Every worktree's view (name, repo) for fsck, which reads each index itself, streaming (see `fsck.rs`).
+    pub(crate) fn fsck_worktrees(&self, problems: &mut Vec<String>) -> Vec<(String, Repo)> {
         let mut seen: std::collections::BTreeMap<(String, String), PathBuf> = Default::default();
         let mut indexes = Vec::new();
         let views = match self.worktree_views() {
             Ok(v) => v,
             Err(e) => {
                 problems.push(format!("worktrees: {e}"));
-                return vec![(self.worktree.display().to_string(), self.index().unwrap_or_default())];
+                return self
+                    .open_view(&self.main_worktree())
+                    .map_or_else(|_| Vec::new(), |v| vec![(self.worktree.display().to_string(), v)]);
             }
         };
         for v in views {
@@ -423,10 +426,7 @@ impl Repo {
                 }
                 Err(e) => problems.push(format!("worktree {}: workspace: {e}", v.worktree.display())),
             }
-            match v.index() {
-                Ok(ix) => indexes.push((v.worktree.display().to_string(), ix)),
-                Err(e) => problems.push(format!("worktree {}: index: {e}", v.worktree.display())),
-            }
+            indexes.push((v.worktree.display().to_string(), v));
         }
         indexes
     }
