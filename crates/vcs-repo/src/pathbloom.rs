@@ -20,6 +20,7 @@ use crate::treeops;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use vcs_objects::{Commit, ObjectId};
+use vcs_store::mapfile::MapFile;
 
 pub(crate) const PF_DIR: &str = "path-filters";
 const MAGIC: &[u8; 4] = b"AGPF";
@@ -85,88 +86,116 @@ pub(crate) fn build_filter<'a>(files: impl Iterator<Item = &'a String>) -> Filte
     Some(b)
 }
 
-/// The filters of a zone: what was read from the file plus what was computed this run.
-#[derive(Default)]
+/// Files up to this size are verified completely when opened lazily.
+pub(crate) const EAGER_VERIFY_MAX: usize = 4 << 20;
+
+/// The filters of a zone: what is in the (memory mapped) file plus what was computed this run.
 pub(crate) struct PathBlooms {
-    raw: Vec<u8>,
+    raw: MapFile,
     count: usize,
     added: BTreeMap<ObjectId, Vec<Filter>>,
 }
 
+impl Default for PathBlooms {
+    fn default() -> Self {
+        PathBlooms {
+            raw: MapFile::from_vec(Vec::new()),
+            count: 0,
+            added: BTreeMap::new(),
+        }
+    }
+}
+
 impl PathBlooms {
-    /// Parse and verify a file; anything wrong gives an empty set.
+    /// Parse and completely verify bytes in memory; anything wrong gives an empty set.
+    #[cfg(test)]
     pub(crate) fn from_bytes(bytes: Vec<u8>) -> PathBlooms {
-        Self::parse(bytes).unwrap_or_default()
+        Self::from_map(MapFile::from_vec(bytes), usize::MAX).unwrap_or_default()
     }
 
-    fn parse(bytes: Vec<u8>) -> Option<PathBlooms> {
-        if bytes.len() < 4 + 1 + 4 + 32 || &bytes[..4] != MAGIC || bytes[4] != VERSION {
+    /// Map the file without reading it: O(1) time and no anonymous memory at any size. Only the header and the
+    /// layout arithmetic are checked at open (and, up to `EAGER_VERIFY_MAX`, everything); every lookup checks the
+    /// record it touches and treats a malformed one as absent, and [`verify_full`](Self::verify_full) (fsck) checks
+    /// the whole file. A missing or invalid file gives an empty set.
+    pub(crate) fn open(path: &std::path::Path) -> PathBlooms {
+        MapFile::open(path, true)
+            .ok()
+            .and_then(|m| Self::from_map(m, EAGER_VERIFY_MAX))
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn from_map(raw: MapFile, eager_max: usize) -> Option<PathBlooms> {
+        if raw.len() < 4 + 1 + 4 + 32 || &raw[..4] != MAGIC || raw[4] != VERSION {
             return None;
         }
-        let (body, sum) = bytes.split_at(bytes.len() - 32);
-        if blake3::hash(body).as_bytes() != sum {
-            return None;
-        }
-        let count = u32::from_le_bytes(body[5..9].try_into().ok()?) as usize;
+        let count = u32::from_le_bytes(raw[5..9].try_into().ok()?) as usize;
         let table = 9usize.checked_add(count.checked_mul(36)?)?;
-        if table > body.len() {
+        if table > raw.len() - 32 {
             return None;
         }
-        let data_len = body.len() - table;
-        // offsets must point inside the data and every record must be well formed
-        for i in 0..count {
-            let off = u32::from_le_bytes(body[9 + count * 32 + i * 4..][..4].try_into().ok()?) as usize;
-            if off >= data_len {
-                return None;
-            }
-            let mut p = table + off;
-            let np = *body.get(p)? as usize;
-            p += 1;
-            for _ in 0..np {
-                let l = u32::from_le_bytes(body.get(p..p + 4)?.try_into().ok()?);
-                p += 4;
-                if l != UNKNOWN {
-                    p = p.checked_add(l as usize)?;
-                }
-            }
-            if p > body.len() {
-                return None;
-            }
-        }
-        Some(PathBlooms {
-            raw: bytes,
+        let b = PathBlooms {
+            raw,
             count,
             added: BTreeMap::new(),
-        })
+        };
+        if b.raw.len() <= eager_max && !b.verify_full() {
+            return None;
+        }
+        Some(b)
+    }
+
+    fn body_len(&self) -> usize {
+        self.raw.len() - 32
+    }
+
+    fn table(&self) -> usize {
+        9 + self.count * 36
+    }
+
+    fn id_at(&self, i: usize) -> &[u8] {
+        &self.raw[9 + i * 32..9 + i * 32 + 32]
+    }
+
+    /// Bytes of record `i`, `None` if its offset or contents run outside the data.
+    fn record(&self, i: usize) -> Option<&[u8]> {
+        let table = self.table();
+        let off = u32::from_le_bytes(self.raw[9 + self.count * 32 + i * 4..][..4].try_into().unwrap()) as usize;
+        let body_len = self.body_len();
+        if off >= body_len - table {
+            return None;
+        }
+        let start = table + off;
+        let mut p = start;
+        let np = *self.raw.get(p)? as usize;
+        p += 1;
+        for _ in 0..np {
+            let l = u32::from_le_bytes(self.raw.get(p..p + 4)?.try_into().ok()?);
+            p += 4;
+            if l != UNKNOWN {
+                p = p.checked_add(l as usize)?;
+            }
+        }
+        (p <= body_len).then(|| &self.raw[start..p])
+    }
+
+    /// Everything: checksum, sorted ids and every record well formed. O(file size) time, O(1) memory.
+    pub(crate) fn verify_full(&self) -> bool {
+        self.raw.advise_sequential();
+        let body = &self.raw[..self.body_len()];
+        if vcs_store::mapfile::blake3_big(body).as_bytes() != &self.raw[self.body_len()..] {
+            return false;
+        }
+        (1..self.count).all(|i| self.id_at(i - 1) < self.id_at(i)) && (0..self.count).all(|i| self.record(i).is_some())
     }
 
     fn lookup_raw(&self, id: &ObjectId) -> Option<Vec<Filter>> {
         let (mut lo, mut hi) = (0usize, self.count);
         while lo < hi {
             let mid = (lo + hi) / 2;
-            let at = 9 + mid * 32;
-            match self.raw[at..at + 32].cmp(id.as_bytes().as_slice()) {
+            match self.id_at(mid).cmp(id.as_bytes().as_slice()) {
                 std::cmp::Ordering::Less => lo = mid + 1,
                 std::cmp::Ordering::Greater => hi = mid,
-                std::cmp::Ordering::Equal => {
-                    let table = 9 + self.count * 36;
-                    let off = u32::from_le_bytes(self.raw[9 + self.count * 32 + mid * 4..][..4].try_into().unwrap()) as usize;
-                    let mut p = table + off;
-                    let np = self.raw[p] as usize;
-                    p += 1;
-                    let mut out = Vec::with_capacity(np);
-                    for _ in 0..np {
-                        let l = u32::from_le_bytes(self.raw[p..p + 4].try_into().unwrap());
-                        p += 4;
-                        if l == UNKNOWN {
-                            out.push(None);
-                        } else {
-                            out.push(Some(self.raw[p..p + l as usize].to_vec()));
-                            p += l as usize;
-                        }
-                    }
-                    return Some(out);
-                }
+                std::cmp::Ordering::Equal => return self.record(mid).map(parse_record),
             }
         }
         None
@@ -189,52 +218,101 @@ impl PathBlooms {
         self.added.len()
     }
 
-    /// Every commit id and its filters (file plus new), sorted by id.
-    pub(crate) fn all(&self) -> BTreeMap<ObjectId, Vec<Filter>> {
-        let mut m = BTreeMap::new();
+    /// Every commit id and its filters (file records that are well formed, overridden by new ones), in id order.
+    pub(crate) fn for_each(&self, mut f: impl FnMut(ObjectId, Vec<Filter>)) {
+        let mut added = self.added.iter().peekable();
         for i in 0..self.count {
-            let at = 9 + i * 32;
-            let id = ObjectId::from_bytes(self.raw[at..at + 32].try_into().unwrap());
-            if let Some(f) = self.lookup_raw(&id) {
-                m.insert(id, f);
+            let id = ObjectId::from_bytes(self.id_at(i).try_into().unwrap());
+            while let Some((k, v)) = added.next_if(|(k, _)| **k < id) {
+                f(*k, v.clone());
+            }
+            if let Some((k, v)) = added.next_if(|(k, _)| **k == id) {
+                f(*k, v.clone());
+            } else if let Some(r) = self.record(i) {
+                f(id, parse_record(r));
             }
         }
-        for (k, v) in &self.added {
-            m.insert(*k, v.clone());
+        for (k, v) in added {
+            f(*k, v.clone());
         }
-        m
     }
 
-    pub(crate) fn encode(&self) -> Vec<u8> {
-        let all = self.all();
-        let mut ids = Vec::with_capacity(all.len() * 32);
-        let mut offs = Vec::with_capacity(all.len() * 4);
-        let mut data = Vec::new();
-        for (id, fs) in &all {
-            ids.extend_from_slice(id.as_bytes());
+    /// The file image of file plus new filters (merged in one pass over the sorted sources, copying file records as
+    /// bytes). `None` if it would not fit the format's 32-bit counts and offsets: the cache is then simply not written.
+    pub(crate) fn encode(&self) -> Option<Vec<u8>> {
+        let mut ids = Vec::with_capacity((self.count + self.added.len()) * 32);
+        let mut offs = Vec::with_capacity((self.count + self.added.len()) * 4);
+        let mut data: Vec<u8> = Vec::new();
+        let mut count = 0usize;
+        let mut push = |id: &[u8], rec: &[u8], data: &mut Vec<u8>| {
+            ids.extend_from_slice(id);
             offs.extend_from_slice(&(data.len() as u32).to_le_bytes());
-            data.push(fs.len() as u8);
-            for f in fs {
-                match f {
-                    None => data.extend_from_slice(&UNKNOWN.to_le_bytes()),
-                    Some(b) => {
-                        data.extend_from_slice(&(b.len() as u32).to_le_bytes());
-                        data.extend_from_slice(b);
-                    }
-                }
+            data.extend_from_slice(rec);
+            count += 1;
+        };
+        let mut added = self.added.iter().peekable();
+        for i in 0..self.count {
+            let id = ObjectId::from_bytes(self.id_at(i).try_into().unwrap());
+            while let Some((k, v)) = added.next_if(|(k, _)| **k < id) {
+                push(k.as_bytes(), &encode_record(v), &mut data);
+            }
+            if let Some((k, v)) = added.next_if(|(k, _)| **k == id) {
+                push(k.as_bytes(), &encode_record(v), &mut data);
+            } else if let Some(r) = self.record(i) {
+                push(id.as_bytes(), r, &mut data);
+            }
+            if data.len() > u32::MAX as usize {
+                return None;
             }
         }
-        let mut out = Vec::new();
+        for (k, v) in added {
+            push(k.as_bytes(), &encode_record(v), &mut data);
+        }
+        if data.len() > u32::MAX as usize || count > u32::MAX as usize {
+            return None;
+        }
+        let mut out = Vec::with_capacity(9 + ids.len() + offs.len() + data.len() + 32);
         out.extend_from_slice(MAGIC);
         out.push(VERSION);
-        out.extend_from_slice(&(all.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(count as u32).to_le_bytes());
         out.extend_from_slice(&ids);
         out.extend_from_slice(&offs);
         out.extend_from_slice(&data);
         let sum = blake3::hash(&out);
         out.extend_from_slice(sum.as_bytes());
-        out
+        Some(out)
     }
+}
+
+fn parse_record(rec: &[u8]) -> Vec<Filter> {
+    let np = rec[0] as usize;
+    let mut p = 1;
+    let mut out = Vec::with_capacity(np);
+    for _ in 0..np {
+        let l = u32::from_le_bytes(rec[p..p + 4].try_into().unwrap());
+        p += 4;
+        if l == UNKNOWN {
+            out.push(None);
+        } else {
+            out.push(Some(rec[p..p + l as usize].to_vec()));
+            p += l as usize;
+        }
+    }
+    out
+}
+
+fn encode_record(fs: &[Filter]) -> Vec<u8> {
+    let mut d = vec![fs.len() as u8];
+    for f in fs {
+        match f {
+            None => d.extend_from_slice(&UNKNOWN.to_le_bytes()),
+            Some(b) => {
+                d.extend_from_slice(&(b.len() as u32).to_le_bytes());
+                d.extend_from_slice(b);
+            }
+        }
+    }
+    d
 }
 
 impl Repo {
@@ -243,12 +321,14 @@ impl Repo {
     }
 
     pub(crate) fn load_path_blooms(&self, zone: &str) -> PathBlooms {
-        fs::read(self.pf_path(zone)).map(PathBlooms::from_bytes).unwrap_or_default()
+        PathBlooms::open(&self.pf_path(zone))
     }
 
     pub(crate) fn save_path_blooms(&self, zone: &str, b: &PathBlooms) {
         let _ = fs::create_dir_all(self.common.join(PF_DIR));
-        let _ = write_cache_atomic(&self.pf_path(zone), &b.encode()); // best effort: it is only a cache
+        if let Some(bytes) = b.encode() {
+            let _ = write_cache_atomic(&self.pf_path(zone), &bytes); // best effort: it is only a cache
+        }
     }
 
     /// The filters of `c` (one per parent) computed from the trees; `None` for a root commit.
@@ -282,26 +362,30 @@ impl Repo {
             if name.contains('.') {
                 continue;
             }
-            let Ok(bytes) = fs::read(&path) else { continue };
-            let b = PathBlooms::from_bytes(bytes);
-            if b.count == 0 && b.added.is_empty() {
-                problems.push(format!(
-                    "path-filters {name}: unreadable or empty (it is only a cache and is rebuilt on next use)"
-                ));
+            if fs::metadata(&path).is_err() {
                 continue;
             }
-            for (id, f) in b.all() {
-                match self.commit_obj(&id) {
-                    Ok(c) if cg_name(&c.zone) == name => match self.compute_filters(&c) {
-                        Ok(Some(want)) if want == f => {}
-                        Ok(None) => problems.push(format!("path-filters {name}: {id} is a root commit")),
-                        Ok(Some(_)) => problems.push(format!("path-filters {name}: wrong filter for {id}")),
-                        Err(e) => problems.push(format!("path-filters {name}: cannot check {id}: {e}")),
-                    },
-                    Ok(_) => problems.push(format!("path-filters {name}: {id} belongs to another zone")),
-                    Err(_) => problems.push(format!("path-filters {name}: {id} is not a readable commit")),
-                }
-            }
+            // lazily opened, then checked completely here (the only place that pays for the whole file)
+            let ok = MapFile::open(&path, false)
+                .ok()
+                .and_then(|m| PathBlooms::from_map(m, 0))
+                .filter(|b| b.verify_full());
+            let Some(b) = ok.filter(|b| b.count > 0) else {
+                problems.push(format!(
+                    "path-filters {name}: unreadable, truncated, corrupt or empty (it is only a cache and is rebuilt on next use)"
+                ));
+                continue;
+            };
+            b.for_each(|id, f| match self.commit_obj(&id) {
+                Ok(c) if cg_name(&c.zone) == name => match self.compute_filters(&c) {
+                    Ok(Some(want)) if want == f => {}
+                    Ok(None) => problems.push(format!("path-filters {name}: {id} is a root commit")),
+                    Ok(Some(_)) => problems.push(format!("path-filters {name}: wrong filter for {id}")),
+                    Err(e) => problems.push(format!("path-filters {name}: cannot check {id}: {e}")),
+                },
+                Ok(_) => problems.push(format!("path-filters {name}: {id} belongs to another zone")),
+                Err(_) => problems.push(format!("path-filters {name}: {id} is not a readable commit")),
+            });
         }
     }
 }
@@ -358,5 +442,127 @@ impl Repo {
             }
         }
         total
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn oid(n: u32) -> ObjectId {
+        let mut b = [0u8; 32];
+        b[..4].copy_from_slice(&n.to_be_bytes());
+        b[4] = 7;
+        ObjectId::from_bytes(b)
+    }
+
+    fn filt() -> impl Strategy<Value = Filter> {
+        prop_oneof![
+            Just(None),
+            Just(Some(Vec::new())),
+            proptest::collection::vec(any::<u8>(), 1..40).prop_map(Some)
+        ]
+    }
+
+    fn model() -> impl Strategy<Value = BTreeMap<u32, Vec<Filter>>> {
+        proptest::collection::btree_map(0u32..200, proptest::collection::vec(filt(), 1..4), 0..60)
+    }
+
+    fn lazy(bytes: Vec<u8>) -> Option<PathBlooms> {
+        PathBlooms::from_map(MapFile::from_vec(bytes), 0)
+    }
+
+    proptest! {
+        /// Lazy reader (nothing verified at open) == fully verified reader == the model, for hits, misses and iteration.
+        #[test]
+        fn lazy_matches_model(m in model(), extra in model()) {
+            let bytes = {
+                let mut b = PathBlooms::default();
+                for (k, v) in &m { b.insert(oid(*k), v.clone()); }
+                b.encode().unwrap()
+            };
+            let eager = PathBlooms::from_bytes(bytes.clone());
+            let mut l = lazy(bytes).unwrap();
+            prop_assert_eq!(eager.has_file(), !m.is_empty());
+            for k in 0..210u32 {
+                prop_assert_eq!(l.get(&oid(k)), m.get(&k).cloned());
+                prop_assert_eq!(eager.get(&oid(k)), m.get(&k).cloned());
+            }
+            prop_assert!(l.verify_full());
+            // new filters override / extend, and the merged encoding equals the encoding of the merged model
+            let mut want = m.clone();
+            for (k, v) in &extra {
+                l.insert(oid(*k), v.clone());
+                want.insert(*k, v.clone());
+            }
+            let mut seen = Vec::new();
+            l.for_each(|id, f| seen.push((id, f)));
+            let want_seen: Vec<_> = want.iter().map(|(k, v)| (oid(*k), v.clone())).collect();
+            prop_assert_eq!(seen, want_seen);
+            let merged = l.encode().unwrap();
+            let mut fresh = PathBlooms::default();
+            for (k, v) in &want { fresh.insert(oid(*k), v.clone()); }
+            prop_assert_eq!(merged, fresh.encode().unwrap());
+        }
+
+        /// A flipped byte never panics a lazily opened reader; `verify_full` and the eager path reject it.
+        #[test]
+        fn corruption_degrades_safely(m in model(), pos in any::<usize>(), bit in 0u8..8) {
+            let mut b = PathBlooms::default();
+            for (k, v) in &m { b.insert(oid(*k), v.clone()); }
+            let mut bytes = b.encode().unwrap();
+            let i = pos % bytes.len();
+            bytes[i] ^= 1 << bit;
+            prop_assert!(PathBlooms::from_bytes(bytes.clone()).count == 0);
+            if let Some(l) = lazy(bytes) {
+                prop_assert!(!l.verify_full());
+                for k in 0..210u32 { let _ = l.get(&oid(k)); }
+                l.for_each(|_, _| {});
+                let _ = l.encode();
+            }
+        }
+    }
+
+    #[test]
+    fn tiny_and_truncated_files() {
+        // empty set and a single record
+        let empty = PathBlooms::default().encode().unwrap();
+        let e = PathBlooms::from_bytes(empty.clone());
+        assert!(!e.has_file() && e.get(&oid(1)).is_none());
+        assert!(lazy(empty).unwrap().verify_full());
+        let mut one = PathBlooms::default();
+        one.insert(oid(5), vec![Some(vec![1, 2, 3]), None]);
+        let bytes = one.encode().unwrap();
+        assert_eq!(
+            PathBlooms::from_bytes(bytes.clone()).get(&oid(5)),
+            Some(vec![Some(vec![1, 2, 3]), None])
+        );
+        // every truncation: never panics, never verifies, never yields a wrong record
+        for len in 0..bytes.len() {
+            let t = bytes[..len].to_vec();
+            assert_eq!(PathBlooms::from_bytes(t.clone()).count, 0, "eager len {len}");
+            if let Some(l) = lazy(t) {
+                assert!(!l.verify_full(), "len {len}");
+                if let Some(f) = l.get(&oid(5)) {
+                    assert_eq!(f, vec![Some(vec![1, 2, 3]), None]);
+                }
+            }
+        }
+        assert!(lazy(b"AGPF".to_vec()).is_none());
+        assert!(lazy(Vec::new()).is_none());
+    }
+
+    #[test]
+    fn open_from_file_and_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut b = PathBlooms::default();
+        b.insert(oid(1), vec![Some(vec![9])]);
+        let p = dir.path().join("pf");
+        std::fs::write(&p, b.encode().unwrap()).unwrap();
+        assert_eq!(PathBlooms::open(&p).get(&oid(1)), Some(vec![Some(vec![9])]));
+        assert!(!PathBlooms::open(&dir.path().join("nope")).has_file());
+        std::fs::write(&p, b"garbage").unwrap();
+        assert!(!PathBlooms::open(&p).has_file());
     }
 }

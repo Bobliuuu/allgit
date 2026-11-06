@@ -80,6 +80,10 @@ fn cached_mark_equals_full_mark_across_rounds() {
         }] {
             fs::write(&cache, bad).unwrap();
             assert_eq!(summary(&r), after);
+            assert!(
+                r.fsck().unwrap().problems.iter().any(|p| p.starts_with("gc-reach")),
+                "fsck must flag a damaged gc-reach"
+            );
         }
         fs::write(&cache, good).unwrap();
     }

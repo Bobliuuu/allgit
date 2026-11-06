@@ -20,6 +20,16 @@ enum Inner {
     },
 }
 
+/// blake3 of a big buffer on all cores (the digest is the same as `blake3::hash`); whole-file verification of
+/// multi-GB caches is the one place this matters.
+pub fn blake3_big(b: &[u8]) -> blake3::Hash {
+    if b.len() >= 1 << 20 {
+        blake3::Hasher::new().update_rayon(b).finalize()
+    } else {
+        blake3::hash(b)
+    }
+}
+
 pub struct MapFile(Inner);
 
 // SAFETY: the mapping is PROT_READ and the file is never modified in place (see module docs).

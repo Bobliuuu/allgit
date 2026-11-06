@@ -376,6 +376,41 @@ fn cg_bytes(sh: &Shape) -> Vec<u8> {
     v
 }
 
+/// Streams a synthetic v2 commit-graph file (columns written one pass each, no whole-file buffer).
+fn cg_write_v2(sh: &Shape, path: &Path) -> std::io::Result<()> {
+    let n = sh.n;
+    let mut f = std::io::BufWriter::with_capacity(8 << 20, std::fs::File::create(path)?);
+    let mut h = blake3::Hasher::new();
+    let mut w = |f: &mut std::io::BufWriter<std::fs::File>, b: &[u8]| -> std::io::Result<()> {
+        h.update(b);
+        f.write_all(b)
+    };
+    let npar: u64 = (0..n).map(|k| sh.node(k).1 as u64).sum();
+    w(&mut f, &vcs_merge::CommitGraphFile::header_v2(n as usize, npar as usize))?;
+    for r in 0..n {
+        w(&mut f, &probe::sorted_id(r, n))?;
+    }
+    for r in 0..n {
+        w(&mut f, &(1_700_000_000 + sh.commit(r) * 60).to_le_bytes())?;
+    }
+    for r in 0..n {
+        w(&mut f, &sh.node(sh.commit(r)).2.to_le_bytes())?;
+    }
+    let mut end = 0u32;
+    for r in 0..n {
+        end += sh.node(sh.commit(r)).1 as u32;
+        w(&mut f, &end.to_le_bytes())?;
+    }
+    for r in 0..n {
+        let (ps, np, _) = sh.node(sh.commit(r));
+        for p in &ps[..np] {
+            w(&mut f, &(sh.rank(*p) as u32).to_le_bytes())?;
+        }
+    }
+    f.write_all(h.finalize().as_bytes())?;
+    f.flush()
+}
+
 fn cmd_cgraph(args: &[String]) {
     use vcs_merge::CommitGraphFile;
     let n: u64 = args[0].parse().unwrap();
@@ -383,10 +418,12 @@ fn cmd_cgraph(args: &[String]) {
     std::fs::create_dir_all(&dir).unwrap();
     assert!(n > 1_000, "cgraph needs N > 1000");
     let sh = Shape::new(n);
-    let path = dir.join(format!("cg{n}.agcg"));
+    let path = dir.join(format!("cg{n}.agcg2"));
     let t = Instant::now();
     if !path.exists() {
-        std::fs::write(&path, cg_bytes(&sh)).unwrap();
+        let tmp = dir.join(format!("cg{n}.agcg2.tmp"));
+        cg_write_v2(&sh, &tmp).unwrap();
+        std::fs::rename(&tmp, &path).unwrap();
     }
     let bytes_len = std::fs::metadata(&path).unwrap().len();
     emit1(
@@ -396,29 +433,31 @@ fn cmd_cgraph(args: &[String]) {
         t.elapsed(),
         &format!("\"bytes\":{bytes_len},\"bytes_per_commit\":{:.2}", bytes_len as f64 / n as f64),
     );
-    let rss0 = rss();
-    let raw = std::fs::read(&path).unwrap();
+    let (rss0, anon0) = (rss(), anon());
     let t = Instant::now();
-    let g = CommitGraphFile::decode(&raw).expect("decode");
+    let g = CommitGraphFile::open(&path).expect("open");
     emit1(
         "commit_graph",
-        "decode_validate",
+        "open",
         n,
         t.elapsed(),
-        &format!("\"mem_delta_kb\":{}", rss().saturating_sub(rss0)),
-    );
-    drop(raw);
-    emit1(
-        "commit_graph",
-        "resident",
-        n,
-        std::time::Duration::ZERO,
         &format!(
-            "\"mem_after_decode_kb\":{},\"mem_bytes_per_commit\":{:.2}",
-            rss(),
-            rss().saturating_sub(rss0) as f64 * 1024.0 / n as f64
+            "\"mem_delta_kb\":{},\"anon_delta_kb\":{}",
+            rss().saturating_sub(rss0),
+            anon().saturating_sub(anon0)
         ),
     );
+    if n <= 100_000_000 {
+        let t = Instant::now();
+        g.verify_full().expect("verify");
+        emit1(
+            "commit_graph",
+            "verify_full",
+            n,
+            t.elapsed(),
+            &format!("\"anon_delta_kb\":{}", anon().saturating_sub(anon0)),
+        );
+    }
     let id_at = |k: u64| ObjectId::from_bytes(probe::sorted_id(sh.rank(k), n));
     let mut rng = Rng(0xDEAD_BEEF_1234_5678);
     let mut lk = time_each(20000, |_| {
@@ -449,9 +488,13 @@ fn cmd_cgraph(args: &[String]) {
     emit("commit_graph", "range_ids_1000", n, &mut rg, "");
     let mut cr = time_each(rep, |_| g.count_reachable_not_from(&tip, &hide));
     emit("commit_graph", "count_reachable_not_from_1000", n, &mut cr, "");
-    let t = Instant::now();
-    let enc = g.encode();
-    emit1("commit_graph", "encode", n, t.elapsed(), &format!("\"bytes\":{}", enc.len()));
+    emit1(
+        "commit_graph",
+        "resident_after_queries",
+        n,
+        std::time::Duration::ZERO,
+        &format!("\"anon_delta_kb\":{}", anon().saturating_sub(anon0)),
+    );
 }
 
 fn cmd_cgbuild(args: &[String]) {
@@ -577,14 +620,28 @@ fn cmd_reach(args: &[String]) {
         &format!("\"bytes\":{size},\"bytes_per_object\":{:.3}", size as f64 / n as f64),
     );
     let r0 = rss();
+    let a0 = anon();
     let t = Instant::now();
     let rc = probe::Reach::load(&path).expect("load");
     emit1(
         "reach_bitmap",
-        "load_verify",
+        "open",
         n,
         t.elapsed(),
-        &format!("\"mem_delta_kb\":{}", rss().saturating_sub(r0)),
+        &format!(
+            "\"mem_delta_kb\":{},\"anon_delta_kb\":{}",
+            rss().saturating_sub(r0),
+            anon().saturating_sub(a0)
+        ),
+    );
+    let t = Instant::now();
+    assert!(rc.verify_full());
+    emit1(
+        "reach_bitmap",
+        "verify_full",
+        n,
+        t.elapsed(),
+        &format!("\"anon_delta_kb\":{}", anon().saturating_sub(a0)),
     );
     let mut rng = Rng(5);
     let mut q = time_each(20000, |_| assert!(rc.scanned(&probe::sorted_id(rng.below(n), n))));
@@ -616,14 +673,29 @@ fn cmd_pfilter(args: &[String]) {
         &format!("\"bytes\":{size},\"bytes_per_commit\":{:.2}", size as f64 / n as f64),
     );
     let r0 = rss();
+    let a0 = anon();
     let t = Instant::now();
     let pf = probe::PathFilters::load(&path);
     emit1(
         "path_filter",
-        "load_parse",
+        "open",
         n,
         t.elapsed(),
-        &format!("\"loaded\":{},\"mem_delta_kb\":{}", pf.loaded(), rss().saturating_sub(r0)),
+        &format!(
+            "\"loaded\":{},\"mem_delta_kb\":{},\"anon_delta_kb\":{}",
+            pf.loaded(),
+            rss().saturating_sub(r0),
+            anon().saturating_sub(a0)
+        ),
+    );
+    let t = Instant::now();
+    assert!(pf.verify_full());
+    emit1(
+        "path_filter",
+        "verify_full",
+        n,
+        t.elapsed(),
+        &format!("\"anon_delta_kb\":{}", anon().saturating_sub(a0)),
     );
     let mut rng = Rng(9);
     let mut q = time_each(20000, |_| assert!(pf.get(&probe::sorted_id(rng.below(n), n))));
