@@ -101,12 +101,17 @@ fn merge_commits_are_recreated_and_undone_as_one_operation() {
     let old_cid = r.commit_of(&old_merge).unwrap().change_id;
     let side = head(&r, "side");
     let out = r.rebase_merges("root", "main", None, false, sig(3000)).unwrap();
-    let RebaseOutcome::Done { from, to, replayed } = out else { panic!("{out:?}") };
-    assert_eq!((from, replayed), (old, 5)); // a, s? no: a, b, merge, c + s is a cousin-free ancestor of the merge
+    let RebaseOutcome::Done { from, to, replayed } = out else {
+        panic!("{out:?}")
+    };
+    assert_eq!((from, replayed), (old, 5)); // a, s, b, the merge, c
     assert_eq!(to, head(&r, "feature"));
     // c on top of the recreated merge, which has two parents: (b rebased, side)
     let merge_id = parents(&r, &to)[0];
-    assert_eq!(subject(&r, &merge_id), r.commit_of(&old_merge).unwrap().message.lines().next().unwrap());
+    assert_eq!(
+        subject(&r, &merge_id),
+        r.commit_of(&old_merge).unwrap().message.lines().next().unwrap()
+    );
     assert_eq!(r.commit_of(&merge_id).unwrap().change_id, old_cid, "change id survives");
     let mp = parents(&r, &merge_id);
     assert_eq!(mp.len(), 2);
@@ -131,7 +136,10 @@ fn up_to_date_and_fast_forward() {
     r.checkout("root", "main").unwrap();
     r.create_branch("root", "tip").unwrap();
     r.checkout("root", "tip").unwrap();
-    assert_eq!(r.rebase_merges("root", "main", None, false, sig(3)).unwrap(), RebaseOutcome::UpToDate);
+    assert_eq!(
+        r.rebase_merges("root", "main", None, false, sig(3)).unwrap(),
+        RebaseOutcome::UpToDate
+    );
 }
 
 /// root: g (8 lines). topic: t1 edits line 2. main: m1. topic merges main, t2. main: m2 edits line 2.
@@ -163,7 +171,9 @@ fn conflict_in_a_recreated_merge_continue() {
     let old = head(&r, "topic");
     let t1 = parents(&r, &parents(&r, &old)[0])[0];
     let out = r.rebase_merges("root", "main", None, false, sig(3000)).unwrap();
-    let RebaseOutcome::Conflicted { paths, .. } = out else { panic!("{out:?}") };
+    let RebaseOutcome::Conflicted { paths, .. } = out else {
+        panic!("{out:?}")
+    };
     assert_eq!(paths, ["g"]);
     assert!(read(&r, "g").contains("<<<<<<<"));
     assert!(r.rebase_state().unwrap().is_some());
@@ -218,12 +228,12 @@ fn rebase_cousins_replays_the_commit_before_the_merge_base_too() {
     r.checkout("root", "topic").unwrap();
     let out = r.rebase_merges("root", "main", None, true, sig(3000)).unwrap();
     let RebaseOutcome::Done { to, .. } = out else { panic!("{out:?}") };
-    let m = parents(&r, &to)[0];
-    let mp = parents(&r, &m);
-    // t1 was replayed onto main, so the merge has two parents that are both new
-    assert_eq!(subject(&r, &mp[0]), "t1");
-    assert_eq!(subject(&r, &parents(&r, &mp[0])[0]), "m3 restores g");
-    assert_eq!(subject(&r, &mp[1]), "m3 restores g");
+    // t1 was replayed onto main, so the merge of main into it is "already up to date" and, as in git,
+    // disappears: t2 sits directly on the replayed t1
+    let t1 = parents(&r, &to)[0];
+    assert_eq!(subject(&r, &t1), "t1");
+    assert_eq!(parents(&r, &t1).len(), 1);
+    assert_eq!(subject(&r, &parents(&r, &t1)[0]), "m3 restores g");
     assert_eq!(read(&r, "g"), "1\nTOPIC\n3\n4\n5\n6\n7\n8\n");
 }
 
@@ -313,7 +323,9 @@ fn criss_cross_with_conflicting_bases_uses_marker_text_as_the_base() {
     r.commit("merge x into main", sig(6)).unwrap();
     // the two merges disagree on line 2: a real conflict, but the merge runs (no refusal)
     let out = merge(&r, "other");
-    let MergeOutcome::Conflicted { paths } = out else { panic!("{out:?}") };
+    let MergeOutcome::Conflicted { paths } = out else {
+        panic!("{out:?}")
+    };
     assert_eq!(paths, ["f"]);
     r.merge_abort().unwrap();
     fsck(&r);

@@ -341,7 +341,7 @@ fn criss_cross_merges_through_a_virtual_base() {
     assert!(matches!(merge(&r, "main").unwrap(), MergeOutcome::Merged { .. })); // other = merge(y, x)
     r.checkout("root", "main").unwrap();
     assert!(matches!(merge(&r, "other2").unwrap(), MergeOutcome::Merged { .. })); // main = merge(x, y)
-    // two best bases (x and y): they are merged into a virtual base instead of being refused
+                                                                                  // two best bases (x and y): they are merged into a virtual base instead of being refused
     assert!(matches!(merge(&r, "other").unwrap(), MergeOutcome::Merged { .. }));
     assert!(exists(&r, "x") && exists(&r, "y"));
     assert!(clean(&r));
