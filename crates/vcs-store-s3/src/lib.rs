@@ -33,9 +33,10 @@ use sha2::{Digest, Sha256};
 pub(crate) use stats::STATS;
 pub use stats::{credentials_rejected, stats, S3Stats, METHODS};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use vcs_remote::backend::validate_key;
-use vcs_remote::{Backend, BackendError, Conditional, Versioned};
+use vcs_remote::{Backend, BackendError, Conditional, ObjectStream, Versioned};
 
 #[derive(Clone)]
 pub struct S3Config {
@@ -183,7 +184,7 @@ pub struct S3Backend {
     /// surfaces as `Unavailable` and is resolved by `RetryBackend`'s read-back, never replayed blind.
     agent: ureq::Agent,
     requests: AtomicU64,
-    bytes_read: AtomicU64,
+    bytes_read: Arc<AtomicU64>,
     /// Server-clock anchor for `now_ms` (see gcops.rs).
     anchor: gcops::Anchor,
     /// S3 Express One Zone directory bucket (name ends in `--x-s3`): virtual-hosted addressing, service
@@ -212,9 +213,50 @@ enum Resp {
         etag: Option<String>,
         /// HTTP status (200, 204, 206, 304 ...).
         status: u16,
+        /// Declared `Content-Length` (what a HEAD reports for the object).
+        len: Option<u64>,
+        /// Unread body, only for a [`Mode::Stream`] request (then `body` is empty).
+        reader: Option<Box<dyn std::io::Read + Send>>,
     },
     /// Non-2xx, non-transient status that the caller interprets.
     Status(u16, String),
+}
+
+/// How [`S3Backend::send_once`] treats a request.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Mode {
+    Normal,
+    /// CreateSession for an Express One Zone directory bucket (signed with the main credentials).
+    CreateSession,
+    /// Hand back the response body as a reader instead of buffering it. Carries the expected length, which scales
+    /// the time allowance exactly as a request body of that size does.
+    Stream(u64),
+}
+
+/// Body reader of a streamed GET: exactly `left` bytes or an error. A connection cut short must not look like a
+/// complete object, and a server that sends more than it declared must not overrun the declared length.
+struct ExactReader {
+    inner: Box<dyn std::io::Read + Send>,
+    left: u64,
+    counter: Arc<AtomicU64>,
+}
+impl std::io::Read for ExactReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.left == 0 {
+            return Ok(0);
+        }
+        let want = buf.len().min(self.left as usize);
+        let n = self.inner.read(&mut buf[..want])?;
+        if n == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                format!("S3 body ended {} bytes short", self.left),
+            ));
+        }
+        self.left -= n as u64;
+        self.counter.fetch_add(n as u64, Ordering::Relaxed);
+        Ok(n)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -326,7 +368,7 @@ impl S3Backend {
             host,
             agent,
             requests: AtomicU64::new(0),
-            bytes_read: AtomicU64::new(0),
+            bytes_read: Arc::new(AtomicU64::new(0)),
             anchor: Default::default(),
             express,
             session: std::sync::Mutex::new(None),
@@ -452,11 +494,11 @@ impl S3Backend {
                 .map(|_| std::time::Instant::now())
         });
         let Some(t0) = t0 else {
-            return self.send_inner(method, key, query, headers, body, false);
+            return self.send_inner(method, key, query, headers, body, Mode::Normal);
         };
         let start = t0.elapsed();
         let s = std::time::Instant::now();
-        let r = self.send_inner(method, key, query, headers, body, false);
+        let r = self.send_inner(method, key, query, headers, body, Mode::Normal);
         let out = match &r {
             Ok(Resp::Ok { body, status, .. }) => format!("{status}/{}", body.len()),
             Ok(Resp::Status(c, _)) => c.to_string(),
@@ -476,6 +518,11 @@ impl S3Backend {
         r
     }
 
+    /// A GET whose body is handed back as a reader (retries apply until the headers arrive).
+    fn send_stream(&self, key: &str, headers: &[(&str, &str)], expect_len: u64) -> Result<Resp, BackendError> {
+        self.send_inner("GET", key, &[], headers, b"", Mode::Stream(expect_len))
+    }
+
     /// CreateSession for a directory bucket; the credentials are cached and renewed every [`SESSION_REFRESH`].
     fn session_creds(&self) -> Result<(String, String, String), BackendError> {
         let mut g = self.session.lock().unwrap_or_else(|e| e.into_inner());
@@ -488,7 +535,7 @@ impl S3Backend {
             &[("session", String::new())],
             &[("x-amz-create-session-mode", "ReadWrite")],
             b"",
-            true,
+            Mode::CreateSession,
         )? {
             Resp::Ok { body, .. } => String::from_utf8_lossy(&body).into_owned(),
             Resp::Status(c, m) => return Err(Self::unexpected("CreateSession", c, m)),
@@ -544,12 +591,12 @@ impl S3Backend {
         query: &[(&str, String)],
         headers: &[(&str, &str)],
         body: &[u8],
-        create_session: bool,
+        mode: Mode,
     ) -> Result<Resp, BackendError> {
         let mut attempt = 0u32;
         let mut refreshed = false;
         loop {
-            let f = match self.send_once(method, key, query, headers, body, create_session) {
+            let f = match self.send_once(method, key, query, headers, body, mode) {
                 Ok(Resp::Status(403, m)) if !refreshed && self.cfg.credentials.is_some() && expired_creds(&m) => {
                     refreshed = true;
                     if let Some(p) = &self.cfg.credentials {
@@ -581,7 +628,7 @@ impl S3Backend {
         query: &[(&str, String)],
         headers: &[(&str, &str)],
         body: &[u8],
-        create_session: bool,
+        mode: Mode,
     ) -> Result<Resp, Fail> {
         let mut path = if self.express {
             String::new()
@@ -601,7 +648,7 @@ impl S3Backend {
 
         // (access key, secret, token, token header, SigV4 service)
         let (access_key, secret_key, token, token_header, service): (String, String, Option<String>, &str, &str) =
-            match (self.express, create_session) {
+            match (self.express, mode == Mode::CreateSession) {
                 (false, _) => {
                     let (a, s, t) = self.main_creds()?;
                     (a, s, t, "x-amz-security-token", "s3")
@@ -650,8 +697,12 @@ impl S3Backend {
         let agent = &self.agent;
         #[allow(clippy::result_large_err)] // ureq's own error type
         // a large body gets proportionally more time (a fixed 30 s cannot move a 256 MiB pack below 70 Mbit/s)
+        let scaled = match mode {
+            Mode::Stream(n) => n,
+            _ => body.len() as u64,
+        };
         let timeout = if self.cfg.min_throughput > 0 {
-            self.cfg.timeout + Duration::from_secs(body.len() as u64 / self.cfg.min_throughput)
+            self.cfg.timeout + Duration::from_secs(scaled / self.cfg.min_throughput)
         } else {
             self.cfg.timeout
         };
@@ -687,6 +738,11 @@ impl S3Backend {
             Ok(resp) => {
                 let status = resp.status();
                 let etag = resp.header("etag").map(str::to_owned);
+                let declared = resp.header("content-length").and_then(|v| v.trim().parse::<u64>().ok());
+                if matches!(mode, Mode::Stream(_)) {
+                    STATS.creds_rejected.store(false, Ordering::Relaxed);
+                    return Ok(Resp::Ok { body: Vec::new(), etag, status, len: declared, reader: Some(resp.into_reader()) });
+                }
                 // Presize from Content-Length: growing by doubling copies a pack range several times and
                 // leaves up to 2x capacity resident. Capped so a lying server cannot force a huge
                 // reservation (untouched capacity costs no RSS; the cap bounds address space).
@@ -701,7 +757,7 @@ impl S3Backend {
                     .map_err(|e| Fail::new(FailKind::Transport, BackendError::Unavailable(format!("read body: {e}"))))?;
                 self.bytes_read.fetch_add(buf.len() as u64, Ordering::Relaxed);
                 STATS.creds_rejected.store(false, Ordering::Relaxed);
-                Ok(Resp::Ok { body: buf, etag, status })
+                Ok(Resp::Ok { body: buf, etag, status, len: declared, reader: None })
             }
             Err(ureq::Error::Status(code, resp)) => {
                 let after = resp
@@ -864,6 +920,31 @@ impl Backend for S3Backend {
             }
             Resp::Status(404, _) => Ok(None),
             Resp::Status(c, m) => Err(Self::unexpected("get", c, m)),
+        }
+    }
+
+    /// HEAD for length and ETag, then one un-ranged GET pinned to that ETag (`If-Match`) whose body is streamed.
+    /// The tag is the ETag S3 returned, so there is no hash pass. If the object changed between the two requests
+    /// (412 or a different ETag) or vanished, the answer is `Ok(None)` and the caller falls back to a whole `get`.
+    fn get_stream(&self, key: &str, min_len: u64) -> Result<Option<ObjectStream>, BackendError> {
+        let k = self.full_key(key)?;
+        let (len, tag) = match self.send("HEAD", &k, &[], &[], b"")? {
+            Resp::Ok { len: Some(len), etag: Some(tag), .. } => (len, tag),
+            Resp::Ok { .. } => return Ok(None),
+            Resp::Status(404, _) => return Ok(None),
+            Resp::Status(c, m) => return Err(Self::unexpected("get_stream", c, m)),
+        };
+        if len < min_len || tag.contains(['\r', '\n']) {
+            return Ok(None);
+        }
+        match self.send_stream(&k, &[("if-match", tag.as_str())], len)? {
+            Resp::Ok { reader: Some(inner), etag, len: got, .. } if etag.as_deref() == Some(tag.as_str()) && got == Some(len) => {
+                let reader = ExactReader { inner, left: len, counter: self.bytes_read.clone() };
+                Ok(Some(ObjectStream { len, tag, reader: Box::new(reader) }))
+            }
+            // replaced between HEAD and GET, or deleted: let the caller read the current object whole
+            Resp::Ok { .. } | Resp::Status(404 | 412, _) => Ok(None),
+            Resp::Status(c, m) => Err(Self::unexpected("get_stream", c, m)),
         }
     }
 
