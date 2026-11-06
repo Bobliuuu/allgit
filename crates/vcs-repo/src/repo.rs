@@ -541,12 +541,17 @@ impl Repo {
         let _l = self.lock()?;
         let zones = self.zones()?;
         let ws = self.workspace()?;
-        let mut ix = self.index()?;
+        if let Some(rep) = self.add_lazy(rel_paths, &zones, &ws)? {
+            return Ok(rep);
+        }
+        let raw = self.rd("index")?;
+        let mut ix = Index::decode(&raw)?;
         let mut rep = AddReport::default();
         let mut todo = Vec::new();
+        let mut removed = Vec::new();
         let rev0 = ix.entries.revision();
         for p in rel_paths {
-            self.add_one(p, &zones, &ws, &mut ix, &mut rep, &mut todo)?;
+            self.add_one(p, &zones, &ws, &mut ix, &mut rep, &mut todo, &mut removed)?;
         }
         // A collision needs a path the index does not hold yet; re-folding 100k tracked names for a
         // plain re-add of modified files costs more than the rest of the command.
@@ -554,7 +559,7 @@ impl Repo {
             crate::portable::require_no_collision(ix.entries.keys().map(String::as_str).chain(todo.iter().map(String::as_str)), "add")?;
         }
         // Read + hash + write the blobs on several threads; the index is updated afterwards.
-        let verified = self.stage_files(&todo, &mut ix)?;
+        let (verified, changed) = self.stage_files(&todo, &mut ix)?;
         self.note_resolved(rel_paths, &ix)?;
         // Durability barrier: every blob the index is about to name must be durable first.
         self.store.sync()?;
@@ -562,11 +567,86 @@ impl Repo {
         if ix.entries.revision() == rev0 && !ix.unlocks(next, self.index_racy_ns) {
             return Ok(rep); // nothing changed: do not rewrite the index
         }
+        // A few changed entries in a big index: patch the blocks they fall in and copy the rest of
+        // the file, instead of encoding every entry again.
+        let mut edits = crate::index_file::Edits::new();
+        for g in removed {
+            edits.insert(g, None);
+        }
+        for p in changed {
+            let e = ix.entries.get(p.as_str()).cloned();
+            edits.insert(p, e);
+        }
+        if !edits.is_empty() && edits.len() <= ix.entries.len() / 16 {
+            if let Some(f) = crate::index_file::IndexFile::parse(raw)? {
+                let (bytes, n) = f.patch_at(&edits, Some(next.max(f.written_ns)))?;
+                if n > 0 {
+                    self.write_index_bytes(&bytes)?;
+                    return Ok(rep);
+                }
+            }
+        }
         self.save_index_verified(&mut ix, |p| verified.contains(p))?;
         Ok(rep)
     }
 
-    fn add_one(&self, p: &str, zones: &Zones, ws: &Workspace, ix: &mut Index, rep: &mut AddReport, todo: &mut Vec<String>) -> Result<()> {
+    /// `add` of a few existing, already tracked files and symlinks (what `add -u` and `add <file>`
+    /// pass): the index file is read lazily, only the blocks holding those paths are decoded and
+    /// patched, and nothing else is encoded again. `None` when the call needs the whole index (a
+    /// directory, an untracked or vanished path, a merge in progress); nothing has changed then.
+    fn add_lazy(&self, rel_paths: &[String], zones: &Zones, ws: &Workspace) -> Result<Option<AddReport>> {
+        if rel_paths.is_empty() || rel_paths.iter().any(|p| p.is_empty()) || self.merge_state()?.is_some() {
+            return Ok(None);
+        }
+        let mut link = Vec::with_capacity(rel_paths.len());
+        for p in rel_paths {
+            match self.wfs.stat(p) {
+                Ok(m) if matches!(m.kind, FileKind::File | FileKind::Symlink) => link.push(m.kind == FileKind::Symlink),
+                _ => return Ok(None),
+            }
+        }
+        let f = self.index_file()?;
+        let old = f.get_many(rel_paths)?;
+        if rel_paths.iter().any(|p| !old.contains_key(p)) {
+            return Ok(None);
+        }
+        for (p, is_link) in rel_paths.iter().zip(link) {
+            let owner = zones.owner(p);
+            if !ws.subs.contains_key(owner) {
+                return msg(format!(
+                    "{p:?} belongs to zone {owner:?}, which this workspace has not subscribed to (vcs zone add {owner})"
+                ));
+            }
+            validate_path(p)?;
+            if is_link {
+                self.check_link(p)?;
+            } else if ws.skips(owner, p) {
+                return msg(format!(
+                    "{p:?} is outside this workspace's sparse set; `vcs sparse add` it before staging"
+                ));
+            }
+        }
+        let res = self.stage_entries(rel_paths, &|p| old.get(p), f.written_ns)?;
+        let mut edits = crate::index_file::Edits::new();
+        for (p, (ne, _)) in rel_paths.iter().zip(res) {
+            if let Some(ne) = ne {
+                edits.insert(p.clone(), Some(ne));
+            }
+        }
+        let rep = AddReport {
+            staged: rel_paths.len(),
+            ..AddReport::default()
+        };
+        let (patched, _) = self.prepare_index_patch(&f, &edits)?;
+        self.store.sync()?;
+        if let Some(bytes) = patched {
+            self.write_index_bytes(&bytes)?;
+        }
+        Ok(Some(rep))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_one(&self, p: &str, zones: &Zones, ws: &Workspace, ix: &mut Index, rep: &mut AddReport, todo: &mut Vec<String>, removed: &mut Vec<String>) -> Result<()> {
         let full = if p.is_empty() {
             self.worktree.clone()
         } else {
@@ -593,6 +673,7 @@ impl Repo {
                     }
                     any = true;
                     ix.entries.remove(&g);
+                    removed.push(g);
                     rep.removed += 1;
                 }
                 if !any {
@@ -628,6 +709,7 @@ impl Repo {
                     for g in ix.under(p) {
                         if !seen.contains(g.as_str()) && !ws.skips(zones.owner(&g), &g) {
                             ix.entries.remove(&g);
+                            removed.push(g);
                             rep.removed += 1;
                         }
                     }
@@ -803,10 +885,35 @@ impl Repo {
     /// the index's racy window, is not read at all. Otherwise it is read; if the content hash
     /// equals the entry's id the object is already stored and is not written again. Returns the
     /// paths whose content is known to match the entry recorded after their racy window closed.
-    fn stage_files(&self, files: &[String], ix: &mut Index) -> Result<BTreeSet<String>> {
+    fn stage_files(&self, files: &[String], ix: &mut Index) -> Result<(BTreeSet<String>, Vec<String>)> {
+        let res = {
+            let prev = &ix.entries;
+            self.stage_entries(files, &|p| prev.get(p), ix.written_ns)?
+        };
+        let mut verified = BTreeSet::new();
+        let mut changed = Vec::new();
+        for (f, (ne, ok)) in files.iter().zip(res) {
+            if let Some(ne) = ne {
+                ix.insert(f, ne)?;
+                changed.push(f.clone());
+            }
+            if ok {
+                verified.insert(f.clone());
+            }
+        }
+        Ok((verified, changed))
+    }
+
+    /// The part of [`Self::stage_files`] that touches the disk: for each file, the entry to record
+    /// (`None`: the old one stands) and whether its content was checked after its racy window.
+    /// `prev` looks up the current entry of a path; `old_w` is the index's `written_ns`.
+    fn stage_entries<'p>(
+        &self,
+        files: &[String],
+        prev: &(dyn Fn(&str) -> Option<&'p IndexEntry> + Sync),
+        old_w: u64,
+    ) -> Result<Vec<(Option<IndexEntry>, bool)>> {
         let racy = self.index_racy_ns;
-        let old_w = ix.written_ns;
-        let prev = &ix.entries;
         // (entry to record if it changed, verified)
         let one = |rel: &String| -> Result<(Option<IndexEntry>, bool)> {
             let t_stat = now_ns();
@@ -837,7 +944,7 @@ impl Repo {
                 ));
             }
             let (mt, ct, mode) = (m.mtime_ns, m.ctime_ns, m.mode);
-            let old = prev.get(rel.as_str());
+            let old = prev(rel.as_str());
             if let Some(e) = old {
                 if e.mode == mode
                     && e.size == m.len
@@ -846,7 +953,7 @@ impl Repo {
                     && ct != 0
                     && mt.max(ct).saturating_add(racy) <= old_w
                 {
-                    return Ok((None, true)); // stat cache hit
+                    return Ok((None, false)); // stat cache hit: its stamp is already older than `written_ns`, nothing to prove
                 }
             }
             let abs = self.worktree.join(rel);
@@ -914,17 +1021,7 @@ impl Repo {
                 entries[i] = Some(r);
             }
         }
-        let mut verified = BTreeSet::new();
-        for (f, e) in files.iter().zip(entries) {
-            let (ne, ok) = e.expect("every file processed")?;
-            if let Some(ne) = ne {
-                ix.insert(f, ne)?;
-            }
-            if ok {
-                verified.insert(f.clone());
-            }
-        }
-        Ok(verified)
+        entries.into_iter().map(|e| e.expect("every file processed")).collect()
     }
 
     /// Content id of the large file `f` (`len` bytes at `abs`), storing what is not stored yet. When the
@@ -1804,7 +1901,8 @@ impl Repo {
         let zones = self.zones()?;
         let ws = self.workspace()?;
         let mut refs = self.refs()?;
-        let mut ix = self.index()?;
+        let raw_ix = self.rd("index")?;
+        let mut ix = Index::decode(&raw_ix)?;
         let fp = zones_fp(&zones);
         let mut fresh_trees: BTreeMap<String, ObjectId> = BTreeMap::new();
         let op_author = author.clone();
@@ -1873,7 +1971,12 @@ impl Repo {
                                                                   // effort: a lost cache write only costs time.
         if !fresh_trees.is_empty() {
             ix.entries.store_trees(fp, fresh_trees);
-            let _ = crate::meta::write_cache_atomic(&self.vcs.join("index"), &ix.encode());
+            // Only the cache-tree section changed: keep the entries' bytes as they are.
+            let bytes = match crate::index_file::IndexFile::parse(raw_ix) {
+                Ok(Some(f)) => f.with_tail(&ix.entries.encode_tail()),
+                _ => ix.encode(),
+            };
+            let _ = crate::meta::write_cache_atomic(&self.vcs.join("index"), &bytes);
         }
         if merging.is_some() {
             self.clear_merge_state()?;

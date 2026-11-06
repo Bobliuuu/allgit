@@ -126,6 +126,28 @@ impl IndexFile {
         Ok(v.binary_search_by(|(k, _)| k.as_str().cmp(path)).ok().map(|i| v[i].1.clone()))
     }
 
+    /// The entries of exactly these `paths` (absent ones are missing from the map). Each block is
+    /// decoded once however many of the paths fall into it.
+    pub(crate) fn get_many(&self, paths: &[String]) -> Result<std::collections::HashMap<String, IndexEntry>> {
+        let mut out = std::collections::HashMap::with_capacity(paths.len());
+        if self.blocks.is_empty() {
+            return Ok(out);
+        }
+        let mut by_block: BTreeMap<usize, Vec<&String>> = BTreeMap::new();
+        for p in paths {
+            by_block.entry(self.block_for(p)).or_default().push(p);
+        }
+        for (bi, want) in by_block {
+            let v = self.decode_block(bi)?;
+            for p in want {
+                if let Ok(i) = v.binary_search_by(|(k, _)| k.as_str().cmp(p)) {
+                    out.insert(p.clone(), v[i].1.clone());
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// First tracked path that sorts at or after `key`.
     fn lower_bound(&self, key: &str) -> Result<Option<String>> {
         if self.blocks.is_empty() {
@@ -179,8 +201,24 @@ impl IndexFile {
         Ok(None)
     }
 
+    /// The file with its cache-tree section replaced by `tail` (see `Entries::encode_tail`):
+    /// header, block table and entries are copied as they are.
+    pub(crate) fn with_tail(&self, tail: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.tail + tail.len());
+        out.extend_from_slice(&self.bytes[..self.tail]);
+        out.extend_from_slice(tail);
+        out
+    }
+
     /// Apply `edits` and return the new file bytes plus how many entries really changed.
     pub(crate) fn patch(&self, edits: &Edits) -> Result<(Vec<u8>, usize)> {
+        self.patch_at(edits, None)
+    }
+
+    /// [`Self::patch`] that also records `written_ns` in the header (`None`: keep the old one).
+    /// Moving it forward is sound only if the caller knows every entry whose racy window it closes
+    /// was verified after that window ended.
+    pub(crate) fn patch_at(&self, edits: &Edits, written_ns: Option<u64>) -> Result<(Vec<u8>, usize)> {
         // 1. group the edits by block
         let mut per_block: BTreeMap<usize, Vec<(&String, &Option<IndexEntry>)>> = BTreeMap::new();
         for kv in edits {
@@ -288,7 +326,7 @@ impl IndexFile {
         let mut out = Vec::with_capacity(body.len() + 128 + trees.len() * 40);
         out.extend_from_slice(b"AGI4");
         out.push(STATE_VERSION);
-        put_varint(&mut out, self.written_ns);
+        put_varint(&mut out, written_ns.unwrap_or(self.written_ns));
         put_varint(&mut out, n_new as u64);
         put_varint(&mut out, table.len() as u64);
         for (l, c) in &table {

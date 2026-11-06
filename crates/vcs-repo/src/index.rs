@@ -152,6 +152,22 @@ impl Entries {
         }
         self.trees.extend(fresh);
     }
+    /// The cache-tree section of the file layouts (count 0 = absent).
+    pub(crate) fn encode_tail(&self) -> Vec<u8> {
+        let mut tail = Writer::new();
+        match (&self.trees_fp, self.trees.is_empty()) {
+            (Some(fp), false) => {
+                tail.varint(self.trees.len() as u64).id(fp);
+                for (d, id) in &self.trees {
+                    tail.str(d).id(id);
+                }
+            }
+            _ => {
+                tail.varint(0);
+            }
+        }
+        tail.finish()
+    }
     pub fn tree_count(&self) -> usize {
         self.trees.len()
     }
@@ -276,20 +292,7 @@ impl Index {
         if in_block > 0 {
             lens.push(body.len() - block_start);
         }
-        // Optional cache-tree section (count 0 = absent).
-        let mut tail = Writer::new();
-        match (&self.entries.trees_fp, self.entries.trees.is_empty()) {
-            (Some(fp), false) => {
-                tail.varint(self.entries.trees.len() as u64).id(fp);
-                for (d, id) in &self.entries.trees {
-                    tail.str(d).id(id);
-                }
-            }
-            _ => {
-                tail.varint(0);
-            }
-        }
-        let tail = tail.finish();
+        let tail = self.entries.encode_tail();
         let mut head = Writer::new();
         head.varint(self.written_ns)
             .varint(n as u64)
