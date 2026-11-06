@@ -411,7 +411,12 @@ impl Repo {
     /// The cover letter of a series (see [`Repo::format_patches_cover`]).
     fn cover_letter(&self, zone: &str, ids: &[ObjectId], start: usize, prefix: &str, sender: &Signature) -> Result<(String, Vec<u8>)> {
         let last = start + ids.len() - 1;
-        let mut text = mbox::format_header(&ids[ids.len() - 1].to_string(), sender, &format!("[{prefix} {}/{last}] ", 0), "*** SUBJECT HERE ***");
+        let mut text = mbox::format_header(
+            &ids[ids.len() - 1].to_string(),
+            sender,
+            &format!("[{prefix} {}/{last}] ", 0),
+            "*** SUBJECT HERE ***",
+        );
         text.push_str("\n*** BLURB HERE ***\n\n");
         // shortlog: per author in first-appearance order, subjects oldest first
         let mut order: Vec<String> = vec![];
@@ -422,7 +427,9 @@ impl Repo {
             if !by.contains_key(&who) {
                 order.push(who.clone());
             }
-            by.entry(who).or_default().push(c.message.lines().next().unwrap_or("").trim_end().to_owned());
+            by.entry(who)
+                .or_default()
+                .push(c.message.lines().next().unwrap_or("").trim_end().to_owned());
         }
         for who in &order {
             let subs = &by[who];

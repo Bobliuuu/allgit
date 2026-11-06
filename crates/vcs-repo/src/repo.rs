@@ -1760,7 +1760,11 @@ impl Repo {
         out: &mut (Vec<String>, Vec<String>),
     ) -> Result<()> {
         let stack = parent.descend(self.wfs.as_ref(), &self.worktree, dir)?;
-        let abs = if dir.is_empty() { self.worktree.clone() } else { self.worktree.join(dir) };
+        let abs = if dir.is_empty() {
+            self.worktree.clone()
+        } else {
+            self.worktree.join(dir)
+        };
         let mut ents = io(&abs, self.wfs.read_dir(dir))?;
         ents.sort_by(|a, b| a.name.cmp(&b.name));
         let ch = ix.tracked_children(dir)?;
