@@ -124,6 +124,14 @@ impl ResilientBackend {
         }
     }
 
+    /// A throttled answer (S3 503 SlowDown) proves the backend is up: it neither opens nor closes the breaker,
+    /// it only frees the half-open probe slot.
+    fn release(&self) {
+        if self.cfg.breaker_threshold != 0 {
+            self.breaker.lock().unwrap_or_else(|e| e.into_inner()).probing = false;
+        }
+    }
+
     fn record(&self, ok: bool) {
         if self.cfg.breaker_threshold == 0 {
             return;
@@ -171,11 +179,18 @@ impl ResilientBackend {
                     return Err(e);
                 }
                 Err(e) => {
-                    let wait = self.backoff(attempt);
+                    let slow = is_slowdown(&e);
+                    // a SlowDown ramp-up wants longer pauses than a flaky network (the S3 layer already backed off)
+                    let wait = self.backoff(attempt + if slow { 2 } else { 0 });
                     let fits = !matches!(deadline, Some(d) if Instant::now() + wait >= d);
                     if attempt >= retries || !fits {
-                        self.metrics.backend_error("unavailable");
-                        self.record(false);
+                        if slow {
+                            self.metrics.backend_error("slowdown");
+                            self.release();
+                        } else {
+                            self.metrics.backend_error("unavailable");
+                            self.record(false);
+                        }
                         return Err(e);
                     }
                     self.metrics.backend_retries.fetch_add(1, Relaxed);
@@ -188,8 +203,17 @@ impl ResilientBackend {
 
     /// Readiness probe: one HEAD of `key`, no retries, subject to (and feeding) the breaker.
     pub fn probe(&self, key: &str) -> bool {
-        self.run(0, |b| b.exists(key)).is_ok()
+        match self.run(0, |b| b.exists(key)) {
+            Ok(_) => true,
+            // throttled, not down: the node can still serve (cache hits, reads that succeed)
+            Err(e) => is_slowdown(&e),
+        }
     }
+}
+
+/// The S3 client tags an exhausted throttle (503 SlowDown, 429) so it is not mistaken for an outage.
+fn is_slowdown(e: &BackendError) -> bool {
+    matches!(e, BackendError::Unavailable(m) if m.contains("SlowDown"))
 }
 
 impl Backend for ResilientBackend {

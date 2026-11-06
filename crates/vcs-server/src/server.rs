@@ -840,7 +840,8 @@ fn ready(sh: &Shared) -> bool {
             return ok;
         }
     }
-    let ok = sh.resilient.probe(manifest::KEY);
+    // reachable but rejecting our (expired) credentials is not ready either: every real call would fail
+    let ok = sh.resilient.probe(manifest::KEY) && !vcs_store_s3::credentials_rejected();
     *c = Some((Instant::now(), ok));
     ok
 }
