@@ -73,6 +73,8 @@ pub enum PublishError {
     NotHolder { zone: String, path: String, holder: String },
     #[error("zone definition conflict: {0}")]
     ZoneConflict(String),
+    #[error(transparent)]
+    Format(#[from] crate::format::FormatError),
 }
 
 fn fmt_id(i: &Option<ObjectId>) -> String {
@@ -1089,6 +1091,10 @@ impl<'a> Publisher<'a> {
                     self.cur_pack = Some((pi, built));
                 }
                 let b = &self.cur_pack.as_ref().expect("built above").1;
+                if b.pack.starts_with(vcs_store::pack::PACK_MAGIC_V3) {
+                    // VCS_PACK_FORMAT=v3 publishes: older binaries cannot read this pack (issue #567)
+                    crate::format::raise(self.backend, crate::format::LEVEL_COMPACT).map_err(PublishError::Format)?;
+                }
                 let (name, pack) = (b.name.clone(), &b.pack);
                 let key = format!("{}{name}.pack", packfetch::PACK_PREFIX);
                 match self.backend.put_if_absent(&key, pack) {
@@ -1348,6 +1354,11 @@ impl<'a> Publisher<'a> {
                     }
                 }
                 let bytes = new.encode();
+                if bytes.get(4) == Some(&5) {
+                    // The compact layout is unreadable to older binaries: raise the marker first, so a crash
+                    // between the two writes leaves it too high (safe), never too low.
+                    crate::format::raise(self.backend, crate::format::LEVEL_COMPACT).map_err(PublishError::Format)?;
+                }
                 let r = match &expected_tag {
                     None => self
                         .backend
@@ -1459,6 +1470,8 @@ pub fn changed_paths(backend: &dyn Backend, old: Option<ObjectId>, new: ObjectId
 
 /// Read and validate the manifest. Missing manifest = empty repository (tag `None`).
 pub fn load_manifest(backend: &dyn Backend) -> Result<(Manifest, Option<String>), PublishError> {
+    // Refuse a repository that needs a newer binary before decoding anything (issue #567).
+    crate::format::check(backend)?;
     match backend.get(manifest::KEY)? {
         None => Ok((Manifest::default(), None)),
         Some(v) => {

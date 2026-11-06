@@ -21,7 +21,7 @@ const USAGE: &str = "usage: vcs-server (--root <dir> | --backend <s3://...|dir>)
 [--rate-limit <burst>,<per-sec>] [--max-connections <n>] [--max-conns-per-ip <n>] [--auth-fail-limit <burst>,<per-sec>] [--max-body <bytes>] [--max-inflight-body <bytes>] [--cache-dir <dir> [--cache-size <bytes>]] [--upstream <url> --upstream-token <token|@file> [--upstream-ca <pem>] [--upstream-manifest-ttl <secs>] [--upstream-stale-if-error <secs>]] [--policy <file>] [--allowed-signers <file>] [--revoked-signers <file>] [--max-lease-secs N] [--skew-epsilon-ms N] [--tls-cert <pem> --tls-key <pem> [--tls-client-ca <pem> [--tls-client-crl <pem>] [--tls-client-map <file>]]] \
 [--config <file>] [--log-format json|text] [--log-level error|warn|info|debug] [--shutdown-grace <secs>] [--metrics-token <token|@file>] \
 [--backend-retries N] [--backend-timeout <secs>] [--breaker-threshold N] [--breaker-cooldown <secs>] [--check-client-cannot-write-manifest] [--no-group-commit]\n       \
-vcs-server hash-token <token>\n       vcs-server audit verify <file> [--key <file>]";
+vcs-server hash-token <token>\n       vcs-server format --backend <dir|s3://...> [--set-min-reader <level>]\n       vcs-server audit verify <file> [--key <file>]";
 
 fn die(m: &str) -> ! {
     eprintln!("vcs-server: {m}");
@@ -101,6 +101,42 @@ fn main() {
                 Ok(r) if r.already => println!("already sharded"),
                 Ok(r) => println!("migrated to sharded manifests: {} zones", r.zones),
                 Err(e) => die(&format!("migration failed (safe to re-run): {e}")),
+            }
+            return;
+        }
+        Some("format") => {
+            // show or (admin, rollback only) lower the minimum-reader marker: docs/upgrade-rollback.md
+            let (mut url, mut set) = (None, None);
+            let mut it = args[1..].iter();
+            while let Some(a) = it.next() {
+                match a.as_str() {
+                    "--backend" => url = it.next().cloned(),
+                    "--set-min-reader" => set = it.next().and_then(|v| v.parse::<u32>().ok()),
+                    _ => die("usage: vcs-server format --backend <dir|s3://...> [--set-min-reader <level>]"),
+                }
+            }
+            let url = url.unwrap_or_else(|| die("usage: vcs-server format --backend <dir|s3://...> [--set-min-reader <level>]"));
+            let b = backend_url::open_raw(&url).unwrap_or_else(|e| die(&e));
+            use vcs_remote::format as fmt;
+            let show = |b: &dyn vcs_remote::Backend| match fmt::read(b) {
+                Ok(Some((f, _))) => println!("min reader level {} (raised by {}); this binary reads up to level {}", f.min_reader, f.writer, fmt::LEVEL),
+                Ok(None) => println!("no marker: level 1 (baseline); this binary reads up to level {}", fmt::LEVEL),
+                Err(e) => die(&e.to_string()),
+            };
+            match set {
+                None => {
+                    show(b.as_ref());
+                    match fmt::needed_by_data(b.as_ref()) {
+                        Ok((l, why)) if l > 1 => println!("data currently needs level {l}: {why}"),
+                        Ok(_) => println!("data currently needs level 1"),
+                        Err(e) => die(&e.to_string()),
+                    }
+                }
+                Some(level) => match fmt::lower(b.as_ref(), level) {
+                    Ok(true) => show(b.as_ref()),
+                    Ok(false) => println!("unchanged (already at or below level {level})"),
+                    Err(e) => die(&e.to_string()),
+                },
             }
             return;
         }
