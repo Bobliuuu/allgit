@@ -250,3 +250,68 @@ fn pick_is_blocked_during_a_merge_in_progress() {
     let e = r.cherry_pick("root", &c.to_string(), sig()).unwrap_err().to_string();
     assert!(e.contains("already in progress"), "{e}");
 }
+
+#[test]
+fn cherry_pick_merge_commit_with_a_mainline_parent() {
+    let (_d, r, c) = with_feature();
+    r.create_branch("root", "o1").unwrap();
+    r.create_branch("root", "o2").unwrap();
+    write(&r, "h.txt", "h\n");
+    commit(&r, "main side");
+    let m = merged(r.merge("root", "feature", sig()).unwrap());
+    assert_eq!(head(&r).1.parents.len(), 2);
+
+    // no mainline, a mainline out of range, and -m on a plain commit are all refused
+    let e = r.cherry_pick("root", &m.to_string(), sig()).unwrap_err().to_string();
+    assert!(e.contains("-m"), "{e}");
+    r.checkout("root", "o1").unwrap();
+    for bad in [0, 3] {
+        let e = r.cherry_pick_mainline("root", &m.to_string(), Some(bad), sig()).unwrap_err().to_string();
+        assert!(e.contains("out of range"), "{e}");
+    }
+    let e = r.cherry_pick_mainline("root", &c.to_string(), Some(1), sig()).unwrap_err().to_string();
+    assert!(e.contains("not a merge commit"), "{e}");
+    assert!(r.revert("root", &m.to_string(), sig()).is_err());
+    assert!(clean(&r));
+
+    // -m 1: the change the merge made relative to the main side = the feature work
+    let new = merged(r.cherry_pick_mainline("root", &m.to_string(), Some(1), sig()).unwrap());
+    let (id, cm) = head(&r);
+    assert_eq!(id, new);
+    assert_eq!(cm.parents.len(), 1, "a pick is a single-parent commit");
+    assert_eq!(read(&r, "f.txt"), "1\n2\nthree\n");
+    assert_eq!(read(&r, "g.txt"), "g\n");
+    assert!(!exists(&r, "h.txt"));
+    assert!(clean(&r));
+    fsck(&r);
+
+    // -m 2: relative to the feature side = what main did meanwhile
+    r.checkout("root", "o2").unwrap();
+    merged(r.cherry_pick_mainline("root", &m.to_string(), Some(2), sig()).unwrap());
+    assert_eq!(read(&r, "h.txt"), "h\n");
+    assert_eq!(read(&r, "f.txt"), "1\n2\n3\n");
+    assert!(!exists(&r, "g.txt"));
+    assert!(clean(&r));
+    fsck(&r);
+}
+
+#[test]
+fn cherry_pick_merge_commit_conflict_finishes_as_a_single_parent_commit() {
+    let (_d, r, _c) = with_feature();
+    r.create_branch("root", "o1").unwrap();
+    write(&r, "h.txt", "h\n");
+    commit(&r, "main side");
+    let m = merged(r.merge("root", "feature", sig()).unwrap());
+    r.checkout("root", "o1").unwrap();
+    write(&r, "f.txt", "1\n2\nlocal\n");
+    commit(&r, "local edit of line 3");
+    match r.cherry_pick_mainline("root", &m.to_string(), Some(1), sig()).unwrap() {
+        MergeOutcome::Conflicted { paths } => assert_eq!(paths, vec!["f.txt".to_string()]),
+        o => panic!("{o:?}"),
+    }
+    write(&r, "f.txt", "1\n2\nboth\n");
+    r.add(&["f.txt".to_string()]).unwrap();
+    r.commit("picked", sig()).unwrap();
+    assert_eq!(head(&r).1.parents.len(), 1);
+    assert_eq!(read(&r, "g.txt"), "g\n");
+}

@@ -319,6 +319,8 @@ impl Repo {
             diff: treeops::TreeDiff,
             /// Conflicted paths with the entry the head has there (the "ours" side).
             conflicts: Vec<(String, Option<(EntryMode, ObjectId)>)>,
+            /// File/directory conflicts: the path whose file side was parked beside its directory.
+            parked: Vec<String>,
         }
         let mut plans = Vec::new();
         for z in &entry.zones {
@@ -337,12 +339,7 @@ impl Repo {
                 None => None,
             };
             let mut tm = self.merge3_trees(&prefix, base, ours, Some(theirs))?;
-            if let Some(c) = tm.conflicts.iter().find(|c| c.kind == ConflictKind::FileDirectory) {
-                return msg(format!(
-                    "{:?} is a file on one side and a directory on the other; file/directory conflicts are not supported yet (nothing was changed)",
-                    c.path
-                ));
-            }
+            self.fd_preflight(&tm)?;
             for (id, data) in &tm.new_blobs {
                 if self.store.put_blob(data)? != *id {
                     return Err(Error::Corrupt("merged blob id mismatch".into()));
@@ -361,15 +358,30 @@ impl Repo {
                 base: "base",
                 right,
             };
-            let conflicts = std::mem::take(&mut tm.conflicts);
-            for c in &conflicts {
-                let (mode, id, _) = self.placeholder(c, &labels)?;
-                tm.set_placeholder(&c.path, (mode, id));
+            let all = std::mem::take(&mut tm.conflicts);
+            // A file/directory conflict keeps the directory at the path and parks the file side(s) at
+            // `path~ours` / `path~theirs` (theirs = the entry); the rest get marker files in place.
+            let mut conflicts = Vec::new();
+            let mut parked = Vec::new();
+            for c in all {
+                if c.kind == ConflictKind::FileDirectory {
+                    for (id, mode, ours) in [(c.left, c.left_mode, true), (c.right, c.right_mode, false)] {
+                        if let Some(id) = id {
+                            tm.set_placeholder(&crate::merge::fd_side_path(&c.path, ours), (mode.unwrap_or(EntryMode::File), id));
+                        }
+                    }
+                    parked.push(c.path);
+                } else {
+                    let (mode, id, _) = self.placeholder(&c, &labels)?;
+                    tm.set_placeholder(&c.path, (mode, id));
+                    conflicts.push(c);
+                }
             }
             let (_, diff) = tm.apply(&self.store, ours, false)?;
             plans.push(Plan {
                 zone: z.zone.clone(),
                 diff,
+                parked,
                 conflicts: conflicts
                     .iter()
                     .map(|c| (c.path.clone(), c.left.map(|id| (c.left_mode.unwrap_or(EntryMode::File), id))))
@@ -380,6 +392,7 @@ impl Repo {
         let mut conflicted = Vec::new();
         for p in &plans {
             self.transition_diff(&p.zone, &zones, &p.diff, &mut ix)?;
+            conflicted.extend(p.parked.iter().cloned());
             for (path, ours) in &p.conflicts {
                 // Show the conflict as an unstaged change against the head, not as staged work.
                 ix.entries.remove(path);

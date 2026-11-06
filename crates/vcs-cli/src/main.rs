@@ -412,9 +412,12 @@ enum Cmd {
     /// Re-apply the change of one commit onto the checked-out branch
     #[command(name = "cherry-pick")]
     CherryPick {
-        /// Commit id (or unique prefix), branch name, HEAD, or a range `A..B` (the commits of B that A lacks, oldest first); several allowed
+        /// Commit id (or unique prefix), branch name, HEAD, a range `A..B` (the commits of B that A lacks, oldest first) or `A...B` (the commits of either that the other lacks); several allowed
         #[arg(required = true)]
         revs: Vec<String>,
+        /// Mainline parent (1-based) for a merge commit: take its change relative to that parent
+        #[arg(short = 'm', long = "mainline", value_name = "PARENT")]
+        mainline: Option<usize>,
         /// Zone (default: the zone containing the current directory)
         #[arg(long)]
         zone: Option<String>,
@@ -1782,14 +1785,14 @@ fn run(cli: Cli) -> Result<(), Error> {
                 }
             }
         }
-        Cmd::CherryPick { revs, zone } => {
+        Cmd::CherryPick { revs, mainline, zone } => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
             if revs.len() == 1 && !revs[0].contains("..") {
-                let out = repo.cherry_pick(&zone, &revs[0], author()?)?;
+                let out = repo.cherry_pick_mainline(&zone, &revs[0], mainline, author()?)?;
                 print_pick(&zone, out, "cherry-pick")?;
             } else {
-                print_pick_seq(&zone, repo.cherry_pick_many(&zone, &revs, author()?)?)?;
+                print_pick_seq(&zone, repo.cherry_pick_many_mainline(&zone, &revs, mainline, author()?)?)?;
             }
         }
         Cmd::Cherry {

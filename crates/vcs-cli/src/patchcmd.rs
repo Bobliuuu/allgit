@@ -12,7 +12,7 @@ fn err<T>(m: impl Into<String>) -> Result<T, Error> {
 
 #[derive(Args, Clone)]
 pub struct FormatPatchArgs {
-    /// Commits to turn into patches: `A..B` (commits of B not in A), or a revision (commits on the branch not in it)
+    /// Commits to turn into patches: `A..B` (commits of B not in A), `A...B` (commits of either not in the other), or a revision (commits on the branch not in it)
     pub rev: Option<String>,
     /// The last N commits of the branch instead
     #[arg(short = 'n', long = "count", value_name = "N")]
@@ -121,7 +121,7 @@ pub fn format_patch(repo: &Repo, cwd: &Path, a: FormatPatchArgs) -> Result<(), E
         return err("give what to format: `-n N` (last N commits), `<rev>` (commits not in it), `A..B`, or `--root`");
     }
     let (since, head) = match a.rev.as_deref() {
-        Some(r) if r.contains("...") => return err("`A...B` is not supported; use `vcs merge-base`, then `A..B`"),
+        Some(r) if r.contains("...") => (None, None),
         Some(r) => match r.split_once("..") {
             Some((x, y)) => (
                 Some(if x.is_empty() { "HEAD" } else { x }),
@@ -131,7 +131,10 @@ pub fn format_patch(repo: &Repo, cwd: &Path, a: FormatPatchArgs) -> Result<(), E
         },
         None => (None, None),
     };
-    let ids = repo.patch_range(&zone, since, head, a.count, a.root)?;
+    let ids = match a.rev.as_deref().and_then(|r| r.split_once("...")) {
+        Some((x, y)) => repo.patch_range_sym(&zone, if x.is_empty() { "HEAD" } else { x }, if y.is_empty() { "HEAD" } else { y }, a.count)?,
+        None => repo.patch_range(&zone, since, head, a.count, a.root)?,
+    };
     if ids.is_empty() {
         return err("no commits to format");
     }

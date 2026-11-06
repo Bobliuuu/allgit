@@ -6,7 +6,8 @@
 //! previous head and worktree). Conflicts are persisted exactly like `vcs merge`
 //! (`.vcs/conflicts`, markers in the worktree, `vcs resolve`/`vcs add`, `vcs merge --abort`);
 //! the extra `.vcs/pick` marker tells `vcs commit` to create a single-parent commit instead of
-//! a merge commit. Merge commits cannot be picked or reverted (no mainline selection yet).
+//! a merge commit. A merge commit is picked with a mainline (`cherry-pick -m N`): the change is
+//! taken against its N-th parent, as in git; without one it is refused.
 
 use crate::error::{msg, Error, Result};
 use crate::merge::{ConflictRec, MergeOutcome, MergeState};
@@ -14,7 +15,7 @@ use crate::meta::{frame, unframe, write_atomic};
 use crate::repo::{fresh_change_id, Repo};
 use std::collections::BTreeSet;
 use std::fs;
-use vcs_merge::{ConflictKind, MarkerLabels};
+use vcs_merge::MarkerLabels;
 use vcs_objects::{Commit, Object, ObjectId, RefUpdate, Signature, Transaction};
 use vcs_store::ObjectStore;
 
@@ -132,6 +133,19 @@ impl Repo {
         self.pick_id(zone, target, PickKind::CherryPick, author)
     }
 
+    /// [`Repo::cherry_pick_id`] with a mainline: for a merge commit, the 1-based parent the
+    /// change is taken against (`git cherry-pick -m N`). `None` is the plain pick.
+    pub fn cherry_pick_id_mainline(&self, zone: &str, target: ObjectId, mainline: Option<usize>, author: Signature) -> Result<MergeOutcome> {
+        self.pick_core(zone, target, PickKind::CherryPick, author, false, mainline)
+    }
+
+    /// [`Repo::cherry_pick`] with a mainline (`-m N`).
+    pub fn cherry_pick_mainline(&self, zone: &str, rev: &str, mainline: Option<usize>, author: Signature) -> Result<MergeOutcome> {
+        let zone = self.resolve_zone(zone)?;
+        let target = self.resolve_commit(&zone, rev)?;
+        self.cherry_pick_id_mainline(&zone, target, mainline, author)
+    }
+
     fn pick(&self, zone: &str, rev: &str, kind: PickKind, author: Signature) -> Result<MergeOutcome> {
         let zone = self.resolve_zone(zone)?;
         let target = self.resolve_commit(&zone, rev)?;
@@ -143,6 +157,18 @@ impl Repo {
     }
 
     fn pick_id_opts(&self, zone: &str, target: ObjectId, kind: PickKind, author: Signature, no_commit: bool) -> Result<MergeOutcome> {
+        self.pick_core(zone, target, kind, author, no_commit, None)
+    }
+
+    fn pick_core(
+        &self,
+        zone: &str,
+        target: ObjectId,
+        kind: PickKind,
+        author: Signature,
+        no_commit: bool,
+        mainline: Option<usize>,
+    ) -> Result<MergeOutcome> {
         let zone = self.resolve_zone(zone)?;
         let zone = zone.as_str();
         let _l = self.lock()?;
@@ -166,18 +192,31 @@ impl Repo {
         if c.zone != zone {
             return msg(format!("{} belongs to zone {:?}, not {zone:?}", target.short(), c.zone));
         }
-        if c.parents.len() > 1 {
-            return msg(format!(
-                "{} is a merge commit; {verb} of merge commits is not supported",
-                target.short()
-            ));
+        // Which parent the change is taken against: the only one, or the mainline of a merge.
+        if kind == PickKind::Revert && c.parents.len() > 1 {
+            return msg(format!("{} is a merge commit; revert of merge commits is not supported", target.short()));
         }
+        let parent_ix = match (c.parents.len(), mainline) {
+            (n, None) if n > 1 => {
+                return msg(format!(
+                    "{} is a merge commit with {n} parents; give the mainline parent with `-m <1..{n}>` (nothing was changed)",
+                    target.short()
+                ))
+            }
+            (n, Some(m)) if n > 1 && (m == 0 || m > n) => {
+                return msg(format!("{} has {n} parents; -m {m} is out of range 1..{n}", target.short()))
+            }
+            (n, Some(_)) if n <= 1 => {
+                return msg(format!("{} is not a merge commit; -m does not apply", target.short()))
+            }
+            (_, m) => m.map_or(0, |m| m - 1),
+        };
         let Some(ours) = refs.head(zone, &branch) else {
             return msg(format!("{zone}/{branch} has no commits to {verb} onto"));
         };
         let prefix = zones.path_of(zone).unwrap_or("").to_owned();
         let this = c.root;
-        let parent = match c.parents.first() {
+        let parent = match c.parents.get(parent_ix) {
             Some(p) => Some(self.commit_obj(p)?.root),
             None => None,
         };
@@ -188,12 +227,7 @@ impl Repo {
         let ours_root = self.commit_obj(&ours)?.root;
         let mut ix = self.index()?;
         let mut tm = self.merge3_trees(&prefix, base, Some(ours_root), theirs)?;
-        if let Some(x) = tm.conflicts.iter().find(|x| x.kind == ConflictKind::FileDirectory) {
-            return msg(format!(
-                "{:?} is a file on one side and a directory on the other; file/directory conflicts are not supported yet (nothing was changed)",
-                x.path
-            ));
-        }
+        self.fd_preflight(&tm)?;
         if !tm.conflicts.is_empty() {
             self.require_conflicts_materialized(zone, tm.conflicts.iter().map(|c| c.path.as_str()), verb)?;
         }
@@ -213,31 +247,13 @@ impl Repo {
                 format!("Revert \"{first}\"\n\nThis reverts commit {target}."),
             ),
         };
-        let mut recs = Vec::new();
         let left_label = format!("ours ({zone}/{branch})");
         let labels = MarkerLabels {
             left: &left_label,
             base: "base",
             right: &label,
         };
-        let conflicts = std::mem::take(&mut tm.conflicts);
-        for x in &conflicts {
-            let (mode, id, markers) = self.placeholder(x, &labels)?;
-            tm.set_placeholder(&x.path, (mode, id));
-            recs.push(ConflictRec {
-                path: x.path.clone(),
-                kind: x.kind,
-                base: x.base,
-                left: x.left,
-                right: x.right,
-                base_mode: x.base_mode,
-                left_mode: x.left_mode,
-                right_mode: x.right_mode,
-                placeholder: id,
-                has_markers: markers,
-                resolved: false,
-            });
-        }
+        let recs = self.conflict_recs(&mut tm, &labels)?;
         let (new_root, diff) = tm.apply(&self.store, Some(ours_root), recs.is_empty())?;
         if recs.is_empty() {
             if new_root == ours_root {

@@ -904,13 +904,7 @@ impl Repo {
                 pc.root
             } else {
                 let tm = self.merge3_trees(&prefix, base_root, Some(cursor_root), Some(pc.root))?;
-                if let Some(c) = tm.conflicts.iter().find(|c| c.kind == ConflictKind::FileDirectory) {
-                    return msg(format!(
-                        "{:?} is a file on one side and a directory on the other while replaying {}; file/directory conflicts are not supported yet (the working tree was not changed)",
-                        c.path,
-                        pick.short()
-                    ));
-                }
+                self.fd_preflight(&tm)?;
                 if !tm.conflicts.is_empty() {
                     self.require_conflicts_materialized(&run.zone, tm.conflicts.iter().map(|c| c.path.as_str()), "rebase")?;
                 }
@@ -978,25 +972,7 @@ impl Repo {
             base: "base",
             right: label,
         };
-        let mut recs = Vec::new();
-        let conflicts = std::mem::take(&mut tm.conflicts);
-        for c in &conflicts {
-            let (mode, id, markers) = self.placeholder(c, &labels)?;
-            tm.set_placeholder(&c.path, (mode, id));
-            recs.push(ConflictRec {
-                path: c.path.clone(),
-                kind: c.kind,
-                base: c.base,
-                left: c.left,
-                right: c.right,
-                base_mode: c.base_mode,
-                left_mode: c.left_mode,
-                right_mode: c.right_mode,
-                placeholder: id,
-                has_markers: markers,
-                resolved: false,
-            });
-        }
+        let recs = self.conflict_recs(&mut tm, &labels)?;
         let prefix = zones.path_of(&run.zone).unwrap_or("").to_owned();
         // The conflicted tree is never committed, so it is not stored: the change from the working
         // tree is the (stored) worktree -> cursor difference chained with the patch difference.
