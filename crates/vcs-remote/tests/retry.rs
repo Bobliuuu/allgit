@@ -364,3 +364,88 @@ mod parallel {
         assert_eq!(r.retried(), 1);
     }
 }
+
+/// Backend whose reads answer `503 SlowDown` while `shed` is set.
+struct Shedding {
+    inner: MemBackend,
+    shed: std::sync::atomic::AtomicBool,
+}
+impl Backend for Shedding {
+    fn get(&self, k: &str) -> Result<Option<Versioned>, BackendError> {
+        if self.shed.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(BackendError::Unavailable("GET k: HTTP 503 SlowDown".into()));
+        }
+        self.inner.get(k)
+    }
+    fn get_range(&self, k: &str, o: u64, l: u64) -> Result<Option<Vec<u8>>, BackendError> {
+        self.inner.get_range(k, o, l)
+    }
+    fn exists(&self, k: &str) -> Result<bool, BackendError> {
+        self.inner.exists(k)
+    }
+    fn put_if_absent(&self, k: &str, d: &[u8]) -> Result<bool, BackendError> {
+        self.inner.put_if_absent(k, d)
+    }
+    fn put_if_match(&self, k: &str, d: &[u8], t: &str) -> Result<Option<String>, BackendError> {
+        self.inner.put_if_match(k, d, t)
+    }
+    fn list(&self, p: &str) -> Result<Vec<String>, BackendError> {
+        self.inner.list(p)
+    }
+}
+
+#[test]
+fn shared_throttle_halves_on_slowdown_and_recovers() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let sh = Arc::new(Shedding {
+        inner: MemBackend::new(),
+        shed: std::sync::atomic::AtomicBool::new(false),
+    });
+    struct W(Arc<Shedding>);
+    impl Backend for W {
+        fn get(&self, k: &str) -> Result<Option<Versioned>, BackendError> {
+            self.0.get(k)
+        }
+        fn get_range(&self, k: &str, o: u64, l: u64) -> Result<Option<Vec<u8>>, BackendError> {
+            self.0.get_range(k, o, l)
+        }
+        fn exists(&self, k: &str) -> Result<bool, BackendError> {
+            self.0.exists(k)
+        }
+        fn put_if_absent(&self, k: &str, d: &[u8]) -> Result<bool, BackendError> {
+            self.0.put_if_absent(k, d)
+        }
+        fn put_if_match(&self, k: &str, d: &[u8], t: &str) -> Result<Option<String>, BackendError> {
+            self.0.put_if_match(k, d, t)
+        }
+        fn list(&self, p: &str) -> Result<Vec<String>, BackendError> {
+            self.0.list(p)
+        }
+    }
+    let b = RetryBackend::with_policy(
+        Box::new(W(sh.clone())),
+        RetryPolicy {
+            retries: 0,
+            base: Duration::from_millis(1),
+            cap: Duration::from_millis(4),
+        },
+    )
+    .with_max_concurrency(32);
+    assert_eq!(b.concurrency_limit(), Some(32));
+    sh.shed.store(true, SeqCst);
+    assert!(b.get("k").is_err());
+    assert_eq!(b.concurrency_limit(), Some(16), "one 503 halves the limit");
+    assert_eq!(b.throttled(), 1);
+    std::thread::sleep(Duration::from_millis(10)); // cool-down is a few ms
+    assert!(b.get("k").is_err());
+    assert_eq!(b.concurrency_limit(), Some(8));
+    sh.shed.store(false, SeqCst);
+    std::thread::sleep(Duration::from_millis(10));
+    for _ in 0..200 {
+        b.get("k").unwrap();
+    }
+    assert!(b.concurrency_limit().unwrap() > 8, "successes grow the limit back");
+    // Off switch: no limit reported.
+    let off = RetryBackend::new(Box::new(MemBackend::new())).with_max_concurrency(0);
+    assert_eq!(off.concurrency_limit(), None);
+}
