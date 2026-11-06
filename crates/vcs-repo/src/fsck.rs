@@ -15,7 +15,7 @@
 use crate::error::Result;
 use crate::repo::{FsckReport, Repo};
 use std::collections::{BTreeSet, HashMap};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use vcs_objects::{Object, ObjectId};
 use vcs_store::ObjectStore;
@@ -149,6 +149,17 @@ impl Zones {
     }
 }
 
+/// A commit as the cross-object checks need it, by index into `ids`.
+struct CommitRec {
+    idx: usize,
+    zone: u32,
+    /// `parents[start..start + n]` of the worker that found it
+    start: usize,
+    n: usize,
+    /// index of the root tree in `ids` (`usize::MAX`: not in the sorted list)
+    root: usize,
+}
+
 /// What one worker found. Merged in a fixed order after the pass.
 struct Acc {
     problems: Vec<String>,
@@ -156,7 +167,7 @@ struct Acc {
     misses: Vec<(ObjectId, String)>,
     chunked: Vec<(ObjectId, vcs_objects::ChunkedBlob)>,
     /// `(index of the commit in ids, zone, start in parents, count)`
-    commits: Vec<(usize, u32, usize, usize)>,
+    commits: Vec<CommitRec>,
     /// indexes in `ids` of the parents of `commits`, flat
     parents: Vec<usize>,
     last_zone: Option<(String, u32)>,
@@ -226,7 +237,9 @@ impl Ctx<'_> {
                         i
                     }
                 };
-                self.exists(&c.root, acc, || format!("commit {id}: missing root tree {}", c.root));
+                let root = self
+                    .exists(&c.root, acc, || format!("commit {id}: missing root tree {}", c.root))
+                    .unwrap_or(usize::MAX);
                 let start = acc.parents.len();
                 for p in &c.parents {
                     if let Some(pi) = self.exists(p, acc, || format!("commit {id}: missing parent {p}")) {
@@ -234,7 +247,7 @@ impl Ctx<'_> {
                     }
                 }
                 let n = acc.parents.len() - start;
-                acc.commits.push((idx, zone, start, n));
+                acc.commits.push(CommitRec { idx, zone, start, n, root });
                 commit_fact(zone)
             }
             Object::Tree(t) => {
@@ -371,6 +384,100 @@ impl Repo {
         Ok(seen)
     }
 
+    /// For each id of `miss` (referenced, held nowhere): whether a remote-tracking head reaches it through objects
+    /// we hold, i.e. whether it is an evictable cache miss. Same answer as membership in [`Repo::remote_closure`],
+    /// without its single-threaded `BTreeSet` of the whole repository: commits are walked from the in-memory commit
+    /// records, trees on every core with an atomic visited map.
+    fn reachable_misses(&self, ctx: &Ctx, accs: &[Acc], miss: &IdSet) -> Result<Vec<AtomicBool>> {
+        let reached: Vec<AtomicBool> = (0..miss.ids.len()).map(|_| AtomicBool::new(false)).collect();
+        let n = ctx.ids.ids.len();
+        let visited: Vec<AtomicBool> = (0..n).map(|_| AtomicBool::new(false)).collect();
+        // commit index -> (root, parents), by binary search over the records sorted by index
+        let mut recs: Vec<(usize, usize, usize, usize)> = Vec::new(); // (idx, acc, start, n) + root below
+        let mut roots: Vec<usize> = Vec::new();
+        for (ai, a) in accs.iter().enumerate() {
+            for c in &a.commits {
+                recs.push((c.idx, ai, c.start, c.n));
+                roots.push(c.root);
+            }
+        }
+        let mut order: Vec<usize> = (0..recs.len()).collect();
+        order.sort_unstable_by_key(|&i| recs[i].0);
+        let find_rec = |idx: usize| order.binary_search_by_key(&idx, |&i| recs[i].0).ok().map(|k| order[k]);
+        let mark_leaf = |id: &ObjectId| {
+            if let Some(k) = miss.find(id) {
+                reached[k].store(true, Ordering::Relaxed);
+            }
+        };
+        let mut generic: Vec<usize> = Vec::new(); // objects to read and expand (trees, tags, ...)
+        let mut stack: Vec<ObjectId> = self.remote_refs()?.branches.values().copied().collect();
+        // phase 1: the commit graph from the in-memory records
+        while let Some(id) = stack.pop() {
+            let Some(i) = ctx.ids.find(&id) else {
+                mark_leaf(&id);
+                continue;
+            };
+            if visited[i].swap(true, Ordering::Relaxed) {
+                continue;
+            }
+            match find_rec(i) {
+                Some(r) => {
+                    let (_, ai, start, cnt) = recs[r];
+                    if roots[r] != usize::MAX && !visited[roots[r]].swap(true, Ordering::Relaxed) {
+                        generic.push(roots[r]);
+                    }
+                    for &p in &accs[ai].parents[start..start + cnt] {
+                        stack.push(ctx.ids.ids[p]);
+                    }
+                }
+                None => generic.push(i),
+            }
+        }
+        // phase 2: trees and everything else, in parallel
+        let work = Mutex::new(generic);
+        let threads = std::thread::available_parallelism().map_or(1, |t| t.get());
+        std::thread::scope(|sc| {
+            for _ in 0..threads {
+                sc.spawn(|| {
+                    let mut local: Vec<usize> = Vec::new();
+                    let mut kids: Vec<ObjectId> = Vec::new();
+                    loop {
+                        if local.is_empty() {
+                            let mut w = work.lock().unwrap();
+                            let take = w.len().min(256);
+                            if take == 0 {
+                                return;
+                            }
+                            let at = w.len() - take;
+                            local.extend(w.drain(at..));
+                        }
+                        let Some(i) = local.pop() else { continue };
+                        if ctx.facts[i].load(Ordering::Acquire) & 3 == 1 {
+                            continue; // a plain blob names nothing
+                        }
+                        let Ok(o) = self.store.get(&ctx.ids.ids[i]) else { continue };
+                        kids.clear();
+                        crate::gc::children(&o, &mut kids);
+                        for k in &kids {
+                            match ctx.ids.find(k) {
+                                Some(ci) => {
+                                    if ctx.facts[ci].load(Ordering::Acquire) & 3 == 1 {
+                                        continue;
+                                    }
+                                    if !visited[ci].swap(true, Ordering::Relaxed) {
+                                        local.push(ci);
+                                    }
+                                }
+                                None => mark_leaf(k),
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        Ok(reached)
+    }
+
     /// Verify every object (hash + canonical decode) and graph invariants.
     pub fn fsck(&self) -> Result<FsckReport> {
         // The operation log, commit graph, path filters and reach cache are checked independently of the objects:
@@ -431,6 +538,25 @@ impl Repo {
         object_problems.sort();
         rep.problems.append(&mut object_problems);
         misses.sort();
+        if !misses.is_empty() {
+            // A lazily cloned repository misses every file blob: ask which of them a remote-tracking head reaches
+            // with one parallel walk, not with a single-threaded closure over the whole repository per miss.
+            let mut miss_ids: Vec<ObjectId> = misses.iter().map(|(i, _)| *i).collect();
+            miss_ids.dedup(); // `misses` is sorted by id
+            let set = IdSet::new(miss_ids);
+            let reached = self.reachable_misses(&ctx, &accs, &set)?;
+            for (id, what) in misses {
+                if self.store.contains(&id)? {
+                    continue;
+                }
+                match set.find(&id) {
+                    Some(k) if reached[k].load(Ordering::Relaxed) => {
+                        evictable.insert(id);
+                    }
+                    _ => rep.problems.push(what),
+                }
+            }
+        }
         // A missing object is an evictable cache miss only if the remote is known to have it.
         let mut missing = |this: &Self, id: &ObjectId, what: String, problems: &mut Vec<String>| -> Result<()> {
             if this.store.contains(id)? {
@@ -446,9 +572,6 @@ impl Repo {
             }
             Ok(())
         };
-        for (id, what) in misses {
-            missing(self, &id, what, &mut rep.problems)?;
-        }
 
         // Chunk manifests: every chunk must be a plain blob of the recorded length.
         chunked.sort_by_key(|(id, _)| *id);
@@ -483,7 +606,7 @@ impl Repo {
         // Commit parents live in the zone of their child.
         let mut zone_problems = Vec::new();
         for a in &accs {
-            for &(idx, zone, start, n) in &a.commits {
+            for &CommitRec { idx, zone, start, n, .. } in &a.commits {
                 for &pi in &a.parents[start..start + n] {
                     let f = ctx.facts[pi].load(Ordering::Acquire);
                     if f != UNSEEN && f & 3 == 3 && (f >> 2) as u32 != zone {
