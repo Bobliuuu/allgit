@@ -134,6 +134,73 @@ cached, 10M lstat on a cold gp3 volume) had run **30 minutes at 9 percent CPU (I
 killed, so the first-status time at 10M, and the later commands, are NOT measured. Memory at import (about 1.1 KB per file) is
 the first limit; the first status is bound by random metadata reads, as at 300k files (finding 10).
 
+## Clone and fsck at scale (i4i.8xlarge, 32 vCPU, 247 GB, NVMe; 2026-11-06; MEASURED, before and after)
+
+Why: at 10M commits `clone` was 2.4x and `fsck` 6x slower than git, and `fsck` used 56 GiB (see `docs/research/trillion-scaling-findings.md`).
+Profiles (`perf` with frame pointers) found the real causes, none of them I/O:
+
+| operation | cause (measured) | fix |
+|---|---|---|
+| `fsck` | one thread read, hashed and decoded every object in id order (`store.get`, random pack access, one decoded block per object in v3 packs); `verify_packs` then hashed every pack again; a `remote_closure` BTreeSet walk of the whole repository (17 percent of the profile, single thread) ran even for a healthy repo; one pack-index probe per tree entry (1e9 at 10M commits); a `BTreeMap` of every commit and a `HashMap` of every id | `crates/vcs-repo/src/fsck.rs`: one pass over each mapped pack in pack order on every core (`Pack::scan`, shared with `verify_packs`, so the pack is hashed once); per-object state is 8 bytes (`facts`), commits keep zone, root, parents as indexes; existence of a referenced id is a bucket-index lookup in the sorted id list, prefetched a tree at a time (a plain binary search over 40M ids was 15 dependent cache misses per lookup and 70 percent of the time); remote closure only when something is missing, and then one parallel reachability walk; the commit-graph, ops, path-filter and reach-cache checks run alongside the object pass; index blobs are checked by streaming the index blocks on every core |
+| `clone` | single-threaded post-order DFS: its stack held every commit, its read-ahead cache every metadata object (21.5 GiB), `known_end` was 22 percent (quadratic over pending ids), every object paid decode, two hash probes, `contains` and a store `put` on one thread; the file prefetch of a wide repository put each blob through the pending map | `crates/vcs-remote/src/bulkmeta.rs`: a reader streams each remote pack's commit and tree prefix, workers hash and strictly decode on all cores and check every named dependency against a sharded id set, a writer appends bounded local packs; holes (loose objects, metadata outside a prefix) fall back to the old walk; large file prefetches are written as streamed packs; `collect_missing_files` builds no path strings without a sparse set |
+
+Method: single runs on the shared box. The box timing lock was held for hours by another job (`bench_status_fair.py`), so these
+runs were **not** under `flock`: they ran at `nice -n 19` with load average 1 to 7 (mostly single-threaded jobs of other agents),
+so wall times are an upper bound, and a first run after other jobs evicted the page cache is slower (fsck 1M: 4.6 s warm, 11.1 s cold).
+Peak memory is anonymous RSS sampled every 0.5 s (`scripts/scaling/anon_peak.sh`); mapped pack pages are not counted (they are
+reclaimable page cache; they are what git's 4 GB "peak_file" does not show). Same generated data feeds vcs and git
+(`scripts/scalability/gen.py deep|wide`). "Before" is the previous binary on the same box except where marked (10M deep: the
+earlier driver run on the same generator; 10M deep was not re-run with the old code, it would take 4.5 hours).
+
+Deep history (one file touched per commit, 4 objects per commit):
+
+| | before (vcs) | after (vcs) | git |
+|---|---|---|---|
+| 1M commits `fsck` | 180.5 s, 6.0 GB maxrss | **4.6 s** warm / 11.1 s cold, 0.52 GB | 39.8 s to 50.3 s, 0.48 GB |
+| 1M commits `clone` | 92.6 s to 100.4 s, 2.71 GB | **13.1 s to 14.1 s**, 1.43 to 1.54 GB | 63.4 s to 65.0 s |
+| 1M `fsck` of that (lazy) clone, 999,000 blobs not cached | 112 s to 120 s, 3.7 to 4.2 GB | **5.6 s to 8.1 s**, 1.0 GB | n/a |
+| 10M commits `fsck` | 2926 s, 56.5 GiB | **53 s to 68 s**, 4.7 GB | 520 s, 4.3 GB (earlier run: 479 s) |
+| 10M commits `clone` | 1596 s, 21.5 GiB | **175 s to 185 s**, 6.5 to 6.9 GB | 697 s (earlier run: 674 s) |
+| 10M `fsck` of that (lazy) clone, 9,999,000 blobs not cached | not run | 131.8 s to 148.6 s, 8.5 to 9.3 GB (first version: 385 s) | n/a |
+
+Wide (one commit, N files, N/100 directories):
+
+| | before (vcs) | after (vcs) | git |
+|---|---|---|---|
+| 1M files `fsck` | not run | 0.50 s, 0.8 MB | 3.5 s, 0.27 GB |
+| 1M files `clone` | 12.6 s | 13.1 s (checkout bound) | 13.1 s (but git did not check out: HEAD was not `main`) |
+| 10M files `fsck` | 55 s (findings) | **3.5 s** warm / 16.6 s cold, 1.24 GB | not run (git import killed at 10M) |
+| 10M files `clone` | 151 s, 8.4 GB | **137 s**, 6.8 GB | not run |
+| 100M files `clone`, `fsck` | 4631 s, 74.9 GiB / 1108 s, 47.7 GiB | **not re-measured** (import alone is 2300 s and 100 GiB) | not run |
+
+What it shows:
+
+* `fsck` is now faster than git at 10M commits (53 to 68 s against 520 s, 9x), memory is about 120 B per object
+  (4.7 GB at 40M objects, 120 B per object; 13x lower than before) and the wide case is 7x faster than git at 1M files.
+* The 10M-commit `clone` is 3.8x faster than git and 9x faster than before. It was not profiled again after the fix; the
+  candidates are the single-threaded pack write (one `fsync`ed segment at a time), `adopt_remote_tags` (1M tags) and the checkout.
+* The wide `clone` did not get much faster: 10M files are 10M `creat` calls, 17 s of `sys` time per 1M files, and the index
+  (`transition_apply_ws`, `Index::insert`, a `BTreeMap`) is built in memory. That code belongs to the checkout and index owners.
+  Its first version of the streamed prefetch made it 36 percent SLOWER (204 s vs 151 s): every store lookup tries the packs one
+  after the other and 25 packs of 400k blobs cost 47 percent of the run in `PackIndex::search`; segments are 2 GiB now.
+
+What the profile showed that the first fix missed (kept here because it will matter again):
+
+* An id lookup is memory-latency bound: the first `IdSet` was an interpolation search and left `memcmp` at 70 percent of
+  fsck (about 15 dependent misses per lookup); a bucket table plus prefetching a tree's 16 entries at a time cut CPU 3.6x.
+* A lazily cloned repository misses every file blob. Building one message per reference was 4 GB and 110 s at 1M commits
+  (200 B x 1e8 references at 10M); a missing id is recorded once and its message rebuilt from the referrer only when reported.
+
+Tests: `crates/vcs-repo/tests/fsck_batches.rs` (batch size of 3 vs 1,000,000 on loose objects with a missing chunk) and
+`fsck_packed.rs` (the same on packed objects, plus a flipped byte in a pack); `crates/vcs-remote/tests/bulk_meta.rs` (bulk fetch
+equals the plain walk over several packs, fills holes left by loose objects, declines a remote without packs, rejects a tampered
+pack). The full `vcs-store`, `vcs-repo`, `vcs-remote`, `vcs-cli` suites pass.
+
+Not done: a multi-pack index (every `LocalStore::get` still tries the packs in turn; a bulk clone writes 1 pack per 2 GiB),
+`Block::decode` allocates a `HashMap` per v3 block (a 1M-commit v3 pack took 16 s before the bucket index; not re-measured), the single-threaded segment
+write and `fsync`, the 47 s commit-graph check at 10M commits (`cgraph.rs`, not touched; it now overlaps the object pass, so it
+is the floor), zone-filtered clones (they still use the object-by-object walk), and the 1e8-file runs.
+
 ## Soak audit with the delta layout
 
 `VCS_REFS_DELTA_MIN=0` (every repository in refs-delta mode, branches through the log) with `scripts/soak/soak.py run --kind vcs
