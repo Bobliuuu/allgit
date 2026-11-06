@@ -266,10 +266,16 @@ fn cherry_pick_merge_commit_with_a_mainline_parent() {
     assert!(e.contains("-m"), "{e}");
     r.checkout("root", "o1").unwrap();
     for bad in [0, 3] {
-        let e = r.cherry_pick_mainline("root", &m.to_string(), Some(bad), sig()).unwrap_err().to_string();
+        let e = r
+            .cherry_pick_mainline("root", &m.to_string(), Some(bad), sig())
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("out of range"), "{e}");
     }
-    let e = r.cherry_pick_mainline("root", &c.to_string(), Some(1), sig()).unwrap_err().to_string();
+    let e = r
+        .cherry_pick_mainline("root", &c.to_string(), Some(1), sig())
+        .unwrap_err()
+        .to_string();
     assert!(e.contains("not a merge commit"), "{e}");
     assert!(r.revert("root", &m.to_string(), sig()).is_err());
     assert!(clean(&r));

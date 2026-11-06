@@ -118,8 +118,8 @@ fn merge_hand_arrangement_counts_once_the_parked_file_is_moved() {
     let (_d, r) = file_vs_dir();
     start_merge(&r);
     // keep both: the file under another name
-    fs::rename(r.worktree().join("p~ours"), r.worktree().join("p-file.txt")).unwrap();
     assert!(r.resolve("p", &Resolution::Mark).is_err(), "p~ours is still staged");
+    fs::rename(r.worktree().join("p~ours"), r.worktree().join("p-file.txt")).unwrap();
     r.add(&["p~ours".into(), "p-file.txt".into()]).unwrap();
     assert!(r.resolve_check().unwrap().is_clean());
     r.commit("merge", sig()).unwrap();
@@ -260,10 +260,39 @@ fn stash_pop_with_directory_in_the_stash_and_file_at_head() {
     write(&r, "p", "file now\n");
     commit(&r, "p is a file");
     match r.stash_pop(0).unwrap() {
-        StashPopOutcome::Conflicted { paths } => assert_eq!(paths, vec!["p".to_string()]),
+        // p/q.txt: the head deleted it with its directory, the stash edited it
+        StashPopOutcome::Conflicted { paths } => assert_eq!(paths, vec!["p".to_string(), "p/q.txt".to_string()]),
         o => panic!("{o:?}"),
     }
     assert_eq!(read(&r, "p/q.txt"), "stashed edit\n");
     assert_eq!(read(&r, "p~ours"), "file now\n");
     assert_eq!(r.stash_list().unwrap().len(), 1);
+}
+
+#[test]
+fn nested_conflict_in_the_given_up_directory_is_settled_with_it() {
+    // main: p is a file; feature: p/q.txt is edited from a base where p was a directory
+    let d = tempfile::tempdir().unwrap();
+    let r = Repo::init(&d.path().join("r")).unwrap();
+    write(&r, "p/q.txt", "1\n2\n3\n");
+    write(&r, "keep.txt", "k\n");
+    commit(&r, "base: p is a directory");
+    r.create_branch("root", "feature").unwrap();
+    r.checkout("root", "feature").unwrap();
+    write(&r, "p/q.txt", "1\n2\nthree\n");
+    commit(&r, "feature edits p/q.txt");
+    r.checkout("root", "main").unwrap();
+    fs::remove_dir_all(r.worktree().join("p")).unwrap();
+    write(&r, "p", "file now\n");
+    commit(&r, "main turns p into a file");
+    match r.merge("root", "feature", sig()).unwrap() {
+        MergeOutcome::Conflicted { paths } => assert_eq!(paths, vec!["p".to_string(), "p/q.txt".to_string()]),
+        o => panic!("{o:?}"),
+    }
+    r.resolve("p", &Resolution::Ours).unwrap();
+    assert!(r.resolve_check().unwrap().is_clean(), "{:?}", r.conflicts().unwrap());
+    r.commit("merge", sig()).unwrap();
+    assert_eq!(tracked(&r), vec!["keep.txt", "p"]);
+    assert_eq!(read(&r, "p"), "file now\n");
+    fsck(&r);
 }

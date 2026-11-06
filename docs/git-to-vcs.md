@@ -144,7 +144,7 @@ Status: exact (same command and flags), renamed (other spelling, same meaning), 
 semantics differ as the notes say), missing (no equivalent; the notes name the native route).
 
 <!-- BEGIN GENERATED TABLE -->
-261 rows: 157 exact, 42 renamed, 41 different, 21 missing.
+264 rows: 160 exact, 42 renamed, 41 different, 21 missing.
 
 | git | vcs | status | notes | test |
 |---|---|---|---|---|
@@ -265,7 +265,9 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git revert -n HEAD` | `vcs revert --no-commit HEAD` | exact | the undoing change is left staged; record it with `vcs commit` | `pick` |
 | `git cherry-pick feature` | `vcs cherry-pick feature` | exact |  | `pick` |
 | `git cherry-pick --continue` | `vcs commit` | exact |  | translation |
-| `git cherry-pick A..B` | `vcs cherry-pick A..B` | exact | oldest first in one run; merge commits in the range are refused up front; a pick that changes nothing is skipped; a conflict stops the run, prints the commits left to pick, and is finished with `vcs commit` | translation |
+| `git cherry-pick A..B` | `vcs cherry-pick A..B` | exact | oldest first in one run; a merge commit in the range is refused up front unless `-m` names its mainline; a pick that changes nothing is skipped; a conflict stops the run, prints the commits left to pick, and is finished with `vcs commit` | translation |
+| `git cherry-pick -m 1 M` | `vcs cherry-pick -m 1 M` | exact | picks the merge commit M as the change against its first parent (1-based, as git); without -m a merge commit is refused | translation |
+| `git cherry-pick A...B` | `vcs cherry-pick A...B` | exact | the commits of either side that the other lacks, oldest first, in one run (merge commits among them are refused unless -m) | translation |
 | `git cherry main feature` | `vcs cherry main feature` | different | `+`/`-` per commit by patch id (the diff against the first parent, line numbers ignored, context included); prints full ids, or `-v` short id and subject | translation |
 | `git merge feature` | `vcs merge feature` | exact | fast-forward when possible, else a merge commit | `merge` |
 | `git merge --abort` | `vcs merge --abort` | exact |  | `merge` |
@@ -390,6 +392,7 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git format-patch -3 -o out` | `vcs format-patch -n 3 -o out` | renamed |  | translation |
 | `git format-patch main` | `vcs format-patch main` | exact | the commits of the branch that main lacks | translation |
 | `git format-patch HEAD~2..HEAD` | `vcs format-patch HEAD~2..HEAD` | exact |  | translation |
+| `git format-patch A...B` | `vcs format-patch A...B` | exact | the non-merge commits of either side that the other lacks | translation |
 | `git format-patch --root` | `vcs format-patch --root` | exact |  | translation |
 | `git format-patch --cover-letter -1` | `vcs format-patch -n 1 --cover-letter` | renamed | `0000-cover-letter.patch` first (placeholders for subject and blurb, shortlog, diffstat); `vcs am` needs the cover letter left out | `patch` |
 | `git am x.patch` | `vcs am x.patch` | exact | commits with the mail's author, date and message; a patch that does not apply stops the run, nothing is half-applied | `patch` |

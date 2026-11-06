@@ -132,7 +132,12 @@ pub fn format_patch(repo: &Repo, cwd: &Path, a: FormatPatchArgs) -> Result<(), E
         None => (None, None),
     };
     let ids = match a.rev.as_deref().and_then(|r| r.split_once("...")) {
-        Some((x, y)) => repo.patch_range_sym(&zone, if x.is_empty() { "HEAD" } else { x }, if y.is_empty() { "HEAD" } else { y }, a.count)?,
+        Some((x, y)) => repo.patch_range_sym(
+            &zone,
+            if x.is_empty() { "HEAD" } else { x },
+            if y.is_empty() { "HEAD" } else { y },
+            a.count,
+        )?,
         None => repo.patch_range(&zone, since, head, a.count, a.root)?,
     };
     if ids.is_empty() {

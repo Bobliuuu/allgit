@@ -10,7 +10,7 @@
 //! taken against its N-th parent, as in git; without one it is refused.
 
 use crate::error::{msg, Error, Result};
-use crate::merge::{ConflictRec, MergeOutcome, MergeState};
+use crate::merge::{MergeOutcome, MergeState};
 use crate::meta::{frame, unframe, write_atomic};
 use crate::repo::{fresh_change_id, Repo};
 use std::collections::BTreeSet;
@@ -135,7 +135,13 @@ impl Repo {
 
     /// [`Repo::cherry_pick_id`] with a mainline: for a merge commit, the 1-based parent the
     /// change is taken against (`git cherry-pick -m N`). `None` is the plain pick.
-    pub fn cherry_pick_id_mainline(&self, zone: &str, target: ObjectId, mainline: Option<usize>, author: Signature) -> Result<MergeOutcome> {
+    pub fn cherry_pick_id_mainline(
+        &self,
+        zone: &str,
+        target: ObjectId,
+        mainline: Option<usize>,
+        author: Signature,
+    ) -> Result<MergeOutcome> {
         self.pick_core(zone, target, PickKind::CherryPick, author, false, mainline)
     }
 
@@ -194,7 +200,10 @@ impl Repo {
         }
         // Which parent the change is taken against: the only one, or the mainline of a merge.
         if kind == PickKind::Revert && c.parents.len() > 1 {
-            return msg(format!("{} is a merge commit; revert of merge commits is not supported", target.short()));
+            return msg(format!(
+                "{} is a merge commit; revert of merge commits is not supported",
+                target.short()
+            ));
         }
         let parent_ix = match (c.parents.len(), mainline) {
             (n, None) if n > 1 => {
@@ -206,9 +215,7 @@ impl Repo {
             (n, Some(m)) if n > 1 && (m == 0 || m > n) => {
                 return msg(format!("{} has {n} parents; -m {m} is out of range 1..{n}", target.short()))
             }
-            (n, Some(_)) if n <= 1 => {
-                return msg(format!("{} is not a merge commit; -m does not apply", target.short()))
-            }
+            (n, Some(_)) if n <= 1 => return msg(format!("{} is not a merge commit; -m does not apply", target.short())),
             (_, m) => m.map_or(0, |m| m - 1),
         };
         let Some(ours) = refs.head(zone, &branch) else {
