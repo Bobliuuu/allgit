@@ -119,7 +119,12 @@ fn main() {
             let b = backend_url::open_raw(&url).unwrap_or_else(|e| die(&e));
             use vcs_remote::format as fmt;
             let show = |b: &dyn vcs_remote::Backend| match fmt::read(b) {
-                Ok(Some((f, _))) => println!("min reader level {} (raised by {}); this binary reads up to level {}", f.min_reader, f.writer, fmt::LEVEL),
+                Ok(Some((f, _))) => println!(
+                    "min reader level {} (raised by {}); this binary reads up to level {}",
+                    f.min_reader,
+                    f.writer,
+                    fmt::LEVEL
+                ),
                 Ok(None) => println!("no marker: level 1 (baseline); this binary reads up to level {}", fmt::LEVEL),
                 Err(e) => die(&e.to_string()),
             };
