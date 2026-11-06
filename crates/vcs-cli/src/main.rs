@@ -275,6 +275,9 @@ enum Cmd {
         /// Like -m but replace an existing branch of that name (never the checked-out one)
         #[arg(short = 'M', long = "force-move", conflicts_with = "delete")]
         force_move: bool,
+        /// List the remote-tracking branches of the zone (`origin/<branch>`, as of the last fetch or publish)
+        #[arg(short = 'r', long, conflicts_with_all = ["delete", "rename", "force_move", "at"])]
+        remotes: bool,
     },
     /// Set tracked changes aside (push, pop, list, drop); untracked files are left alone
     #[command(subcommand)]
@@ -826,6 +829,8 @@ enum RemoteCmd {
     Set { url: String },
     /// Show the configured remote
     Show,
+    /// Forget the remote and its remote-tracking refs (local branches and history are kept)
+    Remove,
 }
 
 #[derive(Subcommand, Clone)]
@@ -1585,7 +1590,18 @@ fn run(cli: Cli) -> Result<(), Error> {
             at,
             rename,
             force_move,
+            remotes,
         } => {
+            if remotes {
+                let (repo, cwd) = open()?;
+                let zone = repo.resolve_zone(&zone_of_cwd(&repo, &cwd, zone)?)?;
+                for ((z, b), _) in &repo.remote_refs()?.branches {
+                    if *z == zone {
+                        println!("  origin/{b}");
+                    }
+                }
+                return Ok(());
+            }
             if histcli::branch_ext(&name, &start, zone.clone(), rename, force_move)? {
                 return Ok(());
             }
@@ -2109,6 +2125,13 @@ fn run(cli: Cli) -> Result<(), Error> {
                     let url = remote::normalize_url(&url, &cwd);
                     repo.set_remote(&url)?;
                     println!("remote set to {url}");
+                }
+                RemoteCmd::Remove => {
+                    if repo.remove_remote()? {
+                        println!("remote removed");
+                    } else {
+                        return Err(Error::Msg("no remote configured".into()));
+                    }
                 }
                 RemoteCmd::Show => match repo.remote_url()? {
                     Some(u) => {

@@ -40,6 +40,7 @@ fn branch(name: Option<String>, start: Option<String>, delete: bool, rename: boo
         at: None,
         rename,
         force_move,
+        remotes: false,
     }
 }
 
@@ -139,7 +140,8 @@ mod tests {
                 at,
                 rename,
                 force_move,
-            } => format!("branch {name:?} {start:?} {zone:?} {delete} {force} {at:?} {rename} {force_move}"),
+                remotes,
+            } => format!("branch {name:?} {start:?} {zone:?} {delete} {force} {at:?} {rename} {force_move} {remotes}"),
             Cmd::Tag {
                 name,
                 rev,

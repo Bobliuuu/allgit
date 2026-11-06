@@ -144,7 +144,7 @@ Status: exact (same command and flags), renamed (other spelling, same meaning), 
 semantics differ as the notes say), missing (no equivalent; the notes name the native route).
 
 <!-- BEGIN GENERATED TABLE -->
-261 rows: 148 exact, 40 renamed, 34 different, 39 missing.
+261 rows: 149 exact, 40 renamed, 35 different, 37 missing.
 
 | git | vcs | status | notes | test |
 |---|---|---|---|---|
@@ -233,7 +233,7 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git branch --show-current` | `vcs branch (the * line)` | renamed |  | `basics` |
 | `git branch -m main trunk` | `vcs branch -m main trunk` | exact | refs and workspace move, no file is touched; an op-log entry makes it undoable (`vcs op undo`); refused while a merge or rebase is in progress | `detach` |
 | `git branch -M rescue side` | `vcs branch -M rescue side` | exact | replaces an existing branch, never the checked-out one | `detach` |
-| `git branch -r` | none | missing | `vcs remote show` lists remote-tracking refs | translation |
+| `git branch -r` | `vcs branch -r` | different | lists the cwd zone's remote-tracking branches as `origin/<branch>`; the remote is always `origin` | `push-force` |
 | `git branch topic3 main~1` | `vcs branch topic3 main~1` | exact | start is any revision: branch, tag, commit-id prefix, `HEAD~2` | `detach` |
 | `git switch main` | `vcs switch main` | exact | a dirty zone is refused instead of carrying changes along | `basics` |
 | `git switch -c feature` | `vcs switch -c feature` | exact |  | `merge` |
@@ -304,7 +304,7 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git remote add origin /srv/app` | `vcs remote set /srv/app` | renamed | vcs has exactly one remote | translation |
 | `git remote -v` | `vcs remote show` | renamed |  | translation |
 | `git remote set-url origin /srv/b` | `vcs remote set /srv/b` | renamed |  | translation |
-| `git remote remove origin` | none | missing | `vcs remote set <url>` replaces the one remote | translation |
+| `git remote remove origin` | `vcs remote remove` | exact | forgets the url and the remote-tracking refs; local branches stay | `push-force` |
 | `git fetch` | `vcs fetch` | exact | local branches stay untouched | translation |
 | `git fetch origin` | `vcs fetch` | exact |  | translation |
 | `git fetch --depth 1` | none | missing | no shallow fetch | translation |

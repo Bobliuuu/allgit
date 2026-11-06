@@ -147,6 +147,25 @@ impl Repo {
         write_atomic(&self.common.join("remote"), url.as_bytes())
     }
 
+    /// Forget the remote: its url, the remote-tracking refs and the cached manifest. Local branches
+    /// and history are untouched. Returns whether a remote was configured.
+    pub fn remove_remote(&self) -> Result<bool> {
+        let had = self.remote_url()?.is_some();
+        for f in ["remote", "remote-refs", "remote-manifest"] {
+            match fs::remove_file(self.common.join(f)) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(source) => {
+                    return Err(Error::Io {
+                        path: self.common.join(f),
+                        source,
+                    })
+                }
+            }
+        }
+        Ok(had)
+    }
+
     pub fn remote_refs(&self) -> Result<Refs> {
         let p = self.common.join("remote-refs");
         match fs::read(&p) {
