@@ -1,6 +1,6 @@
 //! `vcs grep [-n -i -w -l -c -F] <pattern> [rev] [-- paths]`: search tracked files.
 //!
-//! Without `rev` the files are the tracked files of the working tree, read from disk (so
+//! With `--cached` the staged content is searched instead of the disk. Without `rev` the files are the tracked files of the working tree, read from disk (so
 //! unstaged edits are searched; files deleted on disk are skipped). With `rev` they are the
 //! files of that revision in every subscribed zone where it resolves, read from the object
 //! store (chunked files are reassembled with `get_content`). Only tracked files are searched,
@@ -39,6 +39,9 @@ pub struct GrepArgs {
     /// Treat the pattern as a literal string
     #[arg(short = 'F', long)]
     pub fixed: bool,
+    /// Search the staged content (the index) instead of the files on disk
+    #[arg(long, conflicts_with = "rev")]
+    pub cached: bool,
     /// Limit the search to these paths (after `--`)
     #[arg(last = true)]
     pub paths: Vec<String>,
@@ -97,9 +100,10 @@ pub fn run(a: &GrepArgs) -> Result<(), Error> {
     match &a.rev {
         None => {
             let root = repo.worktree();
+            let cached = a.cached;
             let parts = repo.scan_tracked(Vec::new, |t: &mut Vec<(String, Src)>, p, e| {
                 if e.mode != EntryMode::Symlink && wanted(p, &filters) {
-                    t.push((p.to_owned(), Src::Disk(root.join(p))));
+                    t.push((p.to_owned(), if cached { Src::Obj(e.id) } else { Src::Disk(root.join(p)) }));
                 }
             })?;
             files = parts.into_iter().flatten().collect();
