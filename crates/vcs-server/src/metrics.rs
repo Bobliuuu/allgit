@@ -195,15 +195,69 @@ impl Metrics {
         );
         o.push_str("# HELP vcs_server_backend_errors_total Backend errors by kind.\n# TYPE vcs_server_backend_errors_total counter\n");
         let be = self.backend_errors.lock().unwrap_or_else(|e| e.into_inner());
-        for kind in ["unavailable", "other", "timeout", "circuit_open"] {
+        for kind in ["unavailable", "other", "timeout", "circuit_open", "slowdown"] {
             let _ = writeln!(
                 o,
                 "vcs_server_backend_errors_total{{kind=\"{kind}\"}} {}",
                 be.get(kind).copied().unwrap_or(0)
             );
         }
+        drop(be);
+        render_s3(&mut o, &vcs_store_s3::stats());
         o
     }
+}
+
+/// S3 client counters (zero when the backend is not S3). `vcs_server_backend_errors_total` counts what the server
+/// saw after its own retries; these count what happened on the wire to S3.
+fn render_s3(o: &mut String, st: &vcs_store_s3::S3Stats) {
+    o.push_str(
+        "# HELP vcs_s3_requests_total HTTP requests sent to S3 (every attempt, retries included) by method.\n\
+         # TYPE vcs_s3_requests_total counter\n",
+    );
+    for (m, n) in vcs_store_s3::METHODS.iter().zip(st.requests) {
+        let _ = writeln!(o, "vcs_s3_requests_total{{method=\"{m}\"}} {n}");
+    }
+    let mut counter = |name: &str, help: &str, v: u64| {
+        let _ = write!(o, "# HELP {name} {help}\n# TYPE {name} counter\n{name} {v}\n");
+    };
+    counter(
+        "vcs_s3_slowdown_total",
+        "S3 answers that throttled the request (503 SlowDown, 429).",
+        st.slowdown,
+    );
+    counter("vcs_s3_conflicts_409_total", "S3 answers of 409 Conflict.", st.conflict_409);
+    counter("vcs_s3_server_errors_total", "S3 answers of 5xx.", st.status_5xx);
+    counter("vcs_s3_timeouts_total", "S3 requests that timed out.", st.timeouts);
+    counter(
+        "vcs_s3_retries_total",
+        "S3 requests repeated after a transient failure.",
+        st.retries,
+    );
+    counter(
+        "vcs_s3_cas_losses_total",
+        "Conditional writes (If-Match / If-None-Match) lost to another writer.",
+        st.cas_losses,
+    );
+    counter(
+        "vcs_s3_credential_refreshes_total",
+        "Credential provider fetches that succeeded.",
+        st.cred_refreshes,
+    );
+    counter(
+        "vcs_s3_credential_refresh_errors_total",
+        "Credential provider fetches that failed.",
+        st.cred_refresh_errors,
+    );
+    let _ = write!(
+        o,
+        "# HELP vcs_s3_inflight_bytes Request and response body bytes of S3 calls in flight.\n\
+         # TYPE vcs_s3_inflight_bytes gauge\nvcs_s3_inflight_bytes {}\n\
+         # HELP vcs_s3_credentials_rejected 1 while S3 rejects the credentials as expired (/readyz fails).\n\
+         # TYPE vcs_s3_credentials_rejected gauge\nvcs_s3_credentials_rejected {}\n",
+        st.inflight_bytes,
+        u8::from(st.creds_rejected)
+    );
 }
 
 /// Parse text-format samples into `(name{labels}, value)`; used by tests and `vcs-server` self-checks.

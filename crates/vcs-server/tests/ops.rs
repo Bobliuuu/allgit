@@ -32,6 +32,8 @@ struct Fault {
     inner: MemBackend,
     fail: AtomicUsize,
     calls: AtomicUsize,
+    /// Injected failures read as an S3 SlowDown instead of an outage.
+    slow: std::sync::atomic::AtomicBool,
 }
 
 impl Fault {
@@ -40,6 +42,7 @@ impl Fault {
             inner: MemBackend::new(),
             fail: AtomicUsize::new(0),
             calls: AtomicUsize::new(0),
+            slow: Default::default(),
         })
     }
     fn gate(&self) -> Result<(), BackendError> {
@@ -49,7 +52,12 @@ impl Fault {
             if f != usize::MAX {
                 self.fail.fetch_sub(1, Ordering::SeqCst);
             }
-            return Err(BackendError::Unavailable("injected fault".into()));
+            let m = if self.slow.load(Ordering::SeqCst) {
+                "GET k: HTTP 503 SlowDown"
+            } else {
+                "injected fault"
+            };
+            return Err(BackendError::Unavailable(m.into()));
         }
         Ok(())
     }
@@ -395,6 +403,43 @@ fn circuit_breaker_opens_returns_retry_after_and_recovers() {
     assert_eq!(http(a, "GET", "/v1/o/misc/k", Some(ADMIN), "").0, 200);
     assert_eq!(metrics(a)["vcs_server_backend_circuit_open"], 0.0);
     assert_eq!(http(a, "GET", "/v1/o/misc/k", Some(ADMIN), "").0, 200);
+}
+
+#[test]
+fn slowdown_does_not_trip_the_breaker_and_does_not_fail_readiness() {
+    let be = Fault::new();
+    be.slow.store(true, Ordering::SeqCst);
+    be.fail.store(usize::MAX, Ordering::SeqCst);
+    let mut cfg = fast_cfg();
+    cfg.resilience.retries = 1;
+    cfg.resilience.breaker_threshold = 3;
+    let srv = Server::start(be.clone(), cfg, "127.0.0.1:0").unwrap();
+    let a = srv.local_addr();
+    for _ in 0..8 {
+        assert_eq!(http(a, "GET", "/v1/o/misc/k", Some(ADMIN), "").0, 503);
+    }
+    assert_eq!(http(a, "GET", "/readyz", None, "").0, 200, "throttled is not down");
+    let m = metrics(a);
+    assert_eq!(m["vcs_server_backend_circuit_open"], 0.0);
+    assert_eq!(m["vcs_server_backend_breaker_trips_total"], 0.0);
+    assert!(m["vcs_server_backend_errors_total{kind=\"slowdown\"}"] >= 8.0);
+    // S3 client counters are exported (zero here: no S3 backend)
+    for k in [
+        "vcs_s3_requests_total{method=\"PUT\"}",
+        "vcs_s3_slowdown_total",
+        "vcs_s3_conflicts_409_total",
+        "vcs_s3_cas_losses_total",
+        "vcs_s3_inflight_bytes",
+        "vcs_s3_credentials_rejected",
+    ] {
+        assert!(m.contains_key(k), "missing {k}");
+    }
+    // a real outage still trips it
+    be.slow.store(false, Ordering::SeqCst);
+    for _ in 0..3 {
+        http(a, "GET", "/v1/o/misc/k", Some(ADMIN), "");
+    }
+    assert_eq!(metrics(a)["vcs_server_backend_circuit_open"], 1.0);
 }
 
 #[test]
