@@ -92,6 +92,8 @@ backend) and pack tests (old orphan pack deleted, young one kept, pack with a li
 Still not covered: readers (fetch/clone) slower than the grace period
 can lose objects of a replaced head; clock-rate skew (A1 is assumed, not tested); real S3.
 
+**Backup safe point** (#570). `remote_gc` and `compact` refuse to run while an unexpired `gc/hold/*` exists (checked after taking `gc/lock`), and every destructive sweep records `gc/safe-point`. See [backup-restore.md](backup-restore.md).
+
 ## Reachability cache for the mark (issue #509, local gc)
 
 `.vcs/gc-reach` (`"AGRB"`, version 1, blake3-checked, written after every destructive local sweep that found no missing

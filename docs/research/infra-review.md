@@ -152,8 +152,8 @@ Good: immutability makes backups cheap and consistent (copy all, the manifest la
   data before the manifest CAS (read: docs/remote-packs.md); not exercised as a restore test.
 * The audit log is a single local file (`one process per log file`), truncation of the newest records is undetectable, and it is
   not replicated: loss of the host loses the attribution history (the `/v1/audit` endpoint is the intended second sink).
-Filed: `vcs remote verify` (manifest closure exists in store) and `restore`, GC safe-point recording, cross-region replication
-recipe.
+Done (#570): `vcs remote verify | backup | restore | safe-point`, GC safe point and backup hold, drill and cross-region recipe in
+[../backup-restore.md](../backup-restore.md). Still open: audit-log replication.
 
 ## 7. Observability
 
