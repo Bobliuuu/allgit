@@ -1,7 +1,8 @@
 //! The read-policy index walk reads a level of the history concurrently: on a backend with latency the
 //! first restricted request costs round trips per tree depth, not one per file (docs/server.md, "Cost").
 
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 use vcs_objects::*;
 use vcs_remote::protocol::object_key;
 use vcs_remote::*;
@@ -12,14 +13,25 @@ use vcs_store::{MemoryStore, ObjectStore};
 struct Slow<'a> {
     inner: &'a MemBackend,
     delay: Duration,
+    /// Reads in flight now, and the most there ever were at once.
+    now: AtomicUsize,
+    peak: AtomicUsize,
+}
+impl Slow<'_> {
+    fn wait(&self) {
+        let n = self.now.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak.fetch_max(n, Ordering::SeqCst);
+        std::thread::sleep(self.delay);
+        self.now.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 impl Backend for Slow<'_> {
     fn get(&self, key: &str) -> Result<Option<Versioned>, BackendError> {
-        std::thread::sleep(self.delay);
+        self.wait();
         self.inner.get(key)
     }
     fn get_range(&self, key: &str, o: u64, l: u64) -> Result<Option<Vec<u8>>, BackendError> {
-        std::thread::sleep(self.delay);
+        self.wait();
         self.inner.get_range(key, o, l)
     }
     fn exists(&self, key: &str) -> Result<bool, BackendError> {
@@ -78,17 +90,19 @@ fn walk_is_concurrent_and_complete() {
     let slow = Slow {
         inner: &mem,
         delay: Duration::from_millis(5),
+        now: AtomicUsize::new(0),
+        peak: AtomicUsize::new(0),
     };
-    let t0 = Instant::now();
     let mut ix = ReadIndex::default();
     ix.refresh(&slow).unwrap();
-    let took = t0.elapsed();
     // every object of the zone is attributed to it; a stranger is not
     let readable = |_: &str| false;
     for id in &ids {
         assert!(ix.denied_only(id, &readable), "{id} should be in zone z");
     }
     assert!(!ix.denied_only(&ObjectId::from_bytes([9; 32]), &readable));
-    // 240 probes x 5 ms = 1.2 s one at a time; 8 at once is about 0.15 s. Generous bound for loaded CI.
-    assert!(took < Duration::from_millis(700), "walk took {took:?}; probes are not concurrent");
+    // Judged by the most reads in flight at once, not by wall time (which flakes on a loaded runner): a walk
+    // that read one object at a time would peak at 1.
+    let peak = slow.peak.load(Ordering::SeqCst);
+    assert!(peak >= 2, "probes are not concurrent (peak {peak} reads in flight)");
 }

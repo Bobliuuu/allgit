@@ -119,7 +119,7 @@ fn main() {
             let t = Instant::now();
             let b = fs::read(&a[2]).unwrap();
             let mut recs: Vec<([u8; 8], u64)> = Vec::with_capacity(n); // "decode all"
-            for c in b.chunks_exact(64) {
+            for c in b.as_chunks::<64>().0 {
                 recs.push((c[..8].try_into().unwrap(), u64::from_le_bytes(c[32..40].try_into().unwrap())));
             }
             let mut s = 0;

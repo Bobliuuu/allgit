@@ -43,12 +43,18 @@ fn commit_over(s: &MemoryStore, content: &[u8], tag: u8) -> ObjectId {
     .unwrap()
 }
 
+/// Lease length and the stall between phases. The stall is more than half the lease (so the sweeper must renew)
+/// and less than the whole of it, with about a second of slack on either side for a loaded CI runner: with a
+/// 600 ms lease a scheduling hiccup let the lease expire and the rival legitimately took it (`LeaseLost`).
+const LEASE_MS: u64 = 2400;
+const STALL_MS: u64 = 1300;
+
 fn opts() -> RemoteGcOptions {
     RemoteGcOptions {
         grace_ms: 1500,
         hold_ms: 100,
         dry_run: false,
-        lock_ttl_ms: 600,
+        lock_ttl_ms: LEASE_MS,
         owner: "sweeper".into(),
         allow_short_grace: true,
         rewrite_packs: true,
@@ -90,13 +96,13 @@ fn scenario(b: &dyn Backend) {
     assert_eq!(dry.packs_rewritten.len(), 1, "{dry:?}");
     assert!(has(b, &stem, &orphan));
 
-    // the lease is renewed: stall past the original 600 ms TTL between phases, a rival is still locked out
+    // the lease is renewed: stall past half of the original TTL between phases, a rival is still locked out
     let mut blocked = false;
     let mut rewritten = false;
     let mut hook = |p: GcPoint| match p {
-        GcPoint::Tombed => std::thread::sleep(Duration::from_millis(400)),
+        GcPoint::Tombed => std::thread::sleep(Duration::from_millis(STALL_MS)),
         GcPoint::Remarked => {
-            std::thread::sleep(Duration::from_millis(400));
+            std::thread::sleep(Duration::from_millis(STALL_MS));
             blocked = matches!(vcs_remote::remote_gc(b, &opts()), Err(vcs_remote::GcError::Locked(_)));
         }
         GcPoint::Rewritten => rewritten = true,
@@ -113,9 +119,7 @@ fn scenario(b: &dyn Backend) {
     // the head still fetches completely
     let (m, _) = load_manifest(b).unwrap();
     assert_eq!(m.branches.values().copied().collect::<Vec<_>>(), vec![head]);
-    for id in [head] {
-        fetch_object(b, &id).unwrap();
-    }
+    fetch_object(b, &head).unwrap();
 }
 
 #[test]

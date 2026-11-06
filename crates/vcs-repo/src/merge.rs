@@ -153,7 +153,7 @@ impl Repo {
     ) -> (std::borrow::Cow<'a, Flat>, std::borrow::Cow<'a, Flat>, std::borrow::Cow<'a, Flat>) {
         use std::borrow::Cow;
         let same = |a: &ObjectId, b: &ObjectId| crate::largeeq::same_content(&self.store, a, b).unwrap_or(false);
-        let (mut rb, mut rr): (Vec<(&String, ObjectId)>, Vec<(&String, ObjectId)>) = (Vec::new(), Vec::new());
+        let (mut rb, mut rr) = (Vec::<(&String, ObjectId)>::new(), Vec::<(&String, ObjectId)>::new());
         for p in ours.keys().chain(theirs.keys().filter(|p| !ours.contains_key(*p))) {
             let (b, l, r) = (base.get(p), ours.get(p), theirs.get(p));
             let present = [b, l, r].into_iter().flatten().count();
@@ -182,11 +182,7 @@ impl Repo {
                         rr.push((p, b.1));
                     }
                 }
-                (None, Some(l), Some(r)) => {
-                    if l.0 == r.0 && same(&l.1, &r.1) {
-                        rr.push((p, l.1));
-                    }
-                }
+                (None, Some(l), Some(r)) if l.0 == r.0 && same(&l.1, &r.1) => rr.push((p, l.1)),
                 _ => {}
             }
         }
@@ -709,7 +705,7 @@ impl Repo {
         self.save_index(ix)?;
         refs.apply(&[update])?;
         self.store.sync()?; // merge commit + transaction durable before refs name them
-        self.commit_refs_op(&refs, &format!("{msg_prefix} into {zone}/{branch}"), None)?;
+        self.commit_refs_op(refs, &format!("{msg_prefix} into {zone}/{branch}"), None)?;
         Ok(MergeOutcome::Merged { commit: cid })
     }
 
@@ -735,7 +731,7 @@ impl Repo {
             old: from,
             new: to,
         }])?;
-        self.commit_refs_op(&refs, &format!("merge: fast-forward {zone}/{branch}"), None)?;
+        self.commit_refs_op(refs, &format!("merge: fast-forward {zone}/{branch}"), None)?;
         Ok(MergeOutcome::FastForward { from, to })
     }
 

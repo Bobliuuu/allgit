@@ -102,6 +102,35 @@ fn repo(dir: &Path, n: usize) -> Repo {
     r
 }
 
+/// Whether the temp filesystem supports copy-on-write clones. GitHub's ubuntu runners use ext4 (no reflink), where the
+/// cache correctly captures nothing, so tests that need a captured snapshot skip there with a note instead of failing.
+fn cow_supported() -> bool {
+    let d = tempfile::tempdir().unwrap();
+    let (a, b) = (d.path().join("a"), d.path().join("b"));
+    fs::write(&a, "x").unwrap();
+    let flags: &[&str] = if cfg!(target_os = "macos") {
+        &["-c"]
+    } else {
+        &["--reflink=always"]
+    };
+    std::process::Command::new("cp")
+        .args(flags)
+        .arg(&a)
+        .arg(&b)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+macro_rules! need_cow {
+    () => {
+        if !cow_supported() {
+            eprintln!("skipped: this filesystem has no copy-on-write clones, so no snapshot can be captured");
+            return;
+        }
+    };
+}
+
 fn snap_dirs(r: &Repo) -> Vec<PathBuf> {
     let s = r.worktree().join(".vcs/snap");
     match fs::read_dir(&s) {
@@ -121,6 +150,7 @@ fn mtime(p: &Path) -> (i64, i64) {
 
 #[test]
 fn restore_equals_normal_checkout_and_really_clones() {
+    need_cow!();
     let _g = env(&[]);
     let d = tempfile::tempdir().unwrap();
     let a = repo(d.path(), 300);
@@ -153,6 +183,7 @@ fn restore_equals_normal_checkout_and_really_clones() {
 
 #[test]
 fn a_different_tree_never_uses_a_stale_snapshot_and_edits_do_not_leak_in() {
+    need_cow!();
     let _g = env(&[]);
     let d = tempfile::tempdir().unwrap();
     let a = repo(d.path(), 200);
@@ -177,6 +208,7 @@ fn a_different_tree_never_uses_a_stale_snapshot_and_edits_do_not_leak_in() {
 }
 
 fn damage_then_checkout(damage: impl Fn(&Path)) {
+    need_cow!();
     let d = tempfile::tempdir().unwrap();
     let a = repo(d.path(), 200);
     let w1 = a.worktree_add(&d.path().join("w1"), Some("b1")).unwrap().path;
@@ -229,6 +261,7 @@ fn truncated_or_missing_manifest_is_ignored() {
 
 #[test]
 fn interrupted_capture_leaves_no_usable_snapshot() {
+    need_cow!();
     let _g = env(&[]);
     let d = tempfile::tempdir().unwrap();
     let a = repo(d.path(), 100);
@@ -275,6 +308,7 @@ fn untracked_files_in_the_target_directory_take_the_normal_path() {
 
 #[test]
 fn zoned_clone_restores_from_a_shared_store_and_equals_the_normal_clone() {
+    need_cow!();
     let d = tempfile::tempdir().unwrap();
     let store = d.path().join("store");
     let _g = env(&[("VCS_SNAP_DIR", store.to_str().unwrap())]);
@@ -309,6 +343,7 @@ fn zoned_clone_restores_from_a_shared_store_and_equals_the_normal_clone() {
 
 #[test]
 fn lru_keeps_only_the_configured_number_of_snapshots() {
+    need_cow!();
     let _g = env(&[("VCS_SNAPSHOT_KEEP", "1")]);
     let d = tempfile::tempdir().unwrap();
     let a = repo(d.path(), 100);

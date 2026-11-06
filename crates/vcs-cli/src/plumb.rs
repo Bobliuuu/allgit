@@ -142,7 +142,7 @@ pub fn ls_files(a: &LsFilesArgs, json: bool) -> Result<(), Error> {
                 return Err(Error::Msg("--depth 1 lists the top level and takes no paths".into()));
             }
             match repo.rev_top_level(r)? {
-                Some(top) => top.into_iter().map(|(n, m, i)| (n, m, i)).collect(),
+                Some(top) => top.into_iter().collect(),
                 None if a.stage || json => {
                     return Err(Error::Msg(
                         "--depth 1 with -s or --json needs one zone at the repository root; without them the names are listed".into(),

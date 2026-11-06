@@ -187,8 +187,7 @@ impl IndexFile {
             // about 1,000 entries, not all 100,000.
             let mut cur = lo.clone();
             let mut last_child = String::new();
-            loop {
-                let Some((k, _)) = self.img.next_ge(&cur)? else { break };
+            while let Some((k, _)) = self.img.next_ge(&cur)? {
                 if !k.starts_with(&lo) || (!parent.is_empty() && k.as_str() >= hi.as_str()) {
                     break;
                 }
@@ -218,7 +217,6 @@ impl IndexFile {
             return Ok(None);
         }
     }
-
 
     /// Would adding `path` (not tracked before) clash with a tracked file/directory once `edits` are applied?
     fn check_conflicts(&self, path: &str, edits: &Edits) -> Result<()> {
@@ -251,7 +249,6 @@ impl IndexFile {
         Ok(())
     }
 }
-
 
 impl crate::repo::Repo {
     /// The index as an image (mapped base plus log), whatever layout it is in.
@@ -317,7 +314,17 @@ impl crate::repo::Repo {
         match &pending {
             // The patch knows every path it changed: only those can have introduced an attribute file.
             Some(p) => self.carry_attrs_marker_touched(clean, &p.touched),
-            None => self.carry_attrs_marker_touched(clean, &patch.ops.iter().filter_map(|o| match o { Op::Set(p, _) | Op::Remove(p) => Some(p.clone()), _ => None }).collect::<Vec<_>>()),
+            None => self.carry_attrs_marker_touched(
+                clean,
+                &patch
+                    .ops
+                    .iter()
+                    .filter_map(|o| match o {
+                        Op::Set(p, _) | Op::Remove(p) => Some(p.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>(),
+            ),
         }
         if let Some(p) = pending {
             if let Some(old) = p.old_fp {
@@ -455,7 +462,6 @@ impl crate::repo::Repo {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -194,7 +194,7 @@ pub fn encode_payload_at(fmt: PackFormat, enc: &[u8], level: i32) -> Vec<u8> {
         PackFormat::V1 => enc.to_vec(),
         // v3 stores blocks, not entries; a single object is sized as a v2 entry
         PackFormat::V2 | PackFormat::V3 | PackFormat::V4 => {
-            if !looks_incompressible(enc) && !(small_raw && enc.len() < 1024) {
+            if !(looks_incompressible(enc) || small_raw && enc.len() < 1024) {
                 if let Ok(c) = zstd_at(level, enc) {
                     if c.len() < enc.len() {
                         let mut out = Vec::with_capacity(c.len() + 1);

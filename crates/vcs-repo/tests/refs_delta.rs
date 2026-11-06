@@ -234,7 +234,8 @@ fn a_delta_repository_with_no_tags_works() {
     // push the log over its bound so the next base is written without a tag table
     let base0 = fs::read(vcs(&r).join("refs")).unwrap();
     for i in 0..400 {
-        r.create_branch("root", &format!("a-very-long-branch-name-to-fill-the-log-{i:05}")).unwrap();
+        r.create_branch("root", &format!("a-very-long-branch-name-to-fill-the-log-{i:05}"))
+            .unwrap();
         if fs::read(vcs(&r).join("refs")).unwrap() != base0 {
             break;
         }

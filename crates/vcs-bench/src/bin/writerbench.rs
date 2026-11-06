@@ -85,7 +85,8 @@ fn main() {
     let audit_b = HttpBackend::new(&url, &token).unwrap();
     let chain_before = if mode == "same" { chain_len(&audit_b, "shared", "main") } else { 0 };
     let bar = Arc::new(Barrier::new(clients + 1));
-    let out: Arc<Mutex<(Vec<f64>, u64, u64, Vec<String>, Vec<(String, String, String)>)>> = Arc::default();
+    type Tally = (Vec<f64>, u64, u64, Vec<String>, Vec<(String, String, String)>);
+    let out: Arc<Mutex<Tally>> = Arc::default();
     let mut hs = vec![];
     for c in 0..clients {
         let (url, token, mode, tag, bar, out) = (url.clone(), token.clone(), mode.clone(), tag.clone(), bar.clone(), out.clone());

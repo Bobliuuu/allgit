@@ -922,11 +922,11 @@ pub fn entry_at_cached(
         if cur.0 != EntryMode::Directory {
             return Ok(None);
         }
-        if !cache.contains_key(&cur.1) {
+        if let std::collections::hash_map::Entry::Vacant(v) = cache.entry(cur.1) {
             let Object::Tree(t) = store.get(&cur.1)? else {
                 return Err(Error::Corrupt(format!("object {} is not a tree", cur.1)));
             };
-            cache.insert(cur.1, t);
+            v.insert(t);
         }
         match cache[&cur.1].get(part) {
             Some(e) => cur = (e.mode, e.id),
