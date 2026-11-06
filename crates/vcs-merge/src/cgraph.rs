@@ -99,6 +99,11 @@ fn body_size(n: usize, npar: usize) -> Option<usize> {
 }
 
 impl CommitGraphFile {
+    /// The 32-byte v2 header for `n` commits and `npar` parent slots (for writers of synthetic files).
+    pub fn header_v2(n: usize, npar: usize) -> [u8; HDR] {
+        header(n, npar)
+    }
+
     fn from_parts(buf: Arc<MapFile>, n: usize, npar: usize) -> CommitGraphFile {
         let o_time = HDR + 32 * n;
         let o_gen = o_time + 8 * n;
@@ -471,7 +476,8 @@ impl CommitGraphFile {
         }
         // Merge the (already id-sorted) new commits into the id-sorted table: one linear pass over the old columns,
         // no per-commit map. Old parent indexes are shifted by the number of new ids that sort before them.
-        let new: Vec<(ObjectId, (Vec<ObjectId>, u64, Option<u32>))> = new.into_iter().collect();
+        type NewEntry = (ObjectId, (Vec<ObjectId>, u64, Option<u32>));
+        let new: Vec<NewEntry> = new.into_iter().collect();
         let total = self.n + new.len();
         let npar_total = self.npar + new.iter().map(|(_, (ps, _, _))| ps.len()).sum::<usize>();
         if total > u32::MAX as usize || npar_total > u32::MAX as usize {
@@ -560,7 +566,7 @@ impl CommitGraphFile {
     pub fn verify_full(&self) -> Result<(), MergeError> {
         self.buf.advise_sequential();
         if self.buf.len() == self.body_len + 32 {
-            if blake3::hash(&self.buf[..self.body_len]).as_bytes() != &self.buf[self.body_len..] {
+            if vcs_store::mapfile::blake3_big(&self.buf[..self.body_len]).as_bytes() != &self.buf[self.body_len..] {
                 return corrupt("checksum mismatch");
             }
         } else if self.buf.len() != self.body_len {

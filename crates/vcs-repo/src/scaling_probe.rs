@@ -126,23 +126,58 @@ impl Agi5 {
 
 /// Write a synthetic `gc-reach` cache: `ns` sorted ids, every 4th marked, a few roots.
 pub fn reach_write(path: &Path, ns: usize, nroots: usize) -> std::io::Result<u64> {
-    let ids: Vec<ObjectId> = (0..ns as u64).map(|i| ObjectId::from_bytes(sorted_id(i, ns as u64))).collect();
-    let marked: Vec<bool> = (0..ns).map(|i| i % 4 != 3).collect();
-    let tx: Vec<bool> = (0..ns).map(|i| i % 1000 == 0).collect();
-    let roots: Vec<ObjectId> = (0..nroots as u64)
-        .map(|i| ids[(i as usize * (ns / nroots.max(1)).max(1)).min(ns - 1)])
-        .collect();
-    let bytes = reachcache::encode(&ids, &marked, &tx, &roots);
-    std::fs::write(path, &bytes)?;
-    Ok(bytes.len() as u64)
+    // streamed (no per-object vectors), byte for byte what `reachcache::encode` writes
+    let mut f = std::io::BufWriter::with_capacity(8 << 20, std::fs::File::create(path)?);
+    let mut h = blake3::Hasher::new();
+    let mut w = |f: &mut std::io::BufWriter<std::fs::File>, b: &[u8]| -> std::io::Result<()> {
+        h.update(b);
+        f.write_all(b)
+    };
+    w(&mut f, b"AGRB")?;
+    w(&mut f, &[1u8])?;
+    w(&mut f, &(ns as u32).to_le_bytes())?;
+    w(&mut f, &(nroots as u32).to_le_bytes())?;
+    for i in 0..ns as u64 {
+        w(&mut f, &sorted_id(i, ns as u64))?;
+    }
+    for which in 0..2 {
+        let mut i = 0usize;
+        while i < ns {
+            let mut byte = 0u8;
+            for b in 0..8 {
+                let k = i + b;
+                let set = k < ns && if which == 0 { k % 4 != 3 } else { k % 1000 == 0 };
+                if set {
+                    byte |= 1 << b;
+                }
+            }
+            w(&mut f, &[byte])?;
+            i += 8;
+        }
+    }
+    for i in 0..nroots {
+        let at = (i * (ns / nroots.max(1)).max(1)).min(ns - 1);
+        w(&mut f, &sorted_id(at as u64, ns as u64))?;
+    }
+    f.write_all(h.finalize().as_bytes())?;
+    f.flush()?;
+    Ok(std::fs::metadata(path)?.len())
 }
 
 pub struct Reach(reachcache::ReachCache);
 
 impl Reach {
-    /// Read and verify the whole file (what gc does at start).
+    /// Map the file (O(1)); nothing but the header is read.
     pub fn load(path: &Path) -> Option<Reach> {
-        reachcache::ReachCache::from_bytes(std::fs::read(path).ok()?).map(Reach)
+        reachcache::ReachCache::open(path).map(Reach)
+    }
+    /// Map the file and checksum all of it (what gc does at start, and fsck).
+    pub fn load_verified(path: &Path) -> Option<Reach> {
+        reachcache::ReachCache::open_verified(path).map(Reach)
+    }
+    /// The whole-file checksum of an opened file.
+    pub fn verify_full(&self) -> bool {
+        self.0.verify_full()
     }
     pub fn marked(&self, id: &[u8; 32]) -> bool {
         self.0.marked(&ObjectId::from_bytes(*id))
@@ -169,7 +204,7 @@ pub const BLOOM_MAX_PATHS: usize = pathbloom::MAX_PATHS;
 pub fn pathfilter_write(path: &Path, count: usize, flen: usize) -> std::io::Result<u64> {
     let mut f = std::io::BufWriter::new(std::fs::File::create(path)?);
     let mut h = blake3::Hasher::new();
-    let mut w = |h: &mut blake3::Hasher, f: &mut std::io::BufWriter<std::fs::File>, b: &[u8]| -> std::io::Result<()> {
+    let w = |h: &mut blake3::Hasher, f: &mut std::io::BufWriter<std::fs::File>, b: &[u8]| -> std::io::Result<()> {
         h.update(b);
         f.write_all(b)
     };
@@ -198,10 +233,14 @@ pub struct PathFilters(pathbloom::PathBlooms);
 
 impl PathFilters {
     pub fn load(path: &Path) -> PathFilters {
-        PathFilters(pathbloom::PathBlooms::from_bytes(std::fs::read(path).unwrap_or_default()))
+        PathFilters(pathbloom::PathBlooms::open(path))
     }
     pub fn loaded(&self) -> bool {
         self.0.has_file()
+    }
+    /// Checksum and validate the whole file (fsck).
+    pub fn verify_full(&self) -> bool {
+        self.0.verify_full()
     }
     pub fn get(&self, id: &[u8; 32]) -> bool {
         self.0.get(&ObjectId::from_bytes(*id)).is_some()

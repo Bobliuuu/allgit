@@ -7,7 +7,7 @@ license.workspace = true
 [dependencies]
 vcs-objects.workspace = true
 thiserror.workspace = true
-blake3.workspace = true
+blake3 = { workspace = true, features = ["rayon"] }
 zstd = "0.13"
 
 [target.'cfg(unix)'.dependencies]

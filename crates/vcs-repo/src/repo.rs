@@ -2932,6 +2932,7 @@ impl Repo {
         self.fsck_ops(&mut rep.problems);
         self.fsck_commit_graph(&mut rep.problems);
         self.fsck_path_filters(&mut rep.problems);
+        self.fsck_reach_cache(&mut rep.problems);
         rep.problems.extend(self.store.verify_packs());
         Ok(rep)
     }

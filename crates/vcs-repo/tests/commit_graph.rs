@@ -319,3 +319,39 @@ proptest! {
         prop_assert!(r.fsck().unwrap().problems.is_empty());
     }
 }
+
+/// The previous file format (variable length entries, version 1) from a v2 file's columns.
+fn to_v1(v2: &[u8]) -> Vec<u8> {
+    let rd32 = |at: usize| u32::from_le_bytes(v2[at..at + 4].try_into().unwrap()) as usize;
+    let (n, npar) = (rd32(8), rd32(12));
+    let (o_time, o_gen, o_pend, o_par) = (32 + 32 * n, 32 + 40 * n, 32 + 44 * n, 32 + 48 * n);
+    assert_eq!(v2.len(), o_par + 4 * npar + 32);
+    let mut v = b"AGCG\x01".to_vec();
+    v.extend_from_slice(&(n as u32).to_le_bytes());
+    let mut prev = 0;
+    for i in 0..n {
+        v.extend_from_slice(&v2[32 + 32 * i..][..32]);
+        v.extend_from_slice(&v2[o_time + 8 * i..][..8]);
+        v.extend_from_slice(&v2[o_gen + 4 * i..][..4]);
+        let end = rd32(o_pend + 4 * i);
+        v.push((end - prev) as u8);
+        v.extend_from_slice(&v2[o_par + 4 * prev..o_par + 4 * end]);
+        prev = end;
+    }
+    let sum = blake3::hash(&v);
+    v.extend_from_slice(sum.as_bytes());
+    v
+}
+
+#[test]
+fn old_format_graph_still_loads_and_is_rewritten_as_v2() {
+    let (_d, r) = linear(25);
+    let expect = observe(&without_graph(&r));
+    refresh(&r);
+    let v2 = fs::read(cg_path(&r)).unwrap();
+    assert_eq!(v2[4], 2);
+    fs::write(cg_path(&r), to_v1(&v2)).unwrap();
+    assert!(r.fsck().unwrap().problems.is_empty(), "a valid v1 file is not a problem");
+    assert_eq!(observe(&r), expect);
+    assert_eq!(fs::read(cg_path(&r)).unwrap(), v2, "converted to the current format on first use");
+}
