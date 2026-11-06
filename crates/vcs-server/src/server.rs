@@ -1625,7 +1625,10 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str, extra: &mu
         if let Ok(Some(cur)) = sh.backend.get(key) {
             if let Ok(cur) = vcs_remote::format::Format::decode(&cur.data) {
                 if new.min_reader < cur.min_reader && who.role < Role::Admin {
-                    return text(403, "Forbidden: lowering the format level needs an admin token (docs/upgrade-rollback.md)");
+                    return text(
+                        403,
+                        "Forbidden: lowering the format level needs an admin token (docs/upgrade-rollback.md)",
+                    );
                 }
             }
         }

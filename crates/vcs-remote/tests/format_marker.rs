@@ -69,7 +69,8 @@ fn seed_large_manifest(b: &MemBackend) {
     for i in 0..3000u32 {
         let mut id = [0u8; 32];
         id[..4].copy_from_slice(&i.to_le_bytes());
-        m.branches.insert(("big".into(), format!("branch-number-{i:05}")), ObjectId::from_bytes(id));
+        m.branches
+            .insert(("big".into(), format!("branch-number-{i:05}")), ObjectId::from_bytes(id));
     }
     assert!(m.encode_legacy().len() > manifest::COMPACT_THRESHOLD);
     assert!(b.put_if_absent(manifest::KEY, &m.encode()).unwrap());
@@ -89,7 +90,10 @@ fn small_repositories_never_get_a_marker() {
     let s = MemoryStore::new();
     let c = publish(&b, &s, "z", None, 1).unwrap();
     publish(&b, &s, "z", Some(c), 2).unwrap();
-    assert!(b.get(format::KEY).unwrap().is_none(), "baseline repositories stay byte-compatible with unmarked binaries");
+    assert!(
+        b.get(format::KEY).unwrap().is_none(),
+        "baseline repositories stay byte-compatible with unmarked binaries"
+    );
     assert_eq!(format::level(&b).unwrap(), format::LEVEL_BASELINE);
     format::check_as(&b, 1).unwrap();
 }
@@ -101,13 +105,30 @@ fn writer_raises_the_marker_before_storing_a_v5_manifest() {
     assert!(b.get(format::KEY).unwrap().is_none());
     let s = MemoryStore::new();
     publish(&b, &s, "z", None, 1).unwrap();
-    assert_eq!(b.get(manifest::KEY).unwrap().unwrap().data[4], 5, "the manifest is now the compact layout");
+    assert_eq!(
+        b.get(manifest::KEY).unwrap().unwrap().data[4],
+        5,
+        "the manifest is now the compact layout"
+    );
     assert_eq!(format::level(&b).unwrap(), format::LEVEL_COMPACT);
     // old reader / new writer: a level-1 binary refuses with an actionable message
     let e = format::check_as(&b, 1).unwrap_err();
-    assert!(matches!(e, FormatError::TooNew { needed: 2, supported: 1, .. }), "{e:?}");
+    assert!(
+        matches!(
+            e,
+            FormatError::TooNew {
+                needed: 2,
+                supported: 1,
+                ..
+            }
+        ),
+        "{e:?}"
+    );
     let msg = e.to_string();
-    assert!(msg.contains("requires vcs format level 2") && msg.contains("docs/upgrade-rollback.md"), "{msg}");
+    assert!(
+        msg.contains("requires vcs format level 2") && msg.contains("docs/upgrade-rollback.md"),
+        "{msg}"
+    );
 }
 
 #[test]
