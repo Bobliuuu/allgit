@@ -372,7 +372,11 @@ impl Repo {
             None if interactive => self
                 .resolve_rev(zone, onto)
                 .map_err(|_| Error::Msg(format!("no such branch or revision {zone}/{onto}")))?,
-            None => return msg(format!("no such branch {zone}/{onto}")),
+            // `origin/<branch>`: the remote-tracking head as last fetched
+            None => match onto.strip_prefix("origin/").and_then(|b| self.remote_refs().ok()?.head(zone, b)) {
+                Some(id) => id,
+                None => return msg(format!("no such branch {zone}/{onto}")),
+            },
         };
         if self.commit_obj(&onto_id)?.zone != zone {
             return msg(format!("{onto} belongs to another zone"));

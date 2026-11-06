@@ -981,6 +981,11 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
                 commit(),
                 G("git revert HEAD"),
                 G("git revert --no-edit HEAD~2"),
+                W("d.txt", "d\n"),
+                G("git add d.txt"),
+                commit(),
+                G("git revert -n HEAD"),
+                commit(),
             ],
         ),
         (
@@ -1192,7 +1197,7 @@ fn init_and_clone_forms() {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert_eq!(std::fs::read_to_string(cl.join("f.txt")).unwrap(), "one\ntwo\n");
     // refusals name the native way
-    let o = vcs(&cl, &["pull", "--rebase"]);
+    let o = vcs(&cl, &["pull", "--rebase", "origin", "main"]);
     assert!(!o.status.success());
     let e = String::from_utf8_lossy(&o.stderr);
     assert!(e.contains("no vcs equivalent") && e.contains("native:"), "{e}");
@@ -1454,5 +1459,109 @@ fn init_initial_branch_names_the_first_branch_like_git() {
         assert!(Command::new("git").args(["init", "-q", "-b", "trunk"]).arg(&g).env("GIT_CONFIG_GLOBAL", "/dev/null").status().unwrap().success());
         let o = Command::new("git").args(["symbolic-ref", "--short", "HEAD"]).current_dir(&g).output().unwrap();
         assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "trunk");
+    }
+}
+
+/// `pull --rebase` and `rebase origin/<branch>`: local commits are replayed on top of the fetched
+/// ones. Run with vcs and (when available) with real git against a twin remote; the histories must agree.
+#[test]
+fn pull_rebase_replays_local_commits_on_the_fetched_branch() {
+    let t = tempfile::tempdir().unwrap();
+    let git_on = have_git();
+    let mut logs = vec![];
+    for use_git in [false, true] {
+        if use_git && !git_on {
+            continue;
+        }
+        let root = t.path().join(if use_git { "g" } else { "v" });
+        std::fs::create_dir_all(&root).unwrap();
+        let remote = root.join("srv.git");
+        let run = |dir: &Path, args: &[&str]| -> Output {
+            let mut c = if use_git {
+                let mut c = Command::new("git");
+                c.args(args);
+                c
+            } else {
+                let mut c = Command::new(env!("CARGO_BIN_EXE_vcs"));
+                c.arg("git").args(args);
+                c
+            };
+            c.current_dir(dir)
+                .env("VCS_AUTHOR_NAME", "Dev")
+                .env("VCS_AUTHOR_EMAIL", "dev@example.com")
+                .env("VCS_GIT_QUIET", "1")
+                .env("GIT_AUTHOR_NAME", "Dev")
+                .env("GIT_AUTHOR_EMAIL", "dev@example.com")
+                .env("GIT_COMMITTER_NAME", "Dev")
+                .env("GIT_COMMITTER_EMAIL", "dev@example.com")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_EDITOR", "true")
+                .output()
+                .unwrap()
+        };
+        let ok = |dir: &Path, args: &[&str]| {
+            let o = run(dir, args);
+            assert!(
+                o.status.success(),
+                "{} {args:?}: {}{}",
+                if use_git { "git" } else { "vcs" },
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            );
+            String::from_utf8_lossy(&o.stdout).into_owned()
+        };
+        if use_git {
+            std::fs::create_dir_all(&remote).unwrap();
+            ok(&remote, &["init", "-q", "--bare"]);
+            ok(&remote, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        } else {
+            std::fs::create_dir_all(&remote).unwrap();
+        }
+        let (a, b) = (root.join("a"), root.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        if use_git {
+            ok(&a, &["init", "-q"]);
+            ok(&a, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        } else {
+            ok(&a, &["init"]);
+        }
+        let commit = |dir: &Path, f: &str, c: &str, m: &str| {
+            std::fs::write(dir.join(f), c).unwrap();
+            ok(dir, &["add", f]);
+            ok(dir, &["commit", "-m", m]);
+        };
+        commit(&a, "base.txt", "1\n", "base");
+        ok(&a, &["remote", "add", "origin", remote.to_str().unwrap()]);
+        ok(&a, &["push", "-u", "origin", "main"]);
+        std::fs::create_dir_all(&b).unwrap();
+        ok(&root, &["clone", remote.to_str().unwrap(), "b"]);
+        // upstream moves on in a; b has two local commits
+        commit(&a, "up.txt", "u\n", "upstream");
+        ok(&a, &["push"]);
+        commit(&b, "l1.txt", "1\n", "local one");
+        commit(&b, "l2.txt", "2\n", "local two");
+        ok(&b, &["pull", "--rebase"]);
+        logs.push(ok(&b, &["log", "--format=%s"]).lines().map(str::to_owned).collect::<Vec<_>>());
+        for f in ["base.txt", "up.txt", "l1.txt", "l2.txt"] {
+            assert!(b.join(f).exists(), "{f} after pull --rebase");
+        }
+        // again: the local commits are replayed once more, on top of the newest upstream
+        commit(&a, "up2.txt", "u\n", "upstream two");
+        ok(&a, &["push"]);
+        ok(&b, &["pull", "--rebase"]);
+        assert!(b.join("up2.txt").exists());
+        let l: Vec<String> = ok(&b, &["log", "--format=%s"]).lines().map(str::to_owned).collect();
+        assert_eq!(l[..3], ["local two", "local one", "upstream two"], "{l:?}");
+        // a conflict stops the rebase with the usual workflow
+        commit(&a, "c.txt", "from a\n", "a side");
+        ok(&a, &["push"]);
+        std::fs::write(b.join("c.txt"), "from b\n").unwrap();
+        ok(&b, &["add", "c.txt"]);
+        ok(&b, &["commit", "-m", "b side"]);
+        assert!(!run(&b, &["pull", "--rebase"]).status.success(), "a conflicting pull --rebase stops");
+    }
+    assert_eq!(logs[0], ["local two", "local one", "upstream", "base"], "{logs:?}");
+    if logs.len() == 2 {
+        assert_eq!(logs[0], logs[1], "vcs and git order the rebased history alike");
     }
 }
