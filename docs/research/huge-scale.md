@@ -35,7 +35,7 @@ repository was never created and every later command failed. The script now call
 
 All 25 rows exited 0. Observations:
 
-- vcs is faster on every operation except status with 1% modified (about equal) and the no-op `add` (6.8 s against
+- vcs is faster on every operation except `init` (0.17 s against 0.02 s), status with 1% modified (2.1 s against 1.8 s, a loss by 15%) and the no-op `add` (6.8 s against
   0.9 s; git's index stat cache wins there).
 - vcs uses more memory on `add`, `publish` and `clone` (1.0 to 2.2 GiB peak) than git, but stays well inside the box.
 - `diff` shows 51.9 s user time against 3.7 s wall, so it is parallel across the 16 cores; on a smaller box the
@@ -45,3 +45,22 @@ All 25 rows exited 0. Observations:
 - Not covered: multi-GB single files, other layouts (flat, wide, deep), other VCSs. Only the `nested` layout was run.
 
 Cost: box on for about 40 minutes, roughly US$0.45 at US$0.68/h.
+
+## Fairness caveats (added by the benchmark audit, [benchmark-audit](benchmark-audit.md))
+
+These numbers are real measurements, but several cells do not compare like with like. Do not quote the ratios without them.
+
+- **git `clone` (603 s) is a loose-object copy.** `huge_s1.sh` ran `git clone --no-hardlinks` of the working repository *before* `git gc`, so git had to
+  copy about 2,000,000 loose objects one file at a time (wall 603 s but only 65 s of CPU: the rest is EBS I/O wait). vcs cloned from a *published, packed*
+  remote. In [monorepo-stress](monorepo-stress.md) git cloned the same size of tree (1M files) in **24 s** from a local path, and vcs took 177 s over HTTP.
+  The 15x clone win here is therefore an artefact of git's storage state; the fair pair (git clone of a repacked repository against vcs clone) was not run.
+- **git `add` (215 s), `checkout` (46.5 s, 28.6 s) and `diff` (19.7 s) are I/O bound**: wall time is 3.6x, 9.8x, 6.1x and 9x their CPU time (59 s, 4.8 s,
+  4.7 s, 2.2 s). Git does not fsync loose objects by default, so the cause is not fsync; the likely cause is one small file per object on a gp3 volume
+  with a cold or evicted page cache. It was not diagnosed (no `iostat`, no cache state recorded), and vcs's packed store avoids the effect. That is a
+  storage-layout difference worth stating, not a CPU one, and it does not carry over to a local NVMe disk.
+- **No git tuning**: no `core.fsmonitor`, `core.untrackedCache`, `feature.manyFiles`, `pack.*`, or `git gc` before the timed commands. `GIT_CONFIG_*` were pointed at
+  `/dev/null`. The vcs side ran with defaults, which includes the auto-started watcher for indexes above 1 MB.
+- **`gc` is not the same work**: `git gc` repacks and delta-compresses; `vcs gc --yes` collects unreachable objects. Not comparable.
+- **Run order**: git always ran first, then vcs, in the same directory tree copied with `cp -a`; one run per cell; no load recording.
+- **Build**: `edd859b`, now many commits behind main. Re-run before quoting against current code.
+
