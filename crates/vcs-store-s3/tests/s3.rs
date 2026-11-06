@@ -739,3 +739,189 @@ fn conditional_get_sends_if_none_match_and_handles_304() {
     assert_eq!(log[0].1["if-none-match"], "\"t1\"");
     assert_eq!(log[1].1["if-none-match"], "\"stale\"");
 }
+
+// ---------- streamed un-ranged GET (Backend::get_stream) ----------
+
+/// In-process S3 for HEAD / GET / PUT on one bucket. Honours `If-Match`, records every request line, and can be told
+/// to swap an object between the HEAD and the GET or to cut a body short.
+mod stream_fake {
+    use std::collections::HashMap;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    pub struct State {
+        pub objects: HashMap<String, (Vec<u8>, String)>,
+        pub log: Vec<String>,
+        /// After the next HEAD of this path, replace the object with these bytes and ETag.
+        pub swap_after_head: Option<(String, Vec<u8>, String)>,
+        /// Send only this many body bytes of a GET, then close (Content-Length still declares the whole object).
+        pub cut_at: Option<usize>,
+    }
+
+    pub fn start() -> (String, Arc<Mutex<State>>) {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        let st: Arc<Mutex<State>> = Default::default();
+        let st2 = st.clone();
+        std::thread::spawn(move || {
+            for s in l.incoming() {
+                let Ok(s) = s else { continue };
+                let st = st2.clone();
+                std::thread::spawn(move || serve(s, st));
+            }
+        });
+        (url, st)
+    }
+
+    fn serve(mut s: std::net::TcpStream, st: Arc<Mutex<State>>) {
+        let mut data = Vec::new();
+        let mut buf = [0u8; 65536];
+        loop {
+            // one request at a time per connection (keep-alive)
+            let head_end = loop {
+                if let Some(i) = data.windows(4).position(|w| w == b"\r\n\r\n") {
+                    break i;
+                }
+                match s.read(&mut buf) {
+                    Ok(0) | Err(_) => return,
+                    Ok(n) => data.extend_from_slice(&buf[..n]),
+                }
+            };
+            let head = String::from_utf8_lossy(&data[..head_end]).to_string();
+            let clen = head
+                .lines()
+                .find_map(|l| l.to_lowercase().strip_prefix("content-length:").and_then(|v| v.trim().parse::<usize>().ok()))
+                .unwrap_or(0);
+            while data.len() < head_end + 4 + clen {
+                match s.read(&mut buf) {
+                    Ok(0) | Err(_) => return,
+                    Ok(n) => data.extend_from_slice(&buf[..n]),
+                }
+            }
+            let body = data[head_end + 4..head_end + 4 + clen].to_vec();
+            data.drain(..head_end + 4 + clen);
+            let mut parts = head.lines().next().unwrap().split(' ');
+            let (method, path) = (parts.next().unwrap().to_owned(), parts.next().unwrap().to_owned());
+            let hdr = |n: &str| {
+                head.lines()
+                    .skip(1)
+                    .find_map(|l| l.split_once(':').filter(|(k, _)| k.eq_ignore_ascii_case(n)).map(|(_, v)| v.trim().to_owned()))
+            };
+            let mut g = st.lock().unwrap();
+            g.log.push(format!("{method} {path}"));
+            let obj = g.objects.get(&path).cloned();
+            let reply = |s: &mut std::net::TcpStream, status: &str, extra: &str, len: usize, body: &[u8]| {
+                let h = format!("HTTP/1.1 {status}\r\n{extra}Content-Length: {len}\r\n\r\n");
+                let _ = s.write_all(h.as_bytes());
+                let _ = s.write_all(body);
+            };
+            match (method.as_str(), obj) {
+                ("PUT", _) => {
+                    g.objects.insert(path, (body, "\"put\"".into()));
+                    reply(&mut s, "200 OK", "ETag: \"put\"\r\n", 0, b"");
+                }
+                ("HEAD", Some((d, tag))) => {
+                    reply(&mut s, "200 OK", &format!("ETag: {tag}\r\n"), d.len(), b"");
+                    if let Some((p, nd, nt)) = g.swap_after_head.take() {
+                        g.objects.insert(p, (nd, nt));
+                    }
+                }
+                ("GET", Some((d, tag))) => {
+                    if hdr("if-match").is_some_and(|m| m != tag) {
+                        reply(&mut s, "412 Precondition Failed", "", 0, b"");
+                    } else {
+                        let n = g.cut_at.unwrap_or(d.len()).min(d.len());
+                        reply(&mut s, "200 OK", &format!("ETag: {tag}\r\n"), d.len(), &d[..n]);
+                        if n < d.len() {
+                            return; // drop the connection mid-body
+                        }
+                    }
+                }
+                (_, None) => reply(&mut s, "404 Not Found", "", 0, b""),
+                _ => reply(&mut s, "405 Method Not Allowed", "", 0, b""),
+            }
+        }
+    }
+}
+
+fn stream_backend(url: &str) -> S3Backend {
+    let mut c = S3Config::new(url, "b", "AK", "SK");
+    c.timeout = std::time::Duration::from_secs(5);
+    c.retries = 0;
+    S3Backend::new_unchecked(c).unwrap()
+}
+
+fn payload(n: usize) -> Vec<u8> {
+    (0..n).map(|i| (i * 31 % 251) as u8).collect()
+}
+
+#[test]
+fn get_stream_is_head_then_one_unranged_get_with_the_etag_as_tag() {
+    let (url, st) = stream_fake::start();
+    let data = payload(3 << 20);
+    st.lock().unwrap().objects.insert("/b/packs/big.pack".into(), (data.clone(), "\"abc123\"".into()));
+    let b = stream_backend(&url);
+    let mut s = b.get_stream("packs/big.pack", 1 << 20).unwrap().expect("streamed");
+    assert_eq!((s.len, s.tag.as_str()), (data.len() as u64, "\"abc123\""));
+    // nothing but the HEAD has gone out until the body is read
+    assert_eq!(st.lock().unwrap().log, ["HEAD /b/packs/big.pack", "GET /b/packs/big.pack"]);
+    let mut got = Vec::new();
+    s.reader.read_to_end(&mut got).unwrap();
+    assert_eq!(got, data);
+    assert_eq!(b.bytes_read(), data.len() as u64);
+    // the tag is the same one a whole get reports
+    assert_eq!(b.get("packs/big.pack").unwrap().unwrap().tag, s.tag);
+}
+
+#[test]
+fn get_stream_declines_small_missing_and_changed_objects() {
+    let (url, st) = stream_fake::start();
+    let b = stream_backend(&url);
+    {
+        let mut g = st.lock().unwrap();
+        g.objects.insert("/b/small".into(), (payload(100), "\"s\"".into()));
+        g.objects.insert("/b/big".into(), (payload(5000), "\"v1\"".into()));
+    }
+    assert!(b.get_stream("small", 1000).unwrap().is_none());
+    assert!(b.get_stream("missing", 0).unwrap().is_none());
+    // the small one did not cost a GET
+    assert!(!st.lock().unwrap().log.iter().any(|l| l == "GET /b/small"));
+    // replaced between HEAD and GET: If-Match fails, so no stream and no mixed-version body
+    st.lock().unwrap().swap_after_head = Some(("/b/big".into(), payload(9000), "\"v2\"".into()));
+    assert!(b.get_stream("big", 1000).unwrap().is_none());
+    // the fallback reads the new version whole, tag and bytes agree
+    let v = b.get("big").unwrap().unwrap();
+    assert_eq!((v.tag.as_str(), v.data.len()), ("\"v2\"", 9000));
+}
+
+#[test]
+fn get_stream_body_cut_short_is_an_error_not_a_short_object() {
+    let (url, st) = stream_fake::start();
+    st.lock().unwrap().objects.insert("/b/k".into(), (payload(10_000), "\"e\"".into()));
+    st.lock().unwrap().cut_at = Some(4000);
+    let b = stream_backend(&url);
+    let mut s = b.get_stream("k", 0).unwrap().expect("streamed");
+    let mut got = Vec::new();
+    let e = s.reader.read_to_end(&mut got).expect_err("short body must fail");
+    assert!(got.len() <= 4000, "{}", got.len());
+    assert!(matches!(e.kind(), std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::Other), "{e:?}");
+}
+
+#[test]
+fn get_stream_on_minio() {
+    let Some(b) = minio("get_stream") else { return };
+    let data = payload(5 << 20);
+    assert!(b.put_if_absent("packs/big.pack", &data).unwrap());
+    assert!(b.put_if_absent("packs/small.pack", b"tiny").unwrap());
+    assert!(b.get_stream("packs/small.pack", 1 << 20).unwrap().is_none());
+    assert!(b.get_stream("packs/none", 0).unwrap().is_none());
+    let mut s = b.get_stream("packs/big.pack", 1 << 20).unwrap().expect("streamed");
+    let whole = b.get("packs/big.pack").unwrap().unwrap();
+    assert_eq!(s.tag, whole.tag, "streamed tag is the ETag a whole get returns");
+    assert_eq!(s.len, data.len() as u64);
+    let mut got = Vec::new();
+    s.reader.read_to_end(&mut got).unwrap();
+    assert_eq!(got, data);
+}
