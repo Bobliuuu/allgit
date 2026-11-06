@@ -1549,6 +1549,24 @@ fn run_batch(sh: &Shared, chain: &mut crate::groupcommit::Chain, items: Vec<Batc
     finish(items, out)
 }
 
+/// Which keys a non-admin may PUT. `gc/`, `tomb/` and `compact/` are the collector's coordination state
+/// (a planted `gc/lock` with a far-future lease stalls gc and compaction) and need Admin, as gc and compaction
+/// already do because they delete. `packs/` and `tx/` are create-only for a write token: a pack is immutable once
+/// written, so a token limited to one zone cannot overwrite other zones' data. Other prefixes stay open to writers
+/// (tests and tools use ad-hoc keys); tightening to a strict allowlist is future work. Issue #573.
+fn write_keyspace_ok(who: &Principal, key: &str, create_only: bool) -> Result<(), &'static str> {
+    if who.role >= Role::Admin {
+        return Ok(());
+    }
+    if ["gc/", "tomb/", "compact/"].iter().any(|p| key.starts_with(p)) {
+        return Err("this key is reserved for an admin token (collector coordination state such as gc/lock)");
+    }
+    if (key.starts_with("packs/") || key.starts_with("tx/")) && !create_only {
+        return Err("packs/ and tx/ keys are create-only for a write token");
+    }
+    Ok(())
+}
+
 fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str, extra: &mut Extra) -> Response {
     if who.role < Role::Write {
         return text(403, "Forbidden: read-only principal");
@@ -1557,6 +1575,9 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str, extra: &mu
     let if_match = req.header("if-match").map(|s| unquote(s.trim()).to_owned());
     if !if_none && if_match.is_none() {
         return text(428, "unconditional PUT is not allowed; send If-None-Match: * or If-Match");
+    }
+    if let Err(m) = write_keyspace_ok(who, key, if_none) {
+        return text(403, &format!("Forbidden: {m}"));
     }
     if key.starts_with(vcs_remote::shelf::SHELF_PREFIX) {
         if let Err(m) = shelf_write_ok(who, key) {
