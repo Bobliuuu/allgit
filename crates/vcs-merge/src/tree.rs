@@ -347,10 +347,14 @@ pub fn merge_flat_with(
             }
             None => {
                 out.entries.remove(&q);
-                conflicts.insert(
-                    q.clone(),
-                    Conflict::new(&q, ConflictKind::FileDirectory, file_of(&nb), file_of(&nl), file_of(&nr)),
-                );
+                let mut c = Conflict::new(&q, ConflictKind::FileDirectory, file_of(&nb), file_of(&nl), file_of(&nr));
+                // A side that holds a directory here has no id, but its mode says so (absent = `None`),
+                // which is how a resolver tells "the directory" from "nothing".
+                let dir = |n: &Node| matches!(n, Node::Dir(_)).then_some(EntryMode::Directory);
+                c.base_mode = c.base_mode.or_else(|| dir(&nb));
+                c.left_mode = c.left_mode.or_else(|| dir(&nl));
+                c.right_mode = c.right_mode.or_else(|| dir(&nr));
+                conflicts.insert(q.clone(), c);
             }
         }
     }

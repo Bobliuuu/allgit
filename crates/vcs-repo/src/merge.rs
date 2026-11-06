@@ -227,6 +227,24 @@ impl Repo {
     }
 }
 
+/// Where the file side(s) of a file/directory conflict at `path` are parked while the other
+/// side's directory occupies `path`.
+pub(crate) fn fd_side_path(path: &str, ours: bool) -> String {
+    format!("{path}~{}", if ours { "ours" } else { "theirs" })
+}
+
+/// The parked paths of a file/directory conflict (only sides that hold a file).
+pub(crate) fn fd_side_paths(c: &ConflictRec) -> Vec<String> {
+    let mut v = Vec::new();
+    if c.left.is_some() {
+        v.push(fd_side_path(&c.path, true));
+    }
+    if c.right.is_some() {
+        v.push(fd_side_path(&c.path, false));
+    }
+    v
+}
+
 fn kind_u8(k: ConflictKind) -> u8 {
     match k {
         ConflictKind::AddAdd => 0,
@@ -266,6 +284,7 @@ fn mode_from(b: u8) -> Result<Option<EntryMode>> {
         0 => None,
         1 => Some(EntryMode::File),
         2 => Some(EntryMode::Executable),
+        3 => Some(EntryMode::Directory),
         4 => Some(EntryMode::Symlink),
         _ => return Err(Error::Corrupt("conflicts: bad mode".into())),
     })
@@ -390,7 +409,21 @@ impl Repo {
         if ws.subs.get(&st.zone) != Some(&st.branch) || refs.head(&st.zone, &st.branch) != Some(st.ours) {
             return Ok(None);
         }
-        Ok(Some(st))
+        Ok(Some(self.refresh_fd_flags(st)?))
+    }
+
+    /// A file/directory conflict has no content to edit: it is settled when none of its parked
+    /// side files (`path~ours`, `path~theirs`) is staged any more, however that came about
+    /// (`resolve --ours/--theirs`, or moving/removing the files and `vcs add`/`vcs rm`).
+    fn refresh_fd_flags(&self, mut st: MergeState) -> Result<MergeState> {
+        if !st.conflicts.iter().any(|c| c.kind == ConflictKind::FileDirectory) {
+            return Ok(st);
+        }
+        let ix = self.index()?;
+        for c in st.conflicts.iter_mut().filter(|c| c.kind == ConflictKind::FileDirectory) {
+            c.resolved = fd_side_paths(c).iter().all(|p| !ix.entries.contains_key(p));
+        }
+        Ok(st)
     }
 
     pub(crate) fn save_merge_state(&self, st: &MergeState) -> Result<()> {
@@ -431,7 +464,7 @@ impl Repo {
     pub(crate) fn note_resolved(&self, rel_paths: &[String], ix: &Index) -> Result<()> {
         let Some(mut st) = self.merge_state()? else { return Ok(()) };
         let mut changed = false;
-        for c in st.conflicts.iter_mut().filter(|c| !c.resolved) {
+        for c in st.conflicts.iter_mut().filter(|c| !c.resolved && c.kind != ConflictKind::FileDirectory) {
             let hit = rel_paths
                 .iter()
                 .any(|p| p.is_empty() || *p == c.path || c.path.starts_with(&format!("{p}/")));
@@ -568,12 +601,7 @@ impl Repo {
         };
         let (base_root, their_root) = (self.commit_obj(&base)?.root, self.commit_obj(&theirs)?.root);
         let mut tm = self.merge3_trees(&prefix, Some(base_root), Some(ours_root), Some(their_root))?;
-        if let Some(c) = tm.conflicts.iter().find(|c| c.kind == ConflictKind::FileDirectory) {
-            return msg(format!(
-                "{:?} is a file on one side and a directory on the other; file/directory conflicts are not supported yet (nothing was changed)",
-                c.path
-            ));
-        }
+        self.fd_preflight(&tm)?;
         if opts.squash && !tm.conflicts.is_empty() {
             let list: Vec<&str> = tm.conflicts.iter().map(|c| c.path.as_str()).collect();
             return msg(format!(
@@ -591,31 +619,13 @@ impl Repo {
                 return Err(Error::Corrupt("merged blob id mismatch".into()));
             }
         }
-        let mut recs = Vec::new();
         let left_label = format!("ours ({zone}/{branch})");
         let labels = MarkerLabels {
             left: &left_label,
             base: "base",
             right: label,
         };
-        let conflicts = std::mem::take(&mut tm.conflicts);
-        for c in &conflicts {
-            let (mode, id, markers) = self.placeholder(c, &labels)?;
-            tm.set_placeholder(&c.path, (mode, id));
-            recs.push(ConflictRec {
-                path: c.path.clone(),
-                kind: c.kind,
-                base: c.base,
-                left: c.left,
-                right: c.right,
-                base_mode: c.base_mode,
-                left_mode: c.left_mode,
-                right_mode: c.right_mode,
-                placeholder: id,
-                has_markers: markers,
-                resolved: false,
-            });
-        }
+        let recs = self.conflict_recs(&mut tm, &labels)?;
         let (new_root, diff) = tm.apply(&self.store, Some(ours_root), recs.is_empty())?;
         if recs.is_empty() && opts.squash {
             let changed = diff.old.keys().chain(diff.new.keys()).collect::<BTreeSet<_>>().len();
@@ -735,6 +745,63 @@ impl Repo {
         Ok(MergeOutcome::FastForward { from, to })
     }
 
+    /// Refuse before anything changes when a parked side file of a file/directory conflict would
+    /// land on a name that is already in use.
+    pub(crate) fn fd_preflight(&self, tm: &crate::treemerge::Merge3) -> Result<()> {
+        for c in tm.conflicts.iter().filter(|c| c.kind == ConflictKind::FileDirectory) {
+            for (id, ours) in [(c.left, true), (c.right, false)] {
+                let p = fd_side_path(&c.path, ours);
+                if id.is_some() && fs::symlink_metadata(self.worktree.join(&p)).is_ok() {
+                    return msg(format!(
+                        "{:?} is a file on one side and a directory on the other, and the name {p:?} (where the file would be kept) is already in use; move it away first (nothing was changed)",
+                        c.path
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Turn the conflicts of `tm` into records and park what the working tree shows for each: a
+    /// marker file (or one side) at the path, and for file/directory conflicts the file side(s) at
+    /// `path~ours` / `path~theirs`, beside the directory that keeps the path itself.
+    pub(crate) fn conflict_recs(&self, tm: &mut crate::treemerge::Merge3, labels: &MarkerLabels) -> Result<Vec<ConflictRec>> {
+        let conflicts = std::mem::take(&mut tm.conflicts);
+        let mut recs = Vec::new();
+        for c in &conflicts {
+            let (id, markers) = if c.kind == ConflictKind::FileDirectory {
+                for (id, mode, ours) in [(c.left, c.left_mode, true), (c.right, c.right_mode, false)] {
+                    if let Some(id) = id {
+                        tm.set_placeholder(&fd_side_path(&c.path, ours), (mode.unwrap_or(EntryMode::File), id));
+                    }
+                }
+                let id = match c.left.or(c.right) {
+                    Some(i) => i,
+                    None => self.store.put_content(b"")?,
+                };
+                (id, false)
+            } else {
+                let (mode, id, markers) = self.placeholder(c, labels)?;
+                tm.set_placeholder(&c.path, (mode, id));
+                (id, markers)
+            };
+            recs.push(ConflictRec {
+                path: c.path.clone(),
+                kind: c.kind,
+                base: c.base,
+                left: c.left,
+                right: c.right,
+                base_mode: c.base_mode,
+                left_mode: c.left_mode,
+                right_mode: c.right_mode,
+                placeholder: id,
+                has_markers: markers,
+                resolved: false,
+            });
+        }
+        Ok(recs)
+    }
+
     /// What to materialize for a conflict: (mode, blob, contains markers).
     pub(crate) fn placeholder(&self, c: &Conflict, labels: &MarkerLabels) -> Result<(EntryMode, ObjectId, bool)> {
         if let Some(h) = &c.hunks {
@@ -839,6 +906,9 @@ impl Repo {
             .ok_or_else(|| Error::Msg(format!("{path:?} is not conflicted")))?
             .clone();
         validate_path(path)?;
+        if c.kind == ConflictKind::FileDirectory {
+            return self.resolve_file_directory(&c, how);
+        }
         let abs = self.worktree.join(path);
         let pick = |id: Option<ObjectId>, mode: Option<EntryMode>| -> Result<Option<(Vec<u8>, EntryMode)>> {
             id.map(|id| Ok((self.store.get_content(&id)?, mode.unwrap_or(EntryMode::File))))
@@ -906,6 +976,98 @@ impl Repo {
         self.save_merge_state(&st)
     }
 
+    /// Settle a file/directory conflict. The directory side's files are in place at `path/`; the
+    /// file side(s) are parked at `path~ours` / `path~theirs`. `--ours`/`--theirs` keep that side's
+    /// shape: a file replaces the directory (its tracked files are removed) and the other side's
+    /// parked file is dropped; a directory (or nothing) stays/goes and the other side's parked
+    /// file is dropped. `--mark` accepts a hand arrangement (parked files moved or removed).
+    fn resolve_file_directory(&self, c: &ConflictRec, how: &Resolution) -> Result<()> {
+        let keep_ours = match how {
+            Resolution::Ours => true,
+            Resolution::Theirs => false,
+            Resolution::Mark => {
+                let mut paths: Vec<String> = vec![c.path.clone()];
+                paths.extend(fd_side_paths(c));
+                let ix = self.index()?;
+                paths.retain(|p| ix.entries.contains_key(p) || self.worktree.join(p).exists());
+                self.add(&paths)?;
+                let st = self
+                    .merge_state()?
+                    .ok_or_else(|| Error::Msg("no merge or rebase in progress".into()))?;
+                return if st.conflicts.iter().any(|x| x.path == c.path && x.resolved) {
+                    Ok(())
+                } else {
+                    msg(format!(
+                        "{:?} is still a file/directory conflict: move or remove {} (then `vcs add` them), or choose --ours/--theirs",
+                        c.path,
+                        fd_side_paths(c).join(" and ")
+                    ))
+                };
+            }
+            Resolution::Base | Resolution::File(_) => {
+                return msg(format!(
+                    "{:?} is a file/directory conflict: choose --ours or --theirs, or rearrange the files by hand and run `vcs resolve {:?} --mark`",
+                    c.path, c.path
+                ))
+            }
+        };
+        let (mine, mine_mode, other, other_ours) = if keep_ours {
+            (c.left, c.left_mode, c.right, false)
+        } else {
+            (c.right, c.right_mode, c.left, true)
+        };
+        let remove = |p: &str, dirs: &mut BTreeSet<std::path::PathBuf>| -> Result<()> {
+            let abs = self.worktree.join(p);
+            match fs::symlink_metadata(&abs) {
+                Ok(m) if m.is_file() || m.file_type().is_symlink() => io(&abs, fs::remove_file(&abs))?,
+                Ok(_) => return msg(format!("{p:?} is not a regular file")),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(source) => return Err(Error::Io { path: abs, source }),
+            }
+            if let Some(par) = abs.parent() {
+                dirs.insert(par.to_owned());
+            }
+            Ok(())
+        };
+        let mut dirs = BTreeSet::new();
+        let mut stage: Vec<String> = Vec::new();
+        if other.is_some() {
+            let p = fd_side_path(&c.path, other_ours);
+            remove(&p, &mut dirs)?;
+            stage.push(p);
+        }
+        // The chosen side is not a directory: its shape replaces whatever directory holds the path.
+        if mine_mode != Some(EntryMode::Directory) {
+            let pre = format!("{}/", c.path);
+            let doomed: Vec<String> = self.index()?.entries.keys().filter(|k| k.starts_with(&pre)).cloned().collect();
+            for p in doomed {
+                remove(&p, &mut dirs)?;
+                stage.push(p);
+            }
+            self.prune_dirs(dirs.iter().cloned());
+        }
+        if mine.is_some() {
+            let from = fd_side_path(&c.path, keep_ours);
+            let (src, dst) = (self.worktree.join(&from), self.worktree.join(&c.path));
+            io(&src, fs::rename(&src, &dst))?;
+            stage.push(from);
+            stage.push(c.path.clone());
+        }
+        let ix = self.index()?;
+        stage.retain(|p| ix.entries.contains_key(p) || self.worktree.join(p).exists());
+        drop(ix);
+        if !stage.is_empty() {
+            self.add(&stage)?;
+        }
+        self.prune_dirs(dirs);
+        let _l = self.lock()?;
+        let Some(mut st) = self.merge_state()? else { return Ok(()) };
+        if let Some(x) = st.conflicts.iter_mut().find(|x| x.path == c.path) {
+            x.resolved = true;
+        }
+        self.save_merge_state(&st)
+    }
+
     /// Verify the in-progress merge or rebase is ready to finish: every conflict resolved and no
     /// conflict markers left in any staged resolved file.
     pub fn resolve_check(&self) -> Result<ResolveCheck> {
@@ -955,6 +1117,21 @@ impl Repo {
             f(&c.right),
             st.theirs_label
         );
+        if c.kind == ConflictKind::FileDirectory {
+            let side = |m: Option<EntryMode>, id: Option<ObjectId>| match (m, id) {
+                (Some(EntryMode::Directory), _) => "a directory",
+                (_, Some(_)) => "a file",
+                _ => "absent",
+            };
+            out.push_str(&format!(
+                "  ours is {}, theirs is {}; the file side is kept as {}\n  choose `vcs resolve {} --ours|--theirs`, or move/remove the parked file and `vcs add` it\n",
+                side(c.left_mode, c.left),
+                side(c.right_mode, c.right),
+                fd_side_paths(c).join(" / "),
+                c.path
+            ));
+            return Ok(out);
+        }
         let get = |i: &Option<ObjectId>| -> Result<Option<Vec<u8>>> { i.map(|i| Ok(self.store.get_content(&i)?)).transpose() };
         let (b, l, r) = (get(&c.base)?, get(&c.left)?, get(&c.right)?);
         let bin = [&b, &l, &r]

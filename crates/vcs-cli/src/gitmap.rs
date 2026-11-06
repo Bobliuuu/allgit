@@ -492,14 +492,19 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             let cont = p.take(&["--continue"]);
             let abort = p.take(&["--abort"]);
             let x = p.take(&["-x"]);
+            let mainline = p.val(&["-m", "--mainline"]);
             let noedit = p.take(&["--no-edit", "-e", "--edit", "-s", "--signoff"]);
             let _ = noedit;
             let no_commit = cmd == "revert" && p.take(&["-n", "--no-commit"]);
             p.finish(&format!(
-                "`vcs {cmd} <rev>`{}; no {}-m, --skip, --quit",
-                if cmd == "cherry-pick" { " or `A..B`" } else { ", no ranges" },
-                if cmd == "cherry-pick" { "-n/--no-commit, " } else { "" }
+                "`vcs {cmd} <rev>`{}; no {}{}--skip, --quit",
+                if cmd == "cherry-pick" { " or `A..B`, `-m <parent>`" } else { ", no ranges" },
+                if cmd == "cherry-pick" { "-n/--no-commit, " } else { "" },
+                if cmd == "cherry-pick" { "" } else { "-m, " }
             ))?;
+            if cmd == "revert" && mainline.is_some() {
+                return Err(missing(cmd, "-m (revert of a merge commit)", "revert the merge's changes with `vcs revert` on the commits it brought in"));
+            }
             if cont {
                 return Ok(vec![note("a stopped pick/revert is finished with `vcs commit`"), Step::Vcs(v(&["commit"]))]);
             }
@@ -525,6 +530,8 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
                 }
                 if no_commit {
                     out.push(Step::Vcs(v(&[cmd, "--no-commit", r])));
+                } else if let Some(m) = &mainline {
+                    out.push(Step::Vcs(v(&[cmd, "-m", m, r])));
                 } else {
                     out.push(Step::Vcs(v(&[cmd, r])));
                 }

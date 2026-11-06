@@ -36,7 +36,6 @@ vcs rebase --abort               restore the original head, index and working tr
 
 ## Not done
 
-Merge commits in the rebased range, rebasing onto a remote-tracking branch, file/directory conflicts (refused, as in
-merge), rename detection, dropping picks that become empty (they are kept), interactive editing of the todo list.
+Merge commits in the rebased range, rebasing onto a remote-tracking branch, rename detection, dropping picks that become empty (they are kept), interactive editing of the todo list.
 A crash between writing the conflict files and moving the ref leaves stale state files that are ignored; the
 index then shows the conflict placeholders as staged changes against the original head.
