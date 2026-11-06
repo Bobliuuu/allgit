@@ -37,6 +37,20 @@ pub fn validate_zone_name(s: &str) -> Result<(), NameError> {
 /// It starts with a dot, so [`validate_branch_name`] never lets a user create a branch by that name.
 pub const DETACHED_BRANCH: &str = ".detached";
 
+/// Internal ref name under which a zone keeps its commit notes (`vcs notes`): `refs[(zone, NOTES_BRANCH)]`
+/// is a commit of that zone whose tree maps `<aa>/<62 hex>` (the annotated commit's id) to the note blob.
+/// It is a syntactically valid branch name so manifests, bundles and remotes carry it like any branch, but
+/// users cannot create, switch to or list it as a branch (see [`validate_user_branch_name`]).
+pub const NOTES_BRANCH: &str = "refs/notes/commits";
+
+/// [`validate_branch_name`] for names a user chooses: additionally refuses [`NOTES_BRANCH`].
+pub fn validate_user_branch_name(s: &str) -> Result<(), NameError> {
+    if s == NOTES_BRANCH {
+        return Err(NameError::Branch(s.to_owned()));
+    }
+    validate_branch_name(s)
+}
+
 /// Like [`validate_branch_name`] but also accepts [`DETACHED_BRANCH`]; used when decoding stored
 /// refs, workspaces and operation views.
 pub fn validate_stored_branch_name(s: &str) -> Result<(), NameError> {

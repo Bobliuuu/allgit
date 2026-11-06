@@ -304,7 +304,18 @@ pub const ROWS: &[Row] = &[
     Row { git: "git filter-repo --subdirectory-filter lib", vcs: "vcs rewrite --subdirectory-filter lib", status: Status::Different, note: "no --to-subdirectory-filter and no --path-rename", test: "-" },
     Row { git: "git filter-repo --force --path src", vcs: "vcs rewrite --keep src --force", status: Status::Different, note: "git's --force overrides the fresh-clone check; vcs --force overrides the refusal to change commits that origin holds (as last fetched)", test: "-" },
     Row { git: "git filter-repo --replace-text expr.txt", vcs: "-", status: Status::Missing, note: "no callbacks, --replace-text, --mailmap, --path-rename or --path-regex; use --msg-filter / --tree-filter with sed", test: "-" },
-    Row { git: "git notes add", vcs: "-", status: Status::Missing, note: "none", test: "-" },
+    Row { git: "git notes add -m first HEAD~1", vcs: "vcs notes add -m first HEAD~1", status: Status::Exact, note: "notes are per zone: they annotate commits of the zone of the current directory; stored as objects on an internal ref, published and fetched with the branches", test: "notes" },
+    Row { git: "git notes add -f -m replaced HEAD", vcs: "vcs notes add --force -m replaced HEAD", status: Status::Exact, note: "without -f an existing note is refused, as git", test: "notes" },
+    Row { git: "git notes append -m more HEAD", vcs: "vcs notes append -m more HEAD", status: Status::Exact, note: "a blank line separates the old text from the appended text, as git", test: "notes" },
+    Row { git: "git notes show HEAD", vcs: "vcs notes show HEAD", status: Status::Exact, note: "exit 1 when the commit has no note", test: "notes" },
+    Row { git: "git notes list", vcs: "vcs notes list", status: Status::Different, note: "prints `<note blob id> <commit id>` like git, but the ids are 64-digit BLAKE3, not SHA-1", test: "notes" },
+    Row { git: "git notes remove HEAD", vcs: "vcs notes remove HEAD", status: Status::Exact, note: "an error when the commit has no note", test: "notes" },
+    Row { git: "git notes edit", vcs: "-", status: Status::Missing, note: "no editor: `vcs notes add --force -m <text>` or `vcs notes append`", test: "-" },
+    Row { git: "git notes merge other", vcs: "-", status: Status::Missing, note: "one notes ref per zone; `vcs fetch` merges remote notes itself (union, texts concatenated when both sides annotated a commit)", test: "-" },
+    Row { git: "git notes copy HEAD~1 HEAD", vcs: "-", status: Status::Missing, note: "`vcs notes show HEAD~1`, then `vcs notes add -m <text> HEAD`", test: "-" },
+    Row { git: "git notes prune", vcs: "-", status: Status::Missing, note: "notes of unreachable commits are kept; remove them with `vcs notes remove <commit>`", test: "-" },
+    Row { git: "git notes --ref=review add -m x", vcs: "-", status: Status::Missing, note: "only the default notes ref exists, per zone", test: "-" },
+    Row { git: "git log --notes", vcs: "-", status: Status::Missing, note: "`vcs log` does not print notes; use `vcs notes show <rev>`", test: "-" },
 ];
 /// `(exact, renamed, different, missing)` row counts.
 pub fn counts() -> (usize, usize, usize, usize) {

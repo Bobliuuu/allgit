@@ -37,6 +37,7 @@ Commands:
   gen            Generate shell completions or man pages
   branch         List branches of the current zone, or create one (at the checked-out head)
   stash          Set tracked changes aside (push, pop, list, drop); untracked files are left alone
+  notes          Annotate commits after the fact (add, show, list, append, remove); notes are published and fetched with the branches
   shelve         Park your changes on the remote as a private shelf (the working tree is left alone); `--delete` removes one
   shelves        List your shelves on the remote (`--all`: also other people's that you may read)
   unshelve       Apply a shelf from the remote to the working tree (staged, like `stash pop`)
@@ -712,6 +713,130 @@ Arguments:
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+## `vcs notes`
+
+```text
+Annotate commits after the fact (add, show, list, append, remove); notes are published and fetched with the branches
+
+Usage: vcs notes [OPTIONS] [COMMAND]
+
+Commands:
+  list    List notes as `<note blob> <annotated commit>`, or print the note blob id of one commit
+  add     Attach a note to a commit (default HEAD); refuses an existing note unless -f
+  show    Print the note on a commit (default HEAD); exit 1 when it has none
+  append  Add text to the note on a commit, after a blank line (creates the note when there is none)
+  remove  Remove the note from each commit (default HEAD)
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --zone <ZONE>    Zone whose commits are annotated (default: the zone of the current directory)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+### `vcs notes list`
+
+```text
+List notes as `<note blob> <annotated commit>`, or print the note blob id of one commit
+
+Usage: vcs notes list [OPTIONS] [REV]
+
+Arguments:
+  [REV]  Commit to look up (default: every note)
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --zone <ZONE>    Zone whose commits are annotated (default: the zone of the current directory)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+#### `vcs notes add`
+
+```text
+Attach a note to a commit (default HEAD); refuses an existing note unless -f
+
+Usage: vcs notes add [OPTIONS] [REV]
+
+Arguments:
+  [REV]  
+
+Options:
+  -C <DIR>                 Run as if vcs was started in <DIR> (applied before repository discovery)
+  -m, --message <MESSAGE>  Note text (repeat for several paragraphs, separated by a blank line)
+      --zone <ZONE>        Zone whose commits are annotated (default: the zone of the current directory)
+  -F, --file <FILE>        Read the note text from a file (`-` for standard input)
+      --json               Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>      PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+  -f, --force              Replace an existing note
+      --no-hooks           Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help               Print help
+```
+
+##### `vcs notes show`
+
+```text
+Print the note on a commit (default HEAD); exit 1 when it has none
+
+Usage: vcs notes show [OPTIONS] [REV]
+
+Arguments:
+  [REV]  
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --zone <ZONE>    Zone whose commits are annotated (default: the zone of the current directory)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+###### `vcs notes append`
+
+```text
+Add text to the note on a commit, after a blank line (creates the note when there is none)
+
+Usage: vcs notes append [OPTIONS] [REV]
+
+Arguments:
+  [REV]  
+
+Options:
+  -C <DIR>                 Run as if vcs was started in <DIR> (applied before repository discovery)
+  -m, --message <MESSAGE>  Note text (repeat for several paragraphs, separated by a blank line)
+      --zone <ZONE>        Zone whose commits are annotated (default: the zone of the current directory)
+  -F, --file <FILE>        Read the note text from a file (`-` for standard input)
+      --json               Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>      PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks           Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help               Print help
+```
+
+####### `vcs notes remove`
+
+```text
+Remove the note from each commit (default HEAD)
+
+Usage: vcs notes remove [OPTIONS] [REVS]...
+
+Arguments:
+  [REVS]...  
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --zone <ZONE>    Zone whose commits are annotated (default: the zone of the current directory)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md

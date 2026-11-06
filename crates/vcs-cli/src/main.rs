@@ -27,6 +27,7 @@ mod json;
 mod lockable_cmd;
 mod logfmt;
 mod logopts;
+mod notes_cmd;
 mod ontology;
 mod p4map;
 mod patchcmd;
@@ -289,6 +290,8 @@ enum Cmd {
     /// Set tracked changes aside (push, pop, list, drop); untracked files are left alone
     #[command(subcommand)]
     Stash(StashCmd),
+    /// Annotate commits after the fact (add, show, list, append, remove); notes are published and fetched with the branches
+    Notes(notes_cmd::NotesArgs),
     /// Park your changes on the remote as a private shelf (the working tree is left alone); `--delete` removes one
     Shelve(shelve_cmd::ShelveArgs),
     /// List your shelves on the remote (`--all`: also other people's that you may read)
@@ -1744,7 +1747,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                 let (repo, cwd) = open()?;
                 let zone = repo.resolve_zone(&zone_of_cwd(&repo, &cwd, zone)?)?;
                 for (z, b) in repo.remote_refs()?.branches.keys() {
-                    if *z == zone {
+                    if *z == zone && b != vcs_objects::names::NOTES_BRANCH {
                         println!("  origin/{b}");
                     }
                 }
@@ -2377,6 +2380,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             }
         }
         Cmd::Bundle(b) => bundle_cmd::run(b)?,
+        Cmd::Notes(a) => notes_cmd::run(a)?,
         Cmd::Shelve(a) => shelve_cmd::shelve(&open()?.0, a, &principal(), author()?)?,
         Cmd::Shelves(a) => shelve_cmd::shelves(&open()?.0, a, &principal())?,
         Cmd::Unshelve(a) => shelve_cmd::unshelve(&open()?.0, a, &principal())?,
@@ -2480,6 +2484,11 @@ fn run(cli: Cli) -> Result<(), Error> {
             for (z, b, old) in &rep.deleted {
                 println!("deleted remote branch {z}/{b} (it was at {})", old.short());
                 println!("  to restore: vcs branch {b} --at {}   then vcs publish {b}", old.to_hex());
+            }
+            for z in &rep.notes_diverged {
+                eprintln!(
+                    "notes of zone {z} were not published: the remote has notes you lack; `vcs fetch` merges them, then publish again"
+                );
             }
             for (z, n) in &rep.tags {
                 println!("tag {z}/{n}");

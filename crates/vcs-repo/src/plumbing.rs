@@ -5,7 +5,7 @@ use crate::error::{msg, Error, Result};
 use crate::meta::ROOT_ZONE;
 use crate::repo::{Repo, StatusOpts};
 use crate::treeops::{self, Flat};
-use vcs_objects::names::validate_branch_name;
+use vcs_objects::names::validate_user_branch_name;
 use vcs_objects::{Commit, Object, ObjectId, RefUpdate};
 use vcs_store::ObjectStore;
 
@@ -166,7 +166,7 @@ impl Repo {
     pub fn checkout_commit(&self, zone: &str, branch: &str, target: &ObjectId) -> Result<()> {
         let zone = self.resolve_zone(zone)?;
         let zone = zone.as_str();
-        validate_branch_name(branch)?;
+        validate_user_branch_name(branch)?;
         let _l = self.lock()?;
         let zones = self.zones()?;
         let mut ws = self.workspace()?;
