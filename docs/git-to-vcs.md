@@ -144,7 +144,7 @@ Status: exact (same command and flags), renamed (other spelling, same meaning), 
 semantics differ as the notes say), missing (no equivalent; the notes name the native route).
 
 <!-- BEGIN GENERATED TABLE -->
-261 rows: 148 exact, 40 renamed, 32 different, 41 missing.
+261 rows: 148 exact, 40 renamed, 34 different, 39 missing.
 
 | git | vcs | status | notes | test |
 |---|---|---|---|---|
@@ -196,8 +196,8 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git commit --amend --no-edit` | `vcs reset --soft HEAD^ && vcs commit -m <old message>` | different | as above | `amend` |
 | `git commit -S -m "msg"` | `vcs commit -S -m msg` | different | Ed25519 OpenSSH key signatures, not GPG | translation |
 | `git commit --no-verify -m "msg"` | `vcs --no-hooks commit -m msg` | exact |  | translation |
-| `git commit --allow-empty -m "msg"` | none | missing | a commit with no change is refused; make a change or use a tag | translation |
-| `git commit --author="A <a@x>"` | none | missing | set `user.name`/`user.email` (or VCS_AUTHOR_*) instead | translation |
+| `git commit --allow-empty -m "msg"` | `vcs commit --allow-empty -m msg` | different | acts on ONE zone (the cwd zone) because each zone has its own head; other zones commit only when they have staged changes | `basics` |
+| `git commit --author="A <a@x>" -m "msg"` | `vcs commit --author A <a@x> -m msg` | different | vcs records one identity per commit, so it is the author and the committer both (git keeps the committer from `user.*`) | `basics` |
 | `git log` | `vcs log -n 1000000000` | exact | git has no default limit; neither does the translation (native `vcs log` shows 20) | `history` |
 | `git log -n 5 --oneline` | `vcs log -n 5 --oneline` | exact |  | `history` |
 | `git log -5` | `vcs log -n 5` | exact |  | `history` |
