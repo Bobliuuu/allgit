@@ -55,14 +55,40 @@ largest pack, and prefer slice or `--auto` clones, which read ranges.
 
 ## `status` at 100k files (issue #293)
 
-- **No path arena.** `Entries` is a public `BTreeMap`, and the AGI5 mmap
-  index already removed most of the decode cost, so the expected gain is
-  small. A quiet `status` costs about 9 ms CPU flat and 7 ms deep at 100k
-  files (git: 13 ms and 721 ms).
-- **No quiet-machine re-measure.** Those numbers were taken at load 80 to 150.
-- **Linux directory scans use `fstatat`.** `getattrlistbulk` is used on macOS
-  only (22% less CPU for `status`, 43% for `diff`); `statx` has no
-  per-directory form and io_uring batching was not built or timed.
+Measured on the Linux bench box (32 vCPU, ext4/NVMe md array, load about 2, `flock` timing, median of 100 runs, 100k
+files in 1100 directories, one tracked file modified, release build). Without a watcher:
+
+| | wall ms | CPU ms |
+|---|---|---|
+| before | 38.5 | 208 |
+| after | 16.4 | 121 |
+
+With the `vcs watch` journal running, `status` answers from the saved result in 2.5 ms (CPU 2.1 ms) before and after;
+the watcher path needed no change. The floor for stat-ing 100k files with 8 threads in a bare C loop on this box is
+12 ms wall and 95 ms CPU, so the no-watcher `status` is now within 4 ms of the syscall cost.
+
+What was slow, and what changed:
+
+- The untracked walk took 22 ms after the 14.5 ms tracked scan. It asked the index for each directory's tracked names
+  with one binary search, one entry decode and two string allocations per name (100k times). It now reads the names in
+  place, record after record (`IndexImage::tracked_children`), when no logged edit touches the directory.
+- The directory cache decoded 100k names into 100k `String`s (6 ms, plus the frees). Names now sit in one arena per
+  directory (`dircache::Names`); the file format is unchanged.
+- The ignore file was opened in every directory (a failing `open` each). It is opened only when the directory listing
+  names one.
+- The tracked scan and the untracked walk now run side by side (`VCS_SERIAL_STATUS=1` restores the old order for A/B).
+
+Not done, with reasons:
+
+- **No path arena for `Entries`.** It is a public `BTreeMap`; the lazy status path never builds it, and the cost was in
+  the walk, not the decode.
+- **`statx` and io_uring.** `statx` (mask `STATX_BASIC_STATS`, `AT_STATX_DONT_SYNC`) measured the same as `fstatat` in the
+  C loop (12.0 vs 12.4 ms wall, 91 vs 95 ms CPU, noise level), so it was not adopted. io_uring was not built: its statx
+  opcode is always punted to kernel worker threads, which should not beat 8 threads doing the syscall directly; this is
+  reasoning, not a measurement.
+- **macOS** keeps `getattrlistbulk`; the numbers above are Linux only.
+- Dircache decode is still about 3 ms of CPU on one thread (hidden behind the tracked scan now). A lazy per-directory
+  decode would remove it; not needed at this size.
 
 ## Command-level gaps vs other tools
 
