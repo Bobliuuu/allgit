@@ -42,11 +42,48 @@ pub(crate) enum Kind {
     Other = 2,
 }
 
+/// The names of one directory listing in a single arena: the names back to back in `text`, `ends[i]`
+/// the end offset of name `i`. Two allocations per directory instead of one per name: decoding a
+/// 100k-name cache is then a copy, and dropping it is two frees per directory.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Names {
+    text: String,
+    ends: Vec<usize>,
+    kinds: Vec<Kind>,
+}
+
+impl Names {
+    pub fn with_capacity(names: usize) -> Names {
+        Names {
+            text: String::with_capacity(names * 12),
+            ends: Vec::with_capacity(names),
+            kinds: Vec::with_capacity(names),
+        }
+    }
+    pub fn push(&mut self, name: &str, kind: Kind) {
+        self.text.push_str(name);
+        self.ends.push(self.text.len());
+        self.kinds.push(kind);
+    }
+    pub fn len(&self) -> usize {
+        self.ends.len()
+    }
+    /// `(name, kind)` in the order they were pushed (sorted by name).
+    pub fn iter(&self) -> impl Iterator<Item = (&str, Kind)> + '_ {
+        let mut start = 0;
+        self.ends.iter().zip(&self.kinds).map(move |(&end, &k)| {
+            let n = &self.text[start..end];
+            start = end;
+            (n, k)
+        })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct Listing {
     pub stamp: Stamp,
     /// Sorted by name; names already filtered of `.vcs` and invalid components.
-    pub entries: Vec<(String, Kind)>,
+    pub entries: Names,
 }
 
 #[derive(Default)]
@@ -97,8 +134,8 @@ impl DirCache {
             let l = &self.dirs[k];
             w.str(k).varint(l.stamp.ino).varint(l.stamp.mtime_ns).varint(l.stamp.ctime_ns);
             w.varint(l.entries.len() as u64);
-            for (n, kind) in &l.entries {
-                w.str(n).u8(*kind as u8);
+            for (n, kind) in l.entries.iter() {
+                w.str(n).u8(kind as u8);
             }
         }
         frame(b"AGDC", w.finish())
@@ -117,16 +154,16 @@ impl DirCache {
                 ctime_ns: r.varint().ok()?,
             };
             let m = r.count(2).ok()?;
-            let mut entries = Vec::with_capacity(m);
+            let mut entries = Names::with_capacity(m);
             for _ in 0..m {
-                let name = r.str(4096).ok()?;
+                let name = std::str::from_utf8(r.bytes(4096).ok()?).ok()?;
                 let kind = match r.u8().ok()? {
                     0 => Kind::Dir,
                     1 => Kind::File,
                     2 => Kind::Other,
                     _ => return None,
                 };
-                entries.push((name, kind));
+                entries.push(name, kind);
             }
             dirs.insert(k, Listing { stamp, entries });
         }
@@ -149,7 +186,12 @@ mod tests {
                     mtime_ns: 8,
                     ctime_ns: 9,
                 },
-                entries: vec![("x".into(), Kind::File), ("y".into(), Kind::Dir)],
+                entries: {
+                    let mut n = Names::default();
+                    n.push("x", Kind::File);
+                    n.push("y", Kind::Dir);
+                    n
+                },
             },
         );
         let d = DirCache::decode(&c.encode()).unwrap();
