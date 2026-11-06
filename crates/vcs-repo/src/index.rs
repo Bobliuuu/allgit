@@ -185,6 +185,29 @@ impl Entries {
     }
 }
 
+/// Tracked names directly inside a directory, owned: what the untracked-file walk needs from the index.
+#[derive(Debug, Default)]
+pub(crate) struct TrackedChildren {
+    pub files: Vec<String>,
+    pub dirs: Vec<String>,
+}
+
+/// The tracked-name lookup of the untracked walk; implemented by the decoded index and by the mapped image.
+pub(crate) trait TrackedDirs: Sync {
+    /// `files` and `dirs` (each sorted) directly inside `dir` ("" = root).
+    fn tracked_children(&self, dir: &str) -> Result<TrackedChildren>;
+}
+
+impl TrackedDirs for Index {
+    fn tracked_children(&self, dir: &str) -> Result<TrackedChildren> {
+        let c = self.entries.children(dir);
+        Ok(TrackedChildren {
+            files: c.files.iter().map(|s| (*s).to_owned()).collect(),
+            dirs: c.dirs.iter().map(|s| (*s).to_owned()).collect(),
+        })
+    }
+}
+
 /// See [`Entries::children`].
 #[derive(Debug, Default)]
 pub struct Children<'a> {

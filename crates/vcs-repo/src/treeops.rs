@@ -569,7 +569,7 @@ const CACHE_MIN_FILES: u32 = 8;
 /// caller may merge back into the index.
 pub struct IndexTrees<'a> {
     pub store: &'a dyn ObjectStore,
-    pub map: &'a BTreeMap<String, crate::index::IndexEntry>,
+    pub map: &'a dyn EntrySource,
     pub zones: &'a crate::meta::Zones,
     pub zone: &'a str,
     cached: Option<&'a BTreeMap<String, ObjectId>>,
@@ -585,10 +585,33 @@ enum Child {
     Dir(String),
 }
 
+/// Ordered access to tracked entries: all [`IndexTrees`] needs. Implemented by the decoded map and
+/// by the mapped index image (which answers without decoding the other entries).
+pub trait EntrySource {
+    /// First tracked entry whose path is `>= key`.
+    fn next_ge(&self, key: &str) -> Result<Option<(String, crate::index::IndexEntry)>>;
+}
+
+impl EntrySource for BTreeMap<String, crate::index::IndexEntry> {
+    fn next_ge(&self, key: &str) -> Result<Option<(String, crate::index::IndexEntry)>> {
+        use std::ops::Bound::{Included, Unbounded};
+        Ok(self
+            .range::<str, _>((Included(key), Unbounded))
+            .next()
+            .map(|(k, e)| (k.clone(), e.clone())))
+    }
+}
+
+impl EntrySource for crate::index::Entries {
+    fn next_ge(&self, key: &str) -> Result<Option<(String, crate::index::IndexEntry)>> {
+        (**self).next_ge(key)
+    }
+}
+
 impl<'a> IndexTrees<'a> {
     pub fn new(
         store: &'a dyn ObjectStore,
-        map: &'a BTreeMap<String, crate::index::IndexEntry>,
+        map: &'a dyn EntrySource,
         zones: &'a crate::meta::Zones,
         zone: &'a str,
         cached: Option<&'a BTreeMap<String, ObjectId>>,
@@ -606,18 +629,20 @@ impl<'a> IndexTrees<'a> {
     }
 
     /// Immediate children of directory `d` (full path, "" = root) in this zone's view, by name.
-    fn children(&self, d: &str) -> Vec<(String, Child)> {
-        use std::ops::Bound::{Included, Unbounded};
+    fn children(&self, d: &str) -> Result<Vec<(String, Child)>> {
         let lo = if d.is_empty() { String::new() } else { format!("{d}/") };
         let mut out = Vec::new();
-        let mut it = self.map.range::<str, _>((Included(lo.as_str()), Unbounded));
-        while let Some((k, e)) = it.next() {
+        let mut cur = lo.clone();
+        while let Some((k, e)) = self.map.next_ge(&cur)? {
             if !k.starts_with(&lo) {
                 break;
             }
             let rest = &k[lo.len()..];
             match rest.find('/') {
-                None => out.push((rest.to_owned(), Child::File(e.mode, e.id))),
+                None => {
+                    out.push((rest.to_owned(), Child::File(e.mode, e.id)));
+                    cur = format!("{k}\0");
+                }
                 Some(p) => {
                     let name = &rest[..p];
                     let full = format!("{lo}{name}");
@@ -625,12 +650,11 @@ impl<'a> IndexTrees<'a> {
                     if self.zones.owner(&format!("{full}/_")) == self.zone {
                         out.push((name.to_owned(), Child::Dir(full)));
                     }
-                    let skip = format!("{lo}{name}0"); // '0' == '/' + 1: first key after "full/..."
-                    it = self.map.range::<str, _>((Included(skip.as_str()), Unbounded));
+                    cur = format!("{lo}{name}0"); // '0' == '/' + 1: first key after "full/..."
                 }
             }
         }
-        out
+        Ok(out)
     }
 
     /// Id (and a lower bound on the number of files beneath) of the tree for directory `d`;
@@ -644,7 +668,7 @@ impl<'a> IndexTrees<'a> {
         }
         let mut entries = Vec::new();
         let mut count = 0u32;
-        for (name, ch) in self.children(d) {
+        for (name, ch) in self.children(d)? {
             match ch {
                 Child::File(mode, id) => {
                     count = count.saturating_add(1);
@@ -689,7 +713,7 @@ impl<'a> IndexTrees<'a> {
             None => BTreeMap::new(),
         };
         let mut entries = Vec::new();
-        for (name, ch) in self.children(d) {
+        for (name, ch) in self.children(d)? {
             match ch {
                 Child::File(mode, fid) => entries.push(TreeEntry { name, mode, id: fid }),
                 Child::Dir(full) => {
@@ -750,14 +774,15 @@ impl<'a> IndexTrees<'a> {
         Ok(out)
     }
 
-    fn added_under(&self, d: &str, out: &mut Vec<(String, crate::ChangeKind)>) {
-        for (name, ch) in self.children(d) {
+    fn added_under(&self, d: &str, out: &mut Vec<(String, crate::ChangeKind)>) -> Result<()> {
+        for (name, ch) in self.children(d)? {
             let p = join(d, &name);
             match ch {
                 Child::File(..) => out.push((p, crate::ChangeKind::Added)),
-                Child::Dir(full) => self.added_under(&full, out),
+                Child::Dir(full) => self.added_under(&full, out)?,
             }
         }
+        Ok(())
     }
 
     fn diff_dir(&mut self, d: &str, head: Option<ObjectId>, out: &mut Vec<(String, crate::ChangeKind)>) -> Result<()> {
@@ -781,7 +806,7 @@ impl<'a> IndexTrees<'a> {
             }
             Ok(())
         };
-        for (name, ch) in self.children(d) {
+        for (name, ch) in self.children(d)? {
             let p = join(d, &name);
             match ch {
                 Child::File(m, id) => match hm.remove(&name) {
@@ -801,7 +826,7 @@ impl<'a> IndexTrees<'a> {
                         continue; // empty in this view: HEAD's entry (if any) is reported deleted below
                     };
                     match hm.remove(&name) {
-                        None => self.added_under(&full, out),
+                        None => self.added_under(&full, out)?,
                         Some(h) if h.mode == EntryMode::Directory => {
                             if h.id != id {
                                 self.diff_dir(&full, Some(h.id), out)?;
@@ -809,7 +834,7 @@ impl<'a> IndexTrees<'a> {
                         }
                         Some(h) => {
                             deleted_under(self.store, &h, &p, out)?;
-                            self.added_under(&full, out);
+                            self.added_under(&full, out)?;
                         }
                     }
                 }
