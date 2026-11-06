@@ -113,7 +113,6 @@ impl Zones {
 }
 
 /// What one worker found. Merged in a fixed order after the pass.
-#[derive(Default)]
 struct Acc {
     problems: Vec<String>,
     /// Referenced ids that are in no pack index and no loose file, with the message to report if not refetchable.
@@ -124,6 +123,25 @@ struct Acc {
     /// indexes in `ids` of the parents of `commits`, flat
     parents: Vec<usize>,
     last_zone: Option<(String, u32)>,
+    /// Direct-mapped memory of ids found in `ids` lately (consecutive trees name mostly the same entries), so
+    /// most lookups never touch the big sorted array: it is memory-latency bound (70 percent of the time without).
+    recent: Vec<(ObjectId, usize)>,
+}
+
+const RECENT: usize = 1 << 14;
+
+impl Default for Acc {
+    fn default() -> Self {
+        Acc {
+            problems: Vec::new(),
+            misses: Vec::new(),
+            chunked: Vec::new(),
+            commits: Vec::new(),
+            parents: Vec::new(),
+            last_zone: None,
+            recent: vec![(ObjectId::from_bytes([0; 32]), usize::MAX); RECENT],
+        }
+    }
 }
 
 struct Ctx<'a> {
@@ -137,7 +155,13 @@ impl Ctx<'_> {
     /// Whether the store has `id`. The sorted id list answers almost always; the store is asked for the rest
     /// (an object that appeared after listing, or a lookup the list cannot see).
     fn exists(&self, id: &ObjectId, acc: &mut Acc, what: impl FnOnce() -> String) -> Option<usize> {
+        let b = id.as_bytes();
+        let slot = (u16::from_le_bytes([b[8], b[9]]) as usize) & (RECENT - 1);
+        if acc.recent[slot].1 != usize::MAX && acc.recent[slot].0 == *id {
+            return Some(acc.recent[slot].1);
+        }
         if let Some(i) = self.ids.find(id) {
+            acc.recent[slot] = (*id, i);
             return Some(i);
         }
         match self.repo.store.contains(id) {
