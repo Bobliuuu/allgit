@@ -337,9 +337,13 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
         }
         "init" => {
             let mut p = parse(cmd, rest, &["-b", "--initial-branch", "--template", "--separate-git-dir", "--object-format"]);
+            let branch = p.val(&["-b", "--initial-branch"]);
             p.take(&["-q", "--quiet"]);
-            p.finish("`vcs init [path]` (the first branch is always main; no bare repositories)")?;
+            p.finish("`vcs init [-b <branch>] [path]` (no bare repositories)")?;
             let mut a = v(&["init"]);
+            if let Some(b) = branch {
+                a.extend(["--initial-branch".to_owned(), b]);
+            }
             a.extend(p.pos.first().cloned());
             vec![Step::Vcs(a)]
         }

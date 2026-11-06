@@ -29,7 +29,7 @@ pub const ROWS: &[Row] = &[
     Row { git: "git init", vcs: "vcs init", status: Status::Exact, note: "", test: "-" },
     Row { git: "git init proj", vcs: "vcs init proj", status: Status::Exact, note: "", test: "-" },
     Row { git: "git init --bare", vcs: "-", status: Status::Missing, note: "a bare repository has no working tree; every vcs repository has one", test: "-" },
-    Row { git: "git init -b trunk", vcs: "-", status: Status::Missing, note: "the first branch is always `main`; create others with `vcs switch -c`", test: "-" },
+    Row { git: "git init -b trunk", vcs: "vcs init --initial-branch trunk", status: Status::Exact, note: "the root zone starts on that branch", test: "-" },
     Row { git: "git clone ssh://host/app.git proj", vcs: "vcs clone ssh://host/app.git proj", status: Status::Exact, note: "only the remotes vcs supports work (path, file://, http(s)://, s3://)", test: "-" },
     Row { git: "git clone /srv/app.git", vcs: "vcs clone /srv/app.git app", status: Status::Exact, note: "the directory name is inferred as git does", test: "-" },
     Row { git: "git clone --depth 1 URL", vcs: "-", status: Status::Missing, note: "vcs has no shallow clones; use `vcs clone --zone Z` / `--for PATH` to download only part", test: "-" },
