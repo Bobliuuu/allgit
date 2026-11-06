@@ -385,3 +385,49 @@ fn merge_with_missing_blobs_writes_nothing_before_failing() {
         .expect("merge after lazy fetch");
     assert!(b.worktree().join("engine/new7.rs").exists());
 }
+
+/// The same for a large file: its chunk manifest can be local while its chunks are not (a lazy fetch brings
+/// the manifest first), and the failure then comes while files are being written. Files created before it
+/// must be removed again, or the re-run after the fetch refuses with "untracked path would be overwritten"
+/// (seen in the monorepo stress run).
+#[test]
+fn merge_with_a_missing_chunk_leaves_no_file_behind() {
+    let d = tempfile::tempdir().unwrap();
+    let remote = MemBackend::new();
+    let a = seeded(&remote, d.path());
+    let b = Repo::clone_from(&remote, "mem", &d.path().join("b"), Some(&["engine".to_string()])).unwrap();
+    for i in 0..5 {
+        write(&a, &format!("engine/new{i}.rs"), &format!("new {i} {}", pad(i, "n")));
+    }
+    let big: String = (0..700).map(|i| pad(i, "big")).collect(); // about 1.4 MB of incompressible letters
+    assert!(big.len() > 1 << 20);
+    write(&a, "engine/zz-big.dat", &big);
+    commit_all(&a, "adds");
+    a.publish(&remote, None, sig()).unwrap();
+    write(&b, "engine/mine.rs", "local change");
+    commit_all(&b, "local");
+    b.fetch(&remote, None).unwrap();
+    // bring the blobs and the big file's manifest, but not its chunks
+    let new_tree_blobs: Vec<ObjectId> = (0..5).map(|i| blob_id(&format!("new {i} {}", pad(i, "n")))).collect();
+    let manifest = vcs_objects::content_id(big.as_bytes());
+    let Ok(Object::Chunked(m)) = vcs_remote::fetch_object(&remote, &manifest) else {
+        panic!("the big file must be chunked")
+    };
+    assert!(m.chunks.len() >= 2);
+    for id in new_tree_blobs.iter().chain(std::iter::once(&manifest)) {
+        b.with_lazy_fetch(&remote, || Ok(b.store().get(id).map(|_| ())?)).unwrap();
+    }
+    let err = b.merge_remote("engine", "main", sig());
+    match err {
+        Err(vcs_repo::Error::Store(vcs_store::StoreError::NotFound(_))) => {}
+        other => panic!("expected NotFound for a chunk, got {other:?}"),
+    }
+    for i in 0..5 {
+        assert!(!b.worktree().join(format!("engine/new{i}.rs")).exists(), "new{i}.rs left behind");
+    }
+    assert!(!b.worktree().join("engine/zz-big.dat").exists());
+    // the re-run after fetching the chunks succeeds
+    b.with_lazy_fetch(&remote, || b.merge_remote("engine", "main", sig()))
+        .expect("merge after lazy fetch");
+    assert_eq!(fs::read_to_string(b.worktree().join("engine/zz-big.dat")).unwrap(), big);
+}
