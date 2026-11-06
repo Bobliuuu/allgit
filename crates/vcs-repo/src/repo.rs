@@ -2663,6 +2663,17 @@ impl Repo {
                 hs.into_iter().flat_map(|h| h.join().expect("checkout writer panicked")).collect()
             })
         };
+        if written.iter().any(|r| r.is_err()) {
+            // A write failed (typically `NotFound` for a chunk of a large file whose manifest is local but whose chunks
+            // are not yet, which `vcs` answers by fetching it and re-running the command). The files created before the
+            // failure are not in the index, so the re-run would refuse with "untracked path would be overwritten": take
+            // them away again. Files that were tracked before were replaced atomically and stay as written.
+            for (p, r) in changed.iter().zip(&written) {
+                if r.is_ok() && !old.contains_key(*p) {
+                    let _ = self.wfs.remove(p);
+                }
+            }
+        }
         for (p, e) in changed.iter().zip(written) {
             let e = e?;
             ix.entries.remove(p);
