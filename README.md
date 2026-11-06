@@ -311,6 +311,10 @@ Sapling, Mercurial, Subversion, Fossil, Breezy and Pijul exist ([perforce](docs/
 current performance work and were not re-run; read those files with that in mind. More method notes:
 [docs/benchmarks.md](docs/benchmarks.md).
 
+## 📈 Scaling
+
+What happens as load, file count, file size, team size and history grow, which limits exist (with numbers and knobs), and which claims are measured, tested, designed only or still open: [docs/how-it-scales.md](docs/how-it-scales.md). Raw audit: [docs/scalability.md](docs/scalability.md).
+
 ## 🔒 Security notes
 
 - 🧾 **Integrity:** objects are re-hashed on read and each has one valid encoding (strict decode); decoders are fuzzed.

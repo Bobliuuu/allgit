@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 420" width="900" height="420" role="img" aria-labelledby="t d">
+<title id="t">History growth</title><desc id="d">Per-zone commit-graph and Bloom filters make walks independent of file count; every publish adds a small pack that automatic compaction merges; gc removes unreachable objects after a grace period.</desc>
+<style>
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px;fill:#1f2328}
+.m{font-size:11px;fill:#59636e}.t{font-size:17px;font-weight:700}.h{font-weight:700}.mid{text-anchor:middle}
+.bg{fill:#ffffff}.pan{fill:#f6f8fa;stroke:#d0d7de;stroke-width:1.2}
+.kA{fill:#ddf4ff;stroke:#0969da;stroke-width:1.5}.kB{fill:#dafbe1;stroke:#1a7f37;stroke-width:1.5}
+.kC{fill:#fff1e5;stroke:#bc4c00;stroke-width:1.5}.kD{fill:#fbefff;stroke:#8250df;stroke-width:1.5}
+.kH{fill:#fff8c5;stroke:#bf8700;stroke-width:1.8}.kX{fill:#ffebe9;stroke:#cf222e;stroke-width:1.5}
+.kG{fill:#eaeef2;stroke:#8c959f;stroke-width:1.2}
+.ln{stroke:#8c959f;stroke-width:1.5;fill:none}.ar{stroke:#8c959f;stroke-width:1.8;fill:none;marker-end:url(#ah)}
+.dash{stroke-dasharray:5 4}.fl{fill:#8c959f}
+@media (prefers-color-scheme:dark){text{fill:#e6edf3}.m{fill:#9198a1}.bg{fill:#0d1117}.pan{fill:#161b22;stroke:#30363d}
+.kA{fill:#0c2d6b;stroke:#58a6ff}.kB{fill:#0f2d1c;stroke:#3fb950}.kC{fill:#3d1d0b;stroke:#f0883e}.kD{fill:#271a45;stroke:#bc8cff}
+.kH{fill:#3a2d00;stroke:#d29922}.kX{fill:#3d1212;stroke:#f85149}.kG{fill:#21262d;stroke:#6e7681}
+.ln{stroke:#6e7681}.ar{stroke:#6e7681}.fl{fill:#6e7681}}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="fl"/></marker></defs>
+<rect width="900" height="420" class="bg"/>
+<text x="20" y="28" class="t">History growth: caches for walks, compaction for packs</text>
+<rect x="20" y="50" width="270" height="112" rx="6" class="kA"/>
+<text x="155.0" y="86.0" class="h mid">commit-graph (per zone)</text>
+<text x="155.0" y="102.0" class="mid">parents, time, generation</text>
+<text x="155.0" y="118.0" class="mid">merge-base, describe, log order</text>
+<text x="155.0" y="134.0" class="mid">pure cache: wrong means rebuild</text>
+<rect x="315" y="50" width="270" height="112" rx="6" class="kD"/>
+<text x="450.0" y="86.0" class="h mid">changed-path Bloom filters</text>
+<text x="450.0" y="102.0" class="mid">12 bits, 7 hashes per path</text>
+<text x="450.0" y="118.0" class="mid">log -- path skips commits</text>
+<text x="450.0" y="134.0" class="mid">no filter above 512 changed paths</text>
+<rect x="610" y="50" width="270" height="112" rx="6" class="kB"/>
+<text x="745.0" y="86.0" class="h mid">tree sharing</text>
+<text x="745.0" y="102.0" class="mid">equal subtrees compared by id</text>
+<text x="745.0" y="118.0" class="mid">diff-tree and tree merge cost</text>
+<text x="745.0" y="134.0" class="mid">follow changed directories</text>
+<text x="20" y="184" class="m">Identical results with and without every cache (property tests); fsck checks them.</text>
+<rect x="20" y="206" width="150" height="56" rx="6" class="kG"/>
+<text x="95.0" y="230.0" class="h mid">publish 1</text>
+<text x="95.0" y="246.0" class="mid">small pack</text>
+<rect x="180" y="206" width="150" height="56" rx="6" class="kG"/>
+<text x="255.0" y="230.0" class="h mid">publish 2</text>
+<text x="255.0" y="246.0" class="mid">small pack</text>
+<rect x="340" y="206" width="90" height="56" rx="6" class="kG"/>
+<text x="385.0" y="238.0" class="h mid">...</text>
+<rect x="450" y="206" width="190" height="56" rx="6" class="kH"/>
+<text x="545.0" y="230.0" class="h mid">auto-compact</text>
+<text x="545.0" y="246.0" class="mid">every 8th generation</text>
+<rect x="660" y="206" width="220" height="56" rx="6" class="kB"/>
+<text x="770.0" y="230.0" class="h mid">fewer, larger packs</text>
+<text x="770.0" y="246.0" class="mid">clone reads few ranges</text>
+<line x1="430" y1="234" x2="450" y2="234" class="ar"/>
+<line x1="640" y1="234" x2="660" y2="234" class="ar"/>
+<text x="450" y="284" class="m">when more than 24 packs; merges up to 64 MiB; VCS_AUTO_COMPACT=0 disables</text>
+<rect x="20" y="304" width="200" height="52" rx="6" class="kX"/>
+<text x="120.0" y="334.0" class="h mid">gc mark and sweep</text>
+<text x="236" y="326" class="m">unreachable and older than the grace period are deleted; grace must exceed twice the hold time (default 1 h);</text>
+<text x="236" y="344" class="m">local sweep refuses a grace at or below 3.5 days unless forced. Remote gc exists for fs, S3 and http backends.</text>
+<text x="20" y="384" class="m">Measured: 100,000 linear commits, rev-list 0.10 s warm; cold graph build 13.2 s in one loaded run, 1.7-2.2 s in 3-run medians (PR #449, open).</text>
+<text x="20" y="402" class="m">Not run: 1M commits, remote gc concurrent with pushes at scale, delta policy beyond the 8-deep chain default (opt-in, local only).</text>
+</svg>

@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 400" width="900" height="400" role="img" aria-labelledby="t d">
+<title id="t">Large files as content-defined chunks</title><desc id="d">A big file is cut into content-defined chunks, stored behind a chunk manifest. An edit changes the chunks around it only; a range read touches only the overlapping chunks.</desc>
+<style>
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px;fill:#1f2328}
+.m{font-size:11px;fill:#59636e}.t{font-size:17px;font-weight:700}.h{font-weight:700}.mid{text-anchor:middle}
+.bg{fill:#ffffff}.pan{fill:#f6f8fa;stroke:#d0d7de;stroke-width:1.2}
+.kA{fill:#ddf4ff;stroke:#0969da;stroke-width:1.5}.kB{fill:#dafbe1;stroke:#1a7f37;stroke-width:1.5}
+.kC{fill:#fff1e5;stroke:#bc4c00;stroke-width:1.5}.kD{fill:#fbefff;stroke:#8250df;stroke-width:1.5}
+.kH{fill:#fff8c5;stroke:#bf8700;stroke-width:1.8}.kX{fill:#ffebe9;stroke:#cf222e;stroke-width:1.5}
+.kG{fill:#eaeef2;stroke:#8c959f;stroke-width:1.2}
+.ln{stroke:#8c959f;stroke-width:1.5;fill:none}.ar{stroke:#8c959f;stroke-width:1.8;fill:none;marker-end:url(#ah)}
+.dash{stroke-dasharray:5 4}.fl{fill:#8c959f}
+@media (prefers-color-scheme:dark){text{fill:#e6edf3}.m{fill:#9198a1}.bg{fill:#0d1117}.pan{fill:#161b22;stroke:#30363d}
+.kA{fill:#0c2d6b;stroke:#58a6ff}.kB{fill:#0f2d1c;stroke:#3fb950}.kC{fill:#3d1d0b;stroke:#f0883e}.kD{fill:#271a45;stroke:#bc8cff}
+.kH{fill:#3a2d00;stroke:#d29922}.kX{fill:#3d1212;stroke:#f85149}.kG{fill:#21262d;stroke:#6e7681}
+.ln{stroke:#6e7681}.ar{stroke:#6e7681}.fl{fill:#6e7681}}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="fl"/></marker></defs>
+<rect width="900" height="400" class="bg"/>
+<text x="20" y="28" class="t">Larger files: chunks, not blobs</text>
+<text x="20" y="56" class="h">v1</text>
+<text x="20" y="120" class="h">v2</text>
+<rect x="50" y="40" width="66" height="28" rx="6" class="kA"/>
+<rect x="120" y="40" width="126" height="28" rx="6" class="kA"/>
+<rect x="250" y="40" width="86" height="28" rx="6" class="kA"/>
+<rect x="340" y="40" width="106" height="28" rx="6" class="kA"/>
+<rect x="450" y="40" width="96" height="28" rx="6" class="kA"/>
+<rect x="550" y="40" width="116" height="28" rx="6" class="kA"/>
+<rect x="670" y="40" width="76" height="28" rx="6" class="kA"/>
+<rect x="750" y="40" width="106" height="28" rx="6" class="kA"/>
+<rect x="50" y="104" width="66" height="28" rx="6" class="kG"/>
+<rect x="120" y="104" width="126" height="28" rx="6" class="kG"/>
+<rect x="250" y="104" width="86" height="28" rx="6" class="kG"/>
+<rect x="340" y="104" width="106" height="28" rx="6" class="kH"/>
+<rect x="450" y="104" width="96" height="28" rx="6" class="kG"/>
+<rect x="550" y="104" width="116" height="28" rx="6" class="kG"/>
+<rect x="670" y="104" width="76" height="28" rx="6" class="kG"/>
+<rect x="750" y="104" width="106" height="28" rx="6" class="kG"/>
+<text x="50" y="90" class="m">cut points depend on the bytes before them, so most boundaries survive an edit</text>
+<text x="50" y="154" class="m">v2 stores only the changed chunk and a new manifest; unchanged chunks are the same objects (dedup).</text>
+<rect x="20" y="180" width="260" height="96" rx="6" class="kB"/>
+<text x="150.0" y="216.0" class="h mid">Chunked, kind 7</text>
+<text x="150.0" y="232.0" class="mid">files from 1 MiB</text>
+<text x="150.0" y="248.0" class="mid">chunks 4 KiB .. 64 KiB, avg 16 KiB</text>
+<rect x="300" y="180" width="290" height="96" rx="6" class="kD"/>
+<text x="445.0" y="208.0" class="h mid">ChunkedLarge, kind 9</text>
+<text x="445.0" y="224.0" class="mid">files from 16 MiB</text>
+<text x="445.0" y="240.0" class="mid">chunks 512 KiB .. 8 MiB, avg 2 MiB</text>
+<text x="445.0" y="256.0" class="mid">min-reader flag in .vcs/features</text>
+<rect x="610" y="180" width="270" height="96" rx="6" class="kC"/>
+<text x="745.0" y="208.0" class="h mid">Use of the manifest</text>
+<text x="745.0" y="224.0" class="mid">range read: only overlapping chunks</text>
+<text x="745.0" y="240.0" class="mid">lazy clone: fetch ranges</text>
+<text x="745.0" y="256.0" class="mid">checkout: parallel, preallocated</text>
+<rect x="20" y="296" width="860" height="88" rx="6" class="pan"/>
+<text x="34" y="318" class="m">Measured (docs/research/large-files-bench.md, box d, one file, v2 = v1 with 3 x 1 MiB overwritten): 256 MiB store after v2 is 265 MiB for vcs,</text>
+<text x="34" y="336" class="m">512 MiB for git and 768 MiB for git-lfs; 4 GiB add peaks at 228 MiB RSS (vcs before the change: 4,396 MiB; git row: 5 MiB).</text>
+<text x="34" y="354" class="m">Tests: chunked.rs, large_files.rs, large_memory.rs (1 GiB file under a memory bound), large_layout_eq.rs.</text>
+<text x="34" y="372" class="m">Not run: files above 4 GiB, binary merge (the answer is a lock, not a merge), real S3 range reads at scale.</text>
+</svg>

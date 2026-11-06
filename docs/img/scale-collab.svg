@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 440" width="900" height="440" role="img" aria-labelledby="t d">
+<title id="t">Zones, one manifest, and conflicts</title><desc id="d">Each zone has its own commit DAG. One manifest holds every branch head and every lock, so a cross-zone change and a lock check commit in a single conditional write.</desc>
+<style>
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px;fill:#1f2328}
+.m{font-size:11px;fill:#59636e}.t{font-size:17px;font-weight:700}.h{font-weight:700}.mid{text-anchor:middle}
+.bg{fill:#ffffff}.pan{fill:#f6f8fa;stroke:#d0d7de;stroke-width:1.2}
+.kA{fill:#ddf4ff;stroke:#0969da;stroke-width:1.5}.kB{fill:#dafbe1;stroke:#1a7f37;stroke-width:1.5}
+.kC{fill:#fff1e5;stroke:#bc4c00;stroke-width:1.5}.kD{fill:#fbefff;stroke:#8250df;stroke-width:1.5}
+.kH{fill:#fff8c5;stroke:#bf8700;stroke-width:1.8}.kX{fill:#ffebe9;stroke:#cf222e;stroke-width:1.5}
+.kG{fill:#eaeef2;stroke:#8c959f;stroke-width:1.2}
+.ln{stroke:#8c959f;stroke-width:1.5;fill:none}.ar{stroke:#8c959f;stroke-width:1.8;fill:none;marker-end:url(#ah)}
+.dash{stroke-dasharray:5 4}.fl{fill:#8c959f}
+@media (prefers-color-scheme:dark){text{fill:#e6edf3}.m{fill:#9198a1}.bg{fill:#0d1117}.pan{fill:#161b22;stroke:#30363d}
+.kA{fill:#0c2d6b;stroke:#58a6ff}.kB{fill:#0f2d1c;stroke:#3fb950}.kC{fill:#3d1d0b;stroke:#f0883e}.kD{fill:#271a45;stroke:#bc8cff}
+.kH{fill:#3a2d00;stroke:#d29922}.kX{fill:#3d1212;stroke:#f85149}.kG{fill:#21262d;stroke:#6e7681}
+.ln{stroke:#6e7681}.ar{stroke:#6e7681}.fl{fill:#6e7681}}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="fl"/></marker></defs>
+<rect width="900" height="440" class="bg"/>
+<text x="20" y="28" class="t">More collaborators: independent DAGs, one atomic pointer</text>
+<text x="20" y="74" class="h">engine</text>
+<line x1="90" y1="70" x2="520" y2="70" class="ln"/>
+<rect x="104" y="60" width="20" height="20" rx="10" class="kA"/>
+<rect x="184" y="60" width="20" height="20" rx="10" class="kA"/>
+<rect x="264" y="60" width="20" height="20" rx="10" class="kA"/>
+<rect x="344" y="60" width="20" height="20" rx="10" class="kA"/>
+<rect x="424" y="60" width="20" height="20" rx="10" class="kA"/>
+<text x="20" y="134" class="h">assets</text>
+<line x1="90" y1="130" x2="520" y2="130" class="ln"/>
+<rect x="104" y="120" width="20" height="20" rx="10" class="kB"/>
+<rect x="184" y="120" width="20" height="20" rx="10" class="kB"/>
+<rect x="264" y="120" width="20" height="20" rx="10" class="kB"/>
+<rect x="344" y="120" width="20" height="20" rx="10" class="kB"/>
+<rect x="424" y="120" width="20" height="20" rx="10" class="kB"/>
+<text x="20" y="194" class="h">docs</text>
+<line x1="90" y1="190" x2="520" y2="190" class="ln"/>
+<rect x="104" y="180" width="20" height="20" rx="10" class="kC"/>
+<rect x="184" y="180" width="20" height="20" rx="10" class="kC"/>
+<rect x="264" y="180" width="20" height="20" rx="10" class="kC"/>
+<text x="90" y="228" class="m">A parent always lives in its child&#x27;s zone, so a zone&#x27;s commit-graph and Bloom filters are closed per zone.</text>
+<rect x="560" y="52" width="320" height="150" rx="6" class="kH"/>
+<text x="720.0" y="91.0" class="h mid">manifest (one object, CAS)</text>
+<text x="720.0" y="107.0" class="mid">heads: engine, assets, docs</text>
+<text x="720.0" y="123.0" class="mid">locks: path, holder, token, expiry</text>
+<text x="720.0" y="139.0" class="mid">applied txids</text>
+<text x="720.0" y="155.0" class="mid">one write moves several heads</text>
+<text x="720.0" y="171.0" class="mid">and checks locks against that very version</text>
+<line x1="520" y1="70" x2="560" y2="100.0" class="ar"/>
+<line x1="520" y1="130" x2="560" y2="120.0" class="ar"/>
+<line x1="520" y1="190" x2="560" y2="140.0" class="ar"/>
+<rect x="20" y="252" width="420" height="168" rx="6" class="pan"/>
+<text x="34" y="274" class="h">Two people, same branch</text>
+<rect x="34" y="286" width="120" height="40" rx="6" class="kA"/>
+<text x="94.0" y="302.0" class="h mid">bob publish</text>
+<text x="94.0" y="318.0" class="mid">loses CAS</text>
+<rect x="180" y="286" width="120" height="40" rx="6" class="kG"/>
+<text x="240.0" y="302.0" class="h mid">fetch</text>
+<text x="240.0" y="318.0" class="mid">moved head</text>
+<rect x="306" y="286" width="120" height="40" rx="6" class="kB"/>
+<text x="366.0" y="310.0" class="h mid">merge</text>
+<line x1="154" y1="306" x2="180" y2="306" class="ar"/>
+<line x1="300" y1="306" x2="306" y2="306" class="ar"/>
+<text x="34" y="354" class="m">clean merge: republish (publish --auto-merge, retry count is a flag)</text>
+<text x="34" y="372" class="m">conflict: stops, writes .vcs/conflicts, nothing is overwritten</text>
+<text x="34" y="390" class="m">binary or unmergeable: take a lock (lease, fenced by token)</text>
+<rect x="460" y="252" width="420" height="168" rx="6" class="pan"/>
+<text x="474" y="274" class="h">What is proven and what is not</text>
+<text x="474" y="298" class="m">model-checked: lock races, expiry, skew, atomic multi-zone</text>
+<text x="474" y="320" class="m">tested: undo/redo of nested ops across two zones</text>
+<text x="474" y="342" class="m">prototype only: per-zone shards (feature sharded)</text>
+<text x="474" y="364" class="m">not run: thousands of lock holders, 100+ humans</text>
+<text x="474" y="386" class="m">known open: every lock op is a manifest write</text>
+</svg>

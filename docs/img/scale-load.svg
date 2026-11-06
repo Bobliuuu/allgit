@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 430" width="900" height="430" role="img" aria-labelledby="t d">
+<title id="t">Publish path under load</title><desc id="d">Many writers upload packs in parallel, then compete on one conditional write of the manifest. A group-commit stage in the server (open pull request) would merge disjoint updates.</desc>
+<style>
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px;fill:#1f2328}
+.m{font-size:11px;fill:#59636e}.t{font-size:17px;font-weight:700}.h{font-weight:700}.mid{text-anchor:middle}
+.bg{fill:#ffffff}.pan{fill:#f6f8fa;stroke:#d0d7de;stroke-width:1.2}
+.kA{fill:#ddf4ff;stroke:#0969da;stroke-width:1.5}.kB{fill:#dafbe1;stroke:#1a7f37;stroke-width:1.5}
+.kC{fill:#fff1e5;stroke:#bc4c00;stroke-width:1.5}.kD{fill:#fbefff;stroke:#8250df;stroke-width:1.5}
+.kH{fill:#fff8c5;stroke:#bf8700;stroke-width:1.8}.kX{fill:#ffebe9;stroke:#cf222e;stroke-width:1.5}
+.kG{fill:#eaeef2;stroke:#8c959f;stroke-width:1.2}
+.ln{stroke:#8c959f;stroke-width:1.5;fill:none}.ar{stroke:#8c959f;stroke-width:1.8;fill:none;marker-end:url(#ah)}
+.dash{stroke-dasharray:5 4}.fl{fill:#8c959f}
+@media (prefers-color-scheme:dark){text{fill:#e6edf3}.m{fill:#9198a1}.bg{fill:#0d1117}.pan{fill:#161b22;stroke:#30363d}
+.kA{fill:#0c2d6b;stroke:#58a6ff}.kB{fill:#0f2d1c;stroke:#3fb950}.kC{fill:#3d1d0b;stroke:#f0883e}.kD{fill:#271a45;stroke:#bc8cff}
+.kH{fill:#3a2d00;stroke:#d29922}.kX{fill:#3d1212;stroke:#f85149}.kG{fill:#21262d;stroke:#6e7681}
+.ln{stroke:#6e7681}.ar{stroke:#6e7681}.fl{fill:#6e7681}}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="fl"/></marker></defs>
+<rect width="900" height="430" class="bg"/>
+<text x="20" y="28" class="t">More pushes: where the contention is</text>
+<rect x="20" y="52" width="120" height="44" rx="6" class="kA"/>
+<text x="80.0" y="78.0" class="h mid">writer 1</text>
+<rect x="20" y="110" width="120" height="44" rx="6" class="kA"/>
+<text x="80.0" y="136.0" class="h mid">writer 2</text>
+<rect x="20" y="168" width="120" height="44" rx="6" class="kA"/>
+<text x="80.0" y="194.0" class="h mid">writer 3</text>
+<rect x="20" y="226" width="120" height="44" rx="6" class="kA"/>
+<text x="80.0" y="252.0" class="h mid">writer N</text>
+<rect x="190" y="52" width="190" height="214" rx="6" class="kB"/>
+<text x="285.0" y="123.0" class="h mid">1. upload objects</text>
+<text x="285.0" y="139.0" class="mid">one pack + index per publish</text>
+<text x="285.0" y="155.0" class="mid">keys are content hashes</text>
+<text x="285.0" y="171.0" class="mid">no contention, any order</text>
+<text x="285.0" y="187.0" class="mid">objects/&lt;hh&gt;/ fans out</text>
+<text x="285.0" y="203.0" class="mid">over 256 prefixes</text>
+<line x1="140" y1="74" x2="190" y2="74" class="ar"/>
+<line x1="140" y1="132" x2="190" y2="132" class="ar"/>
+<line x1="140" y1="190" x2="190" y2="190" class="ar"/>
+<line x1="140" y1="248" x2="190" y2="200" class="ar"/>
+<rect x="450" y="52" width="200" height="100" rx="6" class="kH"/>
+<text x="550.0" y="74.0" class="h mid">2. CAS the manifest</text>
+<text x="550.0" y="90.0" class="mid">one key, one winner</text>
+<text x="550.0" y="106.0" class="mid">per round trip</text>
+<text x="550.0" y="122.0" class="mid">loser re-reads, re-checks</text>
+<text x="550.0" y="138.0" class="mid">only its own heads</text>
+<line x1="380" y1="110" x2="450" y2="100" class="ar"/>
+<rect x="450" y="190" width="200" height="76" rx="6" class="kX"/>
+<text x="550.0" y="208.0" class="h mid">measured, direct clients</text>
+<text x="550.0" y="224.0" class="mid">512 writers: 41 publishes/s</text>
+<text x="550.0" y="240.0" class="mid">p95 25.5 s, 92.8% CAS lost</text>
+<text x="550.0" y="256.0" class="mid">(Mem backend, 1 run)</text>
+<rect x="700" y="52" width="180" height="100" rx="6" class="kD"/>
+<text x="790.0" y="82.0" class="h mid">server group commit</text>
+<text x="790.0" y="98.0" class="mid">OPEN PR #452, not on main</text>
+<text x="790.0" y="114.0" class="mid">merges disjoint updates</text>
+<text x="790.0" y="130.0" class="mid">into one manifest write</text>
+<line x1="650" y1="102" x2="700" y2="102" class="ln dash"/>
+<rect x="700" y="190" width="180" height="76" rx="6" class="kG"/>
+<text x="790.0" y="216.0" class="h mid">bounds that exist</text>
+<text x="790.0" y="232.0" class="mid">retry backoff cap 250 ms</text>
+<text x="790.0" y="248.0" class="mid">8 transient retries</text>
+<rect x="20" y="296" width="860" height="114" rx="6" class="pan"/>
+<text x="34" y="318" class="m">Safety does not depend on the winner: a lost ack is resolved by txid (applied window 4096), crash before the CAS leaves nothing visible.</text>
+<text x="34" y="338" class="m">Server limits (knobs): --max-connections 256, --max-body 1 GiB, --max-inflight-body 2 GiB (503 + Retry-After past it),</text>
+<text x="34" y="356" class="m">--rate-limit and --max-conns-per-ip are off by default. Reads scale out by caches: --cache-dir, and read-through peers (OPEN PR #439).</text>
+<text x="34" y="374" class="m">Not proven: fairness (CAS retries have no bound, only backoff), 503 SlowDown on a real S3, any run above 512 writers.</text>
+<text x="34" y="396" class="m">Tests: model.rs, publish_crash.rs, slowdown.rs, scale_inflight.rs. Numbers: docs/scalability.md finding 6.</text>
+</svg>

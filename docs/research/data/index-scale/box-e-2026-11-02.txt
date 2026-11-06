@@ -1,0 +1,37 @@
+# Index patch cost vs file count. scripts/scalability/index_scale.sh 10000 100000 500000
+# Box E (c6i.4xlarge, 16 vCPU, ext4/EBS, warm page cache), release vcs built from origin/main 21ae589, under flock ~/bench.lock.
+# datagen layout "flat" (100 small files per directory), medians of 5 runs, wall ms, load1 as printed. Raw output, unedited.
+# (The 10,000 run is the second one: the first attempt had no user.name set and was discarded.)
+## N=10000 load1=2.07
+init+add+commit: .136848425 s
+index bytes 713611
+AGI3
+file=d0000/f000000.txt
+status clean: 14.0 ms median (runs: 14.4 13.7 14.0 13.4 14.0 )
+add one edited file: 10.0 ms median (runs: 10.8 10.0 9.6 9.3 10.1 )
+rm one file (staged): 13.2 ms median (runs: 13.9 13.2 13.1 12.9 13.2 )
+restore --staged one file: 13.5 ms median (runs: 13.7 13.4 13.6 13.5 13.5 )
+AGI4 (index magic after patch ops)
+commit after 1 edit: 31.8 ms median (runs: 31.0 31.5 31.9 31.8 32.0 )
+## N=100000 load1=1.82
+init+add+commit: .670447695 s
+index bytes 7135391
+AGI3
+file=d0000/f000000.txt
+status clean: 136.3 ms median (runs: 142.2 139.5 136.3 129.1 116.0 )
+add one edited file: 20.8 ms median (runs: 22.2 21.9 20.8 20.5 19.8 )
+rm one file (staged): 26.1 ms median (runs: 25.2 24.7 26.5 26.1 26.5 )
+restore --staged one file: 28.1 ms median (runs: 27.4 29.3 28.0 28.5 28.1 )
+AGI4 (index magic after patch ops)
+commit after 1 edit: 57.0 ms median (runs: 57.4 56.0 55.7 57.0 64.2 )
+## N=500000 load1=1.70
+init+add+commit: 7.694864276 s
+index bytes 35676621
+AGI3
+file=d0000/f000000.txt
+status clean: 214.6 ms median (runs: 214.6 212.7 214.7 214.7 212.4 )
+add one edited file: 135.6 ms median (runs: 135.4 137.0 109.2 135.6 172.6 )
+rm one file (staged): 391.9 ms median (runs: 382.2 391.9 385.0 392.8 409.9 )
+restore --staged one file: 402.4 ms median (runs: 398.1 402.7 402.4 407.5 402.3 )
+AGI4 (index magic after patch ops)
+commit after 1 edit: 544.9 ms median (runs: 528.6 564.3 536.3 555.9 544.9 )

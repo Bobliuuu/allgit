@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 440" width="900" height="440" role="img" aria-labelledby="t d">
+<title id="t">Index blocks and patching</title><desc id="d">The index file is a header, a block table and blocks of 2048 entries. A patch re-encodes only the touched block and copies the others byte for byte.</desc>
+<style>
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px;fill:#1f2328}
+.m{font-size:11px;fill:#59636e}.t{font-size:17px;font-weight:700}.h{font-weight:700}.mid{text-anchor:middle}
+.bg{fill:#ffffff}.pan{fill:#f6f8fa;stroke:#d0d7de;stroke-width:1.2}
+.kA{fill:#ddf4ff;stroke:#0969da;stroke-width:1.5}.kB{fill:#dafbe1;stroke:#1a7f37;stroke-width:1.5}
+.kC{fill:#fff1e5;stroke:#bc4c00;stroke-width:1.5}.kD{fill:#fbefff;stroke:#8250df;stroke-width:1.5}
+.kH{fill:#fff8c5;stroke:#bf8700;stroke-width:1.8}.kX{fill:#ffebe9;stroke:#cf222e;stroke-width:1.5}
+.kG{fill:#eaeef2;stroke:#8c959f;stroke-width:1.2}
+.ln{stroke:#8c959f;stroke-width:1.5;fill:none}.ar{stroke:#8c959f;stroke-width:1.8;fill:none;marker-end:url(#ah)}
+.dash{stroke-dasharray:5 4}.fl{fill:#8c959f}
+@media (prefers-color-scheme:dark){text{fill:#e6edf3}.m{fill:#9198a1}.bg{fill:#0d1117}.pan{fill:#161b22;stroke:#30363d}
+.kA{fill:#0c2d6b;stroke:#58a6ff}.kB{fill:#0f2d1c;stroke:#3fb950}.kC{fill:#3d1d0b;stroke:#f0883e}.kD{fill:#271a45;stroke:#bc8cff}
+.kH{fill:#3a2d00;stroke:#d29922}.kX{fill:#3d1212;stroke:#f85149}.kG{fill:#21262d;stroke:#6e7681}
+.ln{stroke:#6e7681}.ar{stroke:#6e7681}.fl{fill:#6e7681}}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="fl"/></marker></defs>
+<rect width="900" height="440" class="bg"/>
+<text x="20" y="28" class="t">More files: the index is blocks, a patch touches one</text>
+<rect x="20" y="50" width="90" height="52" rx="6" class="kG"/>
+<text x="65.0" y="80.0" class="h mid">header</text>
+<rect x="114" y="50" width="110" height="52" rx="6" class="kG"/>
+<text x="169.0" y="80.0" class="h mid">block table</text>
+<rect x="228" y="50" width="108" height="52" rx="6" class="kA"/>
+<text x="282.0" y="72.0" class="h mid">block 0</text>
+<text x="282.0" y="88.0" class="mid">2048 entries</text>
+<rect x="340" y="50" width="108" height="52" rx="6" class="kA"/>
+<text x="394.0" y="72.0" class="h mid">block 1</text>
+<text x="394.0" y="88.0" class="mid">2048 entries</text>
+<rect x="452" y="50" width="108" height="52" rx="6" class="kH"/>
+<text x="506.0" y="72.0" class="h mid">block 2</text>
+<text x="506.0" y="88.0" class="mid">2048 entries</text>
+<rect x="564" y="50" width="108" height="52" rx="6" class="kA"/>
+<text x="618.0" y="72.0" class="h mid">block 3</text>
+<text x="618.0" y="88.0" class="mid">2048 entries</text>
+<rect x="676" y="50" width="108" height="52" rx="6" class="kA"/>
+<text x="730.0" y="72.0" class="h mid">block 4</text>
+<text x="730.0" y="88.0" class="mid">2048 entries</text>
+<rect x="788" y="50" width="92" height="52" rx="6" class="kG"/>
+<text x="834.0" y="80.0" class="h mid">cache-tree</text>
+<text x="20" y="126" class="m">AGI3 / AGI4 file. A point lookup reads the table, binary-searches the first path of each block and decodes one block.</text>
+<line x1="506" y1="102" x2="506" y2="150" class="ar"/>
+<text x="520" y="146" class="m">patch: rm, restore --staged, reset &lt;path&gt;, mv, add of named files</text>
+<rect x="228" y="160" width="108" height="52" rx="6" class="kG"/>
+<text x="282.0" y="190.0" class="mid">bytes copied</text>
+<rect x="340" y="160" width="108" height="52" rx="6" class="kG"/>
+<text x="394.0" y="190.0" class="mid">bytes copied</text>
+<rect x="452" y="160" width="108" height="52" rx="6" class="kH"/>
+<text x="506.0" y="190.0" class="h mid">re-encoded</text>
+<rect x="564" y="160" width="108" height="52" rx="6" class="kG"/>
+<text x="618.0" y="190.0" class="mid">bytes copied</text>
+<rect x="676" y="160" width="108" height="52" rx="6" class="kG"/>
+<text x="730.0" y="190.0" class="mid">bytes copied</text>
+<text x="20" y="236" class="m">The file is still read and written whole, so the cost is linear in file size, not constant (measured below).</text>
+<rect x="20" y="252" width="440" height="170" rx="6" class="pan"/>
+<text x="34" y="274" class="h">Measured on box E: one-file index ops (median of 5)</text>
+<text x="34" y="298" class="h">files</text>
+<text x="235" y="298" class="h mid">10,000</text>
+<text x="325" y="298" class="h mid">100,000</text>
+<text x="415" y="298" class="h mid">500,000</text>
+<text x="34" y="318">index bytes</text>
+<text x="235" y="318" class="mid">0.71 MB</text>
+<text x="325" y="318" class="mid">7.1 MB</text>
+<text x="415" y="318" class="mid">35.7 MB</text>
+<text x="34" y="338">status, clean</text>
+<text x="235" y="338" class="mid">14 ms</text>
+<text x="325" y="338" class="mid">136 ms</text>
+<text x="415" y="338" class="mid">215 ms</text>
+<text x="34" y="358">rm one file</text>
+<text x="235" y="358" class="mid">13 ms</text>
+<text x="325" y="358" class="mid">26 ms</text>
+<text x="415" y="358" class="mid">392 ms</text>
+<text x="34" y="378">restore --staged</text>
+<text x="235" y="378" class="mid">14 ms</text>
+<text x="325" y="378" class="mid">28 ms</text>
+<text x="415" y="378" class="mid">402 ms</text>
+<text x="34" y="398">commit after 1 edit</text>
+<text x="235" y="398" class="mid">32 ms</text>
+<text x="325" y="398" class="mid">57 ms</text>
+<text x="415" y="398" class="mid">545 ms</text>
+<rect x="480" y="252" width="400" height="170" rx="6" class="pan"/>
+<text x="494" y="274" class="h">Status without walking the tree</text>
+<rect x="494" y="288" width="170" height="34" rx="6" class="kD"/>
+<text x="579.0" y="309.0" class="h mid">watcher (OPEN #446)</text>
+<rect x="494" y="328" width="170" height="34" rx="6" class="kA"/>
+<text x="579.0" y="349.0" class="h mid">dircache</text>
+<rect x="494" y="368" width="170" height="34" rx="6" class="kG"/>
+<text x="579.0" y="389.0" class="mid">stat tracked files</text>
+<text x="676" y="310" class="m">names the paths that changed</text>
+<text x="676" y="350" class="m">skips read_dir if dir stamp same</text>
+<text x="676" y="390" class="m">full walk on any doubt</text>
+</svg>
