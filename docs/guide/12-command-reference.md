@@ -983,7 +983,7 @@ Write commits as mail-format patch files (one per commit: author, date, message,
 Usage: vcs format-patch [OPTIONS] [REV]
 
 Arguments:
-  [REV]  Commits to turn into patches: `A..B` (commits of B not in A), or a revision (commits on the branch not in it)
+  [REV]  Commits to turn into patches: `A..B` (commits of B not in A), `A...B` (commits of either not in the other), or a revision (commits on the branch not in it)
 
 Options:
   -C <DIR>                      Run as if vcs was started in <DIR> (applied before repository discovery)
@@ -1872,15 +1872,16 @@ Re-apply the change of one commit onto the checked-out branch
 Usage: vcs cherry-pick [OPTIONS] <REVS>...
 
 Arguments:
-  <REVS>...  Commit id (or unique prefix), branch name, HEAD, or a range `A..B` (the commits of B that A lacks, oldest first); several allowed
+  <REVS>...  Commit id (or unique prefix), branch name, HEAD, a range `A..B` (the commits of B that A lacks, oldest first) or `A...B` (the commits of either that the other lacks); several allowed
 
 Options:
-  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
-      --zone <ZONE>    Zone (default: the zone containing the current directory)
-      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
-      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
-      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
-  -h, --help           Print help
+  -C <DIR>                 Run as if vcs was started in <DIR> (applied before repository discovery)
+  -m, --mainline <PARENT>  Mainline parent (1-based) for a merge commit: take its change relative to that parent
+      --json               Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --zone <ZONE>        Zone (default: the zone containing the current directory)
+      --ca-pem <FILE>      PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks           Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help               Print help
 ```
 
 ## `vcs cherry`

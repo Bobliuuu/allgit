@@ -1685,7 +1685,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             if remotes {
                 let (repo, cwd) = open()?;
                 let zone = repo.resolve_zone(&zone_of_cwd(&repo, &cwd, zone)?)?;
-                for ((z, b), _) in &repo.remote_refs()?.branches {
+                for (z, b) in repo.remote_refs()?.branches.keys() {
                     if *z == zone {
                         println!("  origin/{b}");
                     }
