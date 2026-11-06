@@ -58,7 +58,7 @@ Deletion units are a loose object (`objects/xx/...`) or a whole pack (`packs/<na
 reader is pointed at a vanishing pack). A pack is deleted only if none of its objects is needed; a pack holding both live and old unreachable objects is a *rewrite* unit: tombed like the others, and if the remark leaves it
 untouched, a new pack with only its kept objects is uploaded (pack, index, read back), then the old index, then the old pack
 (`packs_rewritten` in the report; a crash leaves duplicates, never a missing live object). Packs that are too young, touched, or over
-512 MiB stay whole (`packs_with_garbage_kept`). The sweeper renews `gc/lock` by compare-and-set at each phase and every 32 units; if the
+512 MiB stay whole (`packs_with_garbage_kept`). The lease is 10 minutes (`DEFAULT_LOCK_TTL_MS`, for compaction too) and a heartbeat thread renews it a tenth of a lease apart while the collector runs, so a collector that is killed on a backend with no same-host kernel lock (HTTP, S3) frees `gc/lock` after at most one lease instead of the 6 hours it used to hold it (`crates/vcs-remote/tests/gc_lease.rs`; a directory backend still frees it at once through its flock). The sweeper also renews `gc/lock` by compare-and-set at each phase and every 32 units; if the
 lock was taken over or removed it stops with `LeaseLost` before the next delete. Tests: `gc_real.rs` (`a_pack_with_garbage_is_rewritten_without_it`,
 `rewrite_is_crash_safe_at_every_step`, `a_touched_pack_survives_the_rewrite_remark`, `the_sweeper_renews_its_lease`,
 `a_sweeper_that_lost_its_lease_stops_before_deleting`); the interleaving search is unchanged. A `.pack` with no index (a publisher

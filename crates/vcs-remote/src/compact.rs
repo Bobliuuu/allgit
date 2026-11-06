@@ -79,7 +79,7 @@ impl Default for CompactOptions {
             max_merge_bytes: DEFAULT_MAX_MERGE_BYTES,
             dry_run: true,
             all: false,
-            lock_ttl_ms: 6 * 3600 * 1000,
+            lock_ttl_ms: crate::gc::DEFAULT_LOCK_TTL_MS,
             owner: "compact".into(),
             format: PackFormat::for_compaction(),
             block_bytes: BLOCK_TARGET,
@@ -220,7 +220,7 @@ pub fn compact_with(
     quirks: CompactQuirks,
     hook: &mut dyn FnMut(CompactPoint),
 ) -> Result<CompactReport, GcError> {
-    let mut rep = CompactReport {
+    let rep = CompactReport {
         dry_run: opts.dry_run,
         ..Default::default()
     };
@@ -232,11 +232,26 @@ pub fn compact_with(
         b.delete("compact/probe")?;
     }
     // C5. The lock needs the backend's clock; without one there is no sweeper to exclude.
-    let _lock = if opts.dry_run || !b.supports_gc() {
+    let lock = if opts.dry_run || !b.supports_gc() {
         None
     } else {
         Some(acquire(b, &opts.owner, opts.lock_ttl_ms, b.now_ms()?)?)
     };
+    // The merge runs under a heartbeat that keeps the (short) lease alive while we are busy.
+    match &lock {
+        Some(l) => l.with_heartbeat(|| merge_packs(b, opts, quirks, hook, rep)),
+        None => merge_packs(b, opts, quirks, hook, rep),
+    }
+}
+
+/// The part of [`compact_with`] that runs under the lock.
+fn merge_packs(
+    b: &dyn Backend,
+    opts: &CompactOptions,
+    quirks: CompactQuirks,
+    hook: &mut dyn FnMut(CompactPoint),
+    mut rep: CompactReport,
+) -> Result<CompactReport, GcError> {
     let loaded = load_packs(b)?;
     rep.packs_before = loaded.len();
     let infos: Vec<PackInfo> = loaded.iter().map(|(p, _)| p.clone()).collect();
