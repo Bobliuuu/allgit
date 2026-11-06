@@ -164,6 +164,13 @@ impl MemoBackend {
 }
 
 impl Backend for MemoBackend {
+    /// Large objects are streamed past the memo (it would not keep them anyway); anything it holds is served from memory.
+    fn get_stream(&self, key: &str, min_len: u64) -> Result<Option<crate::ObjectStream>, BackendError> {
+        if self.imm.lock().unwrap().contains_key(key) {
+            return Ok(None);
+        }
+        self.inner.get_stream(key, min_len)
+    }
     fn get(&self, key: &str) -> Result<Option<Versioned>, BackendError> {
         if immutable(key) {
             if let Some(v) = self.imm.lock().unwrap().get(key) {
@@ -328,6 +335,9 @@ impl Backend for MemoBackend {
 
 /// A shared trait object is a backend too (lets a server hand its `Arc<dyn Backend>` to a wrapper).
 impl Backend for std::sync::Arc<dyn Backend> {
+    fn get_stream(&self, key: &str, min_len: u64) -> Result<Option<crate::ObjectStream>, BackendError> {
+        (**self).get_stream(key, min_len)
+    }
     fn get(&self, key: &str) -> Result<Option<Versioned>, BackendError> {
         (**self).get(key)
     }

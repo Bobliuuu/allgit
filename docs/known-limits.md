@@ -34,8 +34,11 @@ to 6 to 13 GiB with 64 to 256 clients). Two causes, no leak and no unbounded cac
 1. An un-ranged `GET /v1/o/<key>` reads the whole object into memory (`Backend::get`) and holds it until the client has taken it,
    so server memory is the sum of the objects being downloaded at that moment. A full clone fetches whole packs; slice clones and
    fetches use ranged reads (`offset`/`len`) and are bounded. The request-body side is bounded (`--max-inflight-body`, default
-   2 GiB); the response side is not. **Not fixed**: it needs large reads streamed from the backend in windows, which needs a length
-   from the backend.
+   2 GiB). **Fixed for the directory backend**: `Backend::get_stream` returns the length and tag up front and the server sends the
+   body in 256 KiB windows (`Config::stream_min_bytes`, default 8 MiB; smaller objects are still read whole). The directory
+   backend's tag is the content hash, so a streamed GET costs one extra bounded-memory read pass over the file (page cache).
+   **Still open for S3**: the default `get_stream` returns `None`, so an S3-backed server still loads the whole object. Streaming
+   there needs a HEAD (length, ETag) plus a streamed GET body piped through; the S3 ETag is the tag, so no hash pass is needed.
 2. glibc malloc retention: one arena per thread and a mmap threshold that rises to 32 MiB keep freed pack buffers resident.
    **Mitigated**: `vcs-server` now sets `M_ARENA_MAX` 4 and `M_MMAP_THRESHOLD` 1 MiB at startup (Linux/glibc; an explicit
    `MALLOC_ARENA_MAX` / `MALLOC_MMAP_THRESHOLD_` wins).
