@@ -124,7 +124,8 @@ commit (so the repository is in refs-delta mode). Stream 201 MB.
 Reading: everything that walks a prefix of history (`log`, `status`, tag and branch creation) is flat in history length. `rev-list
 HEAD` is linear in the output (1.5 us per commit, the commit-graph is used). `gc` (40 s) and especially `fsck` (112 s, 16 GB)
 hold the whole object set in memory: that is the first thing to break at this scale, not a time problem. Not done: bounding the
-memory of `gc` and `fsck` (streaming marks).
+memory of `gc` (streaming marks). `fsck` now reads and decodes objects in batches of 8192 and keeps only zone, root and parents per
+commit, so it no longer holds the decoded store; the 16 GB figure above is the old code and is not re-measured at 1M commits yet.
 
 ## 10,000,000 files (box f, release, single run, one commit of 10M files in 100,000 directories)
 
@@ -163,6 +164,5 @@ found a real bug (a delta repository with zero tags tried to read a nonexistent 
 ## Not run
 
 R2/GCS, S3 SlowDown counts under load, several server replicas for writes, thousands of idle sockets, the first `status` and later
-commands at 10M files (see above, killed after 30 min), `gc` and `fsck` memory bounds at 1M commits (5.8 GB and 16 GB measured, not
-fixed), lock service or remote GC at scale on real S3 (in-memory backend only), sharded manifest on a real object store, 100k-path commit through `vcs add`/`commit`,
+commands at 10M files (see above, killed after 30 min), `gc` and `fsck` memory bounds at 1M commits (5.8 GB and 16 GB measured; fsck batched, not re-measured; gc not fixed), lock service or remote GC at scale on real S3 (in-memory backend only), sharded manifest on a real object store, 100k-path commit through `vcs add`/`commit`,
 slowloris with thousands of sockets, per-client fair queuing, long (2 h) soak with the delta layout, macOS 1M-commit run.
