@@ -2588,8 +2588,37 @@ fn run_lazy(cli: Cli) -> Result<(), Error> {
     }
 }
 
+/// End the process the way git does when the reader of its stdout went away (`vcs status | head`): die of
+/// SIGPIPE, quietly. Rust ignores SIGPIPE so socket writes return errors, which is why a closed pipe otherwise
+/// surfaces as a panic in `println!` or as an error message.
+fn die_of_broken_pipe() -> ! {
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+        libc::raise(libc::SIGPIPE);
+    }
+    std::process::exit(141)
+}
+
+fn quiet_on_broken_pipe() {
+    let prev = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let msg = info
+            .payload()
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| info.payload().downcast_ref::<&str>().copied())
+            .unwrap_or("");
+        if msg.starts_with("failed printing to stdout") && msg.contains("Broken pipe") {
+            die_of_broken_pipe();
+        }
+        prev(info)
+    }));
+}
+
 fn main() -> ExitCode {
     let _ = ROOT_ZONE;
+    quiet_on_broken_pipe();
     let argv = gitmap::argv_for_shim();
     let cli = match quick::parse(&argv) {
         Some(c) => c,
@@ -2615,6 +2644,9 @@ fn main() -> ExitCode {
     match res {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
+            if e.to_string().contains("Broken pipe") {
+                die_of_broken_pipe();
+            }
             eprintln!("error: {e}");
             ExitCode::FAILURE
         }
