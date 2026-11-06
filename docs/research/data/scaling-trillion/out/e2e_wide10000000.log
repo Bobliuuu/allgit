@@ -1,0 +1,38 @@
+stream 763 MB in 13s
+{"tool": "vcs", "kind": "wide", "n": 10000000, "step": "init", "wall_s": 0.008, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 7188, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000000, "step": "import", "wall_s": 197.135, "user_s": 121.83, "sys_s": 189.1, "maxrss_kb": 11506396, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000000, "step": "disk_after_import", "disk_kb": 1957660}
+{"tool": "vcs", "kind": "wide", "n": 10000000, "step": "status_first", "wall_s": 23.417, "user_s": 32.07, "sys_s": 123.1, "maxrss_kb": 3380740, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000000, "step": "status_second", "wall_s": 9.579, "user_s": 11.48, "sys_s": 16.68, "maxrss_kb": 2904836, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000000, "step": "log_n20", "wall_s": 0.003, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 12216, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000000, "step": "rev_list_head", "wall_s": 0.003, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 11764, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000000, "step": "tag_create", "wall_s": 0.003, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 14044, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000000, "step": "add_one_file", "wall_s": 0.007, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 49216, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000000, "step": "commit_one_file", "wall_s": 7.623, "user_s": 7.62, "sys_s": 1.87, "maxrss_kb": 2907628, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000000, "step": "remote_set", "wall_s": 0.003, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 9340, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000000, "step": "publish_first", "wall_s": 35.429, "user_s": 36.48, "sys_s": 8.91, "maxrss_kb": 3724356, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000000, "step": "add_one_file2", "wall_s": 4.721, "user_s": 3.79, "sys_s": 2.7, "maxrss_kb": 3597652, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000000, "step": "commit_one_file2", "wall_s": 3.618, "user_s": 3.5, "sys_s": 1.6, "maxrss_kb": 3226724, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000000, "step": "publish_incremental", "wall_s": 0.016, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 35936, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000000, "step": "disk_remote", "disk_kb": 1057840}
+{"tool": "vcs", "kind": "wide", "n": 10000000, "step": "clone_full", "wall_s": 221.942, "user_s": 151.88, "sys_s": 198.95, "maxrss_kb": 9150596, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000000, "step": "gc_first", "wall_s": 51.531, "user_s": 58.58, "sys_s": 20.35, "maxrss_kb": 6336628, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000000, "step": "gc_second", "wall_s": 26.448, "user_s": 24.5, "sys_s": 4.62, "maxrss_kb": 5518304, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000000, "step": "fsck", "wall_s": 55.487, "user_s": 59.14, "sys_s": 15.96, "maxrss_kb": 6294984, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000000, "step": "disk_after_gc", "disk_kb": 2872984}
+{"tool": "git", "kind": "wide", "n": 10000000, "step": "init", "wall_s": 0.004, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 4220, "rc": 0}
+{"tool": "git", "kind": "wide", "n": 10000000, "step": "import", "wall_s": 1693.654, "user_s": null, "sys_s": null, "maxrss_kb": null, "rc": -9}
+{"tool": "git", "kind": "wide", "n": 10000000, "step": "checkout", "wall_s": 0.003, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 4484, "rc": 1}
+{"tool": "git", "kind": "wide", "n": 10000000, "step": "disk_after_import", "disk_kb": 174584}
+{"tool": "git", "kind": "wide", "n": 10000000, "step": "status_first", "wall_s": 0.003, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 4452, "rc": 0}
+{"tool": "git", "kind": "wide", "n": 10000000, "step": "status_second", "wall_s": 0.003, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 4692, "rc": 0}
+{"tool": "git", "kind": "wide", "n": 10000000, "step": "log_n20", "wall_s": 0.003, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 4476, "rc": 128}
+{"tool": "git", "kind": "wide", "n": 10000000, "step": "rev_list_head", "wall_s": 0.003, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 4212, "rc": 128}
+{"tool": "git", "kind": "wide", "n": 10000000, "step": "tag_create", "wall_s": 0.003, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 3944, "rc": 128}
+Traceback (most recent call last):
+  File "/data/repo/scripts/scaling/e2e.py", line 122, in <module>
+    edit(g, 1)
+  File "/data/repo/scripts/scaling/e2e.py", line 73, in edit
+    with open(os.path.join(repo, touch), "a") as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/data/e2e-work/wide10000000/g/a0/b0/f0.txt'

@@ -1,0 +1,5 @@
+5.02 s wall, 4301308 KB maxrss: idx 100000000 /data/scaling-work/idxm1 --packs 1 --lookups 5000
+5.13 s wall, 4393032 KB maxrss: idx 100000000 /data/scaling-work/idxm4 --packs 4 --lookups 5000
+5.54 s wall, 4388952 KB maxrss: idx 100000000 /data/scaling-work/idxm16 --packs 16 --lookups 5000
+6.84 s wall, 4362816 KB maxrss: idx 100000000 /data/scaling-work/idxm64 --packs 64 --lookups 5000
+7.43 s wall, 4315120 KB maxrss: idx 100000000 /data/scaling-work/idxm256 --packs 256 --lookups 5000
