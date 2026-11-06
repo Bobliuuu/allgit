@@ -399,19 +399,48 @@ impl Repo {
         rep.problems.append(&mut zone_problems);
 
         // No index of any worktree may name a blob that is not in the store.
-        let indexes = self.fsck_worktrees(&mut rep.problems);
-        let linked = indexes.len() > 1;
-        for (wt, ix) in &indexes {
-            for (p, e) in &ix.entries {
-                if ctx.ids.find(&e.id).is_some() {
-                    continue;
+        let views = self.fsck_worktrees(&mut rep.problems);
+        let linked = views.len() > 1;
+        for (wt, v) in &views {
+            let mut absent: Vec<(String, ObjectId)> = Vec::new();
+            let scanned = (|| -> Result<()> {
+                let img = v.index_image()?;
+                let find = |id: &ObjectId| ctx.ids.find(id).is_some();
+                match v.index_view(&img)? {
+                    // Streaming over the index blocks on every core: no per-entry map of the index in memory.
+                    Some(view) => {
+                        let parts = view.par_scan(
+                            std::thread::available_parallelism().map_or(1, |t| t.get()),
+                            &Vec::<(String, ObjectId)>::new,
+                            &|out, p, e| {
+                                if !find(&e.id) {
+                                    out.push((p.to_owned(), e.id));
+                                }
+                            },
+                        )?;
+                        absent.extend(parts.into_iter().flatten());
+                    }
+                    None => {
+                        for (p, e) in &img.to_index()?.entries {
+                            if !find(&e.id) {
+                                absent.push((p.clone(), e.id));
+                            }
+                        }
+                    }
                 }
+                Ok(())
+            })();
+            if let Err(e) = scanned {
+                rep.problems.push(format!("worktree {wt}: index: {e}"));
+                continue;
+            }
+            for (p, id) in absent {
                 let what = if linked {
-                    format!("index {p} (worktree {wt}): missing blob {}", e.id)
+                    format!("index {p} (worktree {wt}): missing blob {id}")
                 } else {
-                    format!("index {p}: missing blob {}", e.id)
+                    format!("index {p}: missing blob {id}")
                 };
-                missing(self, &e.id, what, &mut rep.problems)?;
+                missing(self, &id, what, &mut rep.problems)?;
             }
         }
         let refs = self.refs()?;
