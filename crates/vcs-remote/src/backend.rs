@@ -89,8 +89,8 @@ pub trait Backend: Send + Sync {
     fn get(&self, key: &str) -> Result<Option<Versioned>, BackendError>;
     /// Open `key` for a windowed read if the backend can supply its length without loading it and it is at
     /// least `min_len` bytes. `Ok(None)` means "not streamed" (missing, smaller, or unsupported): the caller
-    /// falls back to [`Backend::get`]. The default never streams (object stores such as S3 would need a HEAD
-    /// plus a ranged/streaming GET body; see docs/known-limits.md).
+    /// falls back to [`Backend::get`]. The default never streams (backends without a cheap length and tag; the
+    /// directory and S3 backends override it, see docs/known-limits.md).
     fn get_stream(&self, _key: &str, _min_len: u64) -> Result<Option<ObjectStream>, BackendError> {
         Ok(None)
     }

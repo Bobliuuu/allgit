@@ -37,8 +37,13 @@ to 6 to 13 GiB with 64 to 256 clients). Two causes, no leak and no unbounded cac
    2 GiB). **Fixed for the directory backend**: `Backend::get_stream` returns the length and tag up front and the server sends the
    body in 256 KiB windows (`Config::stream_min_bytes`, default 8 MiB; smaller objects are still read whole). The directory
    backend's tag is the content hash, so a streamed GET costs one extra bounded-memory read pass over the file (page cache).
-   **Still open for S3**: the default `get_stream` returns `None`, so an S3-backed server still loads the whole object. Streaming
-   there needs a HEAD (length, ETag) plus a streamed GET body piped through; the S3 ETag is the tag, so no hash pass is needed.
+   **Fixed for S3 too**: `S3Backend::get_stream` sends a HEAD (length, ETag), then one un-ranged GET pinned with
+   `If-Match: <etag>` whose body is piped through; the ETag is the tag, so there is no hash pass (two round trips, no extra
+   read). If the object is replaced between the two requests (412) or deleted, it declines and the server reads it whole, so a
+   body never mixes versions. A connection cut mid-body surfaces as an error (`UnexpectedEof`), never as a short object.
+   Retries cover the HEAD and the GET up to the response headers; a failure after streaming began is the client's to retry
+   (the stream cannot be replayed). Tested against an in-process fake S3 and, when `VCS_TEST_S3_ENDPOINT` is set (the CI `s3`
+   job), against MinIO. Not yet measured against real S3 at scale.
 2. glibc malloc retention: one arena per thread and a mmap threshold that rises to 32 MiB keep freed pack buffers resident.
    **Mitigated**: `vcs-server` now sets `M_ARENA_MAX` 4 and `M_MMAP_THRESHOLD` 1 MiB at startup (Linux/glibc; an explicit
    `MALLOC_ARENA_MAX` / `MALLOC_MMAP_THRESHOLD_` wins).

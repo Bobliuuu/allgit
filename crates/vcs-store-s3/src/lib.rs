@@ -695,18 +695,14 @@ impl S3Backend {
         // Idempotent requests are repeated once if a pooled connection turns out to be dead.
         let safe = matches!(method, "GET" | "HEAD" | "DELETE");
         let agent = &self.agent;
-        #[allow(clippy::result_large_err)] // ureq's own error type
         // a large body gets proportionally more time (a fixed 30 s cannot move a 256 MiB pack below 70 Mbit/s)
         let scaled = match mode {
             Mode::Stream(n) => n,
             _ => body.len() as u64,
         };
-        let timeout = if self.cfg.min_throughput > 0 {
-            self.cfg.timeout + Duration::from_secs(scaled / self.cfg.min_throughput)
-        } else {
-            self.cfg.timeout
-        };
+        let timeout = self.cfg.timeout + Duration::from_secs(scaled.checked_div(self.cfg.min_throughput).unwrap_or(0));
         let _inflight = stats::Inflight::new(body.len() as u64);
+        #[allow(clippy::result_large_err)] // ureq's own error type
         let attempt = || {
             let mut req = agent
                 .request(method, &url)
@@ -741,7 +737,13 @@ impl S3Backend {
                 let declared = resp.header("content-length").and_then(|v| v.trim().parse::<u64>().ok());
                 if matches!(mode, Mode::Stream(_)) {
                     STATS.creds_rejected.store(false, Ordering::Relaxed);
-                    return Ok(Resp::Ok { body: Vec::new(), etag, status, len: declared, reader: Some(resp.into_reader()) });
+                    return Ok(Resp::Ok {
+                        body: Vec::new(),
+                        etag,
+                        status,
+                        len: declared,
+                        reader: Some(resp.into_reader()),
+                    });
                 }
                 // Presize from Content-Length: growing by doubling copies a pack range several times and
                 // leaves up to 2x capacity resident. Capped so a lying server cannot force a huge
@@ -757,7 +759,13 @@ impl S3Backend {
                     .map_err(|e| Fail::new(FailKind::Transport, BackendError::Unavailable(format!("read body: {e}"))))?;
                 self.bytes_read.fetch_add(buf.len() as u64, Ordering::Relaxed);
                 STATS.creds_rejected.store(false, Ordering::Relaxed);
-                Ok(Resp::Ok { body: buf, etag, status, len: declared, reader: None })
+                Ok(Resp::Ok {
+                    body: buf,
+                    etag,
+                    status,
+                    len: declared,
+                    reader: None,
+                })
             }
             Err(ureq::Error::Status(code, resp)) => {
                 let after = resp
@@ -929,7 +937,11 @@ impl Backend for S3Backend {
     fn get_stream(&self, key: &str, min_len: u64) -> Result<Option<ObjectStream>, BackendError> {
         let k = self.full_key(key)?;
         let (len, tag) = match self.send("HEAD", &k, &[], &[], b"")? {
-            Resp::Ok { len: Some(len), etag: Some(tag), .. } => (len, tag),
+            Resp::Ok {
+                len: Some(len),
+                etag: Some(tag),
+                ..
+            } => (len, tag),
             Resp::Ok { .. } => return Ok(None),
             Resp::Status(404, _) => return Ok(None),
             Resp::Status(c, m) => return Err(Self::unexpected("get_stream", c, m)),
@@ -938,9 +950,22 @@ impl Backend for S3Backend {
             return Ok(None);
         }
         match self.send_stream(&k, &[("if-match", tag.as_str())], len)? {
-            Resp::Ok { reader: Some(inner), etag, len: got, .. } if etag.as_deref() == Some(tag.as_str()) && got == Some(len) => {
-                let reader = ExactReader { inner, left: len, counter: self.bytes_read.clone() };
-                Ok(Some(ObjectStream { len, tag, reader: Box::new(reader) }))
+            Resp::Ok {
+                reader: Some(inner),
+                etag,
+                len: got,
+                ..
+            } if etag.as_deref() == Some(tag.as_str()) && got == Some(len) => {
+                let reader = ExactReader {
+                    inner,
+                    left: len,
+                    counter: self.bytes_read.clone(),
+                };
+                Ok(Some(ObjectStream {
+                    len,
+                    tag,
+                    reader: Box::new(reader),
+                }))
             }
             // replaced between HEAD and GET, or deleted: let the caller read the current object whole
             Resp::Ok { .. } | Resp::Status(404 | 412, _) => Ok(None),
