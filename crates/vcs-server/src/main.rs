@@ -209,6 +209,18 @@ fn main() {
     if table.is_empty() {
         die("tokens file has no entries");
     }
+    // deploy/tokens.example ships hashes of publicly known tokens (including an admin). Installing it unedited
+    // (docs/deploy.md copies it into place) would leave that admin token live, so refuse to serve with any of them.
+    if std::env::var_os("VCS_SERVER_ALLOW_EXAMPLE_TOKENS").is_none() {
+        for t in ["example-alice", "example-bob", "example-carol", "example-root"] {
+            if table.authenticate(t).is_some() {
+                die(&format!(
+                    "{tokens} contains the publicly known example token `{t}` from deploy/tokens.example: replace it \
+                     (vcs-server hash-token <new token>), or set VCS_SERVER_ALLOW_EXAMPLE_TOKENS=1 for a throwaway test server"
+                ));
+            }
+        }
+    }
     if check_client && upstream.is_none() {
         backend_url::check_client_cannot_write_manifest(&backend_url, &|k| std::env::var(k).ok()).unwrap_or_else(|e| die(&e));
     }

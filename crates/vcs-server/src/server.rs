@@ -443,10 +443,13 @@ fn refuse(#[allow(unused_variables)] sh: &Shared, mut conn: TcpStream) {
     if sh.tls.read().unwrap_or_else(|e| e.into_inner()).is_some() {
         return;
     }
-    // Consume what the client already sent (briefly) so that closing does not reset the connection
-    // and destroy the reply in flight.
-    let _ = conn.set_read_timeout(Some(Duration::from_millis(5)));
+    // Consume what the client already sent so that closing does not reset the connection and destroy the
+    // reply in flight. This runs on the single accept thread, so it must never wait: a blocking 5 ms read
+    // per refused connection capped refusals at ~200/s (3000 idle sockets against a full server took 13 s
+    // to be turned away, and a /healthz probe got 503 meanwhile; docs/research/infra-review.md).
+    let _ = conn.set_nonblocking(true);
     let _ = conn.read(&mut [0u8; 4096]);
+    let _ = conn.set_nonblocking(false);
     let _ = conn.set_write_timeout(Some(Duration::from_secs(1)));
     sh.metrics.observe("OTHER", 503, "none", Duration::ZERO, 0, 0);
     let r = text(503, "too many connections").with("Retry-After", "1");

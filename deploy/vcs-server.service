@@ -26,6 +26,10 @@ ExecStart=/usr/local/bin/vcs-server --root /var/lib/vcs/data --tokens /etc/vcs/t
 TimeoutStopSec=45
 Restart=on-failure
 RestartSec=2
+# One thread and one descriptor per connection (docs/research/infra-review.md): the systemd default soft limit of
+# 1024 descriptors would turn --max-connections above ~1000 into EMFILE. Size TasksMax to max-connections + ~64.
+LimitNOFILE=65536
+TasksMax=4096
 
 # Hardening: the server only needs its data directory and the network.
 NoNewPrivileges=true
@@ -41,6 +45,14 @@ RestrictNamespaces=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
 SystemCallFilter=@system-service
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+RestrictSUIDSGID=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+UMask=0077
 ReadWritePaths=/var/lib/vcs
 StateDirectory=vcs
 

@@ -1,15 +1,16 @@
 # Build:  docker build -f deploy/Dockerfile -t vcs-server .
 # Run:    docker run -d --name vcs -p 127.0.0.1:8480:8480 \
-#           -v vcs-data:/data -v $PWD/deploy/tokens.example:/etc/vcs/tokens:ro vcs-server
+#           -v vcs-data:/data -v $PWD/tokens:/etc/vcs/tokens:ro vcs-server   # your own tokens file (deploy/tokens.example is refused)
 # S3:     add  -e AWS_ACCESS_KEY_ID=... -e AWS_SECRET_ACCESS_KEY=... and override the command:
 #           vcs-server --backend 's3://bucket/prefix?endpoint=https://s3.example.com' \
 #             --tokens /etc/vcs/tokens --listen 0.0.0.0:8480
-# There is no TLS in the server: publish the port on loopback or a private network and put a
-# TLS-terminating proxy in front of it (docs/deploy.md).
+# The image is built with the `tls` feature (--tls-cert/--tls-key, https:// S3 endpoints). Without a certificate it
+# still speaks plain HTTP: publish the port on loopback or a private network, or terminate TLS in front (docs/deploy.md).
 FROM rust:1-bookworm AS build
 WORKDIR /src
 COPY . .
-RUN cargo build --release --locked -p vcs-server --bin vcs-server
+# tls: HTTPS listener (--tls-cert/--tls-key) and https:// S3 endpoints (real AWS S3 needs it).
+RUN cargo build --release --locked -p vcs-server --bin vcs-server --features tls
 
 FROM debian:bookworm-slim
 RUN useradd --system --uid 10001 --home-dir /data --shell /usr/sbin/nologin vcs \
