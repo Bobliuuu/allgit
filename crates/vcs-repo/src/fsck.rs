@@ -580,7 +580,7 @@ impl Repo {
 
         // The remote closure is only worth computing once something is found missing.
         let mut refetchable: Option<BTreeSet<ObjectId>> = None;
-        let mut evictable: BTreeSet<ObjectId> = BTreeSet::new();
+        let mut evictable: Vec<ObjectId> = Vec::new();
         let mut object_problems: Vec<String> = Vec::new();
         let mut chunked = Vec::new();
         for a in &mut accs {
@@ -604,12 +604,8 @@ impl Repo {
             trace.at("reachability walk");
             let mut lost = Vec::new();
             for (k, (id, m)) in misses.iter().enumerate() {
-                // the workers asked the store already; this only catches an object stored since (no stat per miss)
-                if self.store.contains_hint(id)? {
-                    continue;
-                }
                 if reached[k].load(Ordering::Relaxed) {
-                    evictable.insert(*id);
+                    evictable.push(*id);
                 } else {
                     lost.push(ctx.miss_message(id, *m));
                 }
@@ -626,7 +622,7 @@ impl Repo {
                 refetchable = Some(this.remote_closure()?);
             }
             if refetchable.as_ref().is_some_and(|r| r.contains(id)) {
-                evictable.insert(*id);
+                evictable.push(*id);
             } else {
                 problems.push(what);
             }
@@ -745,7 +741,7 @@ impl Repo {
                         refetchable = Some(self.remote_closure()?);
                     }
                     if refetchable.as_ref().is_some_and(|r| r.contains(h)) && !self.store.contains(h)? {
-                        evictable.insert(*h);
+                        evictable.push(*h);
                     } else {
                         rep.problems.push(format!("ref {a}/{b}: points to missing/non-commit {h}"));
                     }
@@ -754,7 +750,9 @@ impl Repo {
                 _ => {}
             }
         }
-        rep.evictable = evictable.into_iter().collect();
+        evictable.sort_unstable();
+        evictable.dedup();
+        rep.evictable = evictable;
         trace.at("refs");
         Ok((rep, pack_problems))
     }
