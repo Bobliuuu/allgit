@@ -236,7 +236,10 @@ pub fn compact_with(
     let lock = if opts.dry_run || !b.supports_gc() {
         None
     } else {
-        Some(acquire(b, &opts.owner, opts.lock_ttl_ms, b.now_ms()?)?)
+        let now = b.now_ms()?;
+        let g = acquire(b, &opts.owner, opts.lock_ttl_ms, now)?;
+        crate::dr::check_no_hold(b, now)?; // a backup is copying the pack list
+        Some(g)
     };
     // The merge runs under a heartbeat that keeps the (short) lease alive while we are busy.
     match &lock {

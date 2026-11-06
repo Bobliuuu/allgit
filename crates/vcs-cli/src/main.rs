@@ -15,6 +15,7 @@ mod cmds;
 mod config;
 mod describe;
 mod difftool;
+mod dr_cmd;
 mod everyday;
 mod generate;
 mod gitmap;
@@ -854,6 +855,50 @@ enum RemoteCmd {
     Show,
     /// Forget the remote and its remote-tracking refs (local branches and history are kept)
     Remove,
+    /// Walk and hash everything reachable from the remote's manifest; exit 1 if anything is missing or corrupt
+    Verify {
+        /// Remote or backup to check (default: the configured remote)
+        url: Option<String>,
+        /// Check this saved manifest file instead of the remote's current one (is an old manifest still restorable after gc?)
+        #[arg(long)]
+        manifest: Option<std::path::PathBuf>,
+        /// Also read every pack end to end and every loose object, reachable or not
+        #[arg(long)]
+        deep: bool,
+    },
+    /// Copy the remote into DEST (a directory or other remote), holding a GC safe point; the manifest is written last, after verification
+    Backup {
+        /// Where the backup goes; an existing backup is updated incrementally
+        dest: String,
+        /// Remote to back up (default: the configured remote)
+        #[arg(long)]
+        from: Option<String>,
+        /// Lifetime of the GC safe point in seconds (renewed while the backup runs; a killed backup frees it after this)
+        #[arg(long, default_value_t = 3600)]
+        hold_secs: u64,
+        /// Do not take a GC safe point (only if nothing runs `vcs gc --remote` meanwhile)
+        #[arg(long)]
+        no_hold: bool,
+        /// Skip reading every pack end to end before installing the manifest
+        #[arg(long)]
+        no_deep: bool,
+    },
+    /// Restore a remote or backup FROM into a fresh, empty store TO; verified before its manifest is written
+    Restore {
+        from: String,
+        to: String,
+        /// Lifetime of the GC safe point on FROM in seconds
+        #[arg(long, default_value_t = 3600)]
+        hold_secs: u64,
+        /// Do not take a GC safe point on FROM
+        #[arg(long)]
+        no_hold: bool,
+        /// Skip reading every pack end to end before installing the manifest
+        #[arg(long)]
+        no_deep: bool,
+    },
+    /// Show the last destructive gc (the GC safe point) and any backup holds on the remote
+    SafePoint { url: Option<String> },
 }
 
 #[derive(Subcommand, Clone)]
@@ -2229,6 +2274,17 @@ fn run(cli: Cli) -> Result<(), Error> {
             CredCmd::Store => auth::Op::Store,
             CredCmd::Erase => auth::Op::Erase,
         })?,
+        Cmd::Remote(RemoteCmd::Verify { url, manifest, deep }) => dr_cmd::verify(url, manifest, deep, &std::env::current_dir()?)?,
+        Cmd::Remote(RemoteCmd::Backup { dest, from, hold_secs, no_hold, no_deep }) => {
+            dr_cmd::backup(&dest, from, &dr_cmd::CopyArgs { hold_secs, no_hold, no_deep }, &std::env::current_dir()?)?
+        }
+        Cmd::Remote(RemoteCmd::Restore { from, to, hold_secs, no_hold, no_deep }) => dr_cmd::restore(
+            &from,
+            &to,
+            &dr_cmd::CopyArgs { hold_secs, no_hold, no_deep },
+            &std::env::current_dir()?,
+        )?,
+        Cmd::Remote(RemoteCmd::SafePoint { url }) => dr_cmd::safe_point(url, &std::env::current_dir()?)?,
         Cmd::Remote(r) => {
             let (repo, cwd) = open()?;
             match r {
@@ -2237,6 +2293,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                     repo.set_remote(&url)?;
                     println!("remote set to {url}");
                 }
+                RemoteCmd::Verify { .. } | RemoteCmd::Backup { .. } | RemoteCmd::Restore { .. } | RemoteCmd::SafePoint { .. } => unreachable!(),
                 RemoteCmd::Remove => {
                     if repo.remove_remote()? {
                         println!("remote removed");
