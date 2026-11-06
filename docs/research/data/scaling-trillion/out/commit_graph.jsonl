@@ -119,3 +119,14 @@
 {"comp":"commit_graph","op":"range_ids_1000","n":300000000,"samples":9,"p50_us":2376.444,"p95_us":2798.266,"rss_kb":15354692,"anon_kb":15352172,"hwm_kb":29826876}
 {"comp":"commit_graph","op":"count_reachable_not_from_1000","n":300000000,"samples":9,"p50_us":73937979.509,"p95_us":82927994.731,"rss_kb":15354692,"anon_kb":15352172,"hwm_kb":29826876}
 {"comp":"commit_graph","op":"encode","n":300000000,"samples":1,"p50_us":8983789.583,"p95_us":8983789.583,"rss_kb":29827352,"anon_kb":29824832,"hwm_kb":29827352,"bytes":14819999953}
+{"comp":"commit_graph","op":"synth_build","n":1000000000,"samples":1,"p50_us":64975849.238,"p95_us":64975849.238,"rss_kb":2680,"anon_kb":164,"hwm_kb":48244120,"bytes":49399999953,"bytes_per_commit":49.40}
+{"comp":"commit_graph","op":"decode_validate","n":1000000000,"samples":1,"p50_us":55270474.317,"p95_us":55270474.317,"rss_kb":99416884,"anon_kb":99414364,"hwm_kb":99416884,"mem_delta_kb":99414200}
+{"comp":"commit_graph","op":"resident","n":1000000000,"samples":1,"p50_us":0.000,"p95_us":0.000,"rss_kb":51174696,"anon_kb":51172176,"hwm_kb":99415436,"mem_after_decode_kb":51174696,"mem_bytes_per_commit":52.40}
+{"comp":"commit_graph","op":"index_of","n":1000000000,"samples":20000,"p50_us":2.969,"p95_us":3.892,"rss_kb":51175012,"anon_kb":51172492,"hwm_kb":99415436}
+{"comp":"commit_graph","op":"merge_base_fork_distance_1","n":1000000000,"samples":9,"p50_us":336.015,"p95_us":484.314,"rss_kb":51175012,"anon_kb":51172492,"hwm_kb":99415436,"correct":true,"fork_distance":1}
+{"comp":"commit_graph","op":"merge_base_fork_distance_100","n":1000000000,"samples":9,"p50_us":991.751,"p95_us":1165.190,"rss_kb":51175012,"anon_kb":51172492,"hwm_kb":99415436,"correct":true,"fork_distance":100}
+{"comp":"commit_graph","op":"merge_base_fork_distance_10000","n":1000000000,"samples":9,"p50_us":52313.879,"p95_us":56427.750,"rss_kb":51175012,"anon_kb":51172492,"hwm_kb":99415436,"correct":true,"fork_distance":10000}
+{"comp":"commit_graph","op":"merge_base_fork_distance_1000000","n":1000000000,"samples":9,"p50_us":1781021.884,"p95_us":1823086.297,"rss_kb":51175012,"anon_kb":51172492,"hwm_kb":99415436,"correct":true,"fork_distance":1000000}
+{"comp":"commit_graph","op":"range_ids_1000","n":1000000000,"samples":9,"p50_us":2770.710,"p95_us":3535.850,"rss_kb":51175012,"anon_kb":51172492,"hwm_kb":99415436}
+{"comp":"commit_graph","op":"count_reachable_not_from_1000","n":1000000000,"samples":9,"p50_us":280110543.972,"p95_us":286616922.158,"rss_kb":51175012,"anon_kb":51172492,"hwm_kb":99415436}
+{"comp":"commit_graph","op":"encode","n":1000000000,"samples":1,"p50_us":30424102.893,"p95_us":30424102.893,"rss_kb":99417200,"anon_kb":99414680,"hwm_kb":99417200,"bytes":49399999953}
