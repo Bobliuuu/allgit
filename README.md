@@ -36,6 +36,7 @@ none is a statement about other hardware. Where vcs loses, it says so in the sam
 | 128 pushers, local disk | 85.3 pushes/s (**loss**) | git 222.0 | same |
 | 100,000 files `add` (flat, fresh index) | **538 ms** | git 4,810 ms | [command-scoreboard](docs/research/command-scoreboard.md) |
 | `kill -9` of the server, 157 times in 14 min | **0 acknowledged files lost** | n/a | [box-harvest](docs/research/box-harvest.md) |
+| 64 to 256 CLI writers on a 1M-file, 200k-commit, 64.7 GB monorepo, server `kill -9`ed 8 times per run | **0 acknowledged files lost** (5,038 to 7,223 acked per run) | n/a | [monorepo-stress](docs/research/monorepo-stress.md) |
 | Zones chosen from your usage profile | **37 MB** downloaded | 189.5 MB full clone | [zone-profile-bench](docs/research/zone-profile-bench.md) |
 
 Scoreboard totals across all measured cells (one quiet-box pass, build `845610a`, see [below](#-wins-ties-and-losses-measured)):
@@ -557,6 +558,7 @@ Details and what is not defended: [docs/security.md](docs/security.md), [docs/se
 | `crates/vcs-assist-claude`, `crates/vcs-assist-openai` | helper binaries for opt-in `merge --assist` |
 | `crates/vcs-bench` | seeded dataset generator, criterion benchmarks, `s3bench`, `storebench` |
 | `crates/vcs-cli` | the `vcs` and `git-remote-allgit` binaries |
+| `crates/vcs-watchd` | the optional file-watcher daemon that makes `status` incremental |
 
 `crates/vcs-storage-lab*` and `crates/vcs-compress-lab` are research experiments outside the cargo workspace.
 `fuzz/` is a separate cargo-fuzz project; `deploy/` holds the server deploy recipe; `scripts/` holds benchmark
@@ -587,12 +589,14 @@ harnesses.
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace                 # includes the protocol model checker (about 20 s)
+cargo test --workspace                 # includes the protocol model checker
+cargo test -p vcs-merge --features structural
 VCS_TEST_S3_ENDPOINT=http://127.0.0.1:9000 cargo test -p vcs-store-s3   # MinIO, see docs/s3.md
 ```
 
 After changing any CLI command or flag, run `scripts/gen_cli_reference.sh` and commit the regenerated chapter 12 of
-the guide, or `cargo test --workspace` fails. PRs use Conventional Commits and the template in `.github/`.
+the guide, or `cargo test --workspace` fails. PRs use Conventional Commits and the template in `.github/`; see
+[CONTRIBUTING.md](CONTRIBUTING.md). To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## 🚧 Status and limitations
 

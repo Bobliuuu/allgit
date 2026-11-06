@@ -1,2 +1,0 @@
-Id: $Id: //depot/proj/kw.txt#1 $
-Rev: $Revision: #1 $

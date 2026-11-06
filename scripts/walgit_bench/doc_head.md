@@ -10,7 +10,7 @@ Only numbers in the tables below were measured; anything not run is listed under
 
 walgit is a **server**. It has no client: `add`, `commit`, `status`, `log` and `checkout` on a walgit repository are stock
 `git` running on the client, so their cost is exactly the git column of the local-workflow table in
-[benchmarks.md](benchmarks.md) (100k-file scale run, git vs vcs). The only walgit-specific costs are the remote ones:
+[benchmarks.md](../benchmarks.md) (100k-file scale run, git vs vcs). The only walgit-specific costs are the remote ones:
 push, clone, fetch (this document). Do not read the local git numbers as walgit numbers of its own.
 
 ## Setup (all CONFIRMED, from the JSON `meta` blocks)

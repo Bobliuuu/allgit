@@ -29,9 +29,9 @@ vcs --help
 ## Windows (experimental, compile-checked only)
 
 **Nothing in this project has been executed on Windows.** The only verification is that
-`cargo check --workspace --all-targets` passes for `x86_64-pc-windows-gnu` (cross-compiled on Linux with
-mingw-w64). No tests, no binary, and no `msvc` build were run; the advisory `windows-check` CI job runs
-`cargo check --target x86_64-pc-windows-msvc` on `windows-latest` and does not run tests either.
+`cargo check --workspace --exclude vcs-bench --lib --bins` passes for `x86_64-pc-windows-gnu` (cross-compiled with
+mingw-w64). The test suites and the `vcs-bench` tools use Unix-only APIs and are not compiled for Windows. No tests, no binary, and no `msvc` build were run; the advisory `windows-check` CI job runs
+the same `cargo check` for `x86_64-pc-windows-msvc` on `windows-latest` and does not run tests either.
 
 What the code intends on Windows (unverified):
 
