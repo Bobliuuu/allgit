@@ -3,7 +3,7 @@
 *One repository, many zones, any size. Take only the slice you need, publish from as many hands as you like.* 🍰
 
 [![CI](https://github.com/Bobliuuu/allgit/actions/workflows/ci.yml/badge.svg)](https://github.com/Bobliuuu/allgit/actions/workflows/ci.yml)
-![Rust](https://img.shields.io/badge/rust-1.80%2B-orange)
+![Rust](https://img.shields.io/badge/rust-1.88%2B-orange)
 ![Status](https://img.shields.io/badge/status-early%20research-yellow)
 ![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)
 
@@ -373,7 +373,7 @@ current performance work and were not re-run; read those files with that in mind
 
 ## 🛠️ Install and build
 
-Needs Rust 1.80 or newer.
+Needs Rust 1.88 or newer (checked with 1.88 and 1.89; some dependencies need 1.88).
 
 ```bash
 git clone https://github.com/Bobliuuu/allgit && cd allgit      # any way of getting the sources works
