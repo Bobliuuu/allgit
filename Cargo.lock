@@ -1629,6 +1629,7 @@ dependencies = [
  "criterion",
  "sha2",
  "tempfile",
+ "vcs-merge",
  "vcs-objects",
  "vcs-remote",
  "vcs-repo",

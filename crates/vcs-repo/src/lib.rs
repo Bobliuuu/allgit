@@ -45,6 +45,9 @@ pub mod plumbing;
 pub mod portable;
 pub mod prefetch;
 mod reachcache;
+#[cfg(feature = "scaling-probe")]
+#[doc(hidden)]
+pub mod scaling_probe;
 pub mod rebase;
 pub mod rebase_todo;
 pub(crate) mod refsdelta;
