@@ -38,7 +38,7 @@ use crate::packfetch::PACK_PREFIX;
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use vcs_objects::{id_of_encoded, ObjectId};
-use vcs_store::pack::{build_pack_blocks, BlockCache, PackFormat, PackIndex, BLOCK_TARGET};
+use vcs_store::pack::{BlockCache, PackFormat, PackIndex, BLOCK_TARGET};
 
 /// Tier ratio: a tier holds packs within a factor of this of each other; this many in one tier
 /// are merged (simulation: 1,000 equal publishes compacted after each end at 6 packs for 6.3x the
@@ -298,7 +298,8 @@ fn merge_packs(
         } else {
             union
         };
-        let built = build_pack_blocks(union, opts.format, opts.block_bytes);
+        let built =
+            vcs_store::pack::try_build_pack_blocks(union, opts.format, opts.block_bytes).map_err(|e| GcError::Damaged(e.to_string()))?;
         let new_stem = format!("{PACK_PREFIX}{}", built.name);
         hook(CompactPoint::Planned);
 

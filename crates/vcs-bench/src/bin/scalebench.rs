@@ -128,7 +128,13 @@ const ENTRY: usize = 44;
 /// Write one VCSPIDX2 file holding global indexes `p, p+P, p+2P, ...` of `total` sorted ids.
 fn write_idx(path: &Path, total: u64, packs: u64, p: u64) -> u64 {
     let cnt = (total - p).div_ceil(packs);
-    let f = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path).unwrap();
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)
+        .unwrap();
     let len = IDX_HDR as u64 + cnt * ENTRY as u64 + 32;
     f.set_len(len).unwrap();
     let nt = threads() as u64;
@@ -216,7 +222,10 @@ fn cmd_idx(args: &[String]) {
         "build",
         n,
         build,
-        &format!("\"bytes\":{total_bytes},\"bytes_per_object\":{:.3},\"packs\":{packs}", total_bytes as f64 / n as f64),
+        &format!(
+            "\"bytes\":{total_bytes},\"bytes_per_object\":{:.3},\"packs\":{packs}",
+            total_bytes as f64 / n as f64
+        ),
     );
     // drop page cache effects are left to the OS: file is hot (just written). Open lazily like the store does.
     let t = Instant::now();
@@ -250,18 +259,34 @@ fn cmd_idx(args: &[String]) {
             near += 1;
         }
     });
-    emit("pack_index", "lookup_miss_near_collision", n, &mut ncol, &format!("\"false_hits\":{near},\"packs\":{packs}"));
+    emit(
+        "pack_index",
+        "lookup_miss_near_collision",
+        n,
+        &mut ncol,
+        &format!("\"false_hits\":{near},\"packs\":{packs}"),
+    );
     if verify {
         let t = Instant::now();
         let r = idxs[0].verify_full();
-        emit1("pack_index", "verify_full", n / packs, t.elapsed(), &format!("\"ok\":{}", r.is_ok()));
+        emit1(
+            "pack_index",
+            "verify_full",
+            n / packs,
+            t.elapsed(),
+            &format!("\"ok\":{}", r.is_ok()),
+        );
     }
 }
 
 // ---------------------------------------------------------------- cgraph
 
 fn gcd(a: u64, b: u64) -> u64 {
-    if b == 0 { a } else { gcd(b, a % b) }
+    if b == 0 {
+        a
+    } else {
+        gcd(b, a % b)
+    }
 }
 fn modinv(a: u64, m: u64) -> u64 {
     let (mut r0, mut r1, mut s0, mut s1) = (m as i128, a as i128, 0i128, 1i128);
@@ -290,7 +315,13 @@ impl Shape {
         while gcd(a, n) != 1 {
             a += 2;
         }
-        Shape { n, m, a, ainv: modinv(a, n), b: n / 3 }
+        Shape {
+            n,
+            m,
+            a,
+            ainv: modinv(a, n),
+            b: n / 3,
+        }
     }
     fn rank(&self, k: u64) -> u64 {
         ((k as u128 * self.a as u128 + self.b as u128) % self.n as u128) as u64
@@ -358,14 +389,36 @@ fn cmd_cgraph(args: &[String]) {
         std::fs::write(&path, cg_bytes(&sh)).unwrap();
     }
     let bytes_len = std::fs::metadata(&path).unwrap().len();
-    emit1("commit_graph", "synth_build", n, t.elapsed(), &format!("\"bytes\":{bytes_len},\"bytes_per_commit\":{:.2}", bytes_len as f64 / n as f64));
+    emit1(
+        "commit_graph",
+        "synth_build",
+        n,
+        t.elapsed(),
+        &format!("\"bytes\":{bytes_len},\"bytes_per_commit\":{:.2}", bytes_len as f64 / n as f64),
+    );
     let rss0 = rss();
     let raw = std::fs::read(&path).unwrap();
     let t = Instant::now();
     let g = CommitGraphFile::decode(&raw).expect("decode");
-    emit1("commit_graph", "decode_validate", n, t.elapsed(), &format!("\"mem_delta_kb\":{}", rss().saturating_sub(rss0)));
+    emit1(
+        "commit_graph",
+        "decode_validate",
+        n,
+        t.elapsed(),
+        &format!("\"mem_delta_kb\":{}", rss().saturating_sub(rss0)),
+    );
     drop(raw);
-    emit1("commit_graph", "resident", n, std::time::Duration::ZERO, &format!("\"mem_after_decode_kb\":{},\"mem_bytes_per_commit\":{:.2}", rss(), rss().saturating_sub(rss0) as f64 * 1024.0 / n as f64));
+    emit1(
+        "commit_graph",
+        "resident",
+        n,
+        std::time::Duration::ZERO,
+        &format!(
+            "\"mem_after_decode_kb\":{},\"mem_bytes_per_commit\":{:.2}",
+            rss(),
+            rss().saturating_sub(rss0) as f64 * 1024.0 / n as f64
+        ),
+    );
     let id_at = |k: u64| ObjectId::from_bytes(probe::sorted_id(sh.rank(k), n));
     let mut rng = Rng(0xDEAD_BEEF_1234_5678);
     let mut lk = time_each(20000, |_| {
@@ -383,7 +436,13 @@ fn cmd_cgraph(args: &[String]) {
             let r = g.merge_bases_indexed(&tip, &side_tip).expect("in graph");
             ok &= r == vec![want];
         });
-        emit("commit_graph", &format!("merge_base_fork_distance_{d}"), n, &mut mb, &format!("\"correct\":{ok},\"fork_distance\":{d}"));
+        emit(
+            "commit_graph",
+            &format!("merge_base_fork_distance_{d}"),
+            n,
+            &mut mb,
+            &format!("\"correct\":{ok},\"fork_distance\":{d}"),
+        );
     }
     let hide = id_at(sh.m - 1 - 1000);
     let mut rg = time_each(rep, |_| g.range_ids(&[tip], &[hide]).map(|v| v.len()));
@@ -411,11 +470,27 @@ fn cmd_cgbuild(args: &[String]) {
         })
         .expect("extend");
     let d = t.elapsed();
-    emit1("commit_graph", "build_extend", n, d, &format!("\"commits_per_s\":{:.0},\"len\":{}", n as f64 / d.as_secs_f64(), g.len()));
+    emit1(
+        "commit_graph",
+        "build_extend",
+        n,
+        d,
+        &format!("\"commits_per_s\":{:.0},\"len\":{}", n as f64 / d.as_secs_f64(), g.len()),
+    );
     // incremental: add 1 commit on top of a graph of n (what each commit/push does when no batching)
     let extra = id_of(n + 1);
     let tip = ids[n as usize - 1];
-    let mut inc = time_each(5, |_| g.extend(&[extra], |id| if *id == extra { Ok((vec![tip], 2_000_000_000)) } else { unreachable!() }).unwrap().len());
+    let mut inc = time_each(5, |_| {
+        g.extend(&[extra], |id| {
+            if *id == extra {
+                Ok((vec![tip], 2_000_000_000))
+            } else {
+                unreachable!()
+            }
+        })
+        .unwrap()
+        .len()
+    });
     emit("commit_graph", "extend_one_commit", n, &mut inc, "");
 }
 
@@ -427,29 +502,60 @@ fn cmd_agi5(args: &[String]) {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("idx{n}.agi5"));
     let t = Instant::now();
-    let size = if path.exists() { std::fs::metadata(&path).unwrap().len() } else { probe::agi5_write(&path, n as usize).unwrap() };
-    emit1("agi5", "synth_build", n, t.elapsed(), &format!("\"bytes\":{size},\"bytes_per_entry\":{:.2}", size as f64 / n as f64));
+    let size = if path.exists() {
+        std::fs::metadata(&path).unwrap().len()
+    } else {
+        probe::agi5_write(&path, n as usize).unwrap()
+    };
+    emit1(
+        "agi5",
+        "synth_build",
+        n,
+        t.elapsed(),
+        &format!("\"bytes\":{size},\"bytes_per_entry\":{:.2}", size as f64 / n as f64),
+    );
     let r0 = rss();
     let t = Instant::now();
     let ix = probe::Agi5::open(&path).expect("open");
-    emit1("agi5", "open", n, t.elapsed(), &format!("\"mem_delta_kb\":{}", rss().saturating_sub(r0)));
+    emit1(
+        "agi5",
+        "open",
+        n,
+        t.elapsed(),
+        &format!("\"mem_delta_kb\":{}", rss().saturating_sub(r0)),
+    );
     let mut rng = Rng(77);
     let mut hit = time_each(20000, |_| assert!(ix.find(&probe::agi5_path(rng.below(n), n))));
     emit("agi5", "find_hit", n, &mut hit, "");
-    let mut miss = time_each(20000, |_| assert!(!ix.find(&format!("{}x/nope", probe::agi5_path(rng.below(n), n)))));
+    let mut miss = time_each(
+        20000,
+        |_| assert!(!ix.find(&format!("{}x/nope", probe::agi5_path(rng.below(n), n)))),
+    );
     emit("agi5", "find_miss", n, &mut miss, "");
     drop(ix);
     let ix = probe::Agi5::open(&path).expect("open");
     let t = Instant::now();
     ix.scan().expect("scan");
     let d = t.elapsed();
-    emit1("agi5", "scan_all_status_pass", n, d, &format!("\"ns_per_entry\":{:.1}", d.as_nanos() as f64 / n as f64));
+    emit1(
+        "agi5",
+        "scan_all_status_pass",
+        n,
+        d,
+        &format!("\"ns_per_entry\":{:.1}", d.as_nanos() as f64 / n as f64),
+    );
     drop(ix);
     let ix = probe::Agi5::open(&path).expect("open");
     let t = Instant::now();
     ix.verify_all().expect("verify");
     let d = t.elapsed();
-    emit1("agi5", "verify_all", n, d, &format!("\"ns_per_entry\":{:.1}", d.as_nanos() as f64 / n as f64));
+    emit1(
+        "agi5",
+        "verify_all",
+        n,
+        d,
+        &format!("\"ns_per_entry\":{:.1}", d.as_nanos() as f64 / n as f64),
+    );
 }
 
 fn cmd_reach(args: &[String]) {
@@ -458,12 +564,28 @@ fn cmd_reach(args: &[String]) {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("reach{n}"));
     let t = Instant::now();
-    let size = if path.exists() { std::fs::metadata(&path).unwrap().len() } else { probe::reach_write(&path, n as usize, 64).unwrap() };
-    emit1("reach_bitmap", "synth_build", n, t.elapsed(), &format!("\"bytes\":{size},\"bytes_per_object\":{:.3}", size as f64 / n as f64));
+    let size = if path.exists() {
+        std::fs::metadata(&path).unwrap().len()
+    } else {
+        probe::reach_write(&path, n as usize, 64).unwrap()
+    };
+    emit1(
+        "reach_bitmap",
+        "synth_build",
+        n,
+        t.elapsed(),
+        &format!("\"bytes\":{size},\"bytes_per_object\":{:.3}", size as f64 / n as f64),
+    );
     let r0 = rss();
     let t = Instant::now();
     let rc = probe::Reach::load(&path).expect("load");
-    emit1("reach_bitmap", "load_verify", n, t.elapsed(), &format!("\"mem_delta_kb\":{}", rss().saturating_sub(r0)));
+    emit1(
+        "reach_bitmap",
+        "load_verify",
+        n,
+        t.elapsed(),
+        &format!("\"mem_delta_kb\":{}", rss().saturating_sub(r0)),
+    );
     let mut rng = Rng(5);
     let mut q = time_each(20000, |_| assert!(rc.scanned(&probe::sorted_id(rng.below(n), n))));
     emit("reach_bitmap", "member_lookup", n, &mut q, "");
@@ -481,12 +603,28 @@ fn cmd_pfilter(args: &[String]) {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("pf{n}"));
     let t = Instant::now();
-    let size = if path.exists() { std::fs::metadata(&path).unwrap().len() } else { probe::pathfilter_write(&path, n as usize, 24).unwrap() };
-    emit1("path_filter", "synth_build", n, t.elapsed(), &format!("\"bytes\":{size},\"bytes_per_commit\":{:.2}", size as f64 / n as f64));
+    let size = if path.exists() {
+        std::fs::metadata(&path).unwrap().len()
+    } else {
+        probe::pathfilter_write(&path, n as usize, 24).unwrap()
+    };
+    emit1(
+        "path_filter",
+        "synth_build",
+        n,
+        t.elapsed(),
+        &format!("\"bytes\":{size},\"bytes_per_commit\":{:.2}", size as f64 / n as f64),
+    );
     let r0 = rss();
     let t = Instant::now();
     let pf = probe::PathFilters::load(&path);
-    emit1("path_filter", "load_parse", n, t.elapsed(), &format!("\"loaded\":{},\"mem_delta_kb\":{}", pf.loaded(), rss().saturating_sub(r0)));
+    emit1(
+        "path_filter",
+        "load_parse",
+        n,
+        t.elapsed(),
+        &format!("\"loaded\":{},\"mem_delta_kb\":{}", pf.loaded(), rss().saturating_sub(r0)),
+    );
     let mut rng = Rng(9);
     let mut q = time_each(20000, |_| assert!(pf.get(&probe::sorted_id(rng.below(n), n))));
     emit("path_filter", "lookup", n, &mut q, "");
@@ -495,7 +633,9 @@ fn cmd_pfilter(args: &[String]) {
 fn cmd_bloom() {
     let mut rng = Rng(31337);
     for &k in &[1usize, 4, 16, 64, 128, 256, probe::BLOOM_MAX_PATHS] {
-        let paths: Vec<String> = (0..k).map(|i| format!("svc{:03}/pkg{:03}/src/file{:05}.rs", i % 50, i % 17, i)).collect();
+        let paths: Vec<String> = (0..k)
+            .map(|i| format!("svc{:03}/pkg{:03}/src/file{:05}.rs", i % 50, i % 17, i))
+            .collect();
         let mut sizes = 0usize;
         let mut b = time_each(200, |_| {
             let f = probe::bloom_build(&paths);
@@ -509,7 +649,12 @@ fn cmd_bloom() {
                 let trials = 400_000u64;
                 let mut fp = 0u64;
                 let mut q = time_each(trials as usize, |_| {
-                    let p = format!("svc{:03}/pkg{:03}/src/other{:06}.rs", rng.below(900), rng.below(900), rng.below(1_000_000));
+                    let p = format!(
+                        "svc{:03}/pkg{:03}/src/other{:06}.rs",
+                        rng.below(900),
+                        rng.below(900),
+                        rng.below(1_000_000)
+                    );
                     if probe::bloom_may_contain(&f, &p) {
                         fp += 1;
                     }
@@ -520,13 +665,23 @@ fn cmd_bloom() {
                         tp += 1;
                     }
                 }
-                emit("bloom", &format!("build_changed_{k}"), k as u64, &mut b, &format!("\"filter_bytes\":{sizes}"));
+                emit(
+                    "bloom",
+                    &format!("build_changed_{k}"),
+                    k as u64,
+                    &mut b,
+                    &format!("\"filter_bytes\":{sizes}"),
+                );
                 emit(
                     "bloom",
                     &format!("query_changed_{k}"),
                     k as u64,
                     &mut q,
-                    &format!("\"false_positive_rate\":{:.6},\"false_negatives\":{},\"trials\":{trials}", fp as f64 / trials as f64, k - tp),
+                    &format!(
+                        "\"false_positive_rate\":{:.6},\"false_negatives\":{},\"trials\":{trials}",
+                        fp as f64 / trials as f64,
+                        k - tp
+                    ),
                 );
             }
         }
@@ -536,7 +691,10 @@ fn cmd_bloom() {
 // ---------------------------------------------------------------- manifest, locks
 
 fn synth_manifest(z: usize) -> vcs_remote::Manifest {
-    let mut m = vcs_remote::Manifest { generation: 1_000_000, ..Default::default() };
+    let mut m = vcs_remote::Manifest {
+        generation: 1_000_000,
+        ..Default::default()
+    };
     let mut n = 0u64;
     for i in 0..z {
         let zn = format!("zone-{i:07}");
@@ -553,7 +711,13 @@ fn cmd_manifest(args: &[String]) {
     use vcs_remote::{Backend, FsBackend, Manifest, MemBackend};
     let z: usize = args[0].parse().unwrap();
     let dir = PathBuf::from(&args[1]);
-    let reps = if z <= 10_000 { 21 } else if z <= 100_000 { 9 } else { 3 };
+    let reps = if z <= 10_000 {
+        21
+    } else if z <= 100_000 {
+        9
+    } else {
+        3
+    };
     let t = Instant::now();
     let m = synth_manifest(z);
     emit1("manifest", "synth_build", z as u64, t.elapsed(), "");
@@ -563,7 +727,13 @@ fn cmd_manifest(args: &[String]) {
         enc_bytes = b.len();
         b
     });
-    emit("manifest", "encode", z as u64, &mut e, &format!("\"bytes\":{enc_bytes},\"bytes_per_zone\":{:.2}", enc_bytes as f64 / z as f64));
+    emit(
+        "manifest",
+        "encode",
+        z as u64,
+        &mut e,
+        &format!("\"bytes\":{enc_bytes},\"bytes_per_zone\":{:.2}", enc_bytes as f64 / z as f64),
+    );
     let bytes = m.encode();
     let mut d = time_each(reps, |_| Manifest::decode(&bytes).unwrap());
     emit("manifest", "decode", z as u64, &mut d, "");
@@ -571,7 +741,10 @@ fn cmd_manifest(args: &[String]) {
     let fs_dir = dir.join(format!("fs{z}"));
     let _ = std::fs::remove_dir_all(&fs_dir);
     std::fs::create_dir_all(&fs_dir).unwrap();
-    let backends: Vec<(&str, Box<dyn Backend>)> = vec![("mem", Box::new(MemBackend::new())), ("fs", Box::new(FsBackend::open(&fs_dir).unwrap()))];
+    let backends: Vec<(&str, Box<dyn Backend>)> = vec![
+        ("mem", Box::new(MemBackend::new())),
+        ("fs", Box::new(FsBackend::open(&fs_dir).unwrap())),
+    ];
     for (name, b) in &backends {
         b.put_if_absent(vcs_remote::manifest::KEY, &bytes).unwrap();
         let mut seq = 0u64;
@@ -579,7 +752,8 @@ fn cmd_manifest(args: &[String]) {
             let v = b.get(vcs_remote::manifest::KEY).unwrap().unwrap();
             let mut cur = Manifest::decode(&v.data).unwrap();
             seq += 1;
-            cur.branches.insert((format!("zone-{:07}", seq as usize % z), "main".into()), id_of(10_000_000 + seq));
+            cur.branches
+                .insert((format!("zone-{:07}", seq as usize % z), "main".into()), id_of(10_000_000 + seq));
             cur.generation += 1;
             let out = cur.encode();
             assert!(b.put_if_match(vcs_remote::manifest::KEY, &out, &v.tag).unwrap().is_some());
@@ -603,10 +777,16 @@ fn cmd_manifest(args: &[String]) {
             seq += 1;
             let zi = (seq as usize * 7919) % z;
             let zn = format!("zone-{zi:07}");
-            let old = cur.get(&zi).copied().unwrap_or_else(|| m.branches[&(zn.clone(), "main".to_string())]);
+            let old = cur
+                .get(&zi)
+                .copied()
+                .unwrap_or_else(|| m.branches[&(zn.clone(), "main".to_string())]);
             let new = id_of(20_000_000 + seq);
             cur.insert(zi, new);
-            let d = vcs_remote::sharded::PartDelta { heads: vec![("main".into(), Some(old), Some(new))], ..Default::default() };
+            let d = vcs_remote::sharded::PartDelta {
+                heads: vec![("main".into(), Some(old), Some(new))],
+                ..Default::default()
+            };
             let parts = std::collections::BTreeMap::from([(zn, d)]);
             eng.commit(id_of(30_000_000 + seq), &parts).expect("commit");
         });
@@ -620,11 +800,20 @@ fn cmd_manifest(args: &[String]) {
 fn cmd_locks(args: &[String]) {
     use vcs_objects::{LockOp, RefUpdate, Signature, Transaction};
     let n: usize = args[0].parse().unwrap();
-    let mut m = vcs_remote::Manifest { generation: 1, ..Default::default() };
+    let mut m = vcs_remote::Manifest {
+        generation: 1,
+        ..Default::default()
+    };
     for i in 0..n {
         m.locks.insert(
             (format!("zone-{:05}", i % 1000), format!("assets/file-{i:09}.bin")),
-            vcs_remote::Lock { holder: format!("user{}", i % 5000), token: i as u64 + 1, acquired_at: 1_000, expires_at: 10_000_000_000, reason: "editing".into() },
+            vcs_remote::Lock {
+                holder: format!("user{}", i % 5000),
+                token: i as u64 + 1,
+                acquired_at: 1_000,
+                expires_at: 10_000_000_000,
+                reason: "editing".into(),
+            },
         );
     }
     m.next_token = n as u64 + 1;
@@ -635,19 +824,39 @@ fn cmd_locks(args: &[String]) {
         let b = m.encode();
         bytes = b.len();
     });
-    emit("locks", "manifest_encode", n as u64, &mut e, &format!("\"bytes\":{bytes},\"bytes_per_lock\":{:.2}", bytes as f64 / n as f64));
+    emit(
+        "locks",
+        "manifest_encode",
+        n as u64,
+        &mut e,
+        &format!("\"bytes\":{bytes},\"bytes_per_lock\":{:.2}", bytes as f64 / n as f64),
+    );
     let b = m.encode();
     let mut d = time_each(reps, |_| vcs_remote::Manifest::decode(&b).unwrap());
     emit("locks", "manifest_decode", n as u64, &mut d, "");
-    let sig = Signature { name: "t".into(), email: "t@x".into(), timestamp: 1 };
+    let sig = Signature {
+        name: "t".into(),
+        email: "t@x".into(),
+        timestamp: 1,
+    };
     let mut k = 0u64;
     let mut a = time_each(reps, |_| {
         k += 1;
         let tx = Transaction {
-            updates: vec![RefUpdate { zone: "zone-00001".into(), branch: "main".into(), old: None, new: id_of(1) }],
+            updates: vec![RefUpdate {
+                zone: "zone-00001".into(),
+                branch: "main".into(),
+                old: None,
+                new: id_of(1),
+            }],
             author: sig.clone(),
             message: "m".into(),
-            lock_ops: vec![LockOp::Acquire { zone: "zone-00001".into(), path: format!("assets/new-{k}.bin"), lease_ms: 60_000, reason: "x".into() }],
+            lock_ops: vec![LockOp::Acquire {
+                zone: "zone-00001".into(),
+                path: format!("assets/new-{k}.bin"),
+                lease_ms: 60_000,
+                reason: "x".into(),
+            }],
         };
         let mut newm = m.clone();
         vcs_remote::locks::apply(&m, &mut newm, &tx, "alice", 3_000, 100, None, &mut |_| Ok(Default::default())).expect("apply");

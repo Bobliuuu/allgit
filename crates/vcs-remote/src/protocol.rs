@@ -38,7 +38,7 @@ use crate::packfetch;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use vcs_objects::{id_of_encoded, EntryMode, Object, ObjectId, Transaction};
-use vcs_store::pack::{build_pack, BuiltPack};
+use vcs_store::pack::{try_build_pack, BuiltPack};
 use vcs_store::{ObjectStore, StoreError};
 
 pub const MAX_RETRIES: u32 = 8;
@@ -179,8 +179,15 @@ pub struct Publisher<'a> {
     to_upload: Vec<ObjectId>,
     /// Packed mode: the bundles of this transaction's new objects, built once in Collect. Several packs when the
     /// objects exceed `max_pack_bytes`, so no single request body is larger than a server accepts.
-    built: Vec<BuiltPack>,
+    /// Streaming publish: the planned packs (objects in pack order); a group is taken and built only when its
+    /// `PutPack` step runs, so only `cur_pack` plus the retained encodings below are ever in memory.
+    groups: Vec<Vec<Staged>>,
+    /// The pack currently being uploaded (index into `groups`), kept for retries of `PutPack`/`PutIdx`.
+    cur_pack: Option<(usize, BuiltPack)>,
     max_pack_bytes: usize,
+    /// Encoded bytes Collect may keep in memory for the build; objects past it are re-read from the local store
+    /// when their pack is built. Default [`PACK_MEM_BYTES`].
+    pack_mem: usize,
     packed: bool,
     /// Probe the remote for legacy loose copies of new commits (see [`Publisher::with_loose_probe`]).
     loose_probe: bool,
@@ -229,20 +236,68 @@ const UPLOAD_BATCH: usize = 16;
 /// Longest randomized wait after a lost manifest CAS; the window doubles per loss up to this.
 pub const CAS_BACKOFF_CAP_MS: u64 = 250;
 
+/// Default for [`Publisher::with_pack_mem`]: encoded bytes a publish buffers between the walk and the upload.
+pub const PACK_MEM_BYTES: usize = 1 << 30;
+
+fn pack_mem_default() -> usize {
+    std::env::var("VCS_PUBLISH_MEM_BYTES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(PACK_MEM_BYTES)
+}
+
+/// One object a packed publish will send. `enc` is `None` when it was not buffered (memory bound): the pack
+/// builder re-reads it from the local store. `len` is its encoded length (0: a big blob, uploaded on its own).
+struct Staged {
+    id: ObjectId,
+    kind: u8,
+    len: usize,
+    enc: Option<Vec<u8>>,
+}
+
+impl Staged {
+    fn new(id: ObjectId, enc: Vec<u8>) -> Staged {
+        Staged {
+            id,
+            kind: enc.first().copied().unwrap_or(0),
+            len: enc.len(),
+            enc: Some(enc),
+        }
+    }
+}
+
 /// Cut `objects` (in order) into groups of at most `max` encoded bytes each (an object bigger than `max` gets a
 /// group of its own). One group when everything fits.
-fn split_packs(objects: Vec<(ObjectId, Vec<u8>)>, max: usize) -> Vec<Vec<(ObjectId, Vec<u8>)>> {
+fn split_packs(objects: Vec<Staged>, max: usize) -> Vec<Vec<Staged>> {
     let mut groups = vec![Vec::new()];
     let mut bytes = 0usize;
     for o in objects {
-        if bytes > 0 && bytes + o.1.len() > max {
+        if bytes > 0 && bytes + o.len > max {
             groups.push(Vec::new());
             bytes = 0;
         }
-        bytes += o.1.len();
+        bytes += o.len;
         groups.last_mut().expect("never empty").push(o);
     }
     groups
+}
+
+/// The (id, encoding) list of one pack group, re-reading what was not buffered (in parallel).
+fn materialize(local: &dyn ObjectStore, group: Vec<Staged>) -> Result<Vec<(ObjectId, Vec<u8>)>, PublishError> {
+    let missing: Vec<usize> = (0..group.len()).filter(|&i| group[i].enc.is_none()).collect();
+    let mut fetched = vcs_objects::chunk::par_map(missing.len(), |k| local.get_encoded(&group[missing[k]].id)).into_iter();
+    let mut out = Vec::with_capacity(group.len());
+    for g in group {
+        let enc = match g.enc {
+            Some(e) => e,
+            None => fetched.next().expect("one result per missing object")?,
+        };
+        if enc.len() != g.len {
+            return Err(PublishError::Remote(format!("local object {} changed during the publish", g.id)));
+        }
+        out.push((g.id, enc));
+    }
+    Ok(out)
 }
 
 /// Dependencies of an object (what must exist remotely before it may).
@@ -429,8 +484,10 @@ impl<'a> Publisher<'a> {
             txid,
             state: State::Collect,
             to_upload: vec![],
-            built: Vec::new(),
+            groups: Vec::new(),
+            cur_pack: None,
             max_pack_bytes: MAX_PACK_BYTES,
+            pack_mem: pack_mem_default(),
             packed: true,
             loose_probe: false,
             retries: 0,
@@ -518,6 +575,15 @@ impl<'a> Publisher<'a> {
     /// uploaded before the manifest CAS. Default [`MAX_PACK_BYTES`].
     pub fn with_max_pack_bytes(mut self, n: usize) -> Self {
         self.max_pack_bytes = n.max(1);
+        self
+    }
+    /// Bound on the encoded object bytes a packed publish holds in memory (default [`PACK_MEM_BYTES`], or
+    /// `VCS_PUBLISH_MEM_BYTES`). Objects beyond it are not buffered while walking; they are re-read from the local
+    /// store when their pack is built and dropped after upload, so peak memory is about this plus two packs
+    /// (`max_pack_bytes`) plus 64 bytes per new object, whatever the size of the transaction. The pack bytes
+    /// and the on-wire format are identical for any value (0 re-reads everything).
+    pub fn with_pack_mem(mut self, n: usize) -> Self {
+        self.pack_mem = n;
         self
     }
     /// The authenticated identity lock decisions are made for (NOT `Transaction.author`).
@@ -644,7 +710,7 @@ impl<'a> Publisher<'a> {
     /// Packed Collect: the new objects (id, encoded), dependencies first, found without asking
     /// the remote about individual objects. See the module docs for why pruning is sound.
     #[allow(clippy::type_complexity)]
-    fn collect_packed(&self) -> Result<(Vec<(ObjectId, Vec<u8>)>, Vec<ObjectId>), PublishError> {
+    fn collect_packed(&self) -> Result<(Vec<Staged>, Vec<ObjectId>), PublishError> {
         // Legacy loose objects this walk pruned at (they need the GC handshake). Only filled with
         // `with_loose_probe`.
         let loose_pruned = std::cell::RefCell::new(Vec::<ObjectId>::new());
@@ -664,7 +730,8 @@ impl<'a> Publisher<'a> {
         // new tree/file id -> id of the same-named entry in a present parent (its closure is present)
         let mut hint: HashMap<ObjectId, ObjectId> = HashMap::new();
         let mut done: HashSet<ObjectId> = HashSet::new();
-        let mut out: Vec<(ObjectId, Vec<u8>)> = Vec::new();
+        let mut out: Vec<Staged> = Vec::new();
+        let mut kept = 0usize;
         let local = self.local;
 
         let mut commit_on_remote = |id: &ObjectId, known: &HashSet<ObjectId>| -> Result<bool, PublishError> {
@@ -716,7 +783,13 @@ impl<'a> Publisher<'a> {
                         Object::Blob(b) if b.len() >= BIG_UPLOAD => Vec::new(),
                         _ => o.encode(),
                     };
-                    out.push((id, enc));
+                    let mut st = Staged::new(id, enc);
+                    if kept + st.len > self.pack_mem {
+                        st.enc = None; // re-read when its pack is built
+                    } else {
+                        kept += st.len;
+                    }
+                    out.push(st);
                     done.insert(id);
                     continue;
                 }
@@ -784,7 +857,7 @@ impl<'a> Publisher<'a> {
         }
         // Commits and trees first: a clone reads that prefix of the pack in a few big requests.
         // Stable, and within a group still dependencies-first.
-        out.sort_by_key(|(_, enc)| match enc.first() {
+        out.sort_by_key(|s| match Some(s.kind).filter(|_| s.len > 0) {
             Some(3) => 0u8,
             Some(2) => 1,
             _ => 2,
@@ -864,16 +937,19 @@ impl<'a> Publisher<'a> {
 
     /// Packed publishes trust the manifest heads they build on ("present means complete"). Look
     /// (bounded) beneath those heads and add to `staged` any object the remote lost there.
-    fn with_holes(&self, mut staged: Vec<(ObjectId, Vec<u8>)>) -> Result<Vec<(ObjectId, Vec<u8>)>, PublishError> {
+    fn with_holes(&self, mut staged: Vec<Staged>) -> Result<Vec<Staged>, PublishError> {
         let olds: Vec<ObjectId> = self.tx.updates.iter().filter_map(|u| u.old).collect();
         let budget = self.verify_budget.unwrap_or(0);
         if budget == 0 || olds.is_empty() {
             return Ok(staged);
         }
         let (missing, known) = find_holes(self.backend, self.local, olds, budget)?;
-        let have: HashSet<ObjectId> = staged.iter().map(|s| s.0).collect();
-        let mut holes = order_holes(self.local, &missing, &known)?;
-        holes.retain(|h| !have.contains(&h.0));
+        let have: HashSet<ObjectId> = staged.iter().map(|s| s.id).collect();
+        let mut holes: Vec<Staged> = order_holes(self.local, &missing, &known)?
+            .into_iter()
+            .map(|(id, enc)| Staged::new(id, enc))
+            .collect();
+        holes.retain(|h| !have.contains(&h.id));
         if !holes.is_empty() {
             holes.append(&mut staged);
             staged = holes;
@@ -897,11 +973,12 @@ impl<'a> Publisher<'a> {
                 self.dedup.clear();
                 match self.collect_packed().and_then(|(st, lp)| self.with_holes(st).map(|st| (st, lp))) {
                     Ok((staged, loose_pruned)) => {
-                        let (bigs, staged): (Vec<_>, Vec<_>) = staged.into_iter().partition(|s| s.1.is_empty());
-                        self.to_upload = bigs.iter().map(|s| s.0).collect();
-                        self.built.clear();
+                        let (bigs, staged): (Vec<_>, Vec<_>) = staged.into_iter().partition(|s| s.len == 0);
+                        self.to_upload = bigs.iter().map(|s| s.id).collect();
+                        self.groups.clear();
+                        self.cur_pack = None;
                         let then = if staged.len() >= 2 {
-                            self.built = split_packs(staged, self.max_pack_bytes).into_iter().map(build_pack).collect();
+                            self.groups = split_packs(staged, self.max_pack_bytes);
                             if self.to_upload.is_empty() {
                                 Then::PutPack
                             } else {
@@ -909,7 +986,7 @@ impl<'a> Publisher<'a> {
                             }
                         } else {
                             // zero or one object: a pack would cost more than it saves
-                            self.to_upload.extend(staged.iter().map(|s| s.0));
+                            self.to_upload.extend(staged.iter().map(|s| s.id));
                             Then::Upload
                         };
                         let keys = loose_pruned.iter().map(|id| (object_key(id), tomb_key(id))).collect();
@@ -1001,7 +1078,17 @@ impl<'a> Publisher<'a> {
             }
             State::Guard { phase, i } => self.guard_step(phase, i),
             State::PutPack(pi) => {
-                let b = &self.built[pi];
+                if self.cur_pack.as_ref().map(|c| c.0) != Some(pi) {
+                    // build this pack now, from the objects planned for it; the previous one is already gone
+                    self.cur_pack = None;
+                    let group = std::mem::take(&mut self.groups[pi]);
+                    let built = materialize(self.local, group).and_then(|objs| try_build_pack(objs).map_err(PublishError::from));
+                    match built {
+                        Ok(b) => self.cur_pack = Some((pi, b)),
+                        Err(e) => return Err(e),
+                    }
+                }
+                let b = &self.cur_pack.as_ref().expect("built above").1;
                 let (name, pack) = (b.name.clone(), &b.pack);
                 let key = format!("{}{name}.pack", packfetch::PACK_PREFIX);
                 match self.backend.put_if_absent(&key, pack) {
@@ -1024,8 +1111,8 @@ impl<'a> Publisher<'a> {
                 // not visible yet is as harmless as the one a lost CAS leaves behind (nothing reads
                 // `tx/` except through the manifest's applied window, and the GC never deletes it).
                 // Both are create-only and idempotent, so they go up together: one round trip fewer.
-                let last = pi + 1 == self.built.len();
-                let b = &self.built[pi];
+                let last = pi + 1 == self.groups.len();
+                let b = &self.cur_pack.as_ref().expect("built in PutPack").1;
                 let (name, idx) = (b.name.clone(), &b.idx);
                 let key = format!("{}{name}.idx", packfetch::PACK_PREFIX);
                 let (tkey, tbytes) = (tx_key(&self.txid), Object::Transaction(self.tx.clone()).encode());
@@ -1049,6 +1136,7 @@ impl<'a> Publisher<'a> {
                         if !created {
                             self.dedup.push((key, pack_tomb_key(&name)));
                         }
+                        self.cur_pack = None;
                         if last {
                             let keys = std::mem::take(&mut self.dedup);
                             self.state = self.guard_then(keys, Then::Load);
@@ -1066,7 +1154,7 @@ impl<'a> Publisher<'a> {
             State::Upload(i) => {
                 if i >= self.to_upload.len() {
                     self.distrust.extend(self.to_upload.iter().copied());
-                    self.state = if self.built.is_empty() { State::PutTx } else { State::PutPack(0) };
+                    self.state = if self.groups.is_empty() { State::PutTx } else { State::PutPack(0) };
                     return Ok(Step::Continue);
                 }
                 // a batch at a time: big objects go up in parallel; ones the remote already has (an
