@@ -122,6 +122,27 @@ storing commits the strict decoder rejects, a panic in S3 list handling for keys
 a repeated continuation token, and the remote manifest accepting unsorted or duplicate keys and an empty v2 form (the
 last one found by the `manifest_decode` fuzz target on its first run: `AGMF 02 01 00 00 00 00 00`).
 
+## Server key namespace (issue #573)
+
+`vcs-server` exposes the backend as `PUT /v1/o/<key>`. A Write token may PUT only the keys below; every other key
+(including `gc/`, `tomb/`, `compact/` and any ad-hoc name) answers 403 and needs an Admin token. A planted `gc/lock` with a
+far-future lease would otherwise stall gc and compaction. Read tokens cannot PUT at all, and an Admin token may PUT any key.
+
+| Key | Written by | Write token may PUT | Notes |
+|---|---|---|---|
+| `manifest` | publish, sharded migration marker | yes, create or `If-Match` | the one mutable authoritative key; validated and size-limited |
+| `objects/<hh>/<id>` | publish | yes, create or `If-Match` | body must hash to the key (422 otherwise) |
+| `packs/<name>.pack`, `packs/<name>.idx` | pack publish | create-only (`If-None-Match: *`) | immutable once written |
+| `tx/<txid>` | publish | create-only | immutable transaction record |
+| `shelves/<principal>/<name>/...` | `vcs shelve` | create-only, own principal only | further checked by `shelf_write_ok` |
+| `shard/<name>` | sharded manifest parts | yes, create or `If-Match` | only with the opt-in sharded layout |
+| `decision/<txid>` | sharded cross-shard commits | yes | create-only record in practice |
+| `gc/`, `tomb/`, `compact/` | gc and compaction | no, Admin only | collector coordination state (`gc/lock`, `gc/clock`) |
+| anything else | nobody in the product | no, Admin only | strict allowlist; tests use real key shapes |
+
+The table is the code: `WRITE_KEYS_EXACT`, `WRITE_PREFIXES` and `CREATE_ONLY_PREFIXES` in `crates/vcs-server/src/server.rs`,
+covered by `crates/vcs-server/tests/write_token_keyspace.rs`. A new client prefix must be added there and to this table.
+
 ## What is not defended
 
 * **Resource exhaustion by honest-looking input.** A 1 GiB `data` block, a 10 GB pack or a million-entry tree is accepted

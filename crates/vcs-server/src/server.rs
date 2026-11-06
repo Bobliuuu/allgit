@@ -1565,19 +1565,22 @@ fn run_batch(sh: &Shared, chain: &mut crate::groupcommit::Chain, items: Vec<Batc
     finish(items, out)
 }
 
-/// Which keys a non-admin may PUT. `gc/`, `tomb/` and `compact/` are the collector's coordination state
-/// (a planted `gc/lock` with a far-future lease stalls gc and compaction) and need Admin, as gc and compaction
-/// already do because they delete. `packs/` and `tx/` are create-only for a write token: a pack is immutable once
-/// written, so a token limited to one zone cannot overwrite other zones' data. Other prefixes stay open to writers
-/// (tests and tools use ad-hoc keys); tightening to a strict allowlist is future work. Issue #573.
+/// Key namespace a non-admin may PUT (strict allowlist, issue #573). Anything else needs an Admin token, so a
+/// write token cannot plant arbitrary or coordination keys (`gc/lock`, `tomb/`, `compact/`, `gc/clock`, ...).
+/// Documented in docs/security.md ("Key namespace").
+const WRITE_KEYS_EXACT: &[&str] = &[manifest::KEY];
+const WRITE_PREFIXES: &[&str] = &["objects/", "packs/", "tx/", "shelves/", "shard/", "decision/"];
+/// Of those, immutable once written: a write token may only create them (If-None-Match: *).
+const CREATE_ONLY_PREFIXES: &[&str] = &["packs/", "tx/"];
+
 fn write_keyspace_ok(who: &Principal, key: &str, create_only: bool) -> Result<(), &'static str> {
     if who.role >= Role::Admin {
         return Ok(());
     }
-    if ["gc/", "tomb/", "compact/"].iter().any(|p| key.starts_with(p)) {
-        return Err("this key is reserved for an admin token (collector coordination state such as gc/lock)");
+    if !WRITE_KEYS_EXACT.contains(&key) && !WRITE_PREFIXES.iter().any(|p| key.starts_with(p)) {
+        return Err("this key is outside the namespace a write token may PUT (manifest, objects/, packs/, tx/, shelves/, shard/, decision/); an admin token is required");
     }
-    if (key.starts_with("packs/") || key.starts_with("tx/")) && !create_only {
+    if CREATE_ONLY_PREFIXES.iter().any(|p| key.starts_with(p)) && !create_only {
         return Err("packs/ and tx/ keys are create-only for a write token");
     }
     Ok(())

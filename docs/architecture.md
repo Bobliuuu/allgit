@@ -152,6 +152,7 @@ objects/<hh>/<id>   immutable objects (create-only)
 tx/<txid>           immutable Transaction records (create-only)
 manifest            THE authoritative state: generation, branch heads, snapshots, applied txids, zone definitions
 ```
+Which of these keys a server write token may PUT is listed in [security.md](security.md#server-key-namespace-issue-573).
 **Design decision (changed from the first draft).** One manifest object, not per-zone manifests. Rationale: a single CAS
 gives multi-zone atomicity with no coordinator and no two-phase commit. Cost: all writers contend on one key. Mitigation
 implemented: on CAS loss the writer reloads and re-validates only its own `old` heads; writers on disjoint branches
