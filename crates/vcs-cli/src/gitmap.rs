@@ -1670,7 +1670,7 @@ fn translate_log(rest: &[String]) -> Result<Vec<Step>, Error> {
         }
         return Ok(vec![Step::LogPatch {
             log_argv: la,
-            stat: stat && !patch || stat,
+            stat,
         }]);
     }
     a.extend(revs);
@@ -2382,7 +2382,7 @@ fn checkout_auto(target: &str, _paths: &[String]) -> Result<(), Error> {
     let (repo, cwd) = open()?;
     let zone = zone_of_cwd(&repo, &cwd, None)?;
     let is_branch = repo.branches(&zone)?.iter().any(|(b, _, _)| b == target);
-    if !is_branch && target == "." || (!is_branch && cwd.join(target).exists()) {
+    if !is_branch && (target == "." || cwd.join(target).exists()) {
         return native(&v(&["restore", target]), false);
     }
     if !is_branch && repo.resolve_rev(&zone, target).is_ok() {

@@ -170,6 +170,9 @@ enum State {
     Finished,
 }
 
+/// A branch deletion: (zone, branch, head the caller saw).
+pub type BranchDelete = (String, String, ObjectId);
+
 pub struct Publisher<'a> {
     backend: &'a dyn Backend,
     local: &'a dyn ObjectStore,
@@ -196,7 +199,7 @@ pub struct Publisher<'a> {
     labels: BTreeMap<String, String>,
     tags: BTreeMap<(String, String), ObjectId>,
     /// Branch deletions: (zone, branch, head the caller saw). Compare-and-swapped like an update.
-    deletes: Vec<(String, String, ObjectId)>,
+    deletes: Vec<BranchDelete>,
     verify_budget: Option<usize>,
     principal: String,
     clock: Box<dyn Fn() -> u64 + 'a>,
@@ -624,7 +627,7 @@ impl<'a> Publisher<'a> {
     /// Delete remote branches `(zone, branch, expected head)` atomically with this tx. Each is a
     /// compare-and-swap: if the remote head is not `expected` the publish fails `Diverged`. Name
     /// every deletion in `tx.message` so the transaction id (and the tx log) records it.
-    pub fn with_deletes(mut self, deletes: Vec<(String, String, ObjectId)>) -> Self {
+    pub fn with_deletes(mut self, deletes: Vec<BranchDelete>) -> Self {
         self.deletes = deletes;
         self
     }
@@ -1532,7 +1535,7 @@ pub fn fetch_heads(
     backend: &dyn Backend,
     local: &dyn ObjectStore,
     zones: Option<&[String]>,
-) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
+) -> Result<Vec<BranchDelete>, PublishError> {
     let (m, _) = load_manifest(backend)?;
     fetch_heads_impl(backend, local, zones, false, &m, &Arc::new(packfetch::PackCatalog::new()))
 }
@@ -1543,7 +1546,7 @@ pub fn fetch_tags_lazy(
     backend: &dyn Backend,
     local: &dyn ObjectStore,
     zones: Option<&[String]>,
-) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
+) -> Result<Vec<BranchDelete>, PublishError> {
     let (m, _) = load_manifest(backend)?;
     fetch_tags_lazy_with(backend, local, zones, &m)
 }
@@ -1554,7 +1557,7 @@ pub fn fetch_tags_lazy_with(
     local: &dyn ObjectStore,
     zones: Option<&[String]>,
     m: &Manifest,
-) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
+) -> Result<Vec<BranchDelete>, PublishError> {
     fetch_tags_lazy_shared(backend, local, zones, m, &Arc::new(packfetch::PackCatalog::new()))
 }
 
@@ -1566,7 +1569,7 @@ pub fn fetch_tags_lazy_shared(
     zones: Option<&[String]>,
     m: &Manifest,
     cat: &Arc<packfetch::PackCatalog>,
-) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
+) -> Result<Vec<BranchDelete>, PublishError> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     let mut src = packfetch::RemoteSource::new(backend, packfetch::ReadAhead::None).with_catalog(cat.clone());
@@ -1602,7 +1605,7 @@ pub fn fetch_heads_lazy(
     backend: &dyn Backend,
     local: &dyn ObjectStore,
     zones: Option<&[String]>,
-) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
+) -> Result<Vec<BranchDelete>, PublishError> {
     let (m, _) = load_manifest(backend)?;
     fetch_heads_impl(backend, local, zones, true, &m, &Arc::new(packfetch::PackCatalog::new()))
 }
@@ -1614,7 +1617,7 @@ pub fn fetch_heads_lazy_with(
     local: &dyn ObjectStore,
     zones: Option<&[String]>,
     m: &Manifest,
-) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
+) -> Result<Vec<BranchDelete>, PublishError> {
     fetch_heads_impl(backend, local, zones, true, m, &Arc::new(packfetch::PackCatalog::new()))
 }
 
@@ -1626,7 +1629,7 @@ pub fn fetch_heads_lazy_shared(
     zones: Option<&[String]>,
     m: &Manifest,
     cat: &Arc<packfetch::PackCatalog>,
-) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
+) -> Result<Vec<BranchDelete>, PublishError> {
     fetch_heads_impl(backend, local, zones, true, m, cat)
 }
 
@@ -1689,7 +1692,7 @@ pub fn fetch_heads_bulk(
     local: &vcs_store::LocalStore,
     m: &Manifest,
     cat: &Arc<packfetch::PackCatalog>,
-) -> Result<Option<Vec<(String, String, ObjectId)>>, PublishError> {
+) -> Result<Option<Vec<BranchDelete>>, PublishError> {
     let roots: Vec<ObjectId> = m.branches.values().copied().collect();
     let Some(bulk) = crate::bulkmeta::fetch_metadata_bulk(backend, local, cat, &roots)? else {
         return Ok(None);
@@ -1730,7 +1733,7 @@ fn fetch_heads_impl(
     skip_files: bool,
     m: &Manifest,
     cat: &Arc<packfetch::PackCatalog>,
-) -> Result<Vec<(String, String, ObjectId)>, PublishError> {
+) -> Result<Vec<BranchDelete>, PublishError> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     // Packs are listed and indexed once, on first need. A lazy walk (commits and trees) reads the

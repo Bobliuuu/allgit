@@ -463,9 +463,8 @@ fn sd_notify(state: &str) {
     use std::os::unix::net::UnixDatagram;
     let Some(path) = std::env::var_os("NOTIFY_SOCKET") else { return };
     let Ok(sock) = UnixDatagram::unbound() else { return };
-    let bytes = std::os::unix::ffi::OsStrExt::as_bytes(path.as_os_str());
     #[cfg(target_os = "linux")]
-    if let Some(name) = bytes.strip_prefix(b"@") {
+    if let Some(name) = std::os::unix::ffi::OsStrExt::as_bytes(path.as_os_str()).strip_prefix(b"@") {
         use std::os::linux::net::SocketAddrExt;
         if let Ok(addr) = std::os::unix::net::SocketAddr::from_abstract_name(name) {
             let _ = sock.send_to_addr(state.as_bytes(), &addr);

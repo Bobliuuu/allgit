@@ -63,9 +63,10 @@ pub(crate) fn sum64(b: &[u8]) -> u64 {
         0xA409_3822_299F_31D0,
         0x082E_FA98_EC4E_6C89,
     ];
-    #[allow(clippy::chunks_exact_to_as_chunks)]
-    let mut it = b.chunks_exact(32);
-    for c in &mut it {
+    let mut rest = b;
+    while rest.len() >= 32 {
+        let (c, r) = rest.split_at(32);
+        rest = r;
         for i in 0..4 {
             let w = u64::from_le_bytes(c[i * 8..i * 8 + 8].try_into().expect("8 bytes"));
             l[i] = (l[i] ^ w).wrapping_mul(P[i]);
@@ -73,8 +74,7 @@ pub(crate) fn sum64(b: &[u8]) -> u64 {
         }
     }
     let mut tail = [0u8; 32];
-    let rem = it.remainder();
-    tail[..rem.len()].copy_from_slice(rem);
+    tail[..rest.len()].copy_from_slice(rest);
     for i in 0..4 {
         let w = u64::from_le_bytes(tail[i * 8..i * 8 + 8].try_into().expect("8 bytes"));
         l[i] = (l[i] ^ w).wrapping_mul(P[i]);

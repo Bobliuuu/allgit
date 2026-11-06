@@ -181,7 +181,7 @@ impl Repo {
             // at 10M commits, and only `known`'s budget may keep them.
             let mut next = Vec::new();
             for chunk in level.chunks(GC_CHUNK) {
-                let todo: Vec<ObjectId> = chunk.iter().filter(|id| !known.contains_key(*id)).copied().collect();
+                let todo: Vec<ObjectId> = chunk.iter().filter(|id| !known.contains_key(id)).copied().collect();
                 let got = par_map(&todo, |id| match self.store.get(id) {
                     Ok(o) => Ok(Some(Info::of(&o))),
                     Err(vcs_store::StoreError::NotFound(_)) => Ok(None),
@@ -294,7 +294,7 @@ impl Repo {
         // Objects the cache has scanned before need no read: it knows whether they are transactions.
         let todo: Vec<ObjectId> = all
             .iter()
-            .filter(|id| !known.contains_key(*id) && !cache.is_some_and(|c| c.scanned(id)))
+            .filter(|id| !known.contains_key(id) && !cache.is_some_and(|c| c.scanned(id)))
             .copied()
             .collect();
         for chunk in todo.chunks(GC_CHUNK) {
