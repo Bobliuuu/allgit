@@ -94,6 +94,10 @@ impl<'a> IndexView<'a> {
         }))
     }
 
+    pub fn block_count(&self) -> usize {
+        self.nblocks()
+    }
+
     fn nblocks(&self) -> usize {
         match self.v5 {
             Some(img) => img.base5().map_or(1, |b| b.n.div_ceil(BLOCK5).max(1)),

@@ -1154,20 +1154,20 @@ impl Repo {
     }
 
     /// Remove from staged `Modified` entries those whose HEAD and index ids are the same bytes in two layouts.
-    fn drop_layout_only(
+    pub(crate) fn drop_layout_only(
         &self,
         staged: Vec<Change>,
         head_root: Option<ObjectId>,
         zones: &Zones,
         zone: &str,
-        ix: &Index,
+        entry_of: &dyn Fn(&str) -> Option<IndexEntry>,
     ) -> Result<Vec<Change>> {
         let Some(root) = head_root else { return Ok(staged) };
         let prefix = zones.path_of(zone).unwrap_or("");
         let mut out = Vec::with_capacity(staged.len());
         for c in staged {
             if c.kind == ChangeKind::Modified {
-                if let Some(e) = ix.entries.get(&c.path).filter(|e| e.size >= vcs_objects::CHUNK_THRESHOLD as u64) {
+                if let Some(e) = entry_of(&c.path).filter(|e| e.size >= vcs_objects::CHUNK_THRESHOLD as u64) {
                     let rel = if prefix.is_empty() {
                         c.path.as_str()
                     } else {
@@ -1550,6 +1550,11 @@ impl Repo {
     }
 
     pub fn status_with(&self, opts: StatusOpts) -> Result<Status> {
+        if std::env::var_os("VCS_NO_LAZY_STATUS").is_none() {
+            if let Some(st) = self.status_lazy(opts)? {
+                return Ok(st);
+            }
+        }
         let ix = self.index()?;
         self.status_inner(opts, &ix, true, None)
     }
@@ -1633,7 +1638,7 @@ impl Repo {
                 .into_iter()
                 .map(|(path, kind)| Change { path, kind })
                 .collect();
-            let staged = self.drop_layout_only(staged, head_root, &zones, zone, ix)?;
+            let staged = self.drop_layout_only(staged, head_root, &zones, zone, &|p| ix.entries.get(p).cloned())?;
             let (unstaged, clean) = match inc {
                 Some(i) => (
                     i.dirty
@@ -1680,7 +1685,13 @@ impl Repo {
 
     /// The directory walk for untracked and unsupported entries (with the directory cache when
     /// `opts` asks for it). Shared by `status` and by callers that need only this part.
-    fn scan_untracked(&self, opts: StatusOpts, ix: &Index, zones: &Zones, ws: &Workspace) -> Result<(Vec<String>, Vec<String>)> {
+    pub(crate) fn scan_untracked(
+        &self,
+        opts: StatusOpts,
+        ix: &dyn crate::index::TrackedDirs,
+        zones: &Zones,
+        ws: &Workspace,
+    ) -> Result<(Vec<String>, Vec<String>)> {
         let budget = AtomicUsize::new(std::thread::available_parallelism().map_or(1, |n| n.get()).min(8) - 1);
         let ctx = WalkCtx {
             cache: if opts.dir_cache {
@@ -1794,7 +1805,7 @@ impl Repo {
         dir: &str,
         zones: &Zones,
         ws: &Workspace,
-        ix: &Index,
+        ix: &dyn crate::index::TrackedDirs,
         budget: &AtomicUsize,
         parent_stack: &IgnoreStack,
         ctx: &WalkCtx,
@@ -1869,13 +1880,13 @@ impl Repo {
         let mut items = Vec::new();
         // Tracked names directly in this directory, as two sorted lists: matching the (sorted)
         // listing against them is a linear merge, with no per-name lookup or path allocation.
-        let ch = ix.entries.children(dir);
+        let ch = ix.tracked_children(dir)?;
         let mut fp = 0usize;
         for (name, kind) in entries {
-            while fp < ch.files.len() && ch.files[fp] < name.as_str() {
+            while fp < ch.files.len() && ch.files[fp].as_str() < name.as_str() {
                 fp += 1;
             }
-            let file_tracked = fp < ch.files.len() && ch.files[fp] == name.as_str();
+            let file_tracked = fp < ch.files.len() && ch.files[fp].as_str() == name.as_str();
             if file_tracked && *kind == Kind::File {
                 continue; // tracked file: nothing to report whichever zone owns it
             }
@@ -1888,7 +1899,7 @@ impl Repo {
                 continue;
             }
             if *kind == Kind::Dir {
-                let tracked_below = file_tracked || ch.dirs.binary_search(&name.as_str()).is_ok();
+                let tracked_below = file_tracked || ch.dirs.binary_search_by(|d| d.as_str().cmp(name.as_str())).is_ok();
                 let ignored = stack.is_ignored(&rel, true);
                 if ignored && !tracked_below {
                     continue;
@@ -2064,7 +2075,9 @@ impl Repo {
         let zones = self.zones()?;
         let ws = self.workspace()?;
         let mut refs = self.refs()?;
-        let mut ix = self.index()?;
+        // Lazy: the mapped index image answers the tree walk, so only the entries of directories
+        // whose cached tree id was dropped (the ones on changed paths) are ever decoded.
+        let img = self.index_image()?;
         let fp = zones_fp(&zones);
         let mut fresh_trees: BTreeMap<String, ObjectId> = BTreeMap::new();
         let op_author = author.clone();
@@ -2077,7 +2090,8 @@ impl Repo {
                 None => None,
             };
             let zpath = zones.path_of(zone).unwrap_or("");
-            let mut it = treeops::IndexTrees::new(&self.store, &ix.entries, &zones, zone, ix.entries.cached_trees(&fp));
+            let cached = img.trees()?.filter(|(f, _)| *f == fp).map(|(_, m)| m);
+            let mut it = treeops::IndexTrees::new(&self.store, &img, &zones, zone, cached);
             if parent_root.is_none() && it.is_empty(zpath)? {
                 continue;
             }
@@ -2134,11 +2148,11 @@ impl Repo {
         // directories. `written_ns` is deliberately untouched: no entry was re-verified. Best
         // effort: a lost cache write only costs time.
         if !fresh_trees.is_empty() {
-            ix.entries.store_trees(fp, fresh_trees);
             let old_fp = self.fsmon_fp_of_disk_index();
-            if let Ok(img) = self.index_image() {
-                if ix.entries.src_digest() == Some(img.digest()) {
-                    let _ = img.commit(&self.vcs, vec![crate::indeximage::Op::SetTrees(ix.entries.trees_snapshot())]);
+            if let Ok(now) = self.index_image() {
+                if img.digest() == now.digest() {
+                    // a delta: the log grows by the changed directories, not by every directory
+                    let _ = now.commit(&self.vcs, vec![crate::indeximage::Op::PutTrees(fp, fresh_trees)]);
                 }
             }
             self.fsmon_log_rewrite(old_fp, &[]); // entries are unchanged: only cache trees are new

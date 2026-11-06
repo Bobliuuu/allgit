@@ -53,6 +53,8 @@ pub(crate) enum Op {
     Remove(String),
     DropTrees(Vec<String>),
     SetTrees(Option<Trees>),
+    /// Merge these cached tree ids into the section (replace it when `fp` differs): a delta `SetTrees`.
+    PutTrees(ObjectId, BTreeMap<String, ObjectId>),
     WrittenNs(u64),
 }
 
@@ -132,6 +134,12 @@ fn encode_ops(ops: &[Op]) -> Vec<u8> {
             Op::WrittenNs(n) => {
                 w.u8(5).varint(*n);
             }
+            Op::PutTrees(fp, m) => {
+                w.u8(6).id(fp).varint(m.len() as u64);
+                for (d, id) in m {
+                    w.str(d).id(id);
+                }
+            }
         }
     }
     w.finish()
@@ -190,6 +198,16 @@ fn decode_ops(payload: &[u8]) -> Result<Vec<Op>> {
                 }
             }
             5 => Op::WrittenNs(r.varint().map_err(c)?),
+            6 => {
+                let fp = r.id().map_err(c)?;
+                let k = r.count(1).map_err(c)?;
+                let mut m = BTreeMap::new();
+                for _ in 0..k {
+                    let d = r.str(4096).map_err(c)?;
+                    m.insert(d, r.id().map_err(c)?);
+                }
+                Op::PutTrees(fp, m)
+            }
             t => return Err(corrupt(format!("log: unknown op {t}"))),
         });
     }
@@ -336,7 +354,7 @@ impl IndexImage {
                     self.overlay.insert(p, None);
                 }
                 Op::WrittenNs(n) => self.written_ns = n,
-                t @ (Op::DropTrees(_) | Op::SetTrees(_)) => {
+                t @ (Op::DropTrees(_) | Op::SetTrees(_) | Op::PutTrees(..)) => {
                     self.trees = OnceLock::new();
                     self.tree_ops.push(t);
                 }
@@ -467,6 +485,10 @@ impl IndexImage {
         for op in &self.tree_ops {
             match op {
                 Op::SetTrees(n) => t = n.clone(),
+                Op::PutTrees(fp, add) => match t.as_mut() {
+                    Some((tf, m)) if tf == fp => m.extend(add.iter().map(|(d, i)| (d.clone(), *i))),
+                    _ => t = Some((*fp, add.clone())),
+                },
                 Op::DropTrees(ds) => {
                     if let Some((_, m)) = t.as_mut() {
                         for d in ds {
@@ -663,6 +685,7 @@ fn apply_to_index(ix: &mut Index, ops: Vec<Op>) {
             }
             Op::DropTrees(_) => {} // the inserts and removals above dropped them already
             Op::SetTrees(t) => ix.entries.replace_trees(t),
+            Op::PutTrees(fp, m) => ix.entries.store_trees(fp, m),
             Op::WrittenNs(n) => ix.written_ns = n,
         }
     }
@@ -674,6 +697,35 @@ pub(crate) fn write_full(vcs: &Path, ix: &Index) -> Result<()> {
     crate::meta::write_atomic_nosync(&vcs.join("index"), &bytes)?;
     let _ = std::fs::remove_file(vcs.join("index.log"));
     Ok(())
+}
+
+impl crate::index::TrackedDirs for IndexImage {
+    fn tracked_children(&self, dir: &str) -> Result<crate::index::TrackedChildren> {
+        let prefix = if dir.is_empty() { String::new() } else { format!("{dir}/") };
+        let mut out = crate::index::TrackedChildren::default();
+        let mut cur = prefix.clone();
+        while let Some((k, _)) = self.next_ge(&cur)? {
+            let Some(rest) = k.strip_prefix(prefix.as_str()) else { break };
+            match rest.find('/') {
+                None => {
+                    out.files.push(rest.to_owned());
+                    cur = format!("{k}\0");
+                }
+                Some(i) => {
+                    out.dirs.push(rest[..i].to_owned());
+                    cur = format!("{prefix}{}0", &rest[..i]); // '0' == '/' + 1: first key after "name/..."
+                }
+            }
+        }
+        out.dirs.sort_unstable();
+        Ok(out)
+    }
+}
+
+impl crate::treeops::EntrySource for IndexImage {
+    fn next_ge(&self, key: &str) -> Result<Option<(String, IndexEntry)>> {
+        IndexImage::next_ge(self, key)
+    }
 }
 
 impl Base5 {

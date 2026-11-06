@@ -59,6 +59,7 @@ pub mod shelve;
 mod snapcache;
 pub mod sparse;
 pub mod stash;
+mod statuslazy;
 pub mod sync;
 pub mod tags;
 mod treemerge;
