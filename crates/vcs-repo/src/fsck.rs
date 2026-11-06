@@ -2,8 +2,9 @@
 //! that is a few dozen bytes per object (not per commit message / tree entry).
 //!
 //! Shape (all numbers per 10M-commit deep repo, 40M objects):
-//! * `ids`: every object id, sorted (1.3 GB). Existence of a referenced id is an interpolation search in it
-//!   (ids are uniform hashes), not a pack-index probe per tree entry (1e9 probes before).
+//! * `ids`: every object id, sorted (1.3 GB), plus a bucket table over the top id bits. Existence of a referenced id
+//!   is a lookup there (two or three cache misses, prefetched a tree at a time), not a pack-index probe per tree
+//!   entry (1e9 probes before).
 //! * `facts`: one atomic word per id (8 B): not yet seen / blob of N bytes / failed / commit in zone Z.
 //!   It replaces the whole-set `HashMap<ObjectId, Listed>` and the `BTreeMap<ObjectId, Commit>` of every commit.
 //! * Pack objects are read, hashed and decoded in one pass by `Pack::scan` (mapped pack, pack order, every core):
