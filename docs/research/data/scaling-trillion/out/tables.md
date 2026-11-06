@@ -6,16 +6,16 @@
 | agi5 (agi5) | open memory | 1e+03 to 2e+08 | 0.166 | 0.162 | sub-linear | 5.0 MB | 19.9 MB |
 | agi5 (agi5) | scan_all_status_pass p50 | 1e+03 to 2e+08 | 1.009 | 1.009 | O(n) | 12.7 s | 19.0 h |
 | agi5 (agi5) | verify_all p50 | 1e+03 to 2e+08 | 1.043 | 1.002 | O(n) | 1.8 s | 2.6 h |
-| commit_graph (commit_graph) | count_reachable_not_from_1000 p50 | 3e+03 to 3e+08 | 1.404 | 1.085 | O(n) | 73.9 s | 6 d |
-| commit_graph (commit_graph) | decode_validate p50 | 3e+03 to 3e+08 | 0.997 | 1.011 | O(n) | 17.0 s | 17.3 h |
-| commit_graph (commit_graph) | decode_validate memory | 3e+03 to 3e+08 | 1.0 | 1.0 | O(n) | 30.5 GB | 101.8 TB |
-| commit_graph (commit_graph) | encode p50 | 3e+03 to 3e+08 | 0.969 | 0.994 | O(n) | 9.0 s | 7.9 h |
-| commit_graph (commit_graph) | index_of p50 | 3e+03 to 3e+08 | 0.272 | 0.177 | sub-linear | 2.62 us | 11.00 us |
-| commit_graph (commit_graph) | merge_base_fork_distance_1 p50 | 3e+03 to 3e+08 | 0.616 | 0.064 | flat / O(log n) | 303.65 us | 693.20 us |
-| commit_graph (commit_graph) | merge_base_fork_distance_100 p50 | 3e+03 to 3e+08 | 0.647 | 0.082 | flat / O(log n) | 884.08 us | 1.8 ms |
-| commit_graph (commit_graph) | merge_base_fork_distance_10000 p50 | 3e+03 to 3e+08 | 0.68 | 0.389 | sub-linear | 51.2 ms | 1.2 s |
-| commit_graph (commit_graph) | merge_base_fork_distance_1000000 p50 | 3e+03 to 3e+08 | 0.896 | 0.295 | sub-linear | 713.5 ms | 7.8 s |
-| commit_graph (commit_graph) | range_ids_1000 p50 | 3e+03 to 3e+08 | 0.53 | 0.43 | sub-linear | 2.4 ms | 77.7 ms |
+| commit_graph (commit_graph) | count_reachable_not_from_1000 p50 | 3e+03 to 1e+09 | 1.372 | 1.096 | O(n) | 280.1 s | 6 d |
+| commit_graph (commit_graph) | decode_validate p50 | 3e+03 to 1e+09 | 0.995 | 0.993 | O(n) | 55.3 s | 14.6 h |
+| commit_graph (commit_graph) | decode_validate memory | 3e+03 to 1e+09 | 1.0 | 1.0 | O(n) | 101.8 GB | 101.8 TB |
+| commit_graph (commit_graph) | encode p50 | 3e+03 to 1e+09 | 0.972 | 0.995 | O(n) | 30.4 s | 8.2 h |
+| commit_graph (commit_graph) | index_of p50 | 3e+03 to 1e+09 | 0.259 | 0.152 | sub-linear | 2.97 us | 8.46 us |
+| commit_graph (commit_graph) | merge_base_fork_distance_1 p50 | 3e+03 to 1e+09 | 0.552 | 0.032 | flat / O(log n) | 336.01 us | 632.00 us |
+| commit_graph (commit_graph) | merge_base_fork_distance_100 p50 | 3e+03 to 1e+09 | 0.587 | 0.101 | flat / O(log n) | 991.75 us | 1.8 ms |
+| commit_graph (commit_graph) | merge_base_fork_distance_10000 p50 | 3e+03 to 1e+09 | 0.635 | 0.098 | flat / O(log n) | 52.3 ms | 106.4 ms |
+| commit_graph (commit_graph) | merge_base_fork_distance_1000000 p50 | 3e+03 to 1e+09 | 0.846 | 0.495 | sub-linear | 1.8 s | 54.6 s |
+| commit_graph (commit_graph) | range_ids_1000 p50 | 3e+03 to 1e+09 | 0.509 | 0.079 | flat / O(log n) | 2.8 ms | 5.2 ms |
 | commit_graph (commit_graph_build) | build_extend p50 | 1e+03 to 1e+06 | 1.838 | 1.902 | O(n) | 557.1 s | 1672017761 d |
 | commit_graph (commit_graph_build) | extend_one_commit p50 | 1e+03 to 1e+06 | 1.192 | 1.25 | O(n) | 1.1 s | 393 d |
 | commit_graph (commit_graph_build_fixed) | build_extend p50 | 1e+03 to 1e+07 | 1.185 | 1.184 | O(n) | 71.9 s | 692 d |
