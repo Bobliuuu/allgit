@@ -125,8 +125,10 @@ That is about 100 to 150 B/object, not 1.3 KB.
 1. ~~Commit-graph, reach-bitmap, path-filter: lazy/mmap readers~~ (done, see the update above). What is still O(n) there: extending the commit-graph (rewrites the file), path-filter save (rewrites the file, 32-bit offsets cap it near 1.4e8 commits), fsck's comparison with the real commits.
 2. publish: streaming pack writer. DONE (see docs/scalability.md, Streaming publish): 10M commits 104.5 GB -> 9.9 GB anonymous, wall within noise; the rest is the walk's id sets (about 1 KB per commit).
 3. One-file commit in a wide repo: lazy commit (74 s at 1e8 files, linear).
-4. fsck: 6x slower than git at 10M commits and linear in anonymous memory (1.6 KB/commit).
-5. clone: 2.4x slower than git on deep history, 4631 s and 75 GiB at 1e8 files.
+4. fsck: **done** (2026-11-06): 53 to 68 s at 10M commits against git 520 s, 4.7 GB anonymous (was 2926 s, 56.5 GiB); see
+   `docs/scalability.md`, "Clone and fsck at scale".
+5. clone: **done for deep history** (175 to 185 s at 10M commits against git 697 s, was 1596 s); the 1e8-file clone is checkout-bound
+   (file creation and the in-memory index) and was not re-measured.
 
 Everything is linear in N except the pack index and the point queries; no single-machine path to 1e12 exists for the
 whole-file readers above. The measured evidence reaches 1e11 objects (pack index), 1e9 commits (commit-graph, reach-bitmap),
