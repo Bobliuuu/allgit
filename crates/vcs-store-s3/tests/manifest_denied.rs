@@ -64,6 +64,8 @@ fn server(route: fn(&str) -> &'static str) -> String {
 fn client(ep: &str) -> S3Backend {
     let mut c = S3Config::new(ep, "b", "k", "s");
     c.timeout = std::time::Duration::from_secs(2);
+    c.retry_base = std::time::Duration::from_millis(2);
+    c.retry_max = std::time::Duration::from_millis(20);
     S3Backend::new_unchecked(c).unwrap()
 }
 

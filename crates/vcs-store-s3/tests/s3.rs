@@ -52,6 +52,8 @@ fn fake_server(status_line: &'static str) -> String {
 fn cfg(endpoint: &str) -> S3Config {
     let mut c = S3Config::new(endpoint, "b", "k", "s");
     c.timeout = std::time::Duration::from_secs(2);
+    c.retry_base = std::time::Duration::from_millis(2);
+    c.retry_max = std::time::Duration::from_millis(20);
     c
 }
 

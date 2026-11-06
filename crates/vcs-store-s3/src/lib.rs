@@ -22,11 +22,16 @@
 //!   conditional writes.
 
 mod admin;
+mod creds;
 mod gcops;
+mod stats;
 pub use admin::ManifestWriteProbe;
+pub use creds::{CredentialProvider, Creds};
 pub use gcops::parse_iso_ms;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
+pub(crate) use stats::STATS;
+pub use stats::{credentials_rejected, stats, S3Stats, METHODS};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use vcs_remote::backend::validate_key;
@@ -50,6 +55,20 @@ pub struct S3Config {
     /// replaces the built-in web roots, e.g. for MinIO with a private CA. Verification is
     /// never disabled.
     pub ca_pem: Option<Vec<u8>>,
+    /// Extra attempts after the first for a throttled (503 SlowDown), 5xx, timed-out or dropped request (0 = none).
+    /// Writes are retried only on 503, which S3 answers before it applies anything; an ambiguous failure of a
+    /// conditional write (500, timeout) surfaces so the caller can read back instead of replaying blind.
+    pub retries: u32,
+    /// Backoff base: attempt `n` waits a random time in `[d/2, d]` with `d = min(retry_max, retry_base * 2^n)`;
+    /// SlowDown waits four times longer.
+    pub retry_base: Duration,
+    pub retry_max: Duration,
+    /// Request timeout grows with the body so a large pack still fits: `timeout + body / min_throughput`.
+    /// Bytes per second; 0 = fixed `timeout`.
+    pub min_throughput: u64,
+    /// Refreshing credential source (container or instance role). When set it replaces `access_key`,
+    /// `secret_key` and `session_token`.
+    pub credentials: Option<std::sync::Arc<CredentialProvider>>,
 }
 
 /// Never prints the secret key, access key id or session token.
@@ -65,6 +84,8 @@ impl std::fmt::Debug for S3Config {
             .field("prefix", &self.prefix)
             .field("timeout", &self.timeout)
             .field("ca_pem", &self.ca_pem.as_ref().map(|p| p.len()))
+            .field("retries", &self.retries)
+            .field("credentials", &self.credentials)
             .finish()
     }
 }
@@ -81,6 +102,28 @@ impl S3Config {
             timeout: Duration::from_secs(30),
             session_token: None,
             ca_pem: None,
+            retries: 4,
+            retry_base: Duration::from_millis(100),
+            retry_max: Duration::from_secs(5),
+            min_throughput: 4 << 20,
+            credentials: None,
+        }
+    }
+
+    /// `VCS_S3_TIMEOUT_SECS` (request timeout), `VCS_S3_RETRIES`, `VCS_S3_RETRY_BASE_MS`, `VCS_S3_RETRY_MAX_MS`.
+    pub fn apply_tuning_env(&mut self, env: &dyn Fn(&str) -> Option<String>) {
+        let num = |k: &str| env(k).and_then(|v| v.trim().parse::<u64>().ok());
+        if let Some(n) = num("VCS_S3_TIMEOUT_SECS").filter(|n| *n > 0) {
+            self.timeout = Duration::from_secs(n);
+        }
+        if let Some(n) = num("VCS_S3_RETRIES") {
+            self.retries = n.min(20) as u32;
+        }
+        if let Some(n) = num("VCS_S3_RETRY_BASE_MS").filter(|n| *n > 0) {
+            self.retry_base = Duration::from_millis(n);
+        }
+        if let Some(n) = num("VCS_S3_RETRY_MAX_MS").filter(|n| *n > 0) {
+            self.retry_max = Duration::from_millis(n);
         }
     }
 
@@ -93,6 +136,7 @@ impl S3Config {
         if let Some(r) = get("AWS_REGION").or_else(|| get("AWS_DEFAULT_REGION")) {
             cfg.region = r;
         }
+        cfg.apply_tuning_env(&|k| std::env::var(k).ok());
         Some(cfg)
     }
 }
@@ -171,6 +215,61 @@ enum Resp {
     },
     /// Non-2xx, non-transient status that the caller interprets.
     Status(u16, String),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum FailKind {
+    /// Do not retry (a local error, or one the caller must interpret).
+    Permanent,
+    /// 503 / 429 / SlowDown: nothing was applied; back off harder.
+    Slow,
+    /// Other 5xx and 408.
+    Server,
+    /// Timeout, reset or short body.
+    Transport,
+}
+
+/// A failed attempt: the error to surface plus how it may be retried.
+struct Fail {
+    err: BackendError,
+    kind: FailKind,
+    after: Option<Duration>,
+}
+impl Fail {
+    fn new(kind: FailKind, err: BackendError) -> Self {
+        Fail { err, kind, after: None }
+    }
+}
+impl From<BackendError> for Fail {
+    fn from(err: BackendError) -> Self {
+        Fail::new(FailKind::Permanent, err)
+    }
+}
+
+/// S3's answer to a signature made with expired temporary credentials.
+fn expired_creds(body: &str) -> bool {
+    [
+        "ExpiredToken",
+        "RequestExpired",
+        "InvalidToken",
+        "TokenRefreshRequired",
+        "ExpiredTokenException",
+    ]
+    .iter()
+    .any(|c| body.contains(c))
+}
+
+/// Cheap thread-safe jitter in `0..=max` (splitmix64 over an atomic counter).
+fn jitter(max: u64) -> u64 {
+    static CTR: AtomicU64 = AtomicU64::new(0);
+    let seed = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(1);
+    let mut z = CTR.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed).wrapping_add(seed);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    (z ^ (z >> 31)) % (max + 1)
 }
 
 impl S3Backend {
@@ -407,6 +506,37 @@ impl S3Backend {
         Ok((ak, sk, tok))
     }
 
+    /// Static keys, or the provider chain's current (refreshed before expiry) credentials.
+    fn main_creds(&self) -> Result<(String, String, Option<String>), BackendError> {
+        match &self.cfg.credentials {
+            Some(p) => {
+                let c = p.current()?;
+                Ok((c.access_key, c.secret_key, c.token))
+            }
+            None => Ok((
+                self.cfg.access_key.clone(),
+                self.cfg.secret_key.clone(),
+                self.cfg.session_token.clone(),
+            )),
+        }
+    }
+
+    /// Wait before retry `n` (0-based): random in `[d/2, d]`, `d` doubling from `retry_base` up to `retry_max`
+    /// (a throttled request backs off four times harder, up to twice the cap), never less than `Retry-After`.
+    fn backoff(&self, n: u32, slow: bool, after: Option<Duration>) -> Duration {
+        let (base, cap) = if slow {
+            (self.cfg.retry_base * 4, self.cfg.retry_max * 2)
+        } else {
+            (self.cfg.retry_base, self.cfg.retry_max)
+        };
+        let d = base.saturating_mul(1u32 << n.min(16)).min(cap).as_millis() as u64;
+        let wait = Duration::from_millis(d / 2 + jitter(d / 2));
+        after.map_or(wait, |a| wait.max(a.min(Duration::from_secs(30))))
+    }
+
+    /// One logical request: [`Self::send_once`] plus bounded, jittered retries. 503 SlowDown and 429 are retried
+    /// for every method (S3 has applied nothing); 5xx, timeouts and dropped connections only for requests that
+    /// are safe to repeat (GET, HEAD, DELETE). A 403 for expired credentials refreshes the provider once.
     fn send_inner(
         &self,
         method: &str,
@@ -416,6 +546,43 @@ impl S3Backend {
         body: &[u8],
         create_session: bool,
     ) -> Result<Resp, BackendError> {
+        let mut attempt = 0u32;
+        let mut refreshed = false;
+        loop {
+            let f = match self.send_once(method, key, query, headers, body, create_session) {
+                Ok(Resp::Status(403, m)) if !refreshed && self.cfg.credentials.is_some() && expired_creds(&m) => {
+                    refreshed = true;
+                    if let Some(p) = &self.cfg.credentials {
+                        p.invalidate();
+                    }
+                    continue;
+                }
+                Ok(r) => return Ok(r),
+                Err(f) => f,
+            };
+            let retryable = match f.kind {
+                FailKind::Permanent => false,
+                FailKind::Slow => true,
+                FailKind::Server | FailKind::Transport => matches!(method, "GET" | "HEAD" | "DELETE"),
+            };
+            if !retryable || attempt >= self.cfg.retries {
+                return Err(f.err);
+            }
+            std::thread::sleep(self.backoff(attempt, f.kind == FailKind::Slow, f.after));
+            attempt += 1;
+            STATS.retries.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn send_once(
+        &self,
+        method: &str,
+        key: &str,
+        query: &[(&str, String)],
+        headers: &[(&str, &str)],
+        body: &[u8],
+        create_session: bool,
+    ) -> Result<Resp, Fail> {
         let mut path = if self.express {
             String::new()
         } else {
@@ -435,20 +602,14 @@ impl S3Backend {
         // (access key, secret, token, token header, SigV4 service)
         let (access_key, secret_key, token, token_header, service): (String, String, Option<String>, &str, &str) =
             match (self.express, create_session) {
-                (false, _) => (
-                    self.cfg.access_key.clone(),
-                    self.cfg.secret_key.clone(),
-                    self.cfg.session_token.clone(),
-                    "x-amz-security-token",
-                    "s3",
-                ),
-                (true, true) => (
-                    self.cfg.access_key.clone(),
-                    self.cfg.secret_key.clone(),
-                    self.cfg.session_token.clone(),
-                    "x-amz-security-token",
-                    "s3express",
-                ),
+                (false, _) => {
+                    let (a, s, t) = self.main_creds()?;
+                    (a, s, t, "x-amz-security-token", "s3")
+                }
+                (true, true) => {
+                    let (a, s, t) = self.main_creds()?;
+                    (a, s, t, "x-amz-security-token", "s3express")
+                }
                 (true, false) => {
                     let (a, s, t) = self.session_creds()?;
                     (a, s, Some(t), "x-amz-s3session-token", "s3express")
@@ -488,9 +649,17 @@ impl S3Backend {
         let safe = matches!(method, "GET" | "HEAD" | "DELETE");
         let agent = &self.agent;
         #[allow(clippy::result_large_err)] // ureq's own error type
+        // a large body gets proportionally more time (a fixed 30 s cannot move a 256 MiB pack below 70 Mbit/s)
+        let timeout = if self.cfg.min_throughput > 0 {
+            self.cfg.timeout + Duration::from_secs(body.len() as u64 / self.cfg.min_throughput)
+        } else {
+            self.cfg.timeout
+        };
+        let _inflight = stats::Inflight::new(body.len() as u64);
         let attempt = || {
             let mut req = agent
                 .request(method, &url)
+                .timeout(timeout)
                 .set("x-amz-date", &amz_date)
                 .set("x-amz-content-sha256", &payload_hash)
                 .set("authorization", &auth);
@@ -501,6 +670,7 @@ impl S3Backend {
                 req = req.set(k, v);
             }
             self.requests.fetch_add(1, Ordering::Relaxed);
+            STATS.requests[stats::method_index(method)].fetch_add(1, Ordering::Relaxed);
             if method == "PUT" || method == "POST" {
                 req.send_bytes(body)
             } else {
@@ -525,21 +695,62 @@ impl S3Backend {
                     .and_then(|v| v.trim().parse::<usize>().ok())
                     .unwrap_or(0)
                     .min(256 << 20);
+                let _resp_bytes = stats::Inflight::new(want as u64);
                 let mut buf = Vec::with_capacity(want);
                 std::io::Read::read_to_end(&mut resp.into_reader(), &mut buf)
-                    .map_err(|e| BackendError::Unavailable(format!("read body: {e}")))?;
+                    .map_err(|e| Fail::new(FailKind::Transport, BackendError::Unavailable(format!("read body: {e}"))))?;
                 self.bytes_read.fetch_add(buf.len() as u64, Ordering::Relaxed);
+                STATS.creds_rejected.store(false, Ordering::Relaxed);
                 Ok(Resp::Ok { body: buf, etag, status })
             }
             Err(ureq::Error::Status(code, resp)) => {
+                let after = resp
+                    .header("retry-after")
+                    .and_then(|v| v.trim().parse::<u64>().ok())
+                    .map(Duration::from_secs);
                 let text = resp.into_string().unwrap_or_default();
+                let throttled = code == 429 || text.contains("SlowDown") || text.contains("Slow Down") || text.contains("Throttl");
+                if throttled {
+                    STATS.slowdown.fetch_add(1, Ordering::Relaxed);
+                }
+                if code == 409 {
+                    STATS.conflict_409.fetch_add(1, Ordering::Relaxed);
+                }
                 if code >= 500 || code == 408 || code == 429 {
-                    Err(BackendError::Unavailable(format!("{method} {key}: HTTP {code}")))
+                    if code >= 500 {
+                        STATS.status_5xx.fetch_add(1, Ordering::Relaxed);
+                    }
+                    let tag = if throttled { " SlowDown" } else { "" };
+                    let kind = if throttled || code == 503 {
+                        FailKind::Slow
+                    } else {
+                        FailKind::Server
+                    };
+                    let mut f = Fail::new(kind, BackendError::Unavailable(format!("{method} {key}: HTTP {code}{tag}")));
+                    f.after = after;
+                    Err(f)
                 } else {
+                    if code == 403 {
+                        // HEAD answers carry no body, so a 403 there cannot name ExpiredToken; /readyz probes with HEAD
+                        if method == "HEAD" || expired_creds(&text) {
+                            STATS.creds_rejected.store(true, Ordering::Relaxed);
+                        }
+                    } else {
+                        STATS.creds_rejected.store(false, Ordering::Relaxed);
+                    }
                     Ok(Resp::Status(code, text.chars().take(300).collect()))
                 }
             }
-            Err(ureq::Error::Transport(t)) => Err(BackendError::Unavailable(format!("{method} {key}: {t}"))),
+            Err(ureq::Error::Transport(t)) => {
+                let msg = t.to_string();
+                if msg.contains("timed out") || msg.contains("timeout") {
+                    STATS.timeouts.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(Fail::new(
+                    FailKind::Transport,
+                    BackendError::Unavailable(format!("{method} {key}: {msg}")),
+                ))
+            }
         }
     }
 
@@ -707,7 +918,10 @@ impl Backend for S3Backend {
         }
         match self.send("PUT", &k, &[], &[("if-none-match", "*")], data)? {
             Resp::Ok { .. } => Ok(true),
-            Resp::Status(412 | 409, _) => Ok(false),
+            Resp::Status(412 | 409, _) => {
+                STATS.cas_losses.fetch_add(1, Ordering::Relaxed);
+                Ok(false)
+            }
             Resp::Status(c, m) => Err(Self::unexpected("put_if_absent", c, m)),
         }
     }
@@ -722,7 +936,10 @@ impl Backend for S3Backend {
         }
         match self.send("PUT", &k, &[], &[("if-match", tag)], data)? {
             Resp::Ok { etag, .. } => etag.map(Some).ok_or_else(|| BackendError::Other("PUT without ETag".into())),
-            Resp::Status(412 | 409 | 404, _) => Ok(None),
+            Resp::Status(412 | 409 | 404, _) => {
+                STATS.cas_losses.fetch_add(1, Ordering::Relaxed);
+                Ok(None)
+            }
             Resp::Status(c, m) => Err(Self::unexpected("put_if_match", c, m)),
         }
     }
