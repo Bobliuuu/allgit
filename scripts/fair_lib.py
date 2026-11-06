@@ -38,7 +38,7 @@ def run_timed(argv, env=None, cwd=None):
     r1 = resource.getrusage(resource.RUSAGE_CHILDREN)
     return dict(wall_ms=round(wall * 1000, 1), user_ms=round((r1.ru_utime - r0.ru_utime) * 1000, 1),
                 sys_ms=round((r1.ru_stime - r0.ru_stime) * 1000, 1), rc=p.returncode, load1=l0,
-                out_lines=p.stdout.count(b"\n"), err_tail=p.stderr[-200:].decode("replace") if p.returncode else "")
+                out_lines=p.stdout.count(b"\n"), err_tail=p.stderr[-200:].decode(errors="replace") if p.returncode else "")
 
 
 def proc_cpu_ms(pid):
@@ -56,7 +56,7 @@ def pids_under(root, name_sub):
         if not d.isdigit():
             continue
         try:
-            cmd = open(f"/proc/{d}/cmdline", "rb").read().replace(b"\0", b" ").decode("replace")
+            cmd = open(f"/proc/{d}/cmdline", "rb").read().replace(b"\0", b" ").decode(errors="replace")
             cwd = os.readlink(f"/proc/{d}/cwd")
         except OSError:
             continue

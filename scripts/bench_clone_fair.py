@@ -19,7 +19,8 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), 
 REL = os.environ.get("CARGO_TARGET_DIR", ROOT + "/target") + "/release"
 VCS = REL + "/vcs"
 os.environ.update(GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null", GIT_AUTHOR_NAME="b", GIT_AUTHOR_EMAIL="b@x.invalid",
-                  GIT_COMMITTER_NAME="b", GIT_COMMITTER_EMAIL="b@x.invalid", VCS_NO_AUTOWATCH="1")
+                  GIT_COMMITTER_NAME="b", GIT_COMMITTER_EMAIL="b@x.invalid", VCS_NO_AUTOWATCH="1",
+                  VCS_AUTHOR_NAME="b", VCS_AUTHOR_EMAIL="b@x.invalid")
 G, V, R, C = f"{W}/g", f"{W}/v", f"{W}/r", f"{W}/c"
 res = dict(meta=meta(ROOT, dict(vcs=VCS)), files=FILES, runs=N, setup={}, runs_raw=[], counts={}, sizes_kb={})
 os.makedirs(W, exist_ok=True)
