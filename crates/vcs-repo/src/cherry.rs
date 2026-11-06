@@ -75,7 +75,11 @@ impl Repo {
             }
             if let Some(m) = mainline {
                 if c.parents.len() > 1 && (m == 0 || m > c.parents.len()) {
-                    return msg(format!("{} has {} parents; -m {m} is out of range (nothing was changed)", id.short(), c.parents.len()));
+                    return msg(format!(
+                        "{} has {} parents; -m {m} is out of range (nothing was changed)",
+                        id.short(),
+                        c.parents.len()
+                    ));
                 }
             }
         }

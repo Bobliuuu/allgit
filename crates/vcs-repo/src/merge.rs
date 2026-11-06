@@ -464,7 +464,11 @@ impl Repo {
     pub(crate) fn note_resolved(&self, rel_paths: &[String], ix: &Index) -> Result<()> {
         let Some(mut st) = self.merge_state()? else { return Ok(()) };
         let mut changed = false;
-        for c in st.conflicts.iter_mut().filter(|c| !c.resolved && c.kind != ConflictKind::FileDirectory) {
+        for c in st
+            .conflicts
+            .iter_mut()
+            .filter(|c| !c.resolved && c.kind != ConflictKind::FileDirectory)
+        {
             let hit = rel_paths
                 .iter()
                 .any(|p| p.is_empty() || *p == c.path || c.path.starts_with(&format!("{p}/")));
@@ -879,6 +883,8 @@ impl Repo {
             }
             ix.entries.remove(p);
         }
+        // A directory the merge made may have to give way to a file: drop emptied ones first.
+        self.prune_dirs(dirs.iter().cloned());
         let cur: Flat = ix
             .entries
             .iter()
@@ -1046,24 +1052,28 @@ impl Repo {
             }
             self.prune_dirs(dirs.iter().cloned());
         }
-        if mine.is_some() {
-            let from = fd_side_path(&c.path, keep_ours);
-            let (src, dst) = (self.worktree.join(&from), self.worktree.join(&c.path));
-            io(&src, fs::rename(&src, &dst))?;
-            stage.push(from);
-            stage.push(c.path.clone());
-        }
+        // Stage the removals first: once the file replaces the directory, `path/x` no longer resolves.
         let ix = self.index()?;
-        stage.retain(|p| ix.entries.contains_key(p) || self.worktree.join(p).exists());
+        stage.retain(|p| ix.entries.contains_key(p));
         drop(ix);
         if !stage.is_empty() {
             self.add(&stage)?;
         }
+        if mine.is_some() {
+            let from = fd_side_path(&c.path, keep_ours);
+            let (src, dst) = (self.worktree.join(&from), self.worktree.join(&c.path));
+            io(&src, fs::rename(&src, &dst))?;
+            self.add(&[from, c.path.clone()])?;
+        }
         self.prune_dirs(dirs);
         let _l = self.lock()?;
         let Some(mut st) = self.merge_state()? else { return Ok(()) };
-        if let Some(x) = st.conflicts.iter_mut().find(|x| x.path == c.path) {
-            x.resolved = true;
+        let under = format!("{}/", c.path);
+        for x in st.conflicts.iter_mut() {
+            // a conflict inside the directory that was just given up has nothing left to resolve
+            if x.path == c.path || (mine_mode != Some(EntryMode::Directory) && x.path.starts_with(&under)) {
+                x.resolved = true;
+            }
         }
         self.save_merge_state(&st)
     }

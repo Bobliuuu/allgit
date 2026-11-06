@@ -27,13 +27,13 @@
 //! is refused before anything changes.
 
 use crate::error::{msg, Error, Result};
-use crate::merge::{ConflictRec, MergeState};
+use crate::merge::MergeState;
 use crate::meta::{frame, unframe, write_atomic};
 use crate::repo::Repo;
 use crate::treeops;
 use std::collections::{BTreeSet, VecDeque};
 use std::fs;
-use vcs_merge::{ConflictKind, MarkerLabels};
+use vcs_merge::MarkerLabels;
 use vcs_objects::codec::{Reader, Writer};
 use vcs_objects::{Commit, Object, ObjectId, RefUpdate, Signature, Transaction};
 use vcs_store::ObjectStore;

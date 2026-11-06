@@ -391,9 +391,9 @@ mod tests {
             expect.insert(c.path.clone(), (EntryMode::File, ph));
             m.set_placeholder(&c.path, (EntryMode::File, ph));
         }
-        // File/directory conflicts are refused by every caller before any tree is built (and the
-        // flat result then holds a file and a directory at one path), so only conflicts and blobs
-        // are compared for them. Every other result must build.
+        // For a file/directory conflict the flat result holds a file and a directory at one path
+        // (callers park the file at `path~ours`/`path~theirs` before any tree is built), so only
+        // conflicts and blobs are compared for them. Every other result must build.
         if tm.conflicts.iter().any(|c| c.kind == vcs_merge::ConflictKind::FileDirectory) {
             return;
         }
