@@ -1272,15 +1272,15 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
                 W(".vcsignore", "*.log\nbuild/\n"),
                 G("git add f.txt .gitignore .vcsignore"),
                 commit(),
-                W("a.log", "x\n"),
+                W("ignored.log", "x\n"),
                 W("build/o.bin", "y\n"),
                 W("keep.txt", "k\n"),
                 L("git status -s --ignored"),
-                GC("git status --ignored", "a.log"),
-                GC("git check-ignore a.log", "a.log"),
+                GC("git status --ignored", "ignored.log"),
+                GC("git check-ignore ignored.log", "ignored.log"),
                 Op::BF("git check-ignore f.txt"),
                 Op::BF("git check-ignore keep.txt"),
-                G("git add -f a.log"),
+                G("git add -f ignored.log"),
                 L("git status -s --ignored"),
                 G("git add -f build"),
                 L("git status -s --ignored"),
@@ -1328,7 +1328,7 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
                 G("git tag v1 HEAD~1"),
                 O("git name-rev HEAD~1"),
                 O("git name-rev HEAD~2"),
-                G("git switch -c topic"),
+                G("git switch -c feature"),
                 W("g.txt", "g\n"),
                 G("git add g.txt"),
                 G(r#"git commit -m "topic one""#),
@@ -1339,13 +1339,16 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
                 O("git for-each-ref --sort=-refname --format=%(refname)"),
                 O("git for-each-ref --count=2 --format=%(refname)"),
                 O("git for-each-ref --format=%(HEAD)%(refname:short) refs/heads"),
-                GC("git show-ref", "refs/heads/topic"),
+                GC("git show-ref", "refs/heads/feature"),
                 GC("git show-ref --tags", "refs/tags/v1"),
-                GC("git show-ref topic", "refs/heads/topic"),
+                GC("git show-ref feature", "refs/heads/feature"),
                 G("git show-ref --verify -q refs/heads/main"),
                 Op::BF("git show-ref --verify -q refs/heads/nope"),
                 Op::BF("git show-ref --tags nope"),
                 // create, move and delete refs without touching the working tree
+                G("git update-ref refs/heads/topic HEAD"),
+                O("git for-each-ref --format=%(refname) refs/heads"),
+                G("git update-ref -d refs/heads/topic"),
                 G("git update-ref refs/heads/copy HEAD"),
                 G("git update-ref refs/heads/copy HEAD~1"),
                 O("git for-each-ref --format=%(refname)"),
@@ -1354,7 +1357,7 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
                 O("git for-each-ref --format=%(refname) refs/tags"),
                 G("git update-ref -d refs/tags/v2"),
                 G("git update-ref refs/heads/main HEAD~2"),
-                G("git update-ref refs/heads/main topic"),
+                G("git update-ref refs/heads/main feature"),
             ],
         ),
         (
@@ -1991,7 +1994,13 @@ fn write_tree_commit_tree_update_ref_build_a_commit_like_git() {
         std::fs::create_dir_all(&dir).unwrap();
         let ok = |args: &[&str]| {
             let o = run(&dir, args);
-            assert!(o.status.success(), "{} {args:?}: {}{}", if use_git { "git" } else { "vcs" }, stdout_of(&o), String::from_utf8_lossy(&o.stderr));
+            assert!(
+                o.status.success(),
+                "{} {args:?}: {}{}",
+                if use_git { "git" } else { "vcs" },
+                stdout_of(&o),
+                String::from_utf8_lossy(&o.stderr)
+            );
             stdout_of(&o).trim().to_owned()
         };
         if use_git {
@@ -2013,7 +2022,10 @@ fn write_tree_commit_tree_update_ref_build_a_commit_like_git() {
         // nothing references it yet
         assert_eq!(ok(&["log", "--format=%s"]).lines().collect::<Vec<_>>(), ["base"]);
         ok(&["update-ref", "refs/heads/hand", &commit]);
-        assert_eq!(ok(&["log", "--format=%s", "hand"]).lines().collect::<Vec<_>>(), ["made by hand", "base"]);
+        assert_eq!(
+            ok(&["log", "--format=%s", "hand"]).lines().collect::<Vec<_>>(),
+            ["made by hand", "base"]
+        );
         // the old value is checked: a stale one is refused and moves nothing
         let head = ok(&["rev-parse", "HEAD"]);
         assert!(!run(&dir, &["update-ref", "refs/heads/hand", &head, &head]).status.success());
@@ -2021,7 +2033,10 @@ fn write_tree_commit_tree_update_ref_build_a_commit_like_git() {
         assert_eq!(ok(&["log", "--format=%s", "hand"]).lines().collect::<Vec<_>>(), ["base"]);
         // a tree can be written again and is the same tree
         assert_eq!(ok(&["write-tree"]), tree);
-        results.push((ok(&["show-ref", "-s", "--heads", "main"]).len() >= 40, ok(&["for-each-ref", "--format=%(refname)", "refs/heads"])));
+        results.push((
+            ok(&["show-ref", "-s", "--heads", "main"]).len() >= 40,
+            ok(&["for-each-ref", "--format=%(refname)", "refs/heads"]),
+        ));
     }
     if results.len() == 2 {
         assert_eq!(results[0], results[1]);
@@ -2034,7 +2049,12 @@ fn hash_object_and_count_objects_answer_for_the_vcs_store() {
     let run = side_runner(false);
     let ok = |args: &[&str]| {
         let o = run(t.path(), args);
-        assert!(o.status.success(), "{args:?}: {}{}", stdout_of(&o), String::from_utf8_lossy(&o.stderr));
+        assert!(
+            o.status.success(),
+            "{args:?}: {}{}",
+            stdout_of(&o),
+            String::from_utf8_lossy(&o.stderr)
+        );
         stdout_of(&o).trim().to_owned()
     };
     ok(&["init"]);
@@ -2082,7 +2102,12 @@ fn worktree_prune_forgets_only_vanished_worktrees() {
     std::fs::create_dir_all(&main).unwrap();
     let ok = |dir: &Path, args: &[&str]| {
         let o = run(dir, args);
-        assert!(o.status.success(), "{args:?}: {}{}", stdout_of(&o), String::from_utf8_lossy(&o.stderr));
+        assert!(
+            o.status.success(),
+            "{args:?}: {}{}",
+            stdout_of(&o),
+            String::from_utf8_lossy(&o.stderr)
+        );
         stdout_of(&o)
     };
     ok(&main, &["init"]);
@@ -2136,7 +2161,13 @@ fn bisect_log_and_replay_reach_the_same_first_bad_commit() {
         std::fs::create_dir_all(&dir).unwrap();
         let ok = |args: &[&str]| {
             let o = run(&dir, args);
-            assert!(o.status.success(), "{} {args:?}: {}{}", if use_git { "git" } else { "vcs" }, stdout_of(&o), String::from_utf8_lossy(&o.stderr));
+            assert!(
+                o.status.success(),
+                "{} {args:?}: {}{}",
+                if use_git { "git" } else { "vcs" },
+                stdout_of(&o),
+                String::from_utf8_lossy(&o.stderr)
+            );
             stdout_of(&o)
         };
         if use_git {
@@ -2169,7 +2200,15 @@ fn bisect_log_and_replay_reach_the_same_first_bad_commit() {
         };
         ok(&["bisect", "start", "HEAD", "HEAD~7"]);
         let out = mark(&ok);
-        let subject = |rev: &str| ok(&["log", "-n", "1", "--format=%s", rev]).trim().to_owned();
+        let subject = |rev: &str| {
+            ok(&["cat-file", "-p", rev])
+                .lines()
+                .rev()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("")
+                .trim()
+                .to_owned()
+        };
         let first = out
             .lines()
             .find(|l| l.contains("is the first bad commit"))
@@ -2216,7 +2255,12 @@ fn ls_remote_lists_the_remote_refs_live() {
     let run = side_runner(false);
     let ok = |dir: &Path, args: &[&str]| {
         let o = run(dir, args);
-        assert!(o.status.success(), "{args:?}: {}{}", stdout_of(&o), String::from_utf8_lossy(&o.stderr));
+        assert!(
+            o.status.success(),
+            "{args:?}: {}{}",
+            stdout_of(&o),
+            String::from_utf8_lossy(&o.stderr)
+        );
         stdout_of(&o)
     };
     let (a, remote) = (t.path().join("a"), t.path().join("srv"));
@@ -2252,7 +2296,12 @@ fn apply_cached_checks_the_staged_content_and_leaves_the_file() {
     let run = side_runner(false);
     let ok = |args: &[&str]| {
         let o = run(t.path(), args);
-        assert!(o.status.success(), "{args:?}: {}{}", stdout_of(&o), String::from_utf8_lossy(&o.stderr));
+        assert!(
+            o.status.success(),
+            "{args:?}: {}{}",
+            stdout_of(&o),
+            String::from_utf8_lossy(&o.stderr)
+        );
         stdout_of(&o)
     };
     ok(&["init"]);
@@ -2262,7 +2311,11 @@ fn apply_cached_checks_the_staged_content_and_leaves_the_file() {
     let patch = "--- a/f.txt\n+++ b/f.txt\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n";
     std::fs::write(t.path().join("x.patch"), patch).unwrap();
     ok(&["apply", "--cached", "x.patch"]);
-    assert_eq!(std::fs::read_to_string(t.path().join("f.txt")).unwrap(), "a\nb\nc\n", "the file is untouched");
+    assert_eq!(
+        std::fs::read_to_string(t.path().join("f.txt")).unwrap(),
+        "a\nb\nc\n",
+        "the file is untouched"
+    );
     assert!(ok(&["diff", "--staged"]).contains("+B"), "the index holds the patched content");
     // the same patch again no longer fits the staged content
     assert!(!run(t.path(), &["apply", "--cached", "x.patch"]).status.success());

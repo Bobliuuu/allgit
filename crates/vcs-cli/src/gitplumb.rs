@@ -80,6 +80,7 @@ pub enum Plumb {
 
 impl Plumb {
     /// The canonical text shown in docs/git-to-vcs.md.
+    #[cfg(test)]
     pub fn display(&self) -> String {
         match self {
             Plumb::ForEachRef { .. } => "vcs branch + vcs tag (rendered as refs)".into(),
@@ -99,7 +100,12 @@ impl Plumb {
 
     pub fn run(&self) -> Result<(), Error> {
         match self {
-            Plumb::ForEachRef { patterns, format, sort, count } => for_each_ref(patterns, format.as_deref(), sort, *count),
+            Plumb::ForEachRef {
+                patterns,
+                format,
+                sort,
+                count,
+            } => for_each_ref(patterns, format.as_deref(), sort, *count),
             Plumb::ShowRef {
                 heads,
                 tags,
@@ -108,14 +114,24 @@ impl Plumb {
                 quiet,
                 patterns,
             } => show_ref(*heads, *tags, *hash, *verify, *quiet, patterns),
-            Plumb::LsRemote { remote, heads, tags, patterns } => ls_remote(remote.as_deref(), *heads, *tags, patterns),
+            Plumb::LsRemote {
+                remote,
+                heads,
+                tags,
+                patterns,
+            } => ls_remote(remote.as_deref(), *heads, *tags, patterns),
             Plumb::NameRev { revs, name_only } => name_rev(revs, *name_only),
             Plumb::UpdateRef { name, new, old, delete } => update_ref(name, new.as_deref(), old.as_deref(), *delete),
             Plumb::CheckIgnore { paths, quiet } => check_ignore(paths, *quiet),
             Plumb::CountObjects { verbose } => count_objects(*verbose),
             Plumb::HashObject { write, stdin, files } => hash_object(*write, *stdin, files),
             Plumb::WriteTree => write_tree(),
-            Plumb::CommitTree { tree, parents, messages, file } => commit_tree(tree, parents, messages, file.as_deref()),
+            Plumb::CommitTree {
+                tree,
+                parents,
+                messages,
+                file,
+            } => commit_tree(tree, parents, messages, file.as_deref()),
         }
     }
 }
@@ -132,15 +148,24 @@ fn ref_rows(repo: &Repo, zone: &str) -> Result<Vec<RefRow>, Error> {
     let mut v = Vec::new();
     for (b, id, _) in repo.branches(zone)? {
         if let Some(id) = id {
-            v.push(RefRow { name: format!("refs/heads/{b}"), id });
+            v.push(RefRow {
+                name: format!("refs/heads/{b}"),
+                id,
+            });
         }
     }
     for t in repo.tag_list(zone)? {
-        v.push(RefRow { name: format!("refs/tags/{}", t.name), id: t.commit });
+        v.push(RefRow {
+            name: format!("refs/tags/{}", t.name),
+            id: t.commit,
+        });
     }
     for ((z, b), id) in &repo.remote_refs()?.branches {
         if z == zone {
-            v.push(RefRow { name: format!("refs/remotes/origin/{b}"), id: *id });
+            v.push(RefRow {
+                name: format!("refs/remotes/origin/{b}"),
+                id: *id,
+            });
         }
     }
     v.sort_by(|a, b| a.name.cmp(&b.name));
@@ -224,7 +249,10 @@ fn for_each_ref(patterns: &[String], format: Option<&str>, sort: &[String], coun
         out.push_str(&expand(&repo, fmt, r, is_head)?);
         out.push('\n');
     }
-    std::io::stdout().lock().write_all(out.as_bytes()).map_err(|source| Error::Io { path: "stdout".into(), source })
+    std::io::stdout().lock().write_all(out.as_bytes()).map_err(|source| Error::Io {
+        path: "stdout".into(),
+        source,
+    })
 }
 
 fn expand(repo: &Repo, fmt: &str, r: &RefRow, is_head: bool) -> Result<String, Error> {
@@ -244,10 +272,17 @@ fn expand(repo: &Repo, fmt: &str, r: &RefRow, is_head: bool) -> Result<String, E
             out.push('\0');
             rest = r2;
         } else if let Some(r2) = rest.strip_prefix('(') {
-            let Some(end) = r2.find(')') else { return bad("for-each-ref --format: unterminated %(") };
+            let Some(end) = r2.find(')') else {
+                return bad("for-each-ref --format: unterminated %(");
+            };
             let atom = &r2[..end];
             rest = &r2[end + 1..];
-            if commit.is_none() && !matches!(atom, "refname" | "refname:short" | "objectname" | "objecttype" | "HEAD" | "upstream") {
+            if commit.is_none()
+                && !matches!(
+                    atom,
+                    "refname" | "refname:short" | "objectname" | "objecttype" | "HEAD" | "upstream"
+                )
+            {
                 commit = Some(repo.commit_of(&r.id)?);
             }
             let field = |f: fn(&vcs_objects::Commit) -> String| commit.as_ref().map(f).unwrap_or_default();
@@ -308,7 +343,10 @@ fn show_ref(heads: bool, tags: bool, hash: Option<usize>, verify: bool, quiet: b
         }
     }
     if !quiet {
-        std::io::stdout().lock().write_all(out.as_bytes()).map_err(|source| Error::Io { path: "stdout".into(), source })?;
+        std::io::stdout().lock().write_all(out.as_bytes()).map_err(|source| Error::Io {
+            path: "stdout".into(),
+            source,
+        })?;
     }
     if hits == 0 {
         exit_no_match();
@@ -342,22 +380,33 @@ fn ls_remote(remote: Option<&str>, heads: bool, tags: bool, patterns: &[String])
     };
     let mut rows: Vec<RefRow> = Vec::new();
     for ((z, b), id) in &m.branches {
-        rows.push(RefRow { name: format!("{}/heads/{b}", prefix(z)), id: *id });
+        rows.push(RefRow {
+            name: format!("{}/heads/{b}", prefix(z)),
+            id: *id,
+        });
     }
     for ((z, t), id) in &m.tags {
-        rows.push(RefRow { name: format!("{}/tags/{t}", prefix(z)), id: *id });
+        rows.push(RefRow {
+            name: format!("{}/tags/{t}", prefix(z)),
+            id: *id,
+        });
     }
     rows.sort_by(|a, b| a.name.cmp(&b.name));
     let mut out = String::new();
     for r in &rows {
         let is_head = r.name.contains("/heads/");
         let is_tag = r.name.contains("/tags/");
-        if ((heads || tags) && !((heads && is_head) || (tags && is_tag))) || !(patterns.is_empty() || patterns.iter().any(|p| tail_match(&r.name, p))) {
+        if ((heads || tags) && !((heads && is_head) || (tags && is_tag)))
+            || !(patterns.is_empty() || patterns.iter().any(|p| tail_match(&r.name, p)))
+        {
             continue;
         }
         out.push_str(&format!("{}\t{}\n", r.id.to_hex(), r.name));
     }
-    std::io::stdout().lock().write_all(out.as_bytes()).map_err(|source| Error::Io { path: "stdout".into(), source })
+    std::io::stdout().lock().write_all(out.as_bytes()).map_err(|source| Error::Io {
+        path: "stdout".into(),
+        source,
+    })
 }
 
 // ---------------------------------------------------------------- name-rev
@@ -387,13 +436,28 @@ fn name_rev(revs: &[String], name_only: bool) -> Result<(), Error> {
     let mut tips: Vec<(ObjectId, Nm)> = Vec::new();
     for (b, id, _) in repo.branches(&zone)? {
         if let Some(id) = id {
-            tips.push((id, Nm { base: b, gen: 0, dist: 0, tag: false, peeled: false }));
+            tips.push((
+                id,
+                Nm {
+                    base: b,
+                    gen: 0,
+                    dist: 0,
+                    tag: false,
+                    peeled: false,
+                },
+            ));
         }
     }
     for t in repo.tag_list(&zone)? {
         tips.push((
             t.commit,
-            Nm { base: format!("tags/{}", t.name), gen: 0, dist: 0, tag: true, peeled: t.annotation.is_some() },
+            Nm {
+                base: format!("tags/{}", t.name),
+                gen: 0,
+                dist: 0,
+                tag: true,
+                peeled: t.annotation.is_some(),
+            },
         ));
     }
     for (id, nm) in tips {
@@ -406,10 +470,26 @@ fn name_rev(revs: &[String], name_only: bool) -> Result<(), Error> {
         let Some(nm) = map.get(&c).cloned() else { continue };
         for (i, p) in repo.commit_of(&c)?.parents.iter().enumerate() {
             let cand = if i == 0 {
-                Nm { base: nm.base.clone(), gen: nm.gen + 1, dist: nm.dist + 1, tag: nm.tag, peeled: false }
+                Nm {
+                    base: nm.base.clone(),
+                    gen: nm.gen + 1,
+                    dist: nm.dist + 1,
+                    tag: nm.tag,
+                    peeled: false,
+                }
             } else {
-                let base = if nm.gen == 0 { format!("{}^{}", nm.base, i + 1) } else { format!("{}~{}^{}", nm.base, nm.gen, i + 1) };
-                Nm { base, gen: 0, dist: nm.dist + MERGE_WEIGHT + 1, tag: nm.tag, peeled: false }
+                let base = if nm.gen == 0 {
+                    format!("{}^{}", nm.base, i + 1)
+                } else {
+                    format!("{}~{}^{}", nm.base, nm.gen, i + 1)
+                };
+                Nm {
+                    base,
+                    gen: 0,
+                    dist: nm.dist + MERGE_WEIGHT + 1,
+                    tag: nm.tag,
+                    peeled: false,
+                }
             };
             if map.get(p).is_none_or(|o| better(&cand, o)) {
                 map.insert(*p, cand);
@@ -466,7 +546,9 @@ fn update_ref(name: &str, new: Option<&str>, old: Option<&str>, delete: bool) ->
     } else if let Some(t) = name.strip_prefix("refs/tags/") {
         ("tag", t.to_owned())
     } else {
-        return bad(format!("update-ref {name}: only HEAD, refs/heads/<branch> and refs/tags/<tag> exist in vcs"));
+        return bad(format!(
+            "update-ref {name}: only HEAD, refs/heads/<branch> and refs/tags/<tag> exist in vcs"
+        ));
     };
     if delete {
         return match kind {
@@ -483,7 +565,9 @@ fn update_ref(name: &str, new: Option<&str>, old: Option<&str>, delete: bool) ->
             _ => bad("update-ref -d HEAD: HEAD cannot be deleted"),
         };
     }
-    let Some(new) = new else { return bad("usage: git update-ref [-d] <ref> [<new-value> [<old-value>]]") };
+    let Some(new) = new else {
+        return bad("usage: git update-ref [-d] <ref> [<new-value> [<old-value>]]");
+    };
     let to = rev_or_id(&repo, &zone, new)?;
     match kind {
         "head" => {
@@ -567,7 +651,10 @@ fn hash_object(write: bool, stdin: bool, files: &[String]) -> Result<(), Error> 
     let mut inputs: Vec<Vec<u8>> = Vec::new();
     if stdin {
         let mut b = Vec::new();
-        std::io::stdin().lock().read_to_end(&mut b).map_err(|source| Error::Io { path: "stdin".into(), source })?;
+        std::io::stdin().lock().read_to_end(&mut b).map_err(|source| Error::Io {
+            path: "stdin".into(),
+            source,
+        })?;
         inputs.push(b);
     }
     for f in files {
@@ -578,7 +665,11 @@ fn hash_object(write: bool, stdin: bool, files: &[String]) -> Result<(), Error> 
         return bad("usage: git hash-object [-w] (--stdin | <file>...)");
     }
     for data in inputs {
-        let id = if write { repo.store_content(&data)? } else { vcs_objects::content_id(&data) };
+        let id = if write {
+            repo.store_content(&data)?
+        } else {
+            vcs_objects::content_id(&data)
+        };
         println!("{}", id.to_hex());
     }
     Ok(())
@@ -592,14 +683,20 @@ fn write_tree() -> Result<(), Error> {
             println!("{}", id.to_hex());
             Ok(())
         }
-        None => bad(format!("write-tree: zone {zone:?} has nothing staged and no commits, so there is no tree")),
+        None => bad(format!(
+            "write-tree: zone {zone:?} has nothing staged and no commits, so there is no tree"
+        )),
     }
 }
 
 fn commit_tree(tree: &str, parents: &[String], messages: &[String], file: Option<&str>) -> Result<(), Error> {
     let (repo, cwd) = open()?;
     let zone = zone_of_cwd(&repo, &cwd, None)?;
-    let tree = ObjectId::from_hex(tree).map_err(|_| Error::Msg(format!("commit-tree: {tree:?} is not a full tree id (the output of `git write-tree`)")))?;
+    let tree = ObjectId::from_hex(tree).map_err(|_| {
+        Error::Msg(format!(
+            "commit-tree: {tree:?} is not a full tree id (the output of `git write-tree`)"
+        ))
+    })?;
     let parents: Vec<ObjectId> = parents.iter().map(|p| rev_or_id(&repo, &zone, p)).collect::<Result<_, _>>()?;
     let message = if !messages.is_empty() {
         messages.join("\n\n")
@@ -608,7 +705,10 @@ fn commit_tree(tree: &str, parents: &[String], messages: &[String], file: Option
         std::fs::read_to_string(&p).map_err(|source| Error::Io { path: p, source })?
     } else {
         let mut s = String::new();
-        std::io::stdin().lock().read_to_string(&mut s).map_err(|source| Error::Io { path: "stdin".into(), source })?;
+        std::io::stdin().lock().read_to_string(&mut s).map_err(|source| Error::Io {
+            path: "stdin".into(),
+            source,
+        })?;
         s
     };
     let id = repo.commit_tree(&zone, &tree, &parents, message.trim_end(), crate::author()?)?;

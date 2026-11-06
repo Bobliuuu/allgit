@@ -1245,7 +1245,11 @@ fn run(cli: Cli) -> Result<(), Error> {
             };
             println!("Initialized empty vcs repository in {}", r.worktree().join(".vcs").display());
         }
-        Cmd::Add { paths, force_no_lock, force } => {
+        Cmd::Add {
+            paths,
+            force_no_lock,
+            force,
+        } => {
             let (repo, cwd) = open()?;
             if paths.is_empty() {
                 return Err(Error::Msg("nothing specified; use `vcs add .` to stage everything".into()));

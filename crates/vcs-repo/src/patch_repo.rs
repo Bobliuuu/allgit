@@ -142,7 +142,9 @@ impl Repo {
                 for q in [&p.old_path, &p.new_path].into_iter().flatten() {
                     let owner = zones.owner(q);
                     if !ws.subs.contains_key(owner) {
-                        return msg(format!("{q:?} belongs to zone {owner:?}, which this workspace has not subscribed to (vcs zone add {owner})"));
+                        return msg(format!(
+                            "{q:?} belongs to zone {owner:?}, which this workspace has not subscribed to (vcs zone add {owner})"
+                        ));
                     }
                 }
             }

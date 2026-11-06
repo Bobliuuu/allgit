@@ -1420,7 +1420,7 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             vec![note("the id is a blake3 hash of the content, not git's sha1"), Step::Plumb(Plumb::HashObject { write, stdin, files: p.all_pos() })]
         }
         "write-tree" => {
-            let mut p = parse(cmd, rest, &[]);
+            let p = parse(cmd, rest, &[]);
             p.finish("`vcs commit`; write-tree takes no flags here")?;
             vec![note(ONE_ZONE_REFS), Step::Plumb(Plumb::WriteTree)]
         }
