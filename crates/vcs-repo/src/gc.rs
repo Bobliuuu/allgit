@@ -184,10 +184,14 @@ impl Repo {
                 Err(e) => Err(crate::Error::from(e)),
             });
             let mut absent = std::collections::HashSet::new();
+            // Results the budget did not let `known` keep: still needed for this level.
+            let mut overflow: std::collections::HashMap<ObjectId, Info> = std::collections::HashMap::new();
             for (id, r) in todo.iter().zip(got) {
                 match r? {
                     Some(info) => {
-                        known.insert(*id, info);
+                        if let Some(info) = known.insert(*id, info) {
+                            overflow.insert(*id, info);
+                        }
                     }
                     None => {
                         absent.insert(*id);
@@ -196,7 +200,7 @@ impl Repo {
             }
             let mut next = Vec::new();
             for id in &level {
-                match known.get(id) {
+                match known.get(id).or_else(|| overflow.get(id)) {
                     Some(info) => {
                         marked.insert(*id);
                         next.extend_from_slice(&info.kids);
@@ -228,7 +232,7 @@ impl Repo {
             snap.ids.push(id);
             snap.marked.push(is_marked);
             snap.tx
-                .push(known.get(&id).map_or_else(|| cache.is_some_and(|c| c.is_tx(&id)), |i| i.tx));
+                .push(known.is_tx(&id) || (!known.contains_key(&id) && cache.is_some_and(|c| c.is_tx(&id))));
             if is_marked {
                 rep.reachable += 1;
                 continue;
@@ -304,10 +308,14 @@ impl Repo {
                 known.insert(id, info);
             }
         }
-        roots.extend(all.iter().filter(|id| known.get(*id).is_some_and(|i| i.tx)).copied());
+        roots.extend(all.iter().filter(|id| known.is_tx(id)).copied());
         if let Some(c) = cache {
             let present: std::collections::HashSet<&ObjectId> = all.iter().collect();
-            roots.extend(c.txs().into_iter().filter(|t| present.contains(t) && !known.contains_key(t)));
+            roots.extend(
+                c.txs()
+                    .into_iter()
+                    .filter(|t| present.contains(t) && !known.contains_key(t) && !known.is_tx(t)),
+            );
         }
         Ok(roots)
     }
@@ -330,8 +338,61 @@ impl Info {
     }
 }
 
-/// Objects already read during one gc run (content-addressed, so a result never goes stale).
-type Known = std::collections::HashMap<ObjectId, Info>;
+/// Default byte budget of [`Known`] (`VCS_GC_KNOWN_BYTES` overrides). Speed first: 16 GiB holds every object of a
+/// repository of about 10M commits; past it gc re-reads the overflow in its second pass instead of growing.
+const KNOWN_BUDGET: usize = 16 << 30;
+
+/// Objects already read during one gc run (content-addressed, so a result never goes stale). Bounded: once the
+/// estimated size passes the budget, further results are not remembered (the caller still uses them for the level
+/// at hand), so gc memory is O(budget) rather than O(objects). Transactions are always remembered (few, and a
+/// forgotten one would not be a root).
+struct Known {
+    map: std::collections::HashMap<ObjectId, Info>,
+    txs: std::collections::HashSet<ObjectId>,
+    bytes: usize,
+    budget: usize,
+}
+
+impl Known {
+    fn new() -> Known {
+        let budget = std::env::var("VCS_GC_KNOWN_BYTES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(KNOWN_BUDGET);
+        Known::with_budget(budget)
+    }
+    fn with_budget(budget: usize) -> Known {
+        Known {
+            map: Default::default(),
+            txs: Default::default(),
+            bytes: 0,
+            budget,
+        }
+    }
+    fn contains_key(&self, id: &ObjectId) -> bool {
+        self.map.contains_key(id)
+    }
+    fn get(&self, id: &ObjectId) -> Option<&Info> {
+        self.map.get(id)
+    }
+    fn is_tx(&self, id: &ObjectId) -> bool {
+        self.txs.contains(id)
+    }
+    /// Remember `info` if the budget allows. Returns `info` back when it was not kept.
+    fn insert(&mut self, id: ObjectId, info: Info) -> Option<Info> {
+        if info.tx {
+            self.txs.insert(id);
+        }
+        // key + Info + boxed kids + hash-table slack
+        let cost = 96 + info.kids.len() * std::mem::size_of::<ObjectId>();
+        if self.bytes + cost > self.budget {
+            return Some(info);
+        }
+        self.bytes += cost;
+        self.map.insert(id, info);
+        None
+    }
+}
 
 /// `f` over `items` on several threads (small inputs stay on the caller), results in order.
 fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
@@ -377,5 +438,32 @@ pub(crate) fn children(o: &Object, out: &mut Vec<ObjectId>) {
             out.extend(op.view.tags.iter().flat_map(|t| t.values().copied()));
             out.extend(op.view.tags_delta.iter().flatten().filter_map(|(_, v)| *v));
         }
+    }
+}
+
+#[cfg(test)]
+mod known_tests {
+    use super::*;
+
+    fn info(tx: bool, kids: usize) -> Info {
+        Info {
+            tx,
+            kids: vec![ObjectId::from_bytes([7; 32]); kids].into_boxed_slice(),
+        }
+    }
+
+    #[test]
+    fn budget_bounds_the_map_but_never_forgets_transactions() {
+        let mut k = Known::with_budget(300);
+        let id = |n: u8| ObjectId::from_bytes([n; 32]);
+        assert!(k.insert(id(1), info(false, 1)).is_none());
+        assert!(k.insert(id(2), info(false, 1)).is_none());
+        // over budget: handed back, not remembered
+        assert!(k.insert(id(3), info(false, 10)).is_some());
+        assert!(!k.contains_key(&id(3)));
+        // a transaction is a gc root, so it is remembered as one even when its info is not kept
+        assert!(k.insert(id(4), info(true, 10)).is_some());
+        assert!(k.is_tx(&id(4)));
+        assert!(!k.is_tx(&id(1)));
     }
 }
