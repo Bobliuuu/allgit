@@ -248,13 +248,13 @@ fn build_inner(cmd: &Cmd) -> Result<J, Error> {
             };
             let clean = st.zones.iter().all(|a| a.staged.is_empty() && a.unstaged.is_empty()) && st.untracked.is_empty();
             let mut fields = vec![
-                    ("zones", J::Arr(zones)),
-                    ("untracked", strs(&st.untracked)),
-                    ("unsubscribed", strs(&st.unsubscribed)),
-                    ("unsupported", strs(&st.unsupported)),
-                    ("merging", merging),
-                    ("rebasing", J::Bool(repo.rebase_state()?.is_some())),
-                    ("clean", J::Bool(clean)),
+                ("zones", J::Arr(zones)),
+                ("untracked", strs(&st.untracked)),
+                ("unsubscribed", strs(&st.unsubscribed)),
+                ("unsupported", strs(&st.unsupported)),
+                ("merging", merging),
+                ("rebasing", J::Bool(repo.rebase_state()?.is_some())),
+                ("clean", J::Bool(clean)),
             ];
             if *ignored {
                 fields.push(("ignored", strs(&repo.ignored_paths()?)));

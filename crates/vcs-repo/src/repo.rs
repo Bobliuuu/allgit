@@ -716,7 +716,16 @@ impl Repo {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn add_one(&self, p: &str, zones: &Zones, ws: &Workspace, ix: &mut Index, rep: &mut AddReport, todo: &mut Vec<String>, force: bool) -> Result<()> {
+    fn add_one(
+        &self,
+        p: &str,
+        zones: &Zones,
+        ws: &Workspace,
+        ix: &mut Index,
+        rep: &mut AddReport,
+        todo: &mut Vec<String>,
+        force: bool,
+    ) -> Result<()> {
         let full = if p.is_empty() {
             self.worktree.clone()
         } else {
@@ -859,7 +868,11 @@ impl Repo {
 
     fn ignored_dir(&self, dir: &str, ix: &Index, zones: &Zones, ws: &Workspace, parent: &IgnoreStack, out: &mut Vec<String>) -> Result<()> {
         let stack = parent.descend(self.wfs.as_ref(), &self.worktree, dir)?;
-        let abs = if dir.is_empty() { self.worktree.clone() } else { self.worktree.join(dir) };
+        let abs = if dir.is_empty() {
+            self.worktree.clone()
+        } else {
+            self.worktree.join(dir)
+        };
         for e in io(&abs, fs::read_dir(&abs))? {
             let e = e.map_err(|source| Error::Io { path: abs.clone(), source })?;
             let name = e.file_name().to_string_lossy().into_owned();
@@ -871,7 +884,11 @@ impl Repo {
                 continue;
             }
             let is_dir = io(&abs, e.file_type())?.is_dir();
-            let tracked = if is_dir { ix.has_under(&rel) } else { ix.entries.contains_key(&rel) };
+            let tracked = if is_dir {
+                ix.has_under(&rel)
+            } else {
+                ix.entries.contains_key(&rel)
+            };
             if !tracked && stack.is_ignored(&rel, is_dir) {
                 out.push(if is_dir { format!("{rel}/") } else { rel });
             } else if is_dir {

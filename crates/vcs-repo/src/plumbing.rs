@@ -318,7 +318,14 @@ impl Repo {
 
     /// A commit object with the given tree and parents, stored but not referenced by any branch
     /// (git `commit-tree`). Every parent must be a commit of `zone`; `tree` must be a tree object.
-    pub fn commit_tree(&self, zone: &str, tree: &ObjectId, parents: &[ObjectId], message: &str, author: vcs_objects::Signature) -> Result<ObjectId> {
+    pub fn commit_tree(
+        &self,
+        zone: &str,
+        tree: &ObjectId,
+        parents: &[ObjectId],
+        message: &str,
+        author: vcs_objects::Signature,
+    ) -> Result<ObjectId> {
         let zone = self.resolve_zone(zone)?;
         if message.trim().is_empty() {
             return msg("empty commit message");
