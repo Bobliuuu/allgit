@@ -1531,11 +1531,7 @@ pub fn fetch_objects_with(
 /// Fetch the closure of the heads of `zones` (None = all) into `local`, storing
 /// dependencies first and verifying every object's hash. Returns the fetched heads.
 /// Only objects reachable from the requested zones are read.
-pub fn fetch_heads(
-    backend: &dyn Backend,
-    local: &dyn ObjectStore,
-    zones: Option<&[String]>,
-) -> Result<Vec<BranchDelete>, PublishError> {
+pub fn fetch_heads(backend: &dyn Backend, local: &dyn ObjectStore, zones: Option<&[String]>) -> Result<Vec<BranchDelete>, PublishError> {
     let (m, _) = load_manifest(backend)?;
     fetch_heads_impl(backend, local, zones, false, &m, &Arc::new(packfetch::PackCatalog::new()))
 }
