@@ -153,21 +153,28 @@ impl Repo {
         } else {
             self.restore_worktree(specs, &zones, &ws, &mut ix)?
         };
+        let t1 = std::time::Instant::now();
         if n > 0 {
             self.save_index(&mut ix)?;
         }
+        eprintln!("T save {:?}", t1.elapsed());
         let what = if staged { "restore --staged" } else { "restore" };
+        let t2 = std::time::Instant::now();
         self.record_op(&format!("{what} {}", specs.join(" ")), None)?;
+        eprintln!("T op {:?}", t2.elapsed());
         Ok(RestoreReport { restored: n })
     }
 
     fn restore_worktree(&self, specs: &[String], zones: &Zones, ws: &Workspace, ix: &mut Index) -> Result<usize> {
         use crate::repo::ChangeKind;
+        let t0 = std::time::Instant::now();
         let paths = self.match_index(specs, zones, ws, ix, "tracked")?;
+        eprintln!("T match {:?}", t0.elapsed());
         // 1. decide and validate everything first. The stat of every matched path (and the
         // content check of a racy one) runs on the status worker pool.
         let list: Vec<(&String, &IndexEntry)> = paths.iter().map(|p| (p, &ix.entries[p])).collect();
         let (changed, _clean) = self.unstaged_changes(&list, ix.written_ns)?;
+        eprintln!("T stat {:?} changed={}", t0.elapsed(), changed.len());
         let mut ok_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut todo: Vec<(String, bool)> = Vec::with_capacity(changed.len()); // (path, known absent)
         for c in &changed {
@@ -207,7 +214,16 @@ impl Repo {
                     r => io(&abs(), r)?,
                 }
             } else {
-                io(&abs(), self.wfs.write(p, &data, mode))?
+                // Replacing local edits: unlink + create in place like git. A rename over the old
+                // file makes ext4 flush the new data before it returns, which dominates when many
+                // files are restored.
+                match self.wfs.remove(p) {
+                    Ok(()) => match self.wfs.create_new(p, &data, mode) {
+                        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => io(&abs(), self.wfs.write(p, &data, mode))?,
+                        r => io(&abs(), r)?,
+                    },
+                    Err(_) => io(&abs(), self.wfs.write(p, &data, mode))?,
+                }
             };
             Ok(IndexEntry {
                 id,
@@ -231,6 +247,7 @@ impl Repo {
                 hs.into_iter().flat_map(|h| h.join().expect("restore writer panicked")).collect()
             })
         };
+        eprintln!("T written {:?}", t0.elapsed());
         let n = todo.len();
         for ((p, _), e) in todo.into_iter().zip(written) {
             ix.entries.insert(p, e?);
