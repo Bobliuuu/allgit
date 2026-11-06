@@ -33,6 +33,8 @@ pub struct Response {
     pub body: Vec<u8>,
     /// Large payload sent after `body` without copying (a window into a memoized pack).
     pub shared: Option<vcs_remote::SharedBytes>,
+    /// Large payload read from the backend in windows while it is sent (never fully in memory): reader and length.
+    pub stream: Option<(std::sync::Mutex<Box<dyn std::io::Read + Send>>, u64)>,
 }
 
 impl Response {
@@ -43,11 +45,12 @@ impl Response {
             headers: vec![],
             body: Vec::new(),
             shared: Some(bytes),
+            stream: None,
         }
     }
     /// Total payload length.
     pub fn body_len(&self) -> usize {
-        self.body.len() + self.shared.as_ref().map_or(0, |s| s.len())
+        self.body.len() + self.shared.as_ref().map_or(0, |s| s.len()) + self.stream.as_ref().map_or(0, |s| s.1 as usize)
     }
     pub fn new(status: u16, body: impl Into<Vec<u8>>) -> Self {
         Self {
@@ -55,7 +58,14 @@ impl Response {
             headers: vec![],
             body: body.into(),
             shared: None,
+            stream: None,
         }
+    }
+    /// A response whose body of `len` bytes is read from `reader` in windows while it is sent.
+    pub fn streamed(status: u16, reader: Box<dyn std::io::Read + Send>, len: u64) -> Self {
+        let mut r = Self::new(status, Vec::new());
+        r.stream = Some((std::sync::Mutex::new(reader), len));
+        r
     }
     pub fn with(mut self, k: &str, v: impl Into<String>) -> Self {
         self.headers.push((k.into(), v.into()));
@@ -88,6 +98,9 @@ fn reason(s: u16) -> &'static str {
     }
 }
 
+/// Window size for streamed bodies.
+pub const STREAM_WINDOW: usize = 256 * 1024;
+
 pub fn write_response(w: &mut dyn Write, r: &Response, head_only: bool) -> std::io::Result<()> {
     write_response_ka(w, r, head_only, false)
 }
@@ -108,6 +121,23 @@ pub fn write_response_ka(w: &mut dyn Write, r: &Response, head_only: bool, keep_
     let mut head = head.into_bytes();
     if head_only {
         w.write_all(&head)?;
+        return w.flush();
+    }
+    if let Some((rd, len)) = &r.stream {
+        w.write_all(&head)?;
+        let mut rd = rd.lock().unwrap_or_else(|e| e.into_inner());
+        let mut buf = vec![0u8; STREAM_WINDOW];
+        let mut left = *len;
+        while left > 0 {
+            let want = buf.len().min(left as usize);
+            let n = rd.read(&mut buf[..want])?;
+            if n == 0 {
+                // the object shrank under us: the declared length cannot be honoured, so drop the connection
+                return Err(std::io::ErrorKind::UnexpectedEof.into());
+            }
+            w.write_all(&buf[..n])?;
+            left -= n as u64;
+        }
         return w.flush();
     }
     let big = r.shared.is_some() || r.body.len() > 16 * 1024;

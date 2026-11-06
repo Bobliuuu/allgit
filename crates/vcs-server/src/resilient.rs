@@ -217,6 +217,11 @@ fn is_slowdown(e: &BackendError) -> bool {
 }
 
 impl Backend for ResilientBackend {
+    fn get_stream(&self, key: &str, min_len: u64) -> Result<Option<vcs_remote::ObjectStream>, BackendError> {
+        // Not routed through the breaker: the default "not streamed" answer is a no-op and must not count as a
+        // success that resets the failure streak; the fallback `get` that follows is the guarded call.
+        self.inner.get_stream(key, min_len)
+    }
     fn get(&self, key: &str) -> Result<Option<Versioned>, BackendError> {
         self.run(self.cfg.retries, |b| b.get(key))
     }

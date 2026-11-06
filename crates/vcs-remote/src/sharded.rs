@@ -1262,6 +1262,12 @@ impl ShardedBackend {
 }
 
 impl Backend for ShardedBackend {
+    fn get_stream(&self, key: &str, min_len: u64) -> Result<Option<crate::ObjectStream>, BackendError> {
+        if key == KEY {
+            return Ok(None);
+        }
+        self.inner.get_stream(key, min_len)
+    }
     fn get(&self, key: &str) -> Result<Option<Versioned>, BackendError> {
         if key == KEY {
             self.manifest_get()
