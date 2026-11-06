@@ -434,6 +434,7 @@ impl Repo {
     pub(crate) fn clear_merge_state(&self) -> Result<()> {
         self.clear_pick_marker()?;
         self.clear_proposals();
+        self.rerere_forget_state();
         let p = self.vcs.join(FILE);
         match fs::remove_file(&p) {
             Ok(()) => Ok(()),
@@ -480,6 +481,11 @@ impl Repo {
                 Some(e) => !(c.has_markers && e.id == c.placeholder),
             };
             if ok {
+                if c.has_markers && self.rerere_tracking() {
+                    if let Some(e) = ix.entries.get(&c.path) {
+                        self.rerere_record(&c.path, &self.store.get_content(&e.id)?)?;
+                    }
+                }
                 c.resolved = true;
                 changed = true;
             }
@@ -664,6 +670,8 @@ impl Repo {
             self.clear_merge_state()?; // preflight failed before touching files
             return Err(e);
         }
+        let mut state = state;
+        self.rerere_on_conflicts(&mut state, &mut ix)?;
         self.save_index(&mut ix)?;
         Ok(MergeOutcome::Conflicted {
             paths: state.conflicts.iter().map(|c| c.path.clone()).collect(),

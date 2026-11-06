@@ -1300,6 +1300,8 @@ impl Repo {
             self.clear_rebase_state()?;
             return Err(e);
         }
+        let mut ms = ms;
+        self.rerere_on_conflicts(&mut ms, &mut ix)?;
         self.save_index(&mut ix)?;
         if cursor != run.ref_head {
             refs.apply(&[RefUpdate {

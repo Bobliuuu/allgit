@@ -862,6 +862,15 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
                 _ => return Err(missing(&format!("bisect {sub}"), "only start|good|bad|skip|reset|run exist", "`vcs bisect --help`")),
             }
         }
+        "rerere" => {
+            let sub = rest.first().map(String::as_str).unwrap_or("");
+            match sub {
+                "" | "status" | "remaining" | "diff" | "clear" | "gc" => passthrough("rerere", rest),
+                "forget" if rest.len() > 1 => passthrough("rerere", rest),
+                "forget" => return Err(missing("rerere forget", "needs a <path>", "`vcs rerere forget <path>`")),
+                _ => return Err(missing(&format!("rerere {sub}"), "only status|remaining|diff|forget|clear|gc exist", "`vcs rerere --help`")),
+            }
+        }
         "reflog" => {
             let mut p = parse(cmd, rest, &["-n", "--max-count"]);
             let n = p.val(&["-n", "--max-count"]).or_else(|| p.val(&["-N"]));
@@ -1254,7 +1263,7 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
         "lfs" => return Err(missing(cmd, "large files are native", "files are chunked automatically; see docs/guide/06-large-files.md")),
         "filter-branch" => translate_filter_branch(rest)?,
         "filter-repo" => translate_filter_repo(rest)?,
-        "replace" | "rerere" | "range-diff" | "show-branch" | "stripspace" => {
+        "replace" | "range-diff" | "show-branch" | "stripspace" => {
             return Err(missing(cmd, "annotation and ref-substitution tools are not implemented", "`vcs rebase`, `vcs op undo`; history rewriting by path, message, author or tree is `vcs rewrite`"))
         }
         "ls-remote" | "for-each-ref" | "show-ref" | "name-rev" | "update-ref" | "update-index" | "hash-object" | "write-tree" | "read-tree" | "commit-tree" | "count-objects" | "prune" | "pack-objects" | "index-pack" | "unpack-objects" | "check-ignore" | "check-attr" | "var" | "mktag" => {

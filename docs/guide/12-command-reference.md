@@ -51,6 +51,7 @@ Commands:
   blame          Attribute each line of a file to a commit, following first parents
   hook           List, install or run client-side hooks (.vcs/hooks/, see docs/hooks.md)
   bisect         Binary-search a zone's history for the commit that introduced a bug
+  rerere         Reuse recorded conflict resolutions (rerere.enabled; docs/rerere.md)
   grep           Search tracked files (working tree, or a revision) for a regular expression
   describe       Name a commit after the nearest tag behind it
   archive        Write the files of a revision as a .tar or .zip archive
@@ -1426,6 +1427,123 @@ Usage: vcs bisect run [OPTIONS] <CMD>...
 
 Arguments:
   <CMD>...  
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+## `vcs rerere`
+
+```text
+Reuse recorded conflict resolutions (rerere.enabled; docs/rerere.md)
+
+Usage: vcs rerere [OPTIONS] [COMMAND]
+
+Commands:
+  status     List the paths of the conflict in progress that rerere is tracking
+  remaining  List the conflicted paths rerere did not resolve (still need your edit)
+  diff       Show what you changed in the tracked files since the conflict was written
+  forget     Forget the recorded resolution for these paths of the conflict in progress, so the next one is recorded afresh
+  clear      Drop the unresolved preimages of the conflict in progress and stop tracking it
+  gc         Delete resolutions unused for gc.rerereResolved days (60) and conflicts unresolved for gc.rerereUnresolved days (15)
+  help       Print this message or the help of the given subcommand(s)
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+### `vcs rerere status`
+
+```text
+List the paths of the conflict in progress that rerere is tracking
+
+Usage: vcs rerere status [OPTIONS]
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+#### `vcs rerere remaining`
+
+```text
+List the conflicted paths rerere did not resolve (still need your edit)
+
+Usage: vcs rerere remaining [OPTIONS]
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+##### `vcs rerere diff`
+
+```text
+Show what you changed in the tracked files since the conflict was written
+
+Usage: vcs rerere diff [OPTIONS]
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+###### `vcs rerere forget`
+
+```text
+Forget the recorded resolution for these paths of the conflict in progress, so the next one is recorded afresh
+
+Usage: vcs rerere forget [OPTIONS] <PATHS>...
+
+Arguments:
+  <PATHS>...  
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+####### `vcs rerere clear`
+
+```text
+Drop the unresolved preimages of the conflict in progress and stop tracking it
+
+Usage: vcs rerere clear [OPTIONS]
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+######## `vcs rerere gc`
+
+```text
+Delete resolutions unused for gc.rerereResolved days (60) and conflicts unresolved for gc.rerereUnresolved days (15)
+
+Usage: vcs rerere gc [OPTIONS]
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
