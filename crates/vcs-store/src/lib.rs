@@ -883,6 +883,27 @@ impl LocalStore {
             Err(e) => vec![e.to_string()],
         }
     }
+    /// [`LocalStore::verify_packs`] that also hands every packed object to `visit` (see [`pack::Pack::scan`]):
+    /// from many threads, in pack order, each thread with its own `init()` state (all returned). An id held by
+    /// several packs is visited once per pack.
+    pub fn scan_packs<S: Send>(
+        &self,
+        init: impl Fn() -> S + Sync,
+        visit: impl Fn(&mut S, &ObjectId, Option<&[u8]>) + Sync,
+    ) -> (Vec<String>, Vec<S>) {
+        match self.packs_r() {
+            Ok(g) => {
+                let (mut problems, mut states) = (Vec::new(), Vec::new());
+                for p in g.iter() {
+                    let (a, b) = p.scan(0, &init, &visit);
+                    problems.extend(a);
+                    states.extend(b);
+                }
+                (problems, states)
+            }
+            Err(e) => (vec![e.to_string()], Vec::new()),
+        }
+    }
     /// Write `head || tail` (already identified as `id`) as a pending loose object unless it exists.
     /// Fan-out dirs seen at first use plus those this instance created since (see `fan_at_open`).
     fn fan_at_open(&self) -> &Vec<std::sync::atomic::AtomicBool> {

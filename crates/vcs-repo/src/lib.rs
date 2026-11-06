@@ -16,6 +16,7 @@ pub mod edit;
 pub mod error;
 pub mod export;
 pub mod failpoint;
+mod fsck;
 pub mod fsmonitor;
 pub mod gc;
 pub mod histwalk;

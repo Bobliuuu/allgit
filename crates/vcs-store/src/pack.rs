@@ -1038,7 +1038,21 @@ impl Pack {
     /// Full check: index (checksum, order, fanout), whole-pack checksum, then every entry's
     /// framing, codec and object hash. This is where a corrupted index that opened lazily is caught.
     pub fn verify(&self) -> Vec<String> {
+        self.scan(0, || (), |_, _, _| {}).0
+    }
+
+    /// [`Pack::verify`] that also hands every entry to `visit(state, id, bytes)`: `Some(encoded bytes)` after its
+    /// framing, codec and hash checked out, `None` when a problem was reported for it. Entries are visited in pack
+    /// order (sequential reads through the mapping) on `threads` workers (0 = all cores); each worker owns one
+    /// `init()` state, returned with the problems when the scan ends.
+    pub fn scan<S: Send>(
+        &self,
+        threads: usize,
+        init: impl Fn() -> S + Sync,
+        visit: impl Fn(&mut S, &ObjectId, Option<&[u8]>) + Sync,
+    ) -> (Vec<String>, Vec<S>) {
         let mut out = Vec::new();
+        let mut states = Vec::new();
         let name = self.pack_path.display().to_string();
         let name = name.as_str();
         if let Err(e) = self.idx.verify_full() {
@@ -1065,7 +1079,7 @@ impl Pack {
                 }
                 Err(e) => {
                     out.push(format!("{name}: {e}"));
-                    return out;
+                    return (out, states);
                 }
             },
         };
@@ -1074,7 +1088,7 @@ impl Pack {
             Ok(b) => b,
             Err(e) => {
                 out.push(format!("{name}: {e}"));
-                return out;
+                return (out, states);
             }
         };
         #[cfg(not(unix))]
@@ -1087,72 +1101,94 @@ impl Pack {
         };
         if bytes.len() as u64 != self.idx.pack_len || bytes.len() < 44 || &bytes[..8] != magic {
             out.push(format!("{name}: bad length or header"));
-            return out;
+            return (out, states);
         }
         let (body, trailer) = bytes.split_at(bytes.len() - 32);
         let mut entries: Vec<_> = self.idx.iter().collect();
         let version = self.idx.version;
-        if version == 3 {
-            // many ids share a block: check each block once, and every id against its block
-            entries.sort_by_key(|e| e.1);
-        }
-        let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(8);
-        let per = entries.len().div_ceil(threads).max(1);
+        // Pack order: sequential reads, and (v3) each block is decoded once for all of its ids.
+        entries.sort_by_key(|e| e.1);
+        let threads = if threads == 0 {
+            std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+        } else {
+            threads
+        };
+        const SCAN_CHUNK: usize = 2048;
+        let next = std::sync::atomic::AtomicUsize::new(0);
         // The whole-pack checksum and the per-object hashes are independent: run them side by side.
         std::thread::scope(|sc| {
             let sum = sc.spawn(|| blake3::hash(body));
-            let parts: Vec<_> = entries
-                .chunks(per)
-                .map(|part| {
+            let (entries, next, init, visit) = (&entries, &next, &init, &visit);
+            let parts: Vec<_> = (0..threads)
+                .map(|_| {
                     sc.spawn(move || {
                         let mut out = Vec::new();
+                        let mut st = init();
                         let mut blk: Option<(u64, Result<Block, String>)> = None;
-                        for (id, off, len) in part {
-                            let (o, l) = (*off as usize, *len as usize);
-                            if o < 4 || o + l > body.len() || u32::from_le_bytes(body[o - 4..o].try_into().unwrap()) as usize != l {
-                                out.push(format!("{name}: bad framing for {id}"));
-                                continue;
+                        loop {
+                            let lo = next.fetch_add(SCAN_CHUNK, std::sync::atomic::Ordering::Relaxed);
+                            if lo >= entries.len() {
+                                break;
                             }
-                            if version == 3 {
-                                if blk.as_ref().map(|b| b.0) != Some(*off) {
-                                    blk = Some((*off, decode_block(&body[o..o + l])));
+                            for (id, off, len) in &entries[lo..(lo + SCAN_CHUNK).min(entries.len())] {
+                                let (o, l) = (*off as usize, *len as usize);
+                                if o < 4 || o + l > body.len() || u32::from_le_bytes(body[o - 4..o].try_into().unwrap()) as usize != l {
+                                    out.push(format!("{name}: bad framing for {id}"));
+                                    visit(&mut st, id, None);
+                                    continue;
                                 }
-                                match &blk.as_ref().expect("just set").1 {
-                                    Err(e) => out.push(format!("{name}: block at {off} undecodable: {e}")),
-                                    Ok(b) => match b.get(id) {
-                                        None => out.push(format!("{name}: {id} is not in its block")),
-                                        Some(enc) if vcs_objects::id_of_encoded(enc) != *id => {
-                                            out.push(format!("{name}: object {id} hash mismatch"))
-                                        }
-                                        Some(_) => {}
-                                    },
-                                }
-                                continue;
-                            }
-                            let decoded = if version == 4 && body[o..o + l].first() == Some(&CODEC_DELTA) {
-                                let mut fetch = |bo: u64| -> Result<Vec<u8>, String> {
-                                    let bo = bo as usize;
-                                    if bo < 4 || bo > body.len() {
-                                        return Err("base entry outside pack".into());
+                                if version == 3 {
+                                    if blk.as_ref().map(|b| b.0) != Some(*off) {
+                                        blk = Some((*off, decode_block(&body[o..o + l])));
                                     }
-                                    let bl = u32::from_le_bytes(body[bo - 4..bo].try_into().unwrap()) as usize;
-                                    body.get(bo..bo.saturating_add(bl))
-                                        .map(|s| s.to_vec())
-                                        .ok_or_else(|| "base entry outside pack".to_string())
-                                };
-                                resolve_v4(o as u64, body[o..o + l].to_vec(), MAX_DECODED, &mut fetch).map(std::borrow::Cow::Owned)
-                            } else {
-                                decode_payload(version, &body[o..o + l])
-                            };
-                            match decoded {
-                                Err(e) => out.push(format!("{name}: object {id} undecodable: {e}")),
-                                Ok(enc) if vcs_objects::id_of_encoded(&enc) != *id => {
-                                    out.push(format!("{name}: object {id} hash mismatch"))
+                                    match &blk.as_ref().expect("just set").1 {
+                                        Err(e) => {
+                                            out.push(format!("{name}: block at {off} undecodable: {e}"));
+                                            visit(&mut st, id, None);
+                                        }
+                                        Ok(b) => match b.get(id) {
+                                            None => {
+                                                out.push(format!("{name}: {id} is not in its block"));
+                                                visit(&mut st, id, None);
+                                            }
+                                            Some(enc) if vcs_objects::id_of_encoded(enc) != *id => {
+                                                out.push(format!("{name}: object {id} hash mismatch"));
+                                                visit(&mut st, id, None);
+                                            }
+                                            Some(enc) => visit(&mut st, id, Some(enc)),
+                                        },
+                                    }
+                                    continue;
                                 }
-                                Ok(_) => {}
+                                let decoded = if version == 4 && body[o..o + l].first() == Some(&CODEC_DELTA) {
+                                    let mut fetch = |bo: u64| -> Result<Vec<u8>, String> {
+                                        let bo = bo as usize;
+                                        if bo < 4 || bo > body.len() {
+                                            return Err("base entry outside pack".into());
+                                        }
+                                        let bl = u32::from_le_bytes(body[bo - 4..bo].try_into().unwrap()) as usize;
+                                        body.get(bo..bo.saturating_add(bl))
+                                            .map(|s| s.to_vec())
+                                            .ok_or_else(|| "base entry outside pack".to_string())
+                                    };
+                                    resolve_v4(o as u64, body[o..o + l].to_vec(), MAX_DECODED, &mut fetch).map(std::borrow::Cow::Owned)
+                                } else {
+                                    decode_payload(version, &body[o..o + l])
+                                };
+                                match decoded {
+                                    Err(e) => {
+                                        out.push(format!("{name}: object {id} undecodable: {e}"));
+                                        visit(&mut st, id, None);
+                                    }
+                                    Ok(enc) if vcs_objects::id_of_encoded(&enc) != *id => {
+                                        out.push(format!("{name}: object {id} hash mismatch"));
+                                        visit(&mut st, id, None);
+                                    }
+                                    Ok(enc) => visit(&mut st, id, Some(&enc)),
+                                }
                             }
                         }
-                        out
+                        (out, st)
                     })
                 })
                 .collect();
@@ -1161,10 +1197,12 @@ impl Pack {
                 out.push(format!("{name}: pack checksum mismatch"));
             }
             for p in parts {
-                out.extend(p.join().unwrap());
+                let (o, s) = p.join().unwrap();
+                out.extend(o);
+                states.push(s);
             }
         });
-        out
+        (out, states)
     }
 }
 
