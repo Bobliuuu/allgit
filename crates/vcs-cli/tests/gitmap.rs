@@ -696,6 +696,10 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
                 GC("git blame f.txt", "v3"),
                 G("git blame -M f.txt"),
                 G("git blame HEAD~1 -- f.txt"),
+                W("m.txt", "a\nb\nc\nd\ne\nf\n"),
+                G("git add m.txt"),
+                commit(),
+                G("git blame -L 1,5 m.txt"),
                 W("f.txt", "v4\n"),
                 D("git diff HEAD"),
                 D("git diff -- f.txt"),
@@ -1017,6 +1021,11 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
                 G("git tag -a v2 -m rel"),
                 GC("git describe --tags", "v"),
                 G("git describe --always"),
+                GC("git describe --dirty", "v"),
+                W("f.txt", "dirty\n"),
+                GC("git describe --dirty", "-dirty"),
+                G("git restore f.txt"),
+                BF("git describe --dirty HEAD~1"),
             ],
         ),
         (
@@ -1250,4 +1259,41 @@ fn stash_include_untracked_round_trip() {
     vcs(&["stash", "pop"]);
     assert_eq!(std::fs::read_to_string(t.path().join("sub/n.txt")).unwrap(), "new\n");
     assert_eq!(std::fs::read_to_string(t.path().join("f.txt")).unwrap(), "2\n");
+}
+
+#[test]
+fn blame_line_ranges_select_the_lines_git_selects() {
+    let t = tempfile::tempdir().unwrap();
+    let vcs = |args: &[&str]| {
+        let o = Command::new(env!("CARGO_BIN_EXE_vcs"))
+            .arg("git")
+            .args(args)
+            .current_dir(t.path())
+            .env("VCS_AUTHOR_NAME", "Dev")
+            .env("VCS_AUTHOR_EMAIL", "dev@example.com")
+            .env("VCS_GIT_QUIET", "1")
+            .output()
+            .unwrap();
+        (o.status.success(), String::from_utf8_lossy(&o.stdout).into_owned())
+    };
+    vcs(&["init"]);
+    std::fs::write(t.path().join("m.txt"), "a\nb\nc\nd\ne\nf\n").unwrap();
+    vcs(&["add", "m.txt"]);
+    vcs(&["commit", "-m", "base"]);
+    // expected text per range, as `git blame -L` selects it
+    for (range, want) in [
+        ("2,3", "bc"),
+        ("3", "cdef"),
+        ("2,+2", "bc"),
+        ("4,-2", "cd"),
+        (",2", "ab"),
+        ("5,", "ef"),
+        ("3,1", "abc"),
+    ] {
+        let (ok, out) = vcs(&["blame", "-L", range, "m.txt"]);
+        assert!(ok, "-L {range}");
+        let got: String = out.lines().map(|l| l.chars().last().unwrap()).collect();
+        assert_eq!(got, want, "-L {range}: {out}");
+    }
+    assert!(!vcs(&["blame", "-L", "9,12", "m.txt"]).0, "a range past the end is an error");
 }

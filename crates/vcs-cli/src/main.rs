@@ -343,6 +343,9 @@ enum Cmd {
         /// Minimum similarity in percent for -M
         #[arg(long, value_name = "PERCENT", default_value_t = 50, value_parser = clap::value_parser!(u32).range(0..=100))]
         rename_threshold: u32,
+        /// Only these lines: `START,END`, `START,+COUNT`, `START,-COUNT`, `START` (to the end), `,END` or `START,`
+        #[arg(short = 'L', long = "lines", value_name = "RANGE")]
+        lines: Option<String>,
     },
     #[command(flatten)]
     More(cmds::More),
@@ -908,6 +911,33 @@ fn author() -> Result<Signature, Error> {
         email,
         timestamp: timestamp(),
     })
+}
+
+/// `blame -L`: 1-based inclusive `(first, last)` of a range over a file of `total` lines.
+fn parse_line_range(spec: &str, total: usize) -> Result<(usize, usize), Error> {
+    let bad = || Error::Msg(format!("-L {spec:?}: expected START,END | START,+COUNT | START,-COUNT | START | ,END | START,"));
+    let num = |t: &str| t.trim().parse::<usize>().ok().filter(|n| *n >= 1).ok_or_else(bad);
+    let (a, b) = match spec.split_once(',') {
+        None => (num(spec)?, None), // git: from START to the end of the file
+        Some((a, b)) => (if a.trim().is_empty() { 1 } else { num(a)? }, Some(b.to_owned())),
+    };
+    let last = match b.as_deref().map(str::trim) {
+        None | Some("") => total,
+        Some(t) => match (t.strip_prefix('+'), t.strip_prefix('-')) {
+            (Some(k), _) => (a + num(k)?).saturating_sub(1),
+            (_, Some(k)) => {
+                // git: the COUNT lines ending at START
+                let k = num(k)?;
+                return Ok(((a + 1).saturating_sub(k).max(1), a));
+            }
+            _ => num(t)?,
+        },
+    };
+    let (lo, hi) = if last < a { (last, a) } else { (a, last) };
+    if lo > total {
+        return Err(Error::Msg(format!("-L {spec:?}: the file has only {total} line(s)")));
+    }
+    Ok((lo, hi.min(total)))
 }
 
 /// `--author "Name <email>"`.
@@ -1579,11 +1609,16 @@ fn run(cli: Cli) -> Result<(), Error> {
             rev,
             find_renames,
             rename_threshold,
+            lines: range,
         } => {
             let (repo, cwd) = open()?;
             let rel = repo.rel_path(&cwd, &path)?;
-            let lines = repo.blame_follow(&rel, rev.as_deref(), find_renames.then_some(rename_threshold * 10))?;
+            let mut lines = repo.blame_follow(&rel, rev.as_deref(), find_renames.then_some(rename_threshold * 10))?;
             let w = lines.len().to_string().len();
+            if let Some(r) = &range {
+                let (lo, hi) = parse_line_range(r, lines.len())?;
+                lines.retain(|l| (lo..=hi).contains(&l.line_no));
+            }
             let names = lines.iter().any(|l| l.path != rel);
             // one write, not one per line (stdout is line buffered)
             let mut out = String::new();
