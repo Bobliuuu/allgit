@@ -163,8 +163,6 @@ struct CommitRec {
 /// What one worker found. Merged in a fixed order after the pass.
 struct Acc {
     problems: Vec<String>,
-    /// Referenced ids that are in no pack index and no loose file, with the message to report if not refetchable.
-    misses: Vec<(ObjectId, String)>,
     chunked: Vec<(ObjectId, vcs_objects::ChunkedBlob)>,
     /// `(index of the commit in ids, zone, start in parents, count)`
     commits: Vec<CommitRec>,
@@ -177,17 +175,35 @@ struct Acc {
 }
 
 const RECENT: usize = 1 << 14;
+/// `recent` slot never filled / holding an id the store does not have.
+const EMPTY: usize = usize::MAX;
+const ABSENT: usize = usize::MAX - 1;
+
+/// How an object names another (to rebuild the message of a missing reference only when it is reported).
+#[derive(Clone, Copy)]
+enum Via {
+    TreeEntry,
+    Root,
+    Parent,
+    Zone,
+}
+
+/// A referenced id that is in no pack index and no loose file: the first referrer found (lowest index in `ids`).
+#[derive(Clone, Copy)]
+struct Miss {
+    from: usize,
+    via: Via,
+}
 
 impl Default for Acc {
     fn default() -> Self {
         Acc {
             problems: Vec::new(),
-            misses: Vec::new(),
             chunked: Vec::new(),
             commits: Vec::new(),
             parents: Vec::new(),
             last_zone: None,
-            recent: vec![(ObjectId::from_bytes([0; 32]), usize::MAX); RECENT],
+            recent: vec![(ObjectId::from_bytes([0; 32]), EMPTY); RECENT],
         }
     }
 }
@@ -197,29 +213,68 @@ struct Ctx<'a> {
     ids: IdSet,
     facts: Vec<AtomicU64>,
     zones: Zones,
+    /// Missing referenced ids, once each (a lazily cloned repository misses every file blob, referenced by many
+    /// trees: one entry and one message per referrer was 200 B x 1e8 references at 10M commits).
+    misses: Vec<Mutex<HashMap<ObjectId, Miss>>>,
 }
 
 impl Ctx<'_> {
-    /// Whether the store has `id`. The sorted id list answers almost always; the store is asked for the rest
-    /// (an object that appeared after listing, or a lookup the list cannot see).
-    fn exists(&self, id: &ObjectId, acc: &mut Acc, what: impl FnOnce() -> String) -> Option<usize> {
+    /// The message for `missing`, referenced from `ids[from]`; read back from that object, only when needed.
+    fn miss_message(&self, missing: &ObjectId, m: Miss) -> String {
+        let from = self.ids.ids[m.from];
+        let fallback = || format!("object {from}: missing {missing}");
+        match self.repo.store.get(&from) {
+            Ok(Object::Tree(t)) => t
+                .entries()
+                .iter()
+                .find(|e| e.id == *missing)
+                .map_or_else(fallback, |e| format!("tree {from}: missing entry {} -> {}", e.name, e.id)),
+            Ok(Object::Commit(c)) => match m.via {
+                Via::Root => format!("commit {from}: missing root tree {}", c.root),
+                _ => format!("commit {from}: missing parent {missing}"),
+            },
+            Ok(Object::Snapshot(s)) => s
+                .zones
+                .iter()
+                .find(|(_, c)| **c == *missing)
+                .map_or_else(fallback, |(a, c)| format!("snapshot {from}: missing commit {c} for zone {a}")),
+            _ => fallback(),
+        }
+    }
+
+    /// Whether the store has `id` (`Some(index in ids)`). The sorted id list answers almost always; the store is asked
+    /// for the rest (an object that appeared after listing), and a reference to something it lacks is recorded once.
+    fn exists(&self, id: &ObjectId, acc: &mut Acc, from: usize, via: Via) -> Option<usize> {
         let b = id.as_bytes();
         let slot = (u16::from_le_bytes([b[8], b[9]]) as usize) & (RECENT - 1);
-        if acc.recent[slot].1 != usize::MAX && acc.recent[slot].0 == *id {
-            return Some(acc.recent[slot].1);
+        let (rid, ri) = acc.recent[slot];
+        if ri != EMPTY && rid == *id {
+            return if ri == ABSENT { None } else { Some(ri) };
         }
         if let Some(i) = self.ids.find(id) {
             acc.recent[slot] = (*id, i);
             return Some(i);
         }
+        {
+            let mut shard = self.misses[b[0] as usize].lock().unwrap();
+            if let Some(m) = shard.get_mut(id) {
+                if from < m.from {
+                    *m = Miss { from, via };
+                }
+                acc.recent[slot] = (*id, ABSENT);
+                return None;
+            }
+        }
         match self.repo.store.contains(id) {
             Ok(true) => None,
             Ok(false) => {
-                acc.misses.push((*id, what()));
+                self.misses[b[0] as usize].lock().unwrap().entry(*id).or_insert(Miss { from, via });
+                acc.recent[slot] = (*id, ABSENT);
                 None
             }
             Err(e) => {
-                acc.problems.push(format!("{}: {e}", what()));
+                let m = self.miss_message(id, Miss { from, via });
+                acc.problems.push(format!("{m}: {e}"));
                 None
             }
         }
@@ -237,12 +292,10 @@ impl Ctx<'_> {
                         i
                     }
                 };
-                let root = self
-                    .exists(&c.root, acc, || format!("commit {id}: missing root tree {}", c.root))
-                    .unwrap_or(usize::MAX);
+                let root = self.exists(&c.root, acc, idx, Via::Root).unwrap_or(usize::MAX);
                 let start = acc.parents.len();
                 for p in &c.parents {
-                    if let Some(pi) = self.exists(p, acc, || format!("commit {id}: missing parent {p}")) {
+                    if let Some(pi) = self.exists(p, acc, idx, Via::Parent) {
                         acc.parents.push(pi);
                     }
                 }
@@ -261,14 +314,14 @@ impl Ctx<'_> {
                         self.ids.prefetch_ids(&e.id);
                     }
                     for e in part {
-                        self.exists(&e.id, acc, || format!("tree {id}: missing entry {} -> {}", e.name, e.id));
+                        self.exists(&e.id, acc, idx, Via::TreeEntry);
                     }
                 }
                 OTHER
             }
             Object::Snapshot(s) => {
-                for (a, c) in &s.zones {
-                    self.exists(c, acc, || format!("snapshot {id}: missing commit {c} for zone {a}"));
+                for c in s.zones.values() {
+                    self.exists(c, acc, idx, Via::Zone);
                 }
                 OTHER
             }
@@ -516,6 +569,7 @@ impl Repo {
             facts: (0..ids.len()).map(|_| AtomicU64::new(UNSEEN)).collect(),
             ids: IdSet::new(ids),
             zones: Zones::default(),
+            misses: (0..256).map(|_| Mutex::new(HashMap::new())).collect(),
         };
         // Packs: hash + decode in pack order on every core. Then whatever no pack delivered, through `store.get`.
         trace.at("id index");
@@ -528,34 +582,37 @@ impl Repo {
         let mut refetchable: Option<BTreeSet<ObjectId>> = None;
         let mut evictable: BTreeSet<ObjectId> = BTreeSet::new();
         let mut object_problems: Vec<String> = Vec::new();
-        let mut misses: Vec<(ObjectId, String)> = Vec::new();
         let mut chunked = Vec::new();
         for a in &mut accs {
             object_problems.append(&mut a.problems);
-            misses.append(&mut a.misses);
             chunked.append(&mut a.chunked);
         }
         object_problems.sort();
         rep.problems.append(&mut object_problems);
-        misses.sort();
+        let mut misses: Vec<(ObjectId, Miss)> = Vec::new();
+        for shard in &ctx.misses {
+            misses.extend(shard.lock().unwrap().drain());
+        }
+        misses.sort_unstable_by_key(|(id, _)| *id);
         if !misses.is_empty() {
             // A lazily cloned repository misses every file blob: ask which of them a remote-tracking head reaches
-            // with one parallel walk, not with a single-threaded closure over the whole repository per miss.
-            let mut miss_ids: Vec<ObjectId> = misses.iter().map(|(i, _)| *i).collect();
-            miss_ids.dedup(); // `misses` is sorted by id
-            let set = IdSet::new(miss_ids);
+            // with one parallel walk, not with a single-threaded closure over the whole repository.
+            let set = IdSet::new(misses.iter().map(|(i, _)| *i).collect());
             let reached = self.reachable_misses(&ctx, &accs, &set)?;
-            for (id, what) in misses {
-                if self.store.contains(&id)? {
+            let mut lost = Vec::new();
+            for (k, (id, m)) in misses.iter().enumerate() {
+                // the workers asked the store already; this only catches an object stored since (no stat per miss)
+                if self.store.contains_hint(id)? {
                     continue;
                 }
-                match set.find(&id) {
-                    Some(k) if reached[k].load(Ordering::Relaxed) => {
-                        evictable.insert(id);
-                    }
-                    _ => rep.problems.push(what),
+                if reached[k].load(Ordering::Relaxed) {
+                    evictable.insert(*id);
+                } else {
+                    lost.push(ctx.miss_message(id, *m));
                 }
             }
+            lost.sort();
+            rep.problems.append(&mut lost);
         }
         // A missing object is an evictable cache miss only if the remote is known to have it.
         let mut missing = |this: &Self, id: &ObjectId, what: String, problems: &mut Vec<String>| -> Result<()> {
