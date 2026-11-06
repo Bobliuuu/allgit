@@ -153,12 +153,12 @@ enum Cmd {
         /// Do not sign even when `commit.sign` is true
         #[arg(long, conflicts_with = "sign")]
         no_sign: bool,
-    /// Record this identity (`Name <email>`) as the commit's author instead of `user.name`/`user.email`
-    #[arg(long, value_name = "NAME <EMAIL>")]
-    author: Option<String>,
-    /// Commit the current zone even when nothing in it changed (like `git commit --allow-empty`)
-    #[arg(long)]
-    allow_empty: bool,
+        /// Record this identity (`Name <email>`) as the commit's author instead of `user.name`/`user.email`
+        #[arg(long, value_name = "NAME <EMAIL>")]
+        author: Option<String>,
+        /// Commit the current zone even when nothing in it changed (like `git commit --allow-empty`)
+        #[arg(long)]
+        allow_empty: bool,
     },
     /// Check the Ed25519 signature of a commit against `signing.allowedSigners` (exit 1 unless good)
     VerifyCommit {
@@ -929,7 +929,11 @@ fn author() -> Result<Signature, Error> {
 
 /// `blame -L`: 1-based inclusive `(first, last)` of a range over a file of `total` lines.
 fn parse_line_range(spec: &str, total: usize) -> Result<(usize, usize), Error> {
-    let bad = || Error::Msg(format!("-L {spec:?}: expected START,END | START,+COUNT | START,-COUNT | START | ,END | START,"));
+    let bad = || {
+        Error::Msg(format!(
+            "-L {spec:?}: expected START,END | START,+COUNT | START,-COUNT | START | ,END | START,"
+        ))
+    };
     let num = |t: &str| t.trim().parse::<usize>().ok().filter(|n| *n >= 1).ok_or_else(bad);
     let (a, b) = match spec.split_once(',') {
         None => (num(spec)?, None), // git: from START to the end of the file
@@ -1811,7 +1815,9 @@ fn run(cli: Cli) -> Result<(), Error> {
             if no_commit {
                 match repo.revert_no_commit(&zone, &rev, author()?)? {
                     MergeOutcome::Squashed { changed } => {
-                        println!("{zone}: reverted {rev} in the working tree and index ({changed} file(s) staged); record it with `vcs commit`");
+                        println!(
+                            "{zone}: reverted {rev} in the working tree and index ({changed} file(s) staged); record it with `vcs commit`"
+                        );
                     }
                     out => print_pick(&zone, out, "revert")?,
                 }
@@ -2001,7 +2007,10 @@ fn run(cli: Cli) -> Result<(), Error> {
         Cmd::Stash(c) => {
             let (repo, _) = open()?;
             match c {
-                StashCmd::Push { message, include_untracked } => {
+                StashCmd::Push {
+                    message,
+                    include_untracked,
+                } => {
                     if include_untracked {
                         let root = repo.rel_path(repo.worktree(), ".")?;
                         let rep = repo.add(&[root])?;

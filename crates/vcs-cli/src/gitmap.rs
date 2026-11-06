@@ -1584,7 +1584,9 @@ fn translate_commit(rest: &[String]) -> Result<Vec<Step>, Error> {
     }
     if allow_empty {
         if amend {
-            return Err(Error::Msg("git commit --allow-empty with --amend: an amend already allows an unchanged tree".into()));
+            return Err(Error::Msg(
+                "git commit --allow-empty with --amend: an amend already allows an unchanged tree".into(),
+            ));
         }
         commit.push("--allow-empty".into());
     }
@@ -1704,7 +1706,12 @@ fn translate_log(rest: &[String]) -> Result<Vec<Step>, Error> {
     if p.take(&["-M"]) || p.val(&["--find-renames"]).is_some() {
         a.push("-M".into());
     }
-    for (long, fl) in [("--author", &["--author"][..]), ("--grep", &["--grep"][..]), ("-S", &["-S"][..]), ("-G", &["-G"][..])] {
+    for (long, fl) in [
+        ("--author", &["--author"][..]),
+        ("--grep", &["--grep"][..]),
+        ("-S", &["-S"][..]),
+        ("-G", &["-G"][..]),
+    ] {
         if let Some(x) = p.val(fl) {
             a.extend([long.to_owned(), x]);
         }
@@ -1814,7 +1821,11 @@ fn translate_branch(rest: &[String]) -> Result<Vec<Step>, Error> {
     if p.take(&["-r", "--remotes"]) {
         p.finish("`vcs branch -r`")?;
         if !p.pos.is_empty() {
-            return Err(missing("branch -r <pattern>", "pattern filtering", "`vcs branch -r` lists the zone's remote-tracking branches"));
+            return Err(missing(
+                "branch -r <pattern>",
+                "pattern filtering",
+                "`vcs branch -r` lists the zone's remote-tracking branches",
+            ));
         }
         return Ok(vec![Step::Vcs(v(&["branch", "-r"]))]);
     }
