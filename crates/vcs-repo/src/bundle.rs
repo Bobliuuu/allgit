@@ -692,6 +692,23 @@ impl Repo {
     /// each zone checked out on `main` (else its first branch). Bundles with prerequisites cannot
     /// be cloned (they need an existing repository: use `fetch`).
     pub fn clone_from_bundle(file: &Path, dest: &Path, author: Signature) -> Result<Repo> {
+        Self::clone_from_bundle_with(file, dest, author, None, true)
+    }
+
+    /// Like [`Repo::clone_from_bundle`] but only the named zones get a checkout; the other zones'
+    /// objects and refs are kept so `vcs zone add` can add them later. With
+    /// `checkout == false` no zone is added to the workspace (used to plan a `--for` selection:
+    /// every zone's refs are set, nothing is written to a worktree).
+    pub fn clone_from_bundle_zones(file: &Path, dest: &Path, author: Signature, zones: &[String]) -> Result<Repo> {
+        Self::clone_from_bundle_with(file, dest, author, Some(zones), true)
+    }
+
+    /// A repository holding all of the bundle's objects and refs but no checked-out zone.
+    pub fn bundle_plan_repo(file: &Path, dest: &Path, author: Signature) -> Result<Repo> {
+        Self::clone_from_bundle_with(file, dest, author, None, false)
+    }
+
+    fn clone_from_bundle_with(file: &Path, dest: &Path, author: Signature, zones: Option<&[String]>, checkout: bool) -> Result<Repo> {
         let info = verify_file(file)?;
         if !info.prerequisites.is_empty() {
             return msg(
@@ -707,14 +724,28 @@ impl Repo {
             {
                 let _l = repo.lock()?;
                 let p = repo.bundle_prepare(file)?;
+                if let Some(zs) = zones {
+                    let defs = match &p.defs {
+                        Some(d) => d.clone(),
+                        None => repo.zones()?,
+                    };
+                    for x in zs {
+                        if defs.resolve(x).is_none() {
+                            return msg(format!("the bundle has no zone {x:?}"));
+                        }
+                    }
+                }
                 repo.bundle_commit(file, &p, author)?;
                 let mut local = Refs::default();
                 local.apply(&p.updates)?;
                 write_atomic(&repo.common.join("refs"), &local.encode())?;
                 repo.save_ws(&Workspace::default())?;
             }
+            if !checkout {
+                return Ok(());
+            }
             let mut pick: BTreeMap<&str, &str> = BTreeMap::new();
-            for h in &info.heads {
+            for h in info.heads.iter().filter(|h| p_keep(&repo, zones, &h.zone)) {
                 let e = pick.entry(h.zone.as_str()).or_insert(h.branch.as_str());
                 if h.branch == DEFAULT_BRANCH {
                     *e = DEFAULT_BRANCH;
@@ -735,6 +766,15 @@ impl Repo {
                 Err(e)
             }
         }
+    }
+}
+
+/// True when `zone` is selected by `zones` (None = all).
+fn p_keep(repo: &Repo, zones: Option<&[String]>, zone: &str) -> bool {
+    match (zones, repo.zones()) {
+        (None, _) => true,
+        (Some(zs), Ok(d)) => zs.iter().any(|x| d.resolve(x).as_deref() == Some(zone)),
+        _ => false,
     }
 }
 

@@ -19,6 +19,8 @@ use vcs_repo::treeops::{self, Flat};
 use vcs_repo::zonedetect as zd;
 use vcs_repo::{Error, Repo, ROOT_ZONE};
 
+mod bundle_for;
+
 #[derive(Args, Clone)]
 pub struct SuggestArgs {
     /// Hide proposals below this confidence (0..1)
@@ -1032,6 +1034,9 @@ fn subscribe(a: &ForArgs, json: bool) -> Result<(), Error> {
 fn clone_for(url: &str, dir: &Path, zones: &[String], stats: bool, a: &ForArgs, json: bool) -> Result<(), Error> {
     if !zones.is_empty() {
         return Err(Error::Msg("--zone and --for/--task/--for-owner cannot be combined; use one".into()));
+    }
+    if bundle_for::try_clone_for(url, dir, a, json)? {
+        return Ok(());
     }
     let cwd = std::env::current_dir().map_err(|source| Error::Io { path: ".".into(), source })?;
     let url = remote::normalize_url(url, &cwd);

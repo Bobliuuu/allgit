@@ -59,3 +59,36 @@ fn bundle_create_verify_clone_and_incremental_fetch() {
     std::fs::write(&b2, bytes).unwrap();
     assert!(fail(root, &["bundle", "verify", b2.to_str().unwrap()]).contains("hash mismatch"));
 }
+
+#[test]
+fn clone_bundle_for_path_takes_only_the_selected_zone() {
+    let d = tempfile::tempdir().unwrap();
+    let root = d.path();
+    ok(root, &["init", "a"]);
+    let a = root.join("a");
+    ok(&a, &["zone", "create", "engine", "--path", "engine"]);
+    ok(&a, &["zone", "create", "docs", "--path", "docs"]);
+    for (f, c) in [("engine/core.rs", "e"), ("docs/guide.md", "d"), ("README", "r")] {
+        std::fs::create_dir_all(a.join(f).parent().unwrap()).unwrap();
+        std::fs::write(a.join(f), c).unwrap();
+    }
+    ok(&a, &["add", "."]);
+    ok(&a, &["commit", "-m", "one"]);
+    let b = root.join("x.bundle");
+    ok(&a, &["bundle", "create", b.to_str().unwrap()]);
+    // dry run writes nothing
+    ok(root, &["clone", b.to_str().unwrap(), "dry", "--for", "engine", "--dry-run"]);
+    assert!(!root.join("dry").exists());
+    ok(root, &["clone", b.to_str().unwrap(), "c", "--for", "engine/core.rs"]);
+    let c = root.join("c");
+    assert_eq!(std::fs::read_to_string(c.join("engine/core.rs")).unwrap(), "e");
+    assert!(!c.join("docs").exists(), "unselected zone must not be checked out");
+    assert!(ok(&c, &["fsck"]).contains("ok"));
+    // the rest can be added later
+    ok(&c, &["zone", "add", "docs"]);
+    assert_eq!(std::fs::read_to_string(c.join("docs/guide.md")).unwrap(), "d");
+    // unresolvable query is refused and leaves no destination
+    let e = fail(root, &["clone", b.to_str().unwrap(), "bad", "--for", "nosuchthing"]);
+    assert!(e.contains("could not resolve") || e.contains("nothing"), "{e}");
+    assert!(!root.join("bad").exists());
+}
