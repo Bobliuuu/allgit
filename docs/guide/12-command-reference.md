@@ -116,11 +116,12 @@ Arguments:
   [PATH]  
 
 Options:
-  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
-      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
-      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
-      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
-  -h, --help           Print help
+  -b, --initial-branch <BRANCH>  Name of the first branch of the root zone (default `main`)
+  -C <DIR>                       Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json                     Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>            PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks                 Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help                     Print help
 ```
 
 ## `vcs add`
@@ -209,15 +210,17 @@ Commit staged changes in all subscribed zones atomically
 Usage: vcs commit [OPTIONS]
 
 Options:
-  -C <DIR>                 Run as if vcs was started in <DIR> (applied before repository discovery)
-  -m, --message <MESSAGE>  Commit message (omit to write it in core.editor / $EDITOR)
-      --force-no-lock      Commit changes to lockable files (`.vcsattributes`) even without holding their lock
-      --json               Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
-      --ca-pem <FILE>      PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
-  -S, --gpg-sign [<KEY>]   Sign the commits with an Ed25519 key (path to an OpenSSH private key; default `user.signingkey`)
-      --no-hooks           Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
-      --no-sign            Do not sign even when `commit.sign` is true
-  -h, --help               Print help
+  -C <DIR>                     Run as if vcs was started in <DIR> (applied before repository discovery)
+  -m, --message <MESSAGE>      Commit message (omit to write it in core.editor / $EDITOR)
+      --force-no-lock          Commit changes to lockable files (`.vcsattributes`) even without holding their lock
+      --json                   Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>          PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+  -S, --gpg-sign [<KEY>]       Sign the commits with an Ed25519 key (path to an OpenSSH private key; default `user.signingkey`)
+      --no-hooks               Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+      --no-sign                Do not sign even when `commit.sign` is true
+      --author <NAME <EMAIL>>  Record this identity (`Name <email>`) as the commit's author instead of `user.name`/`user.email`
+      --allow-empty            Commit the current zone even when nothing in it changed (like `git commit --allow-empty`)
+  -h, --help                   Print help
 ```
 
 ## `vcs verify-commit`
@@ -267,8 +270,8 @@ Usage: vcs config [OPTIONS] <COMMAND>
 
 Commands:
   get    Print the effective value of a key (exit 1 if unset)
-  set    Set a key in the repository config (or the user config with --user)
-  unset  Remove a key from the repository config (or the user config with --user)
+  set    Set a key in the repository config (or the user config with --user, the machine-wide one with --system)
+  unset  Remove a key from the repository config (or the user config with --user, the machine-wide one with --system)
   list   List effective settings and where each comes from
   help   Print this message or the help of the given subcommand(s)
 
@@ -301,7 +304,7 @@ Options:
 #### `vcs config set`
 
 ```text
-Set a key in the repository config (or the user config with --user)
+Set a key in the repository config (or the user config with --user, the machine-wide one with --system)
 
 Usage: vcs config set [OPTIONS] <KEY> <VALUE>
 
@@ -313,6 +316,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --user           
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --system         The machine-wide config (`$VCS_SYSTEM_CONFIG`, else /etc/vcs/config; usually needs root)
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
@@ -321,7 +325,7 @@ Options:
 ##### `vcs config unset`
 
 ```text
-Remove a key from the repository config (or the user config with --user)
+Remove a key from the repository config (or the user config with --user, the machine-wide one with --system)
 
 Usage: vcs config unset [OPTIONS] <KEY>
 
@@ -332,6 +336,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --user           
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --system         The machine-wide config
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
@@ -397,9 +402,11 @@ Options:
       --json                        Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --stat                        Per-file added/deleted line counts instead of the patch
       --ca-pem <FILE>               PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --numstat                     Machine-readable counts: `added<TAB>deleted<TAB>path` per file (`-` for both on a binary file)
+      --exit-code                   Exit with status 1 when there are differences, 0 when there are none
+      --no-hooks                    Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
       --name-only                   Only the names of changed files
       --name-status                 Names with a status letter: A added, D deleted, M modified, R<score> renamed, C<score> copied
-      --no-hooks                    Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
       --word-diff                   Show changed words inline as [-old-]{+new+} instead of changed lines
       --color [<WHEN>]              Colour the output: auto (terminal and no NO_COLOR), always, never. Bare `--color` forces colour unless NO_COLOR is set; `--color=always` overrides NO_COLOR
       --color-moved                 Colour lines that were moved (deleted in one place, added in another of the same diff) differently; only visible with colour
@@ -597,6 +604,7 @@ Options:
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -m, --move           Rename a branch: `-m <old> <new>`, or `-m <new>` for the checked-out one
   -M, --force-move     Like -m but replace an existing branch of that name (never the checked-out one)
+  -r, --remotes        List the remote-tracking branches of the zone (`origin/<branch>`, as of the last fetch or publish)
   -h, --help           Print help
 ```
 
@@ -634,6 +642,7 @@ Options:
   -C <DIR>                 Run as if vcs was started in <DIR> (applied before repository discovery)
   -m, --message <MESSAGE>  
       --json               Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+  -u, --include-untracked  Also set aside untracked files (not ignored ones): they are added first, so `pop` brings them back staged
       --ca-pem <FILE>      PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks           Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help               Print help
@@ -962,6 +971,7 @@ Options:
       --no-hooks               Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -s, --sign                   Sign the annotated tag with `user.signingkey` (Ed25519; needs -m)
   -d, --delete                 Delete the named tag
+  -f, --force                  Replace the tag when it already exists (the old tag is only dropped once the new target resolves)
   -h, --help                   Print help
 ```
 
@@ -987,6 +997,7 @@ Options:
       --start-number <N>        Number the first patch from N (default 1) [default: 1]
       --no-numbered             Never put `n/m` in the subject
       --subject-prefix <TEXT>   Subject prefix inside the brackets (default PATCH) [default: PATCH]
+      --cover-letter            Write a `0000-cover-letter.patch` first: a subject and blurb to fill in, the shortlog and the diffstat of the series; the patches are then always numbered n/N
       --zone <ZONE>             Zone (default: the zone containing the current directory)
   -h, --help                    Print help
 ```
@@ -1012,6 +1023,7 @@ Options:
   -p <N>               Strip N leading path components (default 1)
   -3, --3way           Three-way application: a hunk that does not fit is merged against its own pre-image; overlapping edits leave conflict markers in the file
   -v, --verbose        Print the files that were (or would be) changed
+      --stat           Show the per-file added and deleted line counts of the patch and apply nothing
   -h, --help           Print help
 ```
 
@@ -1053,9 +1065,11 @@ Options:
       --json                        Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --stat                        Per-file added/deleted line counts instead of the patch
       --ca-pem <FILE>               PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --numstat                     Machine-readable counts: `added<TAB>deleted<TAB>path` per file (`-` for both on a binary file)
+      --exit-code                   Exit with status 1 when there are differences, 0 when there are none
+      --no-hooks                    Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
       --name-only                   Only the names of changed files
       --name-status                 Names with a status letter: A added, D deleted, M modified, R<score> renamed, C<score> copied
-      --no-hooks                    Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
       --word-diff                   Show changed words inline as [-old-]{+new+} instead of changed lines
       --color [<WHEN>]              Colour the output: auto (terminal and no NO_COLOR), always, never. Bare `--color` forces colour unless NO_COLOR is set; `--color=always` overrides NO_COLOR
       --color-moved                 Colour lines that were moved (deleted in one place, added in another of the same diff) differently; only visible with colour
@@ -1085,6 +1099,7 @@ Options:
   -M, --find-renames                Follow the file across renames (a file new in a commit is matched with files that commit removed)
       --ca-pem <FILE>               PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --rename-threshold <PERCENT>  Minimum similarity in percent for -M [default: 50]
+  -L, --lines <RANGE>               Only these lines: `START,END`, `START,+COUNT`, `START,-COUNT`, `START` (to the end), `,END` or `START,`
       --no-hooks                    Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help                        Print help
 ```
@@ -1317,6 +1332,7 @@ Options:
       --no-hooks            Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -c, --count               Print only the number of matching lines per file
   -F, --fixed               Treat the pattern as a literal string
+      --cached              Search the staged content (the index) instead of the files on disk
   -h, --help                Print help
 ```
 
@@ -1331,14 +1347,15 @@ Arguments:
   [REV]  Revision to describe (default HEAD)
 
 Options:
-  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
-      --tags           Use lightweight tags too (default: annotated tags only)
-      --always         Show the abbreviated commit id when no tag is found
-      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
-      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
-      --zone <ZONE>    
-      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
-  -h, --help           Print help
+  -C <DIR>              Run as if vcs was started in <DIR> (applied before repository discovery)
+      --tags            Use lightweight tags too (default: annotated tags only)
+      --always          Show the abbreviated commit id when no tag is found
+      --json            Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>   PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --zone <ZONE>     
+      --dirty[=<MARK>]  Append MARK (default `-dirty`) when tracked files differ from HEAD (staged or unstaged); HEAD only
+      --no-hooks        Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help            Print help
 ```
 
 ## `vcs archive`
@@ -1378,8 +1395,9 @@ Options:
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --show-toplevel  Print the absolute path of the working tree root instead
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
-      --zone <ZONE>    Zone (default: the zone containing the current directory)
+      --git-dir        Print the directory that holds this worktree's state (`.vcs`; relative at the repository root, else absolute)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+      --zone <ZONE>    Zone (default: the zone containing the current directory)
   -h, --help           Print help
 ```
 
@@ -1401,6 +1419,7 @@ Options:
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --depth <N>      With --rev: list only the entries directly inside the root of the revision (`1`), directories as mode 040000 with their tree id, like `git ls-tree <rev>`; reads one tree
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -o, --others         List the untracked files instead (one per file, not collapsed to directories); files matched by `.vcsignore` are left out, like `git ls-files -o --exclude-standard`
   -h, --help           Print help
 ```
 
@@ -1409,19 +1428,21 @@ Options:
 ```text
 Show the type, size or content of an object
 
-Usage: vcs cat-file [OPTIONS] <OBJECT>
+Usage: vcs cat-file [OPTIONS] [OBJECT]
 
 Arguments:
-  <OBJECT>  An object id (64 hex digits), a revision, or `<rev>:<path>` for a file
+  [OBJECT]  An object id (64 hex digits), a revision, or `<rev>:<path>` for a file [default: ""]
 
 Options:
+      --batch          Read object names from standard input, one per line, and print `<id> <type> <size>`, the content and a newline for each (`<name> missing` for an unknown one)
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
-  -t                   Print the object's type
+      --batch-check    Like --batch but only the `<id> <type> <size>` line
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
-  -s                   Print the object's size in bytes
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
-  -p                   Print the content (file bytes; for a commit its header and message)
+  -t                   Print the object's type
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -s                   Print the object's size in bytes
+  -p                   Print the content (file bytes; for a commit its header and message)
       --zone <ZONE>    
   -h, --help           Print help
 ```
@@ -1554,6 +1575,7 @@ Options:
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
   -d                   Also delete untracked directories (here: untracked files inside them are always listed, so this only removes the emptied directories)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -x                   Also delete files matched by `.vcsignore` (ignored directories need -d as well)
   -h, --help           Print help
 ```
 
@@ -1896,6 +1918,7 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --zone <ZONE>    Zone (default: the zone containing the current directory)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+  -n, --no-commit      Leave the undoing change staged in the index and working tree instead of committing it
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
@@ -2579,9 +2602,10 @@ Manage the remote
 Usage: vcs remote [OPTIONS] <COMMAND>
 
 Commands:
-  set   Set the remote location (path or file:// URL)
-  show  Show the configured remote
-  help  Print this message or the help of the given subcommand(s)
+  set     Set the remote location (path or file:// URL)
+  show    Show the configured remote
+  remove  Forget the remote and its remote-tracking refs (local branches and history are kept)
+  help    Print this message or the help of the given subcommand(s)
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
@@ -2615,6 +2639,21 @@ Options:
 Show the configured remote
 
 Usage: vcs remote show [OPTIONS]
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+##### `vcs remote remove`
+
+```text
+Forget the remote and its remote-tracking refs (local branches and history are kept)
+
+Usage: vcs remote remove [OPTIONS]
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
