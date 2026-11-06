@@ -391,16 +391,18 @@ unsafe impl Send for MapBytes {}
 unsafe impl Sync for MapBytes {}
 #[cfg(unix)]
 impl MapBytes {
-    fn open(f: &fs::File, len: usize) -> Option<MapBytes> {
+    fn open(f: &fs::File, len: usize, random: bool) -> Option<MapBytes> {
         use std::os::fd::AsRawFd;
         // SAFETY: plain read-only private mapping of an open file; MAP_FAILED is checked.
         let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_PRIVATE, f.as_raw_fd(), 0) };
         if p == libc::MAP_FAILED {
             return None;
         }
-        // lookups are random: do not read ahead
-        // SAFETY: p/len is the mapping just created.
-        unsafe { libc::madvise(p, len, libc::MADV_RANDOM) };
+        if random {
+            // lookups are random: do not read ahead
+            // SAFETY: p/len is the mapping just created.
+            unsafe { libc::madvise(p, len, libc::MADV_RANDOM) };
+        }
         Some(MapBytes { ptr: p as *const u8, len })
     }
     fn as_slice(&self) -> &[u8] {
@@ -492,7 +494,7 @@ impl PackIndex {
                 })?;
                 let (version, count, pack_len, checksum, fanout, base) = Self::parse_header(&head, len, path)?;
                 if len >= mmap_min {
-                    if let Some(m) = MapBytes::open(&f, len as usize) {
+                    if let Some(m) = MapBytes::open(&f, len as usize, true) {
                         return Ok(PackIndex {
                             src: Src::Map(m),
                             version,
@@ -1042,13 +1044,41 @@ impl Pack {
         if let Err(e) = self.idx.verify_full() {
             out.push(format!("{}: {e}", self.pack_path.with_extension("idx").display()));
         }
-        let bytes = match fs::read(&self.pack_path) {
+        // Map the pack instead of reading it whole: verification is a sequential pass and the pack can be
+        // tens of GB (fsck held the entire pack as an anonymous buffer: 4 GB at 1M commits, 21 GB at 5M).
+        #[cfg(unix)]
+        let mapped = fs::File::open(&self.pack_path).ok().and_then(|f| {
+            f.metadata()
+                .ok()
+                .filter(|m| m.len() > 0)
+                .and_then(|m| MapBytes::open(&f, m.len() as usize, false))
+        });
+        #[cfg(unix)]
+        let owned: Vec<u8>;
+        #[cfg(unix)]
+        let bytes: &[u8] = match &mapped {
+            Some(m) => m.as_slice(),
+            None => match fs::read(&self.pack_path) {
+                Ok(b) => {
+                    owned = b;
+                    &owned
+                }
+                Err(e) => {
+                    out.push(format!("{name}: {e}"));
+                    return out;
+                }
+            },
+        };
+        #[cfg(not(unix))]
+        let owned = match fs::read(&self.pack_path) {
             Ok(b) => b,
             Err(e) => {
                 out.push(format!("{name}: {e}"));
                 return out;
             }
         };
+        #[cfg(not(unix))]
+        let bytes: &[u8] = &owned;
         let magic = match self.idx.version {
             4 => PACK_MAGIC_V4,
             3 => PACK_MAGIC_V3,
