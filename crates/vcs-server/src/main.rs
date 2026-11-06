@@ -56,7 +56,30 @@ fn audit_verify(args: &[String]) -> ! {
     }
 }
 
+/// glibc's defaults suit a program with a few threads, not a thread per connection that buffers whole packs: every
+/// thread gets its own malloc arena (up to 8 per core) and keeps what it freed, and the mmap threshold grows to 32 MiB
+/// as big buffers are freed, so the next ones are carved from arena heaps that never shrink. Under 24 concurrent
+/// downloads of an 80 MB pack the resident size peaked at 2.3 to 2.6 GiB that way, against 0.9 to 1.2 GiB with four
+/// arenas and a fixed 1 MiB threshold (docs/known-limits.md). An explicit `MALLOC_ARENA_MAX` or
+/// `MALLOC_MMAP_THRESHOLD_` in the environment wins.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn tune_malloc() {
+    // SAFETY: mallopt only sets allocator parameters; it is called before any other thread exists.
+    unsafe {
+        if std::env::var_os("MALLOC_ARENA_MAX").is_none() {
+            libc::mallopt(libc::M_ARENA_MAX, 4);
+        }
+        if std::env::var_os("MALLOC_MMAP_THRESHOLD_").is_none() {
+            libc::mallopt(libc::M_MMAP_THRESHOLD, 1 << 20);
+        }
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn tune_malloc() {}
+
 fn main() {
+    tune_malloc();
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("hash-token") => {
