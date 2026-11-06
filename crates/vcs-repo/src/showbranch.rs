@@ -78,7 +78,11 @@ impl Repo {
             }
             let id = self.resolve_rev(&zone, r)?;
             let subject = self.commit_obj(&id)?.message.lines().next().unwrap_or("").to_owned();
-            heads.push(SbHead { name: r.clone(), id, subject });
+            heads.push(SbHead {
+                name: r.clone(),
+                id,
+                subject,
+            });
         }
         if heads.len() > MAX_HEADS {
             return msg(format!("show-branch: at most {MAX_HEADS} revisions at a time"));
@@ -194,8 +198,16 @@ impl Repo {
             let mut extra: BinaryHeap<(u64, Reverse<u64>, ObjectId)> = BinaryHeap::new();
             let mut seen: BTreeSet<ObjectId> = order.iter().copied().collect();
             for b in &boundary {
-                for p in cache[b].parents.clone() {
+                let (base, gen) = names.get(b).cloned().unwrap_or_default();
+                for (k, p) in cache[b].parents.clone().into_iter().enumerate() {
                     self.sb_node(&mut cache, &p)?;
+                    names.entry(p).or_insert_with(|| {
+                        if k == 0 {
+                            (base.clone(), gen + 1)
+                        } else {
+                            (format!("{}^{}", sb_name(&base, gen), k + 1), 0)
+                        }
+                    });
                     if seen.insert(p) {
                         seq += 1;
                         extra.push((cache[&p].time, Reverse(seq), p));
@@ -264,10 +276,12 @@ impl Repo {
     }
 }
 
-/// `base`, `base~N` (N > 0).
+/// `base`, `base^`, `base~N` (N > 1), as git names the first-parent chain.
 fn sb_name(base: &str, gen: u32) -> String {
     if gen == 0 {
         base.to_owned()
+    } else if gen == 1 {
+        format!("{base}^")
     } else {
         format!("{base}~{gen}")
     }

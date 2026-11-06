@@ -94,15 +94,9 @@ impl Repo {
                 let (a, b) = (if a.is_empty() { "HEAD" } else { a }, if b.is_empty() { "HEAD" } else { b });
                 (format!("{b}..{a}"), format!("{a}..{b}"))
             }
-            [a, b] if a.contains("..") && b.contains("..") && !a.contains("...") && !b.contains("...") => {
-                (a.clone(), b.clone())
-            }
-            [base, o, n] if ![base, o, n].iter().any(|x| x.contains("..")) => {
-                (format!("{base}..{o}"), format!("{base}..{n}"))
-            }
-            _ => {
-                return msg("usage: range-diff <old-base>..<old-tip> <new-base>..<new-tip> | <base> <old-tip> <new-tip> | <A>...<B>")
-            }
+            [a, b] if a.contains("..") && b.contains("..") && !a.contains("...") && !b.contains("...") => (a.clone(), b.clone()),
+            [base, o, n] if ![base, o, n].iter().any(|x| x.contains("..")) => (format!("{base}..{o}"), format!("{base}..{n}")),
+            _ => return msg("usage: range-diff <old-base>..<old-tip> <new-base>..<new-tip> | <base> <old-tip> <new-tip> | <A>...<B>"),
         };
         let (o, n) = (self.range_commits(&zone, &spec(&old)?)?, self.range_commits(&zone, &spec(&new)?)?);
         self.range_diff_ids(&zone, &o, &n, creation_factor)
@@ -201,13 +195,13 @@ impl Repo {
                 for (y, &j) in rb.iter().enumerate() {
                     cost[x][y] = diff_size(&a[i].text, &b[j].text) as i64;
                 }
-                for y in rb.len()..n {
-                    cost[x][y] = (a[i].size as i64 * creation_factor as i64) / 100;
+                for c in &mut cost[x][rb.len()..] {
+                    *c = (a[i].size as i64 * creation_factor as i64) / 100;
                 }
             }
             for (y, &j) in rb.iter().enumerate() {
-                for x in ra.len()..n {
-                    cost[x][y] = (b[j].size as i64 * creation_factor as i64) / 100;
+                for row in &mut cost[ra.len()..] {
+                    row[y] = (b[j].size as i64 * creation_factor as i64) / 100;
                 }
             }
             let assign = hungarian(&cost);
@@ -291,26 +285,41 @@ fn diff_size(a: &str, b: &str) -> usize {
 fn inter_diff(a: &str, b: &str) -> String {
     let u = diff::unified("p", Some(a.as_bytes()), Some(b.as_bytes()));
     let a_lines: Vec<&str> = a.lines().collect();
+    let section_at = |upto: usize| {
+        a_lines[..upto.min(a_lines.len())]
+            .iter()
+            .rev()
+            .find_map(|l| l.strip_prefix(" ## ").and_then(|s| s.strip_suffix(" ##")))
+    };
     let mut out = String::new();
+    let mut hunk: Option<(usize, Vec<&str>)> = None;
+    let flush = |out: &mut String, hunk: &mut Option<(usize, Vec<&str>)>| {
+        if let Some((start, lines)) = hunk.take() {
+            // name the hunk after the section its first change is in
+            let lead = lines.iter().take_while(|l| l.starts_with(' ')).count();
+            match section_at(start.saturating_sub(1) + lead) {
+                Some(s) => out.push_str(&format!("@@ {s}\n")),
+                None => out.push_str("@@\n"),
+            }
+            for l in lines {
+                out.push_str(l);
+                out.push('\n');
+            }
+        }
+    };
     for line in u.lines() {
         if line.starts_with("diff --vcs ") || line.starts_with("--- ") || line.starts_with("+++ ") {
             continue;
         }
         if let Some(h) = line.strip_prefix("@@ -") {
+            flush(&mut out, &mut hunk);
             let start: usize = h.split([',', ' ']).next().and_then(|s| s.parse().ok()).unwrap_or(1);
-            let section = a_lines[..start.saturating_sub(1).min(a_lines.len())]
-                .iter()
-                .rev()
-                .find_map(|l| l.strip_prefix(" ## ").and_then(|s| s.strip_suffix(" ##")));
-            out.push_str(&match section {
-                Some(s) => format!("@@ {s}\n"),
-                None => "@@\n".to_owned(),
-            });
-        } else {
-            out.push_str(line);
-            out.push('\n');
+            hunk = Some((start, Vec::new()));
+        } else if let Some((_, lines)) = hunk.as_mut() {
+            lines.push(line);
         }
     }
+    flush(&mut out, &mut hunk);
     out
 }
 

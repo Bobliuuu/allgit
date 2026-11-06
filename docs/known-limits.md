@@ -125,6 +125,7 @@ From the final scoreboard ([research/command-scoreboard.md](research/command-sco
 - **Symmetric ranges order commits by author time** (the `log` order,
   reversed), not by topology, so two commits with the same timestamp are
   picked in id order.
+
 ## Commit notes ([notes.md](notes.md))
 
 - **Notes do not follow rewritten commits.** `commit --amend`, `rebase`, `cherry-pick` and `zone apply` create new
@@ -134,6 +135,17 @@ From the final scoreboard ([research/command-scoreboard.md](research/command-sco
   `log`/`show` do not print notes.
 - **Not measured at scale.** The notes tree is a two-level fan-out; a note write rewrites two small trees. Nothing was
   timed with more than a few notes.
+
+## `range-diff` and `show-branch`
+
+- `range-diff` pairs commits the way git does (identical diffs first, then a minimum-cost assignment
+  with `--creation-factor`), but its patch text and the `!` inner diff are vcs's own: hunks are named by
+  the first changed section, there is no colour and no `--left-only`/`--right-only`/diff options.
+  Merge commits are skipped, as in git. Pairing cost is O(n^3) in the commits left after the
+  exact-match pass, which is fine for patch series and slow for ranges of thousands of unmatched commits.
+- `show-branch` rows with equal commit times can come out in a different order than git's. It does
+  not take globs, `-a`/`-r` (remote-tracking branches), `--topics`, `-g` or `--topo-order`, and shows at
+  most 26 revisions.
 
 ## Other
 

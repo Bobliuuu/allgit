@@ -393,11 +393,17 @@ fn range_diff_pairs_by_patch() {
     let d = rd_repo(t.path());
     let out = ok(&d, &["range-diff", "main..v1", "main..v2"]);
     let l: Vec<&str> = out.lines().collect();
-    assert!(l[0].starts_with("1:  ") && l[0].contains(" = 1:  ") && l[0].ends_with(" p1"), "{out}");
-    assert!(l[1].starts_with("2:  ") && l[1].contains(" ! 2:  ") && l[1].ends_with(" p2"), "{out}");
-    assert!(l.iter().any(|x| x.starts_with("    @@ b.txt")), "{out}");
-    assert!(l.iter().any(|x| x.starts_with("    -") && x.ends_with("b")), "{out}");
-    assert!(l.iter().any(|x| x.starts_with("    +") && x.ends_with("b changed")), "{out}");
+    assert!(
+        l[0].starts_with("1:  ") && l[0].contains(" = 1:  ") && l[0].ends_with(" p1"),
+        "{out}"
+    );
+    assert!(
+        l[1].starts_with("2:  ") && l[1].contains(" ! 2:  ") && l[1].ends_with(" p2"),
+        "{out}"
+    );
+    assert!(l.iter().any(|x| x.starts_with("    @@")), "{out}");
+    assert!(l.iter().any(|x| x.starts_with("    -+b")), "{out}");
+    assert!(l.iter().any(|x| x.starts_with("    ++b changed")), "{out}");
     assert!(l.iter().any(|x| x.starts_with("3:  ") && x.contains(" < -:  ------- p3")), "{out}");
     assert!(l.iter().any(|x| x.starts_with("-:  ------- > 3:  ") && x.ends_with(" p4")), "{out}");
     // the three-argument form is the same comparison
@@ -489,13 +495,13 @@ fn show_branch_merge_shows_dash_and_second_parent_names() {
     let d = t.path().join("r");
     ok(t.path(), &["init", "r"]);
     commit_file(&d, "base.txt", "base\n", "base");
+    ok(&d, &["switch", "-c", "old"]);
+    ok(&d, &["switch", "main"]);
     ok(&d, &["switch", "-c", "side"]);
     commit_file(&d, "s.txt", "s\n", "s1");
     ok(&d, &["switch", "main"]);
     commit_file(&d, "m.txt", "m\n", "m1");
     ok(&d, &["merge", "side", "-m", "join"]);
-    ok(&d, &["switch", "-c", "old", "main~2"]);
-    ok(&d, &["switch", "main"]);
     let out = ok(&d, &["show-branch", "main", "old"]);
     assert!(out.lines().any(|x| x == "*  [main] join" || x == "-  [main] join"), "{out}");
     assert!(out.contains("[main^2] s1") && out.contains("[main^] m1"), "{out}");

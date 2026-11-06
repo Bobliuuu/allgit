@@ -47,8 +47,8 @@ pub mod pick;
 pub mod plumbing;
 pub mod portable;
 pub mod prefetch;
-mod reachcache;
 pub mod rangediff;
+mod reachcache;
 pub mod rebase;
 pub mod rebase_todo;
 mod recbase;
@@ -61,8 +61,8 @@ pub mod revrange;
 #[cfg(feature = "scaling-probe")]
 #[doc(hidden)]
 pub mod scaling_probe;
-pub mod showbranch;
 pub mod shelve;
+pub mod showbranch;
 mod snapcache;
 pub mod sparse;
 pub mod stash;
