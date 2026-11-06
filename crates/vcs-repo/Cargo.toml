@@ -23,6 +23,8 @@ vcs-watchd = { path = "../vcs-watchd" }
 
 [features]
 default = []
+# Benchmark-only access to private structures (scripts/scaling, vcs-bench scalebench).
+scaling-probe = []
 # Use the structural Rust merge in merge and rebase (see vcs-merge).
 structural = ["vcs-merge/structural"]
 structural-python = ["vcs-merge/structural-python"]
