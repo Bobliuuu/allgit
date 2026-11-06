@@ -589,13 +589,19 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             let autosquash = p.take(&["--autosquash"]);
             p.take(&["--no-autosquash", "--keep-empty", "--no-keep-empty"]);
             let execs = p.vals(&["-x", "--exec"]);
-            if p.take(&["--rebase-merges", "-r"]) {
-                return Err(missing(cmd, "recreating merge commits; replay is linear", "`vcs rebase` refuses a range with merges; `vcs merge` the branches instead, or rebase each linear side"));
+            let rebase_merges = match p.val(&["--rebase-merges", "-r"]).as_deref() {
+                None => None,
+                Some("" | "no-rebase-cousins") => Some("--rebase-merges"),
+                Some("rebase-cousins") => Some("--rebase-merges=rebase-cousins"),
+                Some(_) => return Err(Error::Msg("usage: git rebase --rebase-merges[=rebase-cousins|no-rebase-cousins]".into())),
+            };
+            if rebase_merges.is_some() && (interactive || !execs.is_empty()) {
+                return Err(missing(cmd, "--rebase-merges together with -i or -x (no label/reset/merge todo lines)", "`vcs rebase --rebase-merges <branch>` first, then `vcs rebase -i`"));
             }
             let onto = p.val(&["--onto"]);
             let root = p.take(&["--root"]);
             p.take(&["-q", "--quiet", "--no-verify", "-v", "--verbose", "--no-stat", "--stat"]);
-            p.finish("`vcs rebase [-i] [--autosquash] [-x CMD] <branch|rev>` replays the checked-out branch; `--onto <newbase> <upstream>` and `--onto <newbase> --root` work (not with -i/-x); no --autostash/--rebase-merges")?;
+            p.finish("`vcs rebase [-i] [--autosquash] [-x CMD] <branch|rev>` replays the checked-out branch; `--onto <newbase> <upstream>` and `--onto <newbase> --root` work (not with -i/-x); `--rebase-merges[=rebase-cousins]` recreates merges (not with -i/-x); no --autostash")?;
             if cont {
                 vec![Step::Vcs(v(&["rebase", "--continue"]))]
             } else if abort {
@@ -610,6 +616,7 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
                     return Err(missing(cmd, "--root without --onto", "`vcs rebase --onto <newbase> --root`"));
                 };
                 let mut a = v(&["rebase", "--onto", &nb]);
+                a.extend(rebase_merges.map(str::to_owned));
                 match (root, p.pos.as_slice()) {
                     (true, []) => a.push("--root".into()),
                     (false, [up]) => a.push(up.clone()),
@@ -621,6 +628,7 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
                 match p.pos.as_slice() {
                     [b] => {
                         let mut a = v(&["rebase"]);
+                        a.extend(rebase_merges.map(str::to_owned));
                         if interactive {
                             a.push("-i".into());
                             if autosquash {

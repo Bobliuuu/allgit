@@ -327,7 +327,7 @@ fn stale_state_file_is_ignored_after_head_moved() {
 }
 
 #[test]
-fn criss_cross_is_an_error() {
+fn criss_cross_merges_through_a_virtual_base() {
     let (_d, r) = setup();
     write(&r, "f", "0\n");
     commit(&r, "root");
@@ -341,8 +341,9 @@ fn criss_cross_is_an_error() {
     assert!(matches!(merge(&r, "main").unwrap(), MergeOutcome::Merged { .. })); // other = merge(y, x)
     r.checkout("root", "main").unwrap();
     assert!(matches!(merge(&r, "other2").unwrap(), MergeOutcome::Merged { .. })); // main = merge(x, y)
-    let e = merge(&r, "other").unwrap_err().to_string();
-    assert!(e.contains("criss-cross"), "{e}");
+    // two best bases (x and y): they are merged into a virtual base instead of being refused
+    assert!(matches!(merge(&r, "other").unwrap(), MergeOutcome::Merged { .. }));
+    assert!(exists(&r, "x") && exists(&r, "y"));
     assert!(clean(&r));
     fsck(&r);
 }

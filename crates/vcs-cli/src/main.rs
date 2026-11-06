@@ -480,6 +480,18 @@ enum Cmd {
         /// With --onto: replay every commit of the branch, root commit included (no upstream)
         #[arg(long, requires = "new_base")]
         root: bool,
+        /// Recreate the merge commits of the range instead of refusing it (`git rebase --rebase-merges`).
+        /// MODE `no-rebase-cousins` (default) keeps commits that do not descend from the merge base where
+        /// they are; `rebase-cousins` replays them too. Not combinable with -i or -x
+        #[arg(
+            short = 'r',
+            long = "rebase-merges",
+            value_name = "MODE",
+            num_args = 0..=1,
+            require_equals = true,
+            default_missing_value = "no-rebase-cousins"
+        )]
+        rebase_merges: Option<String>,
         /// Do not use the structural Rust merge (only matters when built with `--features structural`)
         #[arg(long)]
         no_structural: bool,
@@ -1886,6 +1898,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             exec,
             new_base,
             root,
+            rebase_merges,
             no_structural,
             renames,
             assist,
@@ -1895,6 +1908,21 @@ fn run(cli: Cli) -> Result<(), Error> {
             let (mut repo, cwd) = open()?;
             repo.set_structural(!no_structural && config::Config::load()?.structural()?);
             repo.set_renames(renames || config::Config::load()?.renames()?);
+            let merges: Option<bool> = match rebase_merges.as_deref() {
+                None => None,
+                Some("no-rebase-cousins") => Some(false),
+                Some("rebase-cousins") => Some(true),
+                Some(m) => {
+                    return Err(Error::Msg(format!(
+                        "unknown --rebase-merges mode {m:?}; use rebase-cousins or no-rebase-cousins"
+                    )))
+                }
+            };
+            if merges.is_some() && (interactive || !exec.is_empty() || cont || abort || skip) {
+                return Err(Error::Msg(
+                    "--rebase-merges cannot be combined with -i, -x, --continue, --abort or --skip (a stopped rebase resumes in the mode it started with)".into(),
+                ));
+            }
             if abort {
                 repo.rebase_abort()?;
                 println!("rebase aborted; original branch restored");
@@ -1913,7 +1941,10 @@ fn run(cli: Cli) -> Result<(), Error> {
                 }
                 let zone = zone_of_cwd(&repo, &cwd, zone)?;
                 hooks::fire_simple(&repo, &zone, "pre-rebase", std::slice::from_ref(&nb))?;
-                repo.rebase_onto(&zone, &nb, onto.as_deref(), author()?)?
+                match merges {
+                    Some(cousins) => repo.rebase_merges(&zone, &nb, Some(onto.as_deref()), cousins, author()?)?,
+                    None => repo.rebase_onto(&zone, &nb, onto.as_deref(), author()?)?,
+                }
             } else if interactive || !exec.is_empty() {
                 let Some(onto) = onto else {
                     return Err(Error::Msg(
@@ -1934,7 +1965,10 @@ fn run(cli: Cli) -> Result<(), Error> {
                 };
                 let zone = zone_of_cwd(&repo, &cwd, zone)?;
                 hooks::fire_simple(&repo, &zone, "pre-rebase", std::slice::from_ref(&onto))?;
-                repo.rebase(&zone, &onto, author()?)?
+                match merges {
+                    Some(cousins) => repo.rebase_merges(&zone, &onto, None, cousins, author()?)?,
+                    None => repo.rebase(&zone, &onto, author()?)?,
+                }
             };
             match out {
                 RebaseOutcome::UpToDate => println!("already up to date"),

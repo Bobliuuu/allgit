@@ -23,15 +23,22 @@
 //! stopped pick; `--abort` restores the original head. One operation is recorded when the whole
 //! rebase finishes, so `vcs op undo` restores the pre-rebase state.
 //!
-//! Only linear ranges are supported: a merge commit between the branch head and the merge base
-//! is refused before anything changes.
+//! A range that contains a merge commit is refused unless the rebase recreates merges
+//! (`--rebase-merges`, [`Repo::rebase_merges`]). That mode keeps a map from every original commit to
+//! its replacement (persisted in the rebase file, so a conflict stop resumes exactly) and replays the
+//! range in topological order: a plain commit is a three-way pick on the replacement of its parent;
+//! a merge commit is recreated by merging the replacements of its parents (git's `merge -C`: the
+//! message, author and change id of the original, a freshly merged tree, with the natural, possibly
+//! virtual, merge base). As in git, the default leaves "cousins" (commits that do not descend from the
+//! merge base) where they are; `rebase-cousins` replays them too. A conflict in a recreated merge
+//! stops with the same workflow as any other pick; `--skip` replaces the merge by its first parent.
 
 use crate::error::{msg, Error, Result};
 use crate::merge::MergeState;
 use crate::meta::{frame, unframe, write_atomic};
 use crate::repo::Repo;
 use crate::treeops;
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs;
 use vcs_merge::MarkerLabels;
 use vcs_objects::codec::{Reader, Writer};
@@ -41,6 +48,7 @@ use vcs_store::ObjectStore;
 const FILE: &str = "rebase";
 const MAGIC: &[u8; 4] = b"AGRB";
 const MAGIC2: &[u8; 4] = b"AGR2";
+const MAGIC3: &[u8; 4] = b"AGR3";
 
 /// What a todo line does with its commit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,15 +136,24 @@ pub struct RebaseState {
     /// A `squash` is in the current fold chain: its message is edited when the chain ends.
     pub chain_squash: bool,
     pub interactive: bool,
+    /// `--rebase-merges`: `Some(rebase_cousins)`; `None` for a linear rebase.
+    pub merges: Option<bool>,
+    /// The commit being rebased onto (only meaningful with `merges`).
+    pub onto: ObjectId,
+    /// `--rebase-merges`: original commit -> its replacement so far (merge bases map to `onto`).
+    pub map: Vec<(ObjectId, ObjectId)>,
 }
 
 impl RebaseState {
     /// Every commit id the state names (GC roots).
     pub fn todo_ids(&self) -> impl Iterator<Item = ObjectId> + '_ {
-        self.todo.iter().filter_map(|s| match s {
+        let picks = self.todo.iter().filter_map(|s| match s {
             Step::Pick(_, id) => Some(*id),
             Step::Exec(_) => None,
-        })
+        });
+        let mapped = self.map.iter().flat_map(|(a, b)| [*a, *b]);
+        let onto = self.merges.is_some().then_some(self.onto);
+        picks.chain(mapped).chain(onto)
     }
 }
 
@@ -198,12 +215,21 @@ impl RebaseState {
         });
         w.u8(u8::from(self.chain_squash));
         w.u8(u8::from(self.interactive));
+        if let Some(cousins) = self.merges {
+            w.u8(if cousins { 2 } else { 1 }).id(&self.onto);
+            w.varint(self.map.len() as u64);
+            for (a, b) in &self.map {
+                w.id(a).id(b);
+            }
+            return frame(MAGIC3, w.finish());
+        }
         frame(MAGIC2, w.finish())
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self> {
-        let v2 = bytes.get(..4) == Some(MAGIC2.as_slice());
-        let body = unframe(if v2 { MAGIC2 } else { MAGIC }, bytes, "rebase")?;
+        let v3 = bytes.get(..4) == Some(MAGIC3.as_slice());
+        let v2 = v3 || bytes.get(..4) == Some(MAGIC2.as_slice());
+        let body = unframe(if v3 { MAGIC3 } else if v2 { MAGIC2 } else { MAGIC }, bytes, "rebase")?;
         let mut r = Reader::new(body);
         let zone = r.str(64).map_err(dec)?;
         let branch = r.str(256).map_err(dec)?;
@@ -237,6 +263,19 @@ impl RebaseState {
             chain_squash = r.u8().map_err(dec)? != 0;
             interactive = r.u8().map_err(dec)? != 0;
         }
+        let (mut merges, mut onto, mut map) = (None, orig, Vec::new());
+        if v3 {
+            merges = match r.u8().map_err(dec)? {
+                1 => Some(false),
+                2 => Some(true),
+                _ => return Err(Error::Corrupt("rebase: bad merges mode".into())),
+            };
+            onto = r.id().map_err(dec)?;
+            let n = r.count(64).map_err(dec)?;
+            for _ in 0..n {
+                map.push((r.id().map_err(dec)?, r.id().map_err(dec)?));
+            }
+        }
         r.finish().map_err(dec)?;
         Ok(RebaseState {
             zone,
@@ -250,6 +289,9 @@ impl RebaseState {
             stop,
             chain_squash,
             interactive,
+            merges,
+            onto,
+            map,
         })
     }
 }
@@ -286,9 +328,38 @@ struct Prepared {
     branch: String,
     head: ObjectId,
     onto_id: ObjectId,
-    /// Commits to replay, oldest first (linear).
+    /// Commits to replay, parents before children (a chain unless `merges`).
     todo: Vec<ObjectId>,
     up_to_date: bool,
+    /// `--rebase-merges`: `Some(rebase_cousins)`.
+    merges: Option<bool>,
+    /// `--rebase-merges`: the merge bases, each mapped to the new base.
+    init_map: Vec<(ObjectId, ObjectId)>,
+}
+
+/// The commits of `parents` reachable from `head`, parents before children, `head` last. Only commits
+/// that are keys of `parents` (and in `keep`, when given) are visited.
+fn topo_order(head: ObjectId, parents: &HashMap<ObjectId, Vec<ObjectId>>, keep: Option<&HashSet<ObjectId>>) -> Vec<ObjectId> {
+    let mut out = Vec::with_capacity(parents.len());
+    if !parents.contains_key(&head) {
+        return out;
+    }
+    let ok = |c: &ObjectId| parents.contains_key(c) && keep.map_or(true, |k| k.contains(c));
+    let mut seen: HashSet<ObjectId> = HashSet::new();
+    seen.insert(head);
+    let mut stack = vec![(head, 0usize)];
+    while let Some((c, i)) = stack.pop() {
+        let ps = &parents[&c];
+        if let Some(p) = ps.get(i) {
+            stack.push((c, i + 1));
+            if ok(p) && seen.insert(*p) {
+                stack.push((*p, 0));
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 impl Repo {
@@ -348,10 +419,10 @@ impl Repo {
 
     /// Checks shared by every way of starting a rebase; resolves the commits to replay.
     fn rebase_prepare(&self, zone: &str, onto: &str, interactive: bool) -> Result<Prepared> {
-        self.rebase_prepare_ex(zone, onto, interactive, Upstream::MergeBase)
+        self.rebase_prepare_ex(zone, onto, interactive, Upstream::MergeBase, None)
     }
 
-    fn rebase_prepare_ex(&self, zone: &str, onto: &str, interactive: bool, up: Upstream) -> Result<Prepared> {
+    fn rebase_prepare_ex(&self, zone: &str, onto: &str, interactive: bool, up: Upstream, merges: Option<bool>) -> Result<Prepared> {
         let ws = self.workspace()?;
         let refs = self.refs()?;
         let Some(branch) = ws.subs.get(zone).cloned() else {
@@ -387,76 +458,100 @@ impl Repo {
             return msg(format!("{zone}/{branch} has no commits to rebase"));
         };
         let explicit = !matches!(up, Upstream::MergeBase);
-        let base: Option<ObjectId> = match &up {
-            Upstream::Root => None,
+        // `up_id`: what the replayed commits must not be reachable from; `bases`: the best common
+        // ancestors of the branch and it (several for a criss-cross history, which a linear range
+        // never has: a chain is totally ordered, so its common ancestors have one maximum).
+        let (up_id, bases): (Option<ObjectId>, Vec<ObjectId>) = match &up {
+            Upstream::Root => (None, Vec::new()),
             Upstream::Rev(u) => {
                 let uid = self
                     .resolve_rev(zone, u)
                     .map_err(|_| Error::Msg(format!("no such branch or revision {zone}/{u}")))?;
-                match self.merge_bases(&head, &uid)?.as_slice() {
-                    [b] => Some(*b),
-                    [] => return msg(format!("{u} shares no commit with {branch}")),
-                    many => return msg(format!("criss-cross history: {} merge bases with {u}; not supported", many.len())),
+                let bs = self.merge_bases(&head, &uid)?;
+                if bs.is_empty() {
+                    return msg(format!("{u} shares no commit with {branch}"));
                 }
+                (Some(uid), bs)
             }
-            Upstream::MergeBase => match self.merge_bases(&head, &onto_id)?.as_slice() {
-                [] => {
+            Upstream::MergeBase => {
+                let bs = self.merge_bases(&head, &onto_id)?;
+                if bs.is_empty() {
                     return msg(format!(
                         "refusing to rebase unrelated histories ({onto} shares no commit with {branch})"
-                    ))
+                    ));
                 }
-                [b] => Some(*b),
-                many => {
-                    return msg(format!(
-                        "criss-cross history: {branch} and {onto} have {} merge bases; not supported",
-                        many.len()
-                    ))
-                }
-            },
+                (Some(onto_id), bs)
+            }
+        };
+        let base: Option<ObjectId> = match bases.as_slice() {
+            [b] => Some(*b),
+            _ => None,
+        };
+        let uptodate = || Prepared {
+            branch: branch.clone(),
+            head,
+            onto_id,
+            todo: Vec::new(),
+            up_to_date: true,
+            merges,
+            init_map: Vec::new(),
         };
         if base == Some(onto_id) && !interactive && !explicit {
-            return Ok(Prepared {
-                branch,
-                head,
-                onto_id,
-                todo: Vec::new(),
-                up_to_date: true,
-            });
+            return Ok(uptodate());
         }
         if explicit && base == Some(head) && head == onto_id {
-            return Ok(Prepared {
-                branch,
-                head,
-                onto_id,
-                todo: Vec::new(),
-                up_to_date: true,
-            });
+            return Ok(uptodate());
         }
-        // Commits to replay, newest first while walking, then reversed. Linear only.
-        let mut todo = Vec::new();
-        let mut c = head;
-        while Some(c) != base {
-            let cm = self.commit_obj(&c)?;
-            if cm.parents.len() > 1 || (cm.parents.is_empty() && base.is_some()) {
+        // The range: everything the branch has that `up_id` lacks, in an order where parents come
+        // first. A linear range is a chain; a range with merges needs `--rebase-merges`.
+        let set = self.range_ids_ordered(&[head], up_id.as_slice(), usize::MAX)?;
+        let mut parents: HashMap<ObjectId, Vec<ObjectId>> = HashMap::with_capacity(set.len());
+        for c in &set {
+            parents.insert(*c, self.commit_obj(c)?.parents);
+        }
+        let order = topo_order(head, &parents, None);
+        if merges.is_none() {
+            if let Some(m) = order.iter().rev().find(|c| parents[*c].len() > 1) {
                 return msg(format!(
-                    "cannot rebase: commit {} has {} parents; only linear history can be replayed (nothing was changed)",
-                    c.short(),
-                    cm.parents.len()
+                    "cannot rebase: commit {} has {} parents; only linear history can be replayed (nothing was changed)\n\nOptions:\n  vcs rebase --rebase-merges     (recreate the merge commits)\n  vcs merge                      (merge instead of replaying)",
+                    m.short(),
+                    parents[m].len()
                 ));
             }
-            todo.push(c);
-            match cm.parents.first() {
-                Some(p) => c = *p,
-                None => break,
+        } else if up_id.is_some() {
+            if let Some(r) = order.iter().find(|c| parents[*c].is_empty()) {
+                return msg(format!(
+                    "cannot rebase: commit {} is a root commit of unrelated history inside the range; --rebase-merges cannot place it (nothing was changed)",
+                    r.short()
+                ));
             }
         }
-        todo.reverse();
+        let mut todo = order;
+        let mut init_map = Vec::new();
+        if let Some(cousins) = merges {
+            // Git's default (`no-rebase-cousins`): only commits that descend from a merge base are
+            // replayed; the others keep their original parents. A parent that is a merge base is
+            // replaced by the new base.
+            if !cousins && !bases.is_empty() {
+                let bset: HashSet<ObjectId> = bases.iter().copied().collect();
+                let mut desc: HashSet<ObjectId> = HashSet::new();
+                for c in &todo {
+                    if parents[c].iter().any(|p| bset.contains(p) || desc.contains(p)) {
+                        desc.insert(*c);
+                    }
+                }
+                todo.retain(|c| desc.contains(c));
+            }
+            init_map = bases.iter().map(|b| (*b, onto_id)).collect();
+        }
         Ok(Prepared {
             branch,
             head,
             onto_id,
             todo,
             up_to_date: false,
+            merges,
+            init_map,
         })
     }
 
@@ -464,6 +559,33 @@ impl Repo {
     pub fn rebase(&self, zone: &str, onto: &str, author: Signature) -> Result<RebaseOutcome> {
         let _l = self.lock()?;
         let p = self.rebase_prepare(zone, onto, false)?;
+        if p.up_to_date {
+            return Ok(RebaseOutcome::UpToDate);
+        }
+        let steps = p.todo.iter().map(|id| Step::Pick(Act::Pick, *id)).collect();
+        self.rebase_launch(zone, onto, p, steps, false, author, &mut |m: &str| Ok(m.to_owned()))
+    }
+
+    /// `git rebase --rebase-merges`: like [`Repo::rebase`] (or, with `upstream`, [`Repo::rebase_onto`]
+    /// where `onto` is the new base) but a range that contains merge commits is replayed with the
+    /// merges recreated. `rebase_cousins` also replays commits that do not descend from the merge
+    /// base (git's `rebase-cousins`; the default keeps them where they are). Criss-cross histories
+    /// work: their merge bases are merged into a virtual base.
+    pub fn rebase_merges(
+        &self,
+        zone: &str,
+        onto: &str,
+        upstream: Option<Option<&str>>,
+        rebase_cousins: bool,
+        author: Signature,
+    ) -> Result<RebaseOutcome> {
+        let _l = self.lock()?;
+        let (interactive, up) = match upstream {
+            None => (false, Upstream::MergeBase),
+            Some(Some(u)) => (true, Upstream::Rev(u.to_owned())),
+            Some(None) => (true, Upstream::Root),
+        };
+        let p = self.rebase_prepare_ex(zone, onto, interactive, up, Some(rebase_cousins))?;
         if p.up_to_date {
             return Ok(RebaseOutcome::UpToDate);
         }
@@ -481,7 +603,7 @@ impl Repo {
             Some(u) => Upstream::Rev(u.to_owned()),
             None => Upstream::Root,
         };
-        let p = self.rebase_prepare_ex(zone, new_base, true, up)?;
+        let p = self.rebase_prepare_ex(zone, new_base, true, up, None)?;
         if p.up_to_date {
             return Ok(RebaseOutcome::UpToDate);
         }
@@ -560,6 +682,9 @@ impl Repo {
             author,
             chain_squash: false,
             interactive,
+            merges: p.merges,
+            onto: p.onto_id,
+            map: p.init_map.iter().copied().collect(),
         };
         self.replay(run, p.onto_id, cursor_root, steps, ed)
     }
@@ -624,12 +749,18 @@ impl Repo {
             author,
             chain_squash: rs.chain_squash,
             interactive: rs.interactive,
+            merges: rs.merges,
+            onto: rs.onto,
+            map: rs.map.iter().copied().collect(),
         };
         let next_folds = matches!(rs.todo.first(), Some(Step::Pick(a, _)) if a.folds());
         let cid = match self.build_pick(&mut run, rs.cur_act, rs.cursor, &pc, root, next_folds, ed)? {
             Built::Ok(c) => c,
             Built::EditorFailed(e) => return msg(format!("cannot continue: {e}")),
         };
+        if run.merges.is_some() {
+            run.map.insert(rs.current, cid);
+        }
         // The old state files stay until the replay finishes or writes a new stop state, so a
         // refused pick (file/directory) leaves the rebase resumable or abortable.
         self.replay(run, cid, root, rs.todo.clone(), ed)
@@ -662,6 +793,9 @@ impl Repo {
             author,
             chain_squash: rs.chain_squash,
             interactive: rs.interactive,
+            merges: rs.merges,
+            onto: rs.onto,
+            map: rs.map.iter().copied().collect(),
         };
         self.replay(run, head, root, rs.todo, ed)
     }
@@ -681,7 +815,7 @@ impl Repo {
         self.restore_pre_merge(&ms, rs.cursor)?;
         self.clear_merge_state()?;
         let root = self.commit_obj(&rs.cursor)?.root;
-        let run = Run {
+        let mut run = Run {
             zone: rs.zone,
             branch: rs.branch,
             orig: rs.orig,
@@ -692,7 +826,14 @@ impl Repo {
             author,
             chain_squash: rs.chain_squash,
             interactive: rs.interactive,
+            merges: rs.merges,
+            onto: rs.onto,
+            map: rs.map.iter().copied().collect(),
         };
+        if run.merges.is_some() {
+            // the skipped commit (or merge) is replaced by what it would have been applied on
+            run.map.insert(rs.current, rs.cursor);
+        }
         self.replay(run, rs.cursor, root, rs.todo, ed)
     }
 
@@ -802,6 +943,9 @@ impl Repo {
             stop,
             chain_squash: run.chain_squash,
             interactive: run.interactive,
+            merges: run.merges,
+            onto: run.onto,
+            map: run.map_vec(),
         };
         self.store.sync()?;
         write_atomic(&self.vcs.join(FILE), &rs.encode())
@@ -845,7 +989,8 @@ impl Repo {
             } else {
                 pc.message.clone()
             };
-            (vec![cursor], pc.change_id, pc.author.clone(), message)
+            let parents = if run.merges.is_some() { run.new_parents(pc) } else { vec![cursor] };
+            (parents, pc.change_id, pc.author.clone(), message)
         };
         let id = self.store.put(&Object::Commit(Commit {
             zone: run.zone.clone(),
@@ -868,6 +1013,9 @@ impl Repo {
     ) -> Result<RebaseOutcome> {
         let zones = self.zones()?;
         let prefix = zones.path_of(&run.zone).unwrap_or("").to_owned();
+        if run.merges.is_some() {
+            return self.replay_merges(run, cursor, cursor_root, todo, &prefix, ed);
+        }
         let mut q: VecDeque<Step> = todo.into();
         while let Some(step) = q.pop_front() {
             let (act, pick) = match step {
@@ -953,6 +1101,98 @@ impl Repo {
         self.finish(run, cursor, cursor_root)
     }
 
+    /// The replay loop of `--rebase-merges`: every pick is applied on the replacement of its first
+    /// parent and a merge commit is recreated by merging the replacements of its parents.
+    fn replay_merges(
+        &self,
+        mut run: Run,
+        mut cursor: ObjectId,
+        mut cursor_root: ObjectId,
+        todo: Vec<Step>,
+        prefix: &str,
+        ed: MsgEditor,
+    ) -> Result<RebaseOutcome> {
+        let mut q: VecDeque<Step> = todo.into();
+        while let Some(step) = q.pop_front() {
+            let Step::Pick(_, pick) = step else { continue };
+            let pc = self.commit_obj(&pick)?;
+            let new_parents = run.new_parents(&pc);
+            let ours = new_parents[0];
+            let ours_root = if ours == cursor { cursor_root } else { self.commit_obj(&ours)?.root };
+            let label = format!("{} ({})", pick.short(), pc.message.lines().next().unwrap_or(""));
+            let root = if pc.parents.len() <= 1 {
+                let base_root = match pc.parents.first() {
+                    Some(parent) => Some(self.commit_obj(parent)?.root),
+                    None => None,
+                };
+                if base_root == Some(ours_root) {
+                    pc.root
+                } else {
+                    let tm = self.merge3_trees(prefix, base_root, Some(ours_root), Some(pc.root))?;
+                    match self.settle_pick(&run, tm, pick, "while replaying")? {
+                        Settled::Tree(tm) => tm.apply(&self.store, Some(ours_root), true)?.0,
+                        Settled::Conflicts(tm) => {
+                            let rest: Vec<Step> = q.into();
+                            return self.stop_on_conflicts(run, ours, ours_root, pick, Act::Pick, rest, tm, &label);
+                        }
+                    }
+                }
+            } else {
+                // a recreated merge: merge the replacements of the other parents into the first
+                let mut acc = ours_root;
+                let mut members = vec![ours];
+                for np in &new_parents[1..] {
+                    let tm = self.merge_into_set(prefix, &members, acc, np)?;
+                    match self.settle_pick(&run, tm, pick, "while recreating the merge")? {
+                        Settled::Tree(tm) => acc = tm.apply(&self.store, Some(acc), true)?.0,
+                        Settled::Conflicts(tm) => {
+                            if new_parents.len() > 2 {
+                                return msg(format!(
+                                    "octopus merge {} conflicts while being recreated; only clean octopus merges can be rebased (the working tree was not changed)",
+                                    pick.short()
+                                ));
+                            }
+                            let rest: Vec<Step> = q.into();
+                            let label = format!("{label}, merging {}", np.short());
+                            return self.stop_on_conflicts(run, ours, ours_root, pick, Act::Pick, rest, tm, &label);
+                        }
+                    }
+                    members.push(*np);
+                }
+                acc
+            };
+            match self.build_pick(&mut run, Act::Pick, cursor, &pc, root, false, ed)? {
+                Built::Ok(c) => {
+                    run.map.insert(pick, c);
+                    cursor = c;
+                }
+                Built::EditorFailed(e) => return msg(e),
+            }
+            cursor_root = root;
+            run.replayed += 1;
+        }
+        self.finish(run, cursor, cursor_root)
+    }
+
+    /// Checks shared by every conflicting-or-clean tree merge of a pick: refuse what is not
+    /// supported, store the merged blobs, and say whether the merge is clean.
+    fn settle_pick(&self, run: &Run, tm: crate::treemerge::Merge3, pick: ObjectId, what: &str) -> Result<Settled> {
+        self.fd_preflight(&tm)?;
+        if !tm.conflicts.is_empty() {
+            self.require_conflicts_materialized(&run.zone, tm.conflicts.iter().map(|c| c.path.as_str()), "rebase")?;
+        }
+        for (id, data) in &tm.new_blobs {
+            if self.store.put_content(data)? != *id {
+                return Err(Error::Corrupt("merged blob id mismatch".into()));
+            }
+        }
+        Ok(if tm.conflicts.is_empty() {
+            Settled::Tree(tm)
+        } else {
+            Settled::Conflicts(tm)
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn stop_on_conflicts(
         &self,
@@ -1012,6 +1252,9 @@ impl Repo {
             stop: Stop::Conflict,
             chain_squash: run.chain_squash,
             interactive: run.interactive,
+            merges: run.merges,
+            onto: run.onto,
+            map: run.map_vec(),
         };
         // `touched` covers both the paths that differ from the old working tree and those that
         // differ from the new tip (the branch head `--abort` compares against).
@@ -1107,6 +1350,44 @@ struct Run {
     /// A `squash` is in the current fold chain.
     chain_squash: bool,
     interactive: bool,
+    /// `--rebase-merges`: `Some(rebase_cousins)`.
+    merges: Option<bool>,
+    onto: ObjectId,
+    /// `--rebase-merges`: original commit -> replacement.
+    map: HashMap<ObjectId, ObjectId>,
+}
+
+impl Run {
+    /// The map as stored in the rebase file (sorted, so the file is deterministic).
+    fn map_vec(&self) -> Vec<(ObjectId, ObjectId)> {
+        let mut v: Vec<_> = self.map.iter().map(|(a, b)| (*a, *b)).collect();
+        v.sort();
+        v
+    }
+
+    /// Parents of the replacement of `pc` (`--rebase-merges`): a replaced parent becomes its
+    /// replacement (a merge base becomes the new base); an unreplaced first parent is the new base
+    /// when cousins are rebased and stays as it was otherwise; other parents stay as they were.
+    fn new_parents(&self, pc: &Commit) -> Vec<ObjectId> {
+        if pc.parents.is_empty() {
+            return vec![self.onto];
+        }
+        let cousins = self.merges == Some(true);
+        pc.parents
+            .iter()
+            .enumerate()
+            .map(|(i, p)| match self.map.get(p) {
+                Some(n) => *n,
+                None if i == 0 && cousins => self.onto,
+                None => *p,
+            })
+            .collect()
+    }
+}
+
+enum Settled {
+    Tree(crate::treemerge::Merge3),
+    Conflicts(crate::treemerge::Merge3),
 }
 
 enum Built {

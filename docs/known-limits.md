@@ -153,3 +153,10 @@ From the final scoreboard ([research/command-scoreboard.md](research/command-sco
   parent or commit filter and no callbacks or regex path rules; signed commits it changes no longer
   verify; its published-history check only knows the remote as of the last `vcs fetch`; a tree
   filter costs one checkout per commit.
+
+## Merge and rebase shapes
+
+- **Rebase `--rebase-merges` cannot be edited interactively.** It does not combine with `-i` or `-x` (no `label`, `reset` or
+  `merge` todo lines), and an octopus merge whose recreation conflicts is refused (clean octopus merges are recreated).
+  Criss-cross merges and rebases are supported (virtual merge base, conflict markers of the bases are kept as base text, as in
+  git); a file/directory conflict between the merge bases is still refused. See [rebase.md](rebase.md) and [merge.md](merge.md).
