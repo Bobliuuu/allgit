@@ -229,7 +229,17 @@ impl RebaseState {
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         let v3 = bytes.get(..4) == Some(MAGIC3.as_slice());
         let v2 = v3 || bytes.get(..4) == Some(MAGIC2.as_slice());
-        let body = unframe(if v3 { MAGIC3 } else if v2 { MAGIC2 } else { MAGIC }, bytes, "rebase")?;
+        let body = unframe(
+            if v3 {
+                MAGIC3
+            } else if v2 {
+                MAGIC2
+            } else {
+                MAGIC
+            },
+            bytes,
+            "rebase",
+        )?;
         let mut r = Reader::new(body);
         let zone = r.str(64).map_err(dec)?;
         let branch = r.str(256).map_err(dec)?;
@@ -338,13 +348,12 @@ struct Prepared {
 }
 
 /// The commits of `parents` reachable from `head`, parents before children, `head` last. Only commits
-/// that are keys of `parents` (and in `keep`, when given) are visited.
-fn topo_order(head: ObjectId, parents: &HashMap<ObjectId, Vec<ObjectId>>, keep: Option<&HashSet<ObjectId>>) -> Vec<ObjectId> {
+/// that are keys of `parents` are visited.
+fn topo_order(head: ObjectId, parents: &HashMap<ObjectId, Vec<ObjectId>>) -> Vec<ObjectId> {
     let mut out = Vec::with_capacity(parents.len());
     if !parents.contains_key(&head) {
         return out;
     }
-    let ok = |c: &ObjectId| parents.contains_key(c) && keep.map_or(true, |k| k.contains(c));
     let mut seen: HashSet<ObjectId> = HashSet::new();
     seen.insert(head);
     let mut stack = vec![(head, 0usize)];
@@ -352,7 +361,7 @@ fn topo_order(head: ObjectId, parents: &HashMap<ObjectId, Vec<ObjectId>>, keep: 
         let ps = &parents[&c];
         if let Some(p) = ps.get(i) {
             stack.push((c, i + 1));
-            if ok(p) && seen.insert(*p) {
+            if parents.contains_key(p) && seen.insert(*p) {
                 stack.push((*p, 0));
             }
         } else {
@@ -509,11 +518,16 @@ impl Repo {
         for c in &set {
             parents.insert(*c, self.commit_obj(c)?.parents);
         }
-        let order = topo_order(head, &parents, None);
+        let order = topo_order(head, &parents);
         if merges.is_none() {
             if let Some(m) = order.iter().rev().find(|c| parents[*c].len() > 1) {
+                let hint = if interactive {
+                    "  vcs merge                      (merge instead of replaying)"
+                } else {
+                    "  vcs rebase --rebase-merges     (recreate the merge commits)\n  vcs merge                      (merge instead of replaying)"
+                };
                 return msg(format!(
-                    "cannot rebase: commit {} has {} parents; only linear history can be replayed (nothing was changed)\n\nOptions:\n  vcs rebase --rebase-merges     (recreate the merge commits)\n  vcs merge                      (merge instead of replaying)",
+                    "cannot rebase: commit {} has {} parents; only linear history can be replayed (nothing was changed)\n\nOptions:\n{hint}",
                     m.short(),
                     parents[m].len()
                 ));
@@ -1014,7 +1028,7 @@ impl Repo {
         let zones = self.zones()?;
         let prefix = zones.path_of(&run.zone).unwrap_or("").to_owned();
         if run.merges.is_some() {
-            return self.replay_merges(run, cursor, cursor_root, todo, &prefix, ed);
+            return self.replay_merges(run, cursor, cursor_root, todo, &prefix);
         }
         let mut q: VecDeque<Step> = todo.into();
         while let Some(step) = q.pop_front() {
@@ -1110,7 +1124,6 @@ impl Repo {
         mut cursor_root: ObjectId,
         todo: Vec<Step>,
         prefix: &str,
-        ed: MsgEditor,
     ) -> Result<RebaseOutcome> {
         let mut q: VecDeque<Step> = todo.into();
         while let Some(step) = q.pop_front() {
@@ -1118,8 +1131,13 @@ impl Repo {
             let pc = self.commit_obj(&pick)?;
             let new_parents = run.new_parents(&pc);
             let ours = new_parents[0];
-            let ours_root = if ours == cursor { cursor_root } else { self.commit_obj(&ours)?.root };
+            let ours_root = if ours == cursor {
+                cursor_root
+            } else {
+                self.commit_obj(&ours)?.root
+            };
             let label = format!("{} ({})", pick.short(), pc.message.lines().next().unwrap_or(""));
+            let mut kept = new_parents.clone();
             let root = if pc.parents.len() <= 1 {
                 let base_root = match pc.parents.first() {
                     Some(parent) => Some(self.commit_obj(parent)?.root),
@@ -1138,10 +1156,16 @@ impl Repo {
                     }
                 }
             } else {
-                // a recreated merge: merge the replacements of the other parents into the first
+                // A recreated merge: merge the replacements of the other parents into the first one.
+                // A parent the result already contains is "already up to date" and is dropped, as in
+                // git; when none is left the merge disappears and the pick is replaced by its first parent.
                 let mut acc = ours_root;
                 let mut members = vec![ours];
+                kept = vec![ours];
                 for np in &new_parents[1..] {
+                    if self.bases_of_set(&members, np)?.as_slice() == [*np] {
+                        continue;
+                    }
                     let tm = self.merge_into_set(prefix, &members, acc, np)?;
                     match self.settle_pick(&run, tm, pick, "while recreating the merge")? {
                         Settled::Tree(tm) => acc = tm.apply(&self.store, Some(acc), true)?.0,
@@ -1158,16 +1182,26 @@ impl Repo {
                         }
                     }
                     members.push(*np);
+                    kept.push(*np);
+                }
+                if kept.len() == 1 {
+                    run.map.insert(pick, ours);
+                    cursor = ours;
+                    cursor_root = ours_root;
+                    continue;
                 }
                 acc
             };
-            match self.build_pick(&mut run, Act::Pick, cursor, &pc, root, false, ed)? {
-                Built::Ok(c) => {
-                    run.map.insert(pick, c);
-                    cursor = c;
-                }
-                Built::EditorFailed(e) => return msg(e),
-            }
+            let id = self.store.put(&Object::Commit(Commit {
+                zone: run.zone.clone(),
+                parents: kept,
+                root,
+                change_id: pc.change_id,
+                author: pc.author.clone(),
+                message: pc.message.clone(),
+            }))?;
+            run.map.insert(pick, id);
+            cursor = id;
             cursor_root = root;
             run.replayed += 1;
         }
