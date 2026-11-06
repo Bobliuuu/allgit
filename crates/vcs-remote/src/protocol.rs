@@ -735,7 +735,7 @@ impl<'a> Publisher<'a> {
             // A new branch has no `old` to lean on: its parent may be any current head.
             let m = match &self.manifest_hint {
                 Some((m, _)) => m.clone(),
-                None => load_manifest(self.backend)?.0,
+                None => load_manifest_unchecked(self.backend)?.0,
             };
             known.extend(m.branches.values().copied());
         }
@@ -973,7 +973,8 @@ impl<'a> Publisher<'a> {
     }
 
     pub fn step(&mut self) -> Result<Step, PublishError> {
-        if matches!(self.state, State::Collect) {
+        if matches!(self.state, State::Collect) && self.manifest_hint.is_none() {
+            // (a hinted manifest was loaded by `load_manifest`, which checked the marker)
             // Refuse before uploading anything when the repository needs a newer binary (issue #567).
             match crate::format::check(self.backend) {
                 Ok(()) => {}
@@ -1240,7 +1241,7 @@ impl<'a> Publisher<'a> {
             State::Load => {
                 let loaded = match self.manifest_hint.take() {
                     Some(h) => Ok(h),
-                    None => load_manifest(self.backend),
+                    None => load_manifest_unchecked(self.backend),
                 };
                 let (cur, tag) = match loaded {
                     Ok(x) => x,
@@ -1509,6 +1510,11 @@ pub fn changed_paths(backend: &dyn Backend, old: Option<ObjectId>, new: ObjectId
 pub fn load_manifest(backend: &dyn Backend) -> Result<(Manifest, Option<String>), PublishError> {
     // Refuse a repository that needs a newer binary before decoding anything (issue #567).
     crate::format::check(backend)?;
+    load_manifest_unchecked(backend)
+}
+
+/// [`load_manifest`] without the format-marker read, for a caller that has just checked it (the publisher does, once).
+fn load_manifest_unchecked(backend: &dyn Backend) -> Result<(Manifest, Option<String>), PublishError> {
     match backend.get(manifest::KEY)? {
         None => Ok((Manifest::default(), None)),
         Some(v) => {
