@@ -1,0 +1,14 @@
+{"comp":"commit_graph","op":"build_extend","n":1000,"samples":1,"p50_us":1365.004,"p95_us":1365.004,"rss_kb":2996,"anon_kb":548,"hwm_kb":2996,"commits_per_s":732599,"len":1000}
+{"comp":"commit_graph","op":"extend_one_commit","n":1000,"samples":5,"p50_us":15.434,"p95_us":27.839,"rss_kb":2996,"anon_kb":548,"hwm_kb":2996}
+{"comp":"commit_graph","op":"build_extend","n":10000,"samples":1,"p50_us":18934.550,"p95_us":18934.550,"rss_kb":5780,"anon_kb":3260,"hwm_kb":6360,"commits_per_s":528135,"len":10000}
+{"comp":"commit_graph","op":"extend_one_commit","n":10000,"samples":5,"p50_us":160.799,"p95_us":210.542,"rss_kb":6092,"anon_kb":3572,"hwm_kb":6360}
+{"comp":"commit_graph","op":"build_extend","n":100000,"samples":1,"p50_us":275413.969,"p95_us":275413.969,"rss_kb":32300,"anon_kb":29864,"hwm_kb":39116,"commits_per_s":363090,"len":100000}
+{"comp":"commit_graph","op":"extend_one_commit","n":100000,"samples":5,"p50_us":1723.978,"p95_us":2567.689,"rss_kb":35424,"anon_kb":32988,"hwm_kb":39116}
+{"comp":"commit_graph","op":"build_extend","n":300000,"samples":1,"p50_us":1140348.366,"p95_us":1140348.366,"rss_kb":96992,"anon_kb":94536,"hwm_kb":123144,"commits_per_s":263078,"len":300000}
+{"comp":"commit_graph","op":"extend_one_commit","n":300000,"samples":5,"p50_us":7254.806,"p95_us":10228.316,"rss_kb":106364,"anon_kb":103908,"hwm_kb":123144}
+{"comp":"commit_graph","op":"build_extend","n":1000000,"samples":1,"p50_us":4601734.193,"p95_us":4601734.193,"rss_kb":331180,"anon_kb":328660,"hwm_kb":401088,"commits_per_s":217309,"len":1000000}
+{"comp":"commit_graph","op":"extend_one_commit","n":1000000,"samples":5,"p50_us":29710.140,"p95_us":37763.959,"rss_kb":362428,"anon_kb":359908,"hwm_kb":401088}
+{"comp":"commit_graph","op":"build_extend","n":3000000,"samples":1,"p50_us":17340583.809,"p95_us":17340583.809,"rss_kb":880656,"anon_kb":878200,"hwm_kb":1114540,"commits_per_s":173005,"len":3000000}
+{"comp":"commit_graph","op":"extend_one_commit","n":3000000,"samples":5,"p50_us":138711.359,"p95_us":141018.020,"rss_kb":880656,"anon_kb":878200,"hwm_kb":1114540}
+{"comp":"commit_graph","op":"build_extend","n":10000000,"samples":1,"p50_us":71876033.599,"p95_us":71876033.599,"rss_kb":3049712,"anon_kb":3047256,"hwm_kb":3830528,"commits_per_s":139128,"len":10000000}
+{"comp":"commit_graph","op":"extend_one_commit","n":10000000,"samples":5,"p50_us":546200.105,"p95_us":559269.931,"rss_kb":3049712,"anon_kb":3047256,"hwm_kb":3830528}

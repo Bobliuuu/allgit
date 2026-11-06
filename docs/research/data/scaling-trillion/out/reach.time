@@ -1,0 +1,7 @@
+0.01 s wall, 3020 KB maxrss: reach 1000 /data/scaling-work/r
+0.01 s wall, 3364 KB maxrss: reach 10000 /data/scaling-work/r
+0.02 s wall, 8652 KB maxrss: reach 100000 /data/scaling-work/r
+0.10 s wall, 67020 KB maxrss: reach 1000000 /data/scaling-work/r
+0.87 s wall, 650432 KB maxrss: reach 10000000 /data/scaling-work/r
+8.07 s wall, 6484236 KB maxrss: reach 100000000 /data/scaling-work/r
+76.47 s wall, 64821428 KB maxrss: reach 1000000000 /data/scaling-work/r

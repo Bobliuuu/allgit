@@ -1,0 +1,104 @@
+### delta 1000
+init                            0.161 s       12 MB
+import-git (1000 tags)          0.009 s       12 MB
+state files: {'refs': 41941}
+tag create (new)                0.005 s       12 MB
+tag create again                0.005 s       12 MB
+tag delete                      0.004 s       12 MB
+branch create                   0.004 s       12 MB
+log --oneline -n 1              0.002 s       12 MB
+status                          0.002 s       12 MB
+tag (list)                      0.002 s       12 MB
+gc                              0.005 s       12 MB
+state files after: {'refs': 42022}
+### delta 10000
+init                            0.007 s       12 MB
+import-git (10000 tags)         0.032 s       17 MB
+state files: {'refs': 428941}
+tag create (new)                0.013 s       13 MB
+tag create again                0.013 s       13 MB
+tag delete                      0.011 s       12 MB
+branch create                   0.009 s       12 MB
+log --oneline -n 1              0.004 s       12 MB
+status                          0.003 s       12 MB
+tag (list)                      0.010 s       12 MB
+gc                              0.028 s       15 MB
+state files after: {'refs': 429022}
+### delta 100000
+init                            0.020 s       12 MB
+import-git (100000 tags)        0.269 s       81 MB
+state files: {'reftags.422097b03a4ce25efd8621e288697e10d3f7cdf5cbce2d93bcffb1c65dbb83a3': 4388893, 'refs': 84}
+tag create (new)                0.019 s       18 MB
+tag create again                0.017 s       18 MB
+tag delete                      0.003 s       12 MB
+branch create                   0.003 s       12 MB
+log --oneline -n 1              0.002 s       12 MB
+status                          0.002 s       12 MB
+tag (list)                      0.098 s       57 MB
+gc                              0.117 s       56 MB
+state files after: {'refs.log': 231, 'reftags.422097b03a4ce25efd8621e288697e10d3f7cdf5cbce2d93bcffb1c65dbb83a3': 4388893, 'refs': 84}
+### delta 1000000
+init                            0.024 s       12 MB
+import-git (1000000 tags)       3.543 s      760 MB
+state files: {'reftags.81fed6aed486a2bd85b40423b1d65b3a248fe38ebb1af23eae7e084d84b2a579': 44888893, 'refs': 84}
+tag create (new)                0.136 s       95 MB
+tag create again                0.135 s       95 MB
+tag delete                      0.002 s       12 MB
+branch create                   0.002 s       12 MB
+log --oneline -n 1              0.002 s       12 MB
+status                          0.002 s       12 MB
+tag (list)                      0.960 s      450 MB
+gc                              1.295 s      474 MB
+state files after: {'refs.log': 231, 'reftags.81fed6aed486a2bd85b40423b1d65b3a248fe38ebb1af23eae7e084d84b2a579': 44888893, 'refs': 84}
+### delta 10000000
+init                            0.003 s       12 MB
+import-git (10000000 tags)     39.684 s     7291 MB
+state files: {'reftags.553eb7bacd9c311ec2d43bd1557805f2d16d32c9866a8b9315cf27930f532c94': 458888894, 'refs': 85}
+tag create (new)                1.457 s      885 MB
+tag create again                1.430 s      885 MB
+tag delete                      0.003 s       12 MB
+branch create                   0.002 s       12 MB
+log --oneline -n 1              0.002 s       12 MB
+status                          0.002 s       12 MB
+tag (list)                      9.857 s     4447 MB
+gc                             13.986 s     4679 MB
+state files after: {'reftags.553eb7bacd9c311ec2d43bd1557805f2d16d32c9866a8b9315cf27930f532c94': 458888894, 'refs.log': 231, 'refs': 85}
+### legacy 100000
+init                            0.004 s       12 MB
+import-git (100000 tags)        0.281 s       80 MB
+state files: {'refs': 4388942}
+tag create (new)                0.091 s       49 MB
+tag create again                0.092 s       49 MB
+tag delete                      0.081 s       47 MB
+branch create                   0.054 s       37 MB
+log --oneline -n 1              0.023 s       18 MB
+status                          0.012 s       17 MB
+tag (list)                      0.100 s       56 MB
+gc                              0.297 s       64 MB
+state files after: {'refs': 4389023}
+### legacy 1000000
+init                            0.003 s       12 MB
+import-git (1000000 tags)       3.753 s      760 MB
+state files: {'refs': 44888942}
+tag create (new)                0.991 s      409 MB
+tag create again                0.982 s      410 MB
+tag delete                      0.894 s      408 MB
+branch create                   0.584 s      310 MB
+log --oneline -n 1              0.205 s       95 MB
+status                          0.108 s       95 MB
+tag (list)                      0.933 s      450 MB
+gc                              3.369 s      566 MB
+state files after: {'refs': 44889023}
+### legacy 10000000
+init                            0.018 s       12 MB
+import-git (10000000 tags)     41.341 s     7291 MB
+state files: {'refs': 458888943}
+tag create (new)               10.247 s     4025 MB
+tag create again               10.178 s     4025 MB
+tag delete                      8.961 s     4024 MB
+branch create                   6.075 s     3053 MB
+log --oneline -n 1              2.140 s      885 MB
+status                          1.077 s      884 MB
+tag (list)                      9.437 s     4447 MB
+gc                             35.842 s     5595 MB
+state files after: {'refs': 458889024}
