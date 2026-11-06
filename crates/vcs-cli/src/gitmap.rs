@@ -1668,10 +1668,7 @@ fn translate_log(rest: &[String]) -> Result<Vec<Step>, Error> {
             la.push("--".into());
             la.extend(paths);
         }
-        return Ok(vec![Step::LogPatch {
-            log_argv: la,
-            stat,
-        }]);
+        return Ok(vec![Step::LogPatch { log_argv: la, stat }]);
     }
     a.extend(revs);
     if !paths.is_empty() {
