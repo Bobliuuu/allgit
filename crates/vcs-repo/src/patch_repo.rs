@@ -19,6 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 use vcs_objects::{EntryMode, ObjectId, Signature};
+use vcs_store::ObjectStore;
 
 #[derive(Clone, Debug, Default)]
 pub struct ApplyOpts {
@@ -33,6 +34,10 @@ pub struct ApplyOpts {
     /// A hunk that does not fit is merged three ways (see `patch3`); overlapping edits leave
     /// conflict markers in the file (reported in [`ApplyReport::conflicts`], never staged).
     pub three_way: bool,
+    /// Apply to the index only (git's `--cached`): the patch is checked against the STAGED content,
+    /// the working tree is not touched, and the result is staged. A working-tree edit of the same
+    /// file then shows as an unstaged change. Not combinable with `index` or `three_way`.
+    pub cached: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -127,6 +132,21 @@ impl Repo {
     /// `tree_clean`: the caller has just checked that the whole tracked tree is clean, so the
     /// per-path index check of `opts.index` has nothing to find and is skipped.
     fn apply_parsed(&self, patches: &[FilePatch], opts: &ApplyOpts, tree_clean: bool) -> Result<ApplyReport> {
+        if opts.cached && (opts.index || opts.three_way) {
+            return msg("--cached cannot be combined with --index or --3way");
+        }
+        let staged = if opts.cached { Some(self.index()?) } else { None };
+        if staged.is_some() {
+            let (zones, ws) = (self.zones()?, self.workspace()?);
+            for p in patches {
+                for q in [&p.old_path, &p.new_path].into_iter().flatten() {
+                    let owner = zones.owner(q);
+                    if !ws.subs.contains_key(owner) {
+                        return msg(format!("{q:?} belongs to zone {owner:?}, which this workspace has not subscribed to (vcs zone add {owner})"));
+                    }
+                }
+            }
+        }
         // paths and binary check first: nothing is touched when any patch is unusable
         for p in patches {
             if p.binary {
@@ -165,13 +185,20 @@ impl Repo {
             let cur = |plan: &BTreeMap<String, Option<(Vec<u8>, u32)>>, path: &str| -> Result<Option<(Vec<u8>, u32)>> {
                 match plan.get(path) {
                     Some(v) => Ok(v.clone()),
-                    None => self.patch_current(path),
+                    None => match &staged {
+                        Some(ix) => match ix.entries.get(path) {
+                            Some(e) => Ok(Some((self.content(&e.id)?, mode_of(e.mode)))),
+                            None => Ok(None),
+                        },
+                        None => self.patch_current(path),
+                    },
                 }
             };
             let (old, mode) = match &p.old_path {
                 None => (Vec::new(), p.new_mode.unwrap_or(0o100644)),
                 Some(src) => match cur(&plan, src)? {
                     Some(x) => x,
+                    None if staged.is_some() => return msg(format!("{src}: does not exist in the index")),
                     None => return msg(format!("{src}: does not exist in the working tree")),
                 },
             };
@@ -234,6 +261,38 @@ impl Repo {
             conflicts,
         };
         if opts.check {
+            return Ok(report);
+        }
+        if let Some(mut ix) = staged {
+            // index only: store the new contents and point the entries at them; no file is touched
+            let _l = self.lock()?;
+            for (path, v) in &plan {
+                if v.is_none() {
+                    ix.entries.remove(path);
+                }
+            }
+            for (path, v) in &plan {
+                let Some((content, mode)) = v else { continue };
+                let id = self.store.put_content(content)?;
+                let mode = match *mode {
+                    0o100755 => EntryMode::Executable,
+                    0o120000 => EntryMode::Symlink,
+                    _ => EntryMode::File,
+                };
+                ix.insert(
+                    path,
+                    crate::index::IndexEntry {
+                        id,
+                        mode,
+                        size: content.len() as u64,
+                        // 0 never matches the file's mtime, so status compares the working tree with what was staged
+                        mtime_ns: 0,
+                        ctime_ns: 0,
+                    },
+                )?;
+            }
+            self.store.sync()?;
+            self.save_index(&mut ix)?;
             return Ok(report);
         }
         // write

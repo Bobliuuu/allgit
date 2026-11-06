@@ -607,10 +607,19 @@ impl Repo {
     // ---------- add ----------
 
     pub fn add(&self, rel_paths: &[String]) -> Result<AddReport> {
+        self.add_impl(rel_paths, false)
+    }
+
+    /// [`Repo::add`] that also stages files and directories matched by `.vcsignore` (git's `add -f`).
+    pub fn add_force(&self, rel_paths: &[String]) -> Result<AddReport> {
+        self.add_impl(rel_paths, true)
+    }
+
+    fn add_impl(&self, rel_paths: &[String], force: bool) -> Result<AddReport> {
         let _l = self.lock()?;
         let zones = self.zones()?;
         let ws = self.workspace()?;
-        if let Some(rep) = self.add_tracked_files_patched(rel_paths, &zones, &ws)? {
+        if let Some(rep) = self.add_tracked_files_patched(rel_paths, &zones, &ws, force)? {
             return Ok(rep);
         }
         let mut ix = self.index()?;
@@ -618,7 +627,7 @@ impl Repo {
         let mut todo = Vec::new();
         let rev0 = ix.entries.revision();
         for p in rel_paths {
-            self.add_one(p, &zones, &ws, &mut ix, &mut rep, &mut todo)?;
+            self.add_one(p, &zones, &ws, &mut ix, &mut rep, &mut todo, force)?;
         }
         // A collision needs a path the index does not hold yet; re-folding 100k tracked names for a
         // plain re-add of modified files costs more than the rest of the command.
@@ -642,7 +651,7 @@ impl Repo {
     /// their own index entries and patch the index file, instead of decoding and re-encoding all of it.
     /// `None` (nothing done) for anything else: a directory, an empty spec, a missing file,
     /// an old index layout, or when no entry changes (the full path may still move `written_ns`).
-    fn add_tracked_files_patched(&self, rel_paths: &[String], zones: &Zones, ws: &Workspace) -> Result<Option<AddReport>> {
+    fn add_tracked_files_patched(&self, rel_paths: &[String], zones: &Zones, ws: &Workspace, force: bool) -> Result<Option<AddReport>> {
         const MAX: usize = 256;
         if rel_paths.is_empty() || rel_paths.len() > MAX || rel_paths.iter().any(|p| p.is_empty()) {
             return Ok(None);
@@ -685,7 +694,7 @@ impl Repo {
         let mut rep = AddReport::default();
         let mut todo = Vec::new();
         for p in rel_paths {
-            self.add_one(p, zones, ws, &mut part, &mut rep, &mut todo)?;
+            self.add_one(p, zones, ws, &mut part, &mut rep, &mut todo, force)?;
         }
         let verified = self.stage_files(&todo, &mut part)?;
         self.note_resolved(rel_paths, &part)?;
@@ -706,7 +715,8 @@ impl Repo {
         Ok(Some(rep))
     }
 
-    fn add_one(&self, p: &str, zones: &Zones, ws: &Workspace, ix: &mut Index, rep: &mut AddReport, todo: &mut Vec<String>) -> Result<()> {
+    #[allow(clippy::too_many_arguments)]
+    fn add_one(&self, p: &str, zones: &Zones, ws: &Workspace, ix: &mut Index, rep: &mut AddReport, todo: &mut Vec<String>, force: bool) -> Result<()> {
         let full = if p.is_empty() {
             self.worktree.clone()
         } else {
@@ -747,14 +757,14 @@ impl Repo {
                 let mut tracked_seen = 0usize;
                 let start = todo.len();
                 let stack = self.ignore_stack_above(p)?;
-                if !p.is_empty() && stack.is_ignored(p, true) {
+                if !force && !p.is_empty() && stack.is_ignored(p, true) {
                     if !ix.has_under(p) {
                         rep.skipped.push(format!("{p} (ignored)"));
                         return Ok(());
                     }
-                    self.add_dir(p, zones, ws, ix, rep, &mut tracked_seen, todo, &stack.inherit())?;
+                    self.add_dir(p, zones, ws, ix, rep, &mut tracked_seen, todo, &stack.inherit(), force)?;
                 } else {
-                    self.add_dir(p, zones, ws, ix, rep, &mut tracked_seen, todo, &stack)?;
+                    self.add_dir(p, zones, ws, ix, rep, &mut tracked_seen, todo, &stack, force)?;
                 }
                 // Every tracked path was seen on disk (the common case): nothing was deleted, and no
                 // set of 100k seen paths has to be built to find that out.
@@ -781,7 +791,7 @@ impl Repo {
                         "{p:?} is outside this workspace's sparse set; `vcs sparse add` it before staging"
                     ));
                 }
-                if !ix.entries.contains_key(p) && self.ignore_stack_above(p)?.is_ignored(p, false) {
+                if !force && !ix.entries.contains_key(p) && self.ignore_stack_above(p)?.is_ignored(p, false) {
                     rep.skipped.push(format!("{p} (ignored)"));
                     return Ok(());
                 }
@@ -835,6 +845,46 @@ impl Repo {
         Ok(self.ignore_stack_above(rel)?.is_ignored(rel, is_dir))
     }
 
+    /// Untracked paths matched by `.vcsignore`, sorted; a directory that is ignored as a whole is one
+    /// entry with a trailing `/` (as `git status --ignored` shows it).
+    pub fn ignored_paths(&self) -> Result<Vec<String>> {
+        let ix = self.index()?;
+        let zones = self.zones()?;
+        let ws = self.workspace()?;
+        let mut out = Vec::new();
+        self.ignored_dir("", &ix, &zones, &ws, &IgnoreStack::default(), &mut out)?;
+        out.sort();
+        Ok(out)
+    }
+
+    fn ignored_dir(&self, dir: &str, ix: &Index, zones: &Zones, ws: &Workspace, parent: &IgnoreStack, out: &mut Vec<String>) -> Result<()> {
+        let stack = parent.descend(self.wfs.as_ref(), &self.worktree, dir)?;
+        let abs = if dir.is_empty() { self.worktree.clone() } else { self.worktree.join(dir) };
+        for e in io(&abs, fs::read_dir(&abs))? {
+            let e = e.map_err(|source| Error::Io { path: abs.clone(), source })?;
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.eq_ignore_ascii_case(META_DIR) {
+                continue;
+            }
+            let rel = if dir.is_empty() { name } else { format!("{dir}/{name}") };
+            if !ws.subs.contains_key(zones.owner(&rel)) {
+                continue;
+            }
+            let is_dir = io(&abs, e.file_type())?.is_dir();
+            let tracked = if is_dir { ix.has_under(&rel) } else { ix.entries.contains_key(&rel) };
+            if !tracked && stack.is_ignored(&rel, is_dir) {
+                out.push(if is_dir { format!("{rel}/") } else { rel });
+            } else if is_dir {
+                if stack.is_ignored(&rel, true) {
+                    self.ignored_dir(&rel, ix, zones, ws, &stack.inherit(), out)?;
+                } else {
+                    self.ignored_dir(&rel, ix, zones, ws, &stack, out)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn add_dir(
         &self,
@@ -846,6 +896,7 @@ impl Repo {
         tracked_seen: &mut usize,
         todo: &mut Vec<String>,
         parent_stack: &IgnoreStack,
+        force: bool,
     ) -> Result<()> {
         let stack = parent_stack.descend(self.wfs.as_ref(), &self.worktree, dir)?;
         let abs = if dir.is_empty() {
@@ -895,7 +946,7 @@ impl Repo {
             } else {
                 ix.entries.contains_key(&rel)
             };
-            let ignored = !tracked && stack.is_ignored(&rel, ft.is_dir());
+            let ignored = !force && !tracked && stack.is_ignored(&rel, ft.is_dir());
             if ignored {
                 continue;
             }
@@ -912,10 +963,10 @@ impl Repo {
                 rep.staged += 1;
             } else if ft.is_dir() {
                 // a directory kept only for tracked files below it ignores everything else
-                if stack.is_ignored(&rel, true) {
-                    self.add_dir(&rel, zones, ws, ix, rep, tracked_seen, todo, &stack.inherit())?;
+                if !force && stack.is_ignored(&rel, true) {
+                    self.add_dir(&rel, zones, ws, ix, rep, tracked_seen, todo, &stack.inherit(), force)?;
                 } else {
-                    self.add_dir(&rel, zones, ws, ix, rep, tracked_seen, todo, &stack)?;
+                    self.add_dir(&rel, zones, ws, ix, rep, tracked_seen, todo, &stack, force)?;
                 }
             } else {
                 validate_path(&rel)?;
