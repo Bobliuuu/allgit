@@ -1200,6 +1200,8 @@ fn diff_flags(p: &mut P) -> Result<Vec<String>, Error> {
     let mut f: Vec<String> = vec![];
     for (name, fl) in [
         ("--stat", &["--stat"][..]),
+        ("--numstat", &["--numstat"][..]),
+        ("--exit-code", &["--exit-code"][..]),
         ("--name-only", &["--name-only"][..]),
         ("--name-status", &["--name-status"][..]),
         ("--word-diff", &["--word-diff"][..]),
@@ -1402,7 +1404,7 @@ fn translate_diff(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
     let mut p = parse(cmd, rest, DIFF_VALUED);
     let staged = p.take(&["--staged", "--cached"]);
     let flags = diff_flags(&mut p)?;
-    p.finish("`vcs diff [--staged] [--stat|--name-only|--name-status|-U<n>|-w|-M|--word-diff|...]`; `vcs git diff A B` also works (no --check/--exit-code/--numstat/--shortstat/-R)")?;
+    p.finish("`vcs diff [--staged] [--stat|--name-only|--name-status|-U<n>|-w|-M|--word-diff|...]`; `vcs git diff A B` also works (no --check/--shortstat/-R)")?;
     let mut specs: Vec<String> = vec![];
     for s in &p.pos {
         if s.contains("...") {
@@ -1609,7 +1611,7 @@ fn translate_log(rest: &[String]) -> Result<Vec<Step>, Error> {
     if p.take(&["-M"]) || p.val(&["--find-renames"]).is_some() {
         a.push("-M".into());
     }
-    for (long, fl) in [("--author", &["--author"][..]), ("--grep", &["--grep"][..]), ("-S", &["-S"][..])] {
+    for (long, fl) in [("--author", &["--author"][..]), ("--grep", &["--grep"][..]), ("-S", &["-S"][..]), ("-G", &["-G"][..])] {
         if let Some(x) = p.val(fl) {
             a.extend([long.to_owned(), x]);
         }
@@ -1640,15 +1642,8 @@ fn translate_log(rest: &[String]) -> Result<Vec<Step>, Error> {
             }
         }
     }
-    if p.opts.iter().any(|(k, _)| k == "-G") {
-        return Err(missing(
-            "log -G",
-            "regex pickaxe",
-            "`vcs log -S <string>` (count-change pickaxe) or `vcs grep <regex> <rev>`",
-        ));
-    }
     p.finish(
-        "`vcs log [branch] [-n N] [--oneline|--graph|--author|--since|--until|--grep|-S|--format|--follow|--name-status] [-- paths]`",
+        "`vcs log [branch] [-n N] [--oneline|--graph|--author|--since|--until|--grep|-S|-G|--format|--follow|--name-status] [-- paths]`",
     )?;
     // positionals: revisions (a branch, `A..B`, `A...B`, `^A`), or (heuristically) existing paths without `--`
     let mut paths = p.dd.clone();
@@ -2293,6 +2288,7 @@ fn diff_specs(staged: bool, specs: &[String], flags: &[String]) -> Result<(), Er
         }
     };
     print!("{}", crate::difftool::render_pairs(pairs, &opts));
+    crate::difftool::exit_if_differs();
     Ok(())
 }
 

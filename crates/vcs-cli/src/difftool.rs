@@ -42,6 +42,12 @@ pub struct DiffArgs {
     /// Per-file added/deleted line counts instead of the patch
     #[arg(long)]
     pub stat: bool,
+    /// Machine-readable counts: `added<TAB>deleted<TAB>path` per file (`-` for both on a binary file)
+    #[arg(long)]
+    pub numstat: bool,
+    /// Exit with status 1 when there are differences, 0 when there are none
+    #[arg(long)]
+    pub exit_code: bool,
     /// Only the names of changed files
     #[arg(long)]
     pub name_only: bool,
@@ -89,6 +95,8 @@ impl DiffArgs {
     /// Nothing but (maybe) `--stat`: the original renderers handle it.
     fn is_plain(&self) -> bool {
         !(self.name_only
+            || self.numstat
+            || self.exit_code
             || self.name_status
             || self.word_diff
             || self.color.is_some()
@@ -588,9 +596,50 @@ pub fn stat(es: &[Entry], a: &DiffArgs) -> String {
     out
 }
 
+/// `--numstat` text for `es`: `added<TAB>deleted<TAB>path`, `-<TAB>-<TAB>path` for a binary file.
+pub fn numstat(es: &[Entry], a: &DiffArgs) -> String {
+    let alg = a.diff_algorithm.map_or(Algorithm::Myers, AlgArg::alg);
+    let mut out = String::new();
+    for e in es {
+        let (ob, nb) = (e.old.as_deref().unwrap_or(&[]), e.new.as_deref().unwrap_or(&[]));
+        let name = match &e.old_path {
+            Some(o) => format!("{o} => {}", e.path),
+            None => e.path.clone(),
+        };
+        if is_binary(ob) || is_binary(nb) {
+            out.push_str(&format!("-\t-\t{name}\n"));
+            continue;
+        }
+        let (i, d) = count_changes(ob, nb, alg, a.ignore_all_space);
+        if i + d == 0 && !matches!(e.status, Status::Renamed(_) | Status::Copied(_)) && !e.mode_changed {
+            continue;
+        }
+        out.push_str(&format!("{i}\t{d}\t{name}\n"));
+    }
+    out
+}
+
+/// Set by `render_pairs` when `--exit-code` was asked and the diff is not empty.
+static DIFFERS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `--exit-code`: after the diff is printed, leave with status 1 when it was not empty (as git does).
+pub fn exit_if_differs() {
+    if DIFFERS.load(std::sync::atomic::Ordering::SeqCst) {
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        std::process::exit(1);
+    }
+}
+
 /// Render `pairs` per the options.
 pub fn render_pairs(pairs: Vec<FilePair>, a: &DiffArgs) -> String {
     let es = entries(pairs, a);
+    if a.exit_code && !es.is_empty() {
+        DIFFERS.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    if a.numstat {
+        return numstat(&es, a);
+    }
     if a.name_only {
         return es.iter().map(|e| format!("{}\n", e.path)).collect();
     }
@@ -628,6 +677,7 @@ pub fn run_diff(repo: &Repo, staged: bool, a: &DiffArgs) -> Result<(), Error> {
         return Ok(());
     }
     print!("{}", render_pairs(repo.diff_pairs(staged)?, a));
+    exit_if_differs();
     Ok(())
 }
 
