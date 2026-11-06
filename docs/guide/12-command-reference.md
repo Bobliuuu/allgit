@@ -2603,10 +2603,14 @@ Manage the remote
 Usage: vcs remote [OPTIONS] <COMMAND>
 
 Commands:
-  set     Set the remote location (path or file:// URL)
-  show    Show the configured remote
-  remove  Forget the remote and its remote-tracking refs (local branches and history are kept)
-  help    Print this message or the help of the given subcommand(s)
+  set         Set the remote location (path or file:// URL)
+  show        Show the configured remote
+  remove      Forget the remote and its remote-tracking refs (local branches and history are kept)
+  verify      Walk and hash everything reachable from the remote's manifest; exit 1 if anything is missing or corrupt
+  backup      Copy the remote into DEST (a directory or other remote), holding a GC safe point; the manifest is written last, after verification
+  restore     Restore a remote or backup FROM into a fresh, empty store TO; verified before its manifest is written
+  safe-point  Show the last destructive gc (the GC safe point) and any backup holds on the remote
+  help        Print this message or the help of the given subcommand(s)
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
@@ -2655,6 +2659,88 @@ Options:
 Forget the remote and its remote-tracking refs (local branches and history are kept)
 
 Usage: vcs remote remove [OPTIONS]
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+###### `vcs remote verify`
+
+```text
+Walk and hash everything reachable from the remote's manifest; exit 1 if anything is missing or corrupt
+
+Usage: vcs remote verify [OPTIONS] [URL]
+
+Arguments:
+  [URL]  Remote or backup to check (default: the configured remote)
+
+Options:
+  -C <DIR>                   Run as if vcs was started in <DIR> (applied before repository discovery)
+      --manifest <MANIFEST>  Check this saved manifest file instead of the remote's current one (is an old manifest still restorable after gc?)
+      --deep                 Also read every pack end to end and every loose object, reachable or not
+      --json                 Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>        PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks             Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help                 Print help
+```
+
+####### `vcs remote backup`
+
+```text
+Copy the remote into DEST (a directory or other remote), holding a GC safe point; the manifest is written last, after verification
+
+Usage: vcs remote backup [OPTIONS] <DEST>
+
+Arguments:
+  <DEST>  Where the backup goes; an existing backup is updated incrementally
+
+Options:
+  -C <DIR>                     Run as if vcs was started in <DIR> (applied before repository discovery)
+      --from <FROM>            Remote to back up (default: the configured remote)
+      --hold-secs <HOLD_SECS>  Lifetime of the GC safe point in seconds (renewed while the backup runs; a killed backup frees it after this) [default: 3600]
+      --json                   Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>          PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hold                Do not take a GC safe point (only if nothing runs `vcs gc --remote` meanwhile)
+      --no-deep                Skip reading every pack end to end before installing the manifest
+      --no-hooks               Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help                   Print help
+```
+
+######## `vcs remote restore`
+
+```text
+Restore a remote or backup FROM into a fresh, empty store TO; verified before its manifest is written
+
+Usage: vcs remote restore [OPTIONS] <FROM> <TO>
+
+Arguments:
+  <FROM>  
+  <TO>    
+
+Options:
+  -C <DIR>                     Run as if vcs was started in <DIR> (applied before repository discovery)
+      --hold-secs <HOLD_SECS>  Lifetime of the GC safe point on FROM in seconds [default: 3600]
+      --json                   Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --no-hold                Do not take a GC safe point on FROM
+      --ca-pem <FILE>          PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-deep                Skip reading every pack end to end before installing the manifest
+      --no-hooks               Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help                   Print help
+```
+
+######### `vcs remote safe-point`
+
+```text
+Show the last destructive gc (the GC safe point) and any backup holds on the remote
+
+Usage: vcs remote safe-point [OPTIONS] [URL]
+
+Arguments:
+  [URL]  
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)

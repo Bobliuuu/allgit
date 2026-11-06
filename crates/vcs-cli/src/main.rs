@@ -2274,17 +2274,40 @@ fn run(cli: Cli) -> Result<(), Error> {
             CredCmd::Store => auth::Op::Store,
             CredCmd::Erase => auth::Op::Erase,
         })?,
-        Cmd::Remote(RemoteCmd::Verify { url, manifest, deep }) => dr_cmd::verify(url, manifest, deep, &std::env::current_dir()?)?,
-        Cmd::Remote(RemoteCmd::Backup { dest, from, hold_secs, no_hold, no_deep }) => {
-            dr_cmd::backup(&dest, from, &dr_cmd::CopyArgs { hold_secs, no_hold, no_deep }, &std::env::current_dir()?)?
-        }
-        Cmd::Remote(RemoteCmd::Restore { from, to, hold_secs, no_hold, no_deep }) => dr_cmd::restore(
+        Cmd::Remote(RemoteCmd::Verify { url, manifest, deep }) => dr_cmd::verify(url, manifest, deep, &dr_cmd::cwd()?)?,
+        Cmd::Remote(RemoteCmd::Backup {
+            dest,
+            from,
+            hold_secs,
+            no_hold,
+            no_deep,
+        }) => dr_cmd::backup(
+            &dest,
+            from,
+            &dr_cmd::CopyArgs {
+                hold_secs,
+                no_hold,
+                no_deep,
+            },
+            &dr_cmd::cwd()?,
+        )?,
+        Cmd::Remote(RemoteCmd::Restore {
+            from,
+            to,
+            hold_secs,
+            no_hold,
+            no_deep,
+        }) => dr_cmd::restore(
             &from,
             &to,
-            &dr_cmd::CopyArgs { hold_secs, no_hold, no_deep },
-            &std::env::current_dir()?,
+            &dr_cmd::CopyArgs {
+                hold_secs,
+                no_hold,
+                no_deep,
+            },
+            &dr_cmd::cwd()?,
         )?,
-        Cmd::Remote(RemoteCmd::SafePoint { url }) => dr_cmd::safe_point(url, &std::env::current_dir()?)?,
+        Cmd::Remote(RemoteCmd::SafePoint { url }) => dr_cmd::safe_point(url, &dr_cmd::cwd()?)?,
         Cmd::Remote(r) => {
             let (repo, cwd) = open()?;
             match r {
@@ -2293,7 +2316,9 @@ fn run(cli: Cli) -> Result<(), Error> {
                     repo.set_remote(&url)?;
                     println!("remote set to {url}");
                 }
-                RemoteCmd::Verify { .. } | RemoteCmd::Backup { .. } | RemoteCmd::Restore { .. } | RemoteCmd::SafePoint { .. } => unreachable!(),
+                RemoteCmd::Verify { .. } | RemoteCmd::Backup { .. } | RemoteCmd::Restore { .. } | RemoteCmd::SafePoint { .. } => {
+                    unreachable!()
+                }
                 RemoteCmd::Remove => {
                     if repo.remove_remote()? {
                         println!("remote removed");
