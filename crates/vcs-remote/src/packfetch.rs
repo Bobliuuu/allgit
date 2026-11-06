@@ -161,27 +161,21 @@ impl PackCatalog {
             0
         };
         let left = AtomicU64::new(crate::smallpack::small_pack_total());
-        let loaded = par_map(
-            &stems,
-            FETCH_THREADS,
-            |(stem, key)| -> Result<Option<(String, PackIndex, Option<Vec<u8>>)>, BackendError> {
-                let Some(idx) = b.get(key)? else { return Ok(None) };
-                let idx = PackIndex::parse(&idx.data, Path::new(stem)).map_err(|e| BackendError::Other(e.to_string()))?;
-                let mut body = None;
-                if idx.pack_len <= small && claim(&left, idx.pack_len) {
-                    match b.get(&format!("{stem}.pack"))? {
-                        None => return Ok(None), // gone: report as vanished
-                        Some(v)
-                            if v.data.len() as u64 == idx.pack_len && v.data[v.data.len().saturating_sub(32)..] == idx.checksum()[..] =>
-                        {
-                            body = Some(v.data);
-                        }
-                        Some(_) => {} // not what the index says: the ranged path reports it
+        let loaded = par_map(&stems, FETCH_THREADS, |(stem, key)| -> Result<Option<LoadedPack>, BackendError> {
+            let Some(idx) = b.get(key)? else { return Ok(None) };
+            let idx = PackIndex::parse(&idx.data, Path::new(stem)).map_err(|e| BackendError::Other(e.to_string()))?;
+            let mut body = None;
+            if idx.pack_len <= small && claim(&left, idx.pack_len) {
+                match b.get(&format!("{stem}.pack"))? {
+                    None => return Ok(None), // gone: report as vanished
+                    Some(v) if v.data.len() as u64 == idx.pack_len && v.data[v.data.len().saturating_sub(32)..] == idx.checksum()[..] => {
+                        body = Some(v.data);
                     }
+                    Some(_) => {} // not what the index says: the ranged path reports it
                 }
-                Ok(Some((stem.clone(), idx, body)))
-            },
-        );
+            }
+            Ok(Some((stem.clone(), idx, body)))
+        });
         let mut packs = Vec::with_capacity(loaded.len());
         let mut bodies = crate::smallpack::Bodies::new();
         let mut vanished = false;
@@ -465,12 +459,15 @@ const SEGMENT_MIN: u64 = 1024 * 1024;
 /// indexes it, merge hits closer than [`COALESCE_GAP`], and cut merged ranges into segments of
 /// about `total / threads` bytes (at least [`SEGMENT_MIN`]) so the pool has work to share.
 /// Returns the segments, the ids no pack has, and the ids of packs found gone (to retry).
+type LoadedPack = (String, PackIndex, Option<Vec<u8>>);
+type Planned<'a> = (Vec<Segment<'a>>, Vec<ObjectId>, Vec<ObjectId>);
+
 fn plan_segments<'a>(
     _b: &dyn Backend,
     cat: &'a PackCatalog,
     packs: &'a PackList,
     want: Vec<ObjectId>,
-) -> Result<(Vec<Segment<'a>>, Vec<ObjectId>, Vec<ObjectId>), BackendError> {
+) -> Result<Planned<'a>, BackendError> {
     let mut remaining = want;
     let gone = Vec::new();
     let mut per_pack: Vec<(usize, Hits)> = Vec::new();

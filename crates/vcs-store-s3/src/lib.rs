@@ -322,7 +322,13 @@ impl S3Backend {
             }
             // a CAS on a key that does not exist must fail; some providers create it instead
             let missing = format!("{}.vcs-probe/{}", self.cfg.prefix, nonce());
-            match self.send("PUT", &missing, &[], &[("if-match", "\"00000000000000000000000000000000\"")], b"probe")? {
+            match self.send(
+                "PUT",
+                &missing,
+                &[],
+                &[("if-match", "\"00000000000000000000000000000000\"")],
+                b"probe",
+            )? {
                 Resp::Status(404 | 412 | 409, _) => {}
                 Resp::Ok { .. } => {
                     self.cas_creates_missing.store(true, std::sync::atomic::Ordering::Relaxed);

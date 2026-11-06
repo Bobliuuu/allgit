@@ -85,6 +85,19 @@ fn server_refuses_to_start_while_the_client_credential_can_write_the_manifest() 
         r#"{{"Version":"2012-10-17","Statement":[{{"Effect":"Deny","Principal":"*","Action":["s3:PutObject","s3:DeleteObject","s3:AbortMultipartUpload"],"Resource":["arn:aws:s3:::{bucket}/repo/manifest"]}}]}}"#
     );
     admin.put_bucket_policy(&policy).unwrap();
+    // MinIO exempts its root credential (the default minioadmin) from bucket policies: the server then rightly keeps
+    // refusing and the "starts" half cannot be observed. Real S3 and a MinIO service account enforce the policy.
+    let mut pc = vcs_store_s3::S3Config::new(&ep, &bucket, &ak, &sk);
+    pc.prefix = "repo/".into();
+    let enforced = matches!(
+        vcs_store_s3::S3Backend::new_unchecked(pc).unwrap().probe_manifest_write().unwrap(),
+        vcs_store_s3::ManifestWriteProbe::Denied
+    );
+    if !enforced {
+        eprintln!("skipping the starts-with-policy half: this server does not apply bucket policies to this credential");
+        admin.delete_bucket_policy().unwrap();
+        return;
+    }
     let mut child = run(true);
     let mut line = String::new();
     BufReader::new(child.stderr.take().unwrap()).read_line(&mut line).unwrap();

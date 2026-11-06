@@ -258,7 +258,7 @@ fn prefetch_subscribed_rejects_a_tampered_blob_and_does_not_store_it() {
     b.fetch(&remote, None).unwrap();
     let id = blob_id("brand new");
     remote.tamper_object(&id, Object::Blob(b"evil".to_vec()).encode());
-    let err = b.prefetch_subscribed(&remote, None).err().expect("must fail").to_string();
+    let err = b.prefetch_subscribed(&remote, None).expect_err("must fail").to_string();
     assert!(err.contains("hash verification"), "{err}");
     assert!(!b.store().contains(&id).unwrap(), "tampered blob must not be stored");
     // the worktree was never touched
@@ -381,7 +381,7 @@ fn merge_with_missing_blobs_writes_nothing_before_failing() {
         );
     }
     // the re-run `vcs` does after fetching the missing object succeeds
-    b.with_lazy_fetch(&remote, || Ok(b.merge_remote("engine", "main", sig())?))
+    b.with_lazy_fetch(&remote, || b.merge_remote("engine", "main", sig()))
         .expect("merge after lazy fetch");
     assert!(b.worktree().join("engine/new7.rs").exists());
 }

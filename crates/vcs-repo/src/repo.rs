@@ -1617,7 +1617,7 @@ impl Repo {
             let mine = || -> Vec<(&String, &IndexEntry)> {
                 ix.entries
                     .iter()
-                    .filter(|(p, _)| only.map_or(true, |o| o.contains(p.as_str())))
+                    .filter(|(p, _)| only.is_none_or(|o| o.contains(p.as_str())))
                     .filter(|(p, _)| (single_zone || zones.owner(p) == zone) && !ws.skips(zone, p))
                     .collect()
             };
@@ -1633,7 +1633,7 @@ impl Repo {
                 .into_iter()
                 .map(|(path, kind)| Change { path, kind })
                 .collect();
-            let staged = self.drop_layout_only(staged, head_root, &zones, zone, &ix)?;
+            let staged = self.drop_layout_only(staged, head_root, &zones, zone, ix)?;
             let (unstaged, clean) = match inc {
                 Some(i) => (
                     i.dirty
@@ -2805,66 +2805,75 @@ impl Repo {
             }
             Ok(())
         };
-        // Read + hash + decode every object on a few threads. Blob contents are reduced to their
-        // length right away (a chunk manifest check only needs that), so memory stays small.
-        let fetched = self.fsck_fetch(&ids);
-        let listed: std::collections::HashMap<ObjectId, Listed> = ids.iter().zip(&fetched).map(|(id, (_, l))| (*id, *l)).collect();
-        for (id, (fetched, _)) in ids.iter().zip(fetched) {
-            rep.objects += 1;
-            match fetched {
-                Err(e) => rep.problems.push(format!("{id}: {e}")),
-                Ok(Object::Commit(c)) => {
-                    commits.insert(*id, c);
-                }
-                Ok(Object::Tree(t)) => {
-                    for e in t.entries() {
-                        missing(
-                            self,
-                            &e.id,
-                            format!("tree {id}: missing entry {} -> {}", e.name, e.id),
-                            &mut rep.problems,
-                        )?;
+        // Read + hash + decode the objects on a few threads, FSCK_BATCH at a time: holding every decoded object
+        // at once took about 16 GB at 1,000,000 commits (3M objects); a batch is dropped before the next is read.
+        // Blob contents are reduced to their length right away (a chunk manifest check only needs that).
+        // Chunk manifests are checked after the last batch, when `listed` knows every chunk.
+        let mut listed: std::collections::HashMap<ObjectId, Listed> = std::collections::HashMap::with_capacity(ids.len());
+        let mut chunked = Vec::new();
+        for batch in ids.chunks(fsck_batch()) {
+            let fetched = self.fsck_fetch(batch);
+            for (id, (_, l)) in batch.iter().zip(&fetched) {
+                listed.insert(*id, *l);
+            }
+            for (id, (fetched, _)) in batch.iter().zip(fetched) {
+                rep.objects += 1;
+                match fetched {
+                    Err(e) => rep.problems.push(format!("{id}: {e}")),
+                    Ok(Object::Commit(c)) => {
+                        commits.insert(*id, c);
                     }
-                }
-                Ok(Object::Snapshot(s)) => {
-                    for (a, c) in &s.zones {
-                        missing(
-                            self,
-                            c,
-                            format!("snapshot {id}: missing commit {c} for zone {a}"),
-                            &mut rep.problems,
-                        )?;
-                    }
-                }
-                Ok(Object::Chunked(m)) => {
-                    for c in &m.chunks {
-                        missing(
-                            self,
-                            &c.id,
-                            format!("chunk manifest {id}: missing chunk {}", c.id),
-                            &mut rep.problems,
-                        )?;
-                        // A present chunk must be a plain blob of the recorded length. Chunks were
-                        // already read and hashed above; only an unlisted one is read again.
-                        let state = match listed.get(&c.id) {
-                            Some(l) => *l,
-                            None if self.store.contains(&c.id)? => match self.store.get(&c.id) {
-                                Ok(Object::Blob(b)) => Listed::Blob(b.len()),
-                                Ok(_) => Listed::Other,
-                                Err(_) => Listed::Failed,
-                            },
-                            None => continue,
-                        };
-                        match state {
-                            Listed::Blob(n) if n == c.len as usize => {}
-                            Listed::Failed => {} // reported when the chunk itself is checked
-                            _ => rep
-                                .problems
-                                .push(format!("chunk manifest {id}: chunk {} is not a blob of {} bytes", c.id, c.len)),
+                    Ok(Object::Tree(t)) => {
+                        for e in t.entries() {
+                            missing(
+                                self,
+                                &e.id,
+                                format!("tree {id}: missing entry {} -> {}", e.name, e.id),
+                                &mut rep.problems,
+                            )?;
                         }
                     }
+                    Ok(Object::Snapshot(s)) => {
+                        for (a, c) in &s.zones {
+                            missing(
+                                self,
+                                c,
+                                format!("snapshot {id}: missing commit {c} for zone {a}"),
+                                &mut rep.problems,
+                            )?;
+                        }
+                    }
+                    Ok(Object::Chunked(m)) => chunked.push((*id, m)),
+                    Ok(_) => {}
                 }
-                Ok(_) => {}
+            }
+        }
+        for (id, m) in &chunked {
+            for c in &m.chunks {
+                missing(
+                    self,
+                    &c.id,
+                    format!("chunk manifest {id}: missing chunk {}", c.id),
+                    &mut rep.problems,
+                )?;
+                // A present chunk must be a plain blob of the recorded length. Chunks were
+                // already read and hashed above; only an unlisted one is read again.
+                let state = match listed.get(&c.id) {
+                    Some(l) => *l,
+                    None if self.store.contains(&c.id)? => match self.store.get(&c.id) {
+                        Ok(Object::Blob(b)) => Listed::Blob(b.len()),
+                        Ok(_) => Listed::Other,
+                        Err(_) => Listed::Failed,
+                    },
+                    None => continue,
+                };
+                match state {
+                    Listed::Blob(n) if n == c.len as usize => {}
+                    Listed::Failed => {} // reported when the chunk itself is checked
+                    _ => rep
+                        .problems
+                        .push(format!("chunk manifest {id}: chunk {} is not a blob of {} bytes", c.id, c.len)),
+                }
             }
         }
         for (id, c) in &commits {
@@ -2970,6 +2979,18 @@ impl Repo {
     pub fn repack_as(&self, fmt: vcs_store::pack::PackFormat) -> Result<(usize, usize)> {
         Ok(self.store.repack_as(fmt, true)?)
     }
+}
+
+/// Objects fsck reads and decodes at a time (bounds its memory; see `Repo::fsck`).
+const FSCK_BATCH: usize = 1 << 16;
+
+/// `VCS_FSCK_BATCH` overrides [`FSCK_BATCH`] (tests use a tiny batch to cross batch boundaries).
+fn fsck_batch() -> usize {
+    std::env::var("VCS_FSCK_BATCH")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(FSCK_BATCH)
 }
 
 /// What fsck saw when it read a listed object, kept for checking chunk manifests.

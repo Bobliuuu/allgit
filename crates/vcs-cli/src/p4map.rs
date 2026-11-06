@@ -1927,7 +1927,7 @@ fn exec(st: &Step, quiet: bool) -> Result<(), Error> {
                     in_desc = false;
                 } else if line.starts_with("Description:") {
                     in_desc = true;
-                    let rest = line["Description:".len()..].trim();
+                    let rest = line.strip_prefix("Description:").unwrap_or_default().trim();
                     if !rest.is_empty() {
                         desc.push(rest.to_owned());
                     }

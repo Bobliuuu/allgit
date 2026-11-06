@@ -309,7 +309,9 @@ fn main() {
         let c = S3Backend::new_unchecked(cfg.clone()).unwrap(); // new agent: new TCP connection
         drop(c.get(&format!("k/{}", i % 50)).unwrap())
     });
-    let mut p_put = time(&mut |i| drop(pooled.put_if_absent(&format!("p/{i}"), &body).unwrap()));
+    let mut p_put = time(&mut |i| {
+        let _ = pooled.put_if_absent(&format!("p/{i}"), &body).unwrap();
+    });
     report("GET 1 KiB, pooled connection", &mut g_pooled, "ms");
     report("GET 1 KiB, new connection each time", &mut g_fresh, "ms");
     let (mp, mf) = (stats(&mut g_pooled).0, stats(&mut g_fresh).0);
@@ -367,7 +369,7 @@ fn main() {
     let big = vec![9u8; 1 << 20];
     let mut put_big = time(&mut |i| {
         if i < 40 {
-            drop(shared.put_if_absent(&format!("big/{i}"), &big).unwrap())
+            let _ = shared.put_if_absent(&format!("big/{i}"), &big).unwrap();
         }
     });
     put_big.truncate(40);

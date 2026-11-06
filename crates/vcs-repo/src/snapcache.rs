@@ -527,7 +527,7 @@ fn prune(store: &Path) {
             (t, e.path())
         })
         .collect();
-    all.sort_by(|a, b| b.0.cmp(&a.0));
+    all.sort_by_key(|a| std::cmp::Reverse(a.0));
     for (_, p) in all.into_iter().skip(keep().max(1)) {
         remove_any(&p);
     }
