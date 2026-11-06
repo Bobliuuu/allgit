@@ -117,7 +117,7 @@ impl DiffArgs {
 
 /// Plain default (no `--color`): colour only on a terminal.
 fn colour_auto() -> bool {
-    std::io::stdout().is_terminal() && !std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty())
+    std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

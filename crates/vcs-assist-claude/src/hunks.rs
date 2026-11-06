@@ -133,7 +133,8 @@ pub fn assemble(req: &Req, text: &str) -> Result<String, String> {
                 // The text is the body as written: every line ends with its own newline, so the closing tag
                 // starts a line. A body that lacks the final newline gets one (except at an unterminated EOF).
                 let mut b = body.clone();
-                if !b.is_empty() && !b.ends_with('\n') && !(n == total && last_is_conflict && eof_no_nl) {
+                let keeps_no_nl = n == total && last_is_conflict && eof_no_nl;
+                if !b.is_empty() && !b.ends_with('\n') && !keeps_no_nl {
                     b.push('\n');
                 }
                 out.push_str(&b);
