@@ -8,7 +8,9 @@ description = "Validating-writer HTTP server and HttpBackend client (optional ru
 [features]
 # HTTPS for server and client via rustls (certificate verification always on). Off by default so the
 # default build has no TLS dependencies.
-tls = ["ureq/tls", "dep:rustls"]
+# Also turns on https:// S3 endpoints (vcs-store-s3/tls): real AWS S3 has no http endpoint, and without this a
+# `--features tls` server refused every `--backend s3://...?endpoint=https://...` (docs/research/infra-review.md).
+tls = ["ureq/tls", "dep:rustls", "vcs-store-s3/tls"]
 
 [lib]
 name = "vcs_server"
