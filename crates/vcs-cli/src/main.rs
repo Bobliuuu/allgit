@@ -930,6 +930,7 @@ fn daemonize_watcher(repo: &vcs_repo::Repo, mut c: std::process::Command) -> std
         unsafe {
             c.pre_exec(|| {
                 libc::setsid();
+                vcs_repo::fsmonitor::set_inherited_fds_cloexec();
                 Ok(())
             });
         }
