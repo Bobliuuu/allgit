@@ -9,6 +9,8 @@ import json, os, shutil, signal, subprocess, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fair_lib import *
 
+import resource
+resource.setrlimit(resource.RLIMIT_NOFILE, (65536, resource.getrlimit(resource.RLIMIT_NOFILE)[1]))  # inherited by server + driver
 W = os.path.abspath(sys.argv[1]); OUT = sys.argv[2]
 NW = int(sys.argv[3]) if len(sys.argv) > 3 else 512
 K = int(sys.argv[4]) if len(sys.argv) > 4 else 2
@@ -32,17 +34,17 @@ def one(label, flags, i):
     open(f"{d}/tokens", "w").write(f"bench write * {hashed}\n")
     port = 20000 + (os.getpid() + i * 7) % 20000
     cmd = [SRV, "--backend", f"{d}/repo", "--tokens", f"{d}/tokens", "--listen", f"127.0.0.1:{port}", "--max-connections", "4096"] + flags
-    sp = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=open(f"{d}/server.log", "wb"), preexec_fn=lambda: os.setrlimit(os.RLIMIT_NOFILE, (65536, 65536)))
+    sp = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=open(f"{d}/server.log", "wb"))
     time.sleep(1.5)
     url = f"http://127.0.0.1:{port}"
     try:
-        sh(f"ulimit -n 65536; {WB} {url} {TOK} --mode zones --clients {SEED} --pushes 1 --first-client 100000 --tag seed > /dev/null")
+        sh(f"{WB} {url} {TOK} --mode zones --clients {SEED} --pushes 1 --first-client 100000 --tag seed > /dev/null")
         mf = sum(os.path.getsize(os.path.join(dp, f)) for dp, _, fn in os.walk(f"{d}/repo") for f in fn if "manifest" in f)
         c0 = proc_cpu_ms(sp.pid)
         with box_lock():
             l0 = load1()
             t0 = time.time()
-            out = sh(f"ulimit -n 65536; {WB} {url} {TOK} --mode zones --clients {NW} --pushes {K} --tag run")
+            out = sh(f"{WB} {url} {TOK} --mode zones --clients {NW} --pushes {K} --tag run")
             wall = time.time() - t0
         srv_cpu = proc_cpu_ms(sp.pid) - c0
         open(f"{raw}/{label}-{i}.json", "w").write(out)
