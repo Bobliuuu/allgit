@@ -78,6 +78,37 @@ impl Backend for FsBackend {
             Err(e) => Err(err(e)),
         }
     }
+    fn get_stream(&self, key: &str, min_len: u64) -> Result<Option<crate::backend::ObjectStream>, BackendError> {
+        let mut f = match fs::File::open(self.path(key)?) {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(err(e)),
+        };
+        let len = f.metadata().map_err(err)?.len();
+        if len < min_len {
+            return Ok(None);
+        }
+        // The tag is the content hash: one bounded-memory pass over the open file (writers replace by rename, so
+        // this descriptor keeps seeing the same bytes), then rewind for the body.
+        let mut h = blake3::Hasher::new();
+        let mut buf = vec![0u8; 256 * 1024];
+        let mut left = len;
+        while left > 0 {
+            let want = buf.len().min(left as usize);
+            let n = f.read(&mut buf[..want]).map_err(err)?;
+            if n == 0 {
+                return Err(BackendError::Other("object shrank while being read".into()));
+            }
+            h.update(&buf[..n]);
+            left -= n as u64;
+        }
+        f.seek(SeekFrom::Start(0)).map_err(err)?;
+        Ok(Some(crate::backend::ObjectStream {
+            len,
+            tag: h.finalize().to_hex().to_string(),
+            reader: Box::new(f.take(len)),
+        }))
+    }
     fn get_range(&self, key: &str, offset: u64, len: u64) -> Result<Option<Vec<u8>>, BackendError> {
         let mut f = match fs::File::open(self.path(key)?) {
             Ok(f) => f,

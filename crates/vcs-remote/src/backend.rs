@@ -77,8 +77,23 @@ pub enum Conditional {
     Missing,
 }
 
+/// A large object opened for streaming: its length and version tag are known up front, the bytes are read
+/// in windows from `reader` (exactly `len` of them), so a server need not hold the whole object in memory.
+pub struct ObjectStream {
+    pub len: u64,
+    pub tag: String,
+    pub reader: Box<dyn std::io::Read + Send>,
+}
+
 pub trait Backend: Send + Sync {
     fn get(&self, key: &str) -> Result<Option<Versioned>, BackendError>;
+    /// Open `key` for a windowed read if the backend can supply its length without loading it and it is at
+    /// least `min_len` bytes. `Ok(None)` means "not streamed" (missing, smaller, or unsupported): the caller
+    /// falls back to [`Backend::get`]. The default never streams (object stores such as S3 would need a HEAD
+    /// plus a ranged/streaming GET body; see docs/known-limits.md).
+    fn get_stream(&self, _key: &str, _min_len: u64) -> Result<Option<ObjectStream>, BackendError> {
+        Ok(None)
+    }
     /// Read `key` only if its version tag differs from `have` (S3/HTTP: `If-None-Match`, answered
     /// 304 with no body when equal). The default is a plain [`Backend::get`] compared locally, so
     /// a backend without the primitive is still correct, just not cheaper. Used for freshness

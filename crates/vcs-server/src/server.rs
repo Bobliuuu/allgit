@@ -39,6 +39,9 @@ pub struct Config {
     pub max_manifest_body: usize,
     /// Request line plus headers, in bytes (431 beyond).
     pub max_header_bytes: usize,
+    /// Un-ranged GETs of objects at least this large are streamed from the backend in windows when it can supply
+    /// a length (directory backend), instead of being loaded whole. 0 streams everything it can.
+    pub stream_min_bytes: u64,
     /// Per read/write timeout on a connection.
     /// Path policy, lease cap and clock-skew allowance for manifest writes.
     pub validator: ValidatorConfig,
@@ -102,6 +105,7 @@ impl Config {
             max_body: 1024 * 1024 * 1024,
             max_manifest_body: 32 * 1024 * 1024,
             max_header_bytes: 32 * 1024,
+            stream_min_bytes: 8 << 20,
             validator: ValidatorConfig::default(),
             io_timeout: Duration::from_secs(30),
             header_timeout: Duration::from_secs(10),
@@ -1258,6 +1262,18 @@ fn object_read(sh: &Shared, req: &Request, who: &Principal, key: &str, head: boo
             Ok(None) => text(404, "not found"),
             Err(e) => backend_err(e),
         };
+    }
+    if key != manifest::KEY {
+        match sh.backend.get_stream(key, sh.cfg.stream_min_bytes) {
+            Ok(Some(s)) => {
+                if req.header("if-none-match").is_some_and(|t| tag_matches(t, &s.tag)) {
+                    return Response::new(304, "").with("ETag", etag(&s.tag));
+                }
+                return Response::streamed(200, s.reader, s.len).with("ETag", etag(&s.tag));
+            }
+            Ok(None) => {}
+            Err(e) => return backend_err(e),
+        }
     }
     let got = sh.backend.get(key);
     if key == manifest::KEY {
