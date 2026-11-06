@@ -1462,6 +1462,8 @@ fn translate_commit(rest: &[String]) -> Result<Vec<Step>, Error> {
     let file = p.val(&["-F", "--file"]);
     let all = p.take(&["-a", "--all"]);
     let amend = p.take(&["--amend"]);
+    let author = p.val(&["--author"]);
+    let allow_empty = p.take(&["--allow-empty"]);
     p.take(&["--no-edit", "-q", "--quiet", "-v", "--verbose", "-e", "--edit"]);
     let no_verify = p.take(&["-n", "--no-verify"]);
     let nosign = p.take(&["--no-gpg-sign"]);
@@ -1471,7 +1473,7 @@ fn translate_commit(rest: &[String]) -> Result<Vec<Step>, Error> {
     } else {
         p.val(&["--gpg-sign"])
     };
-    p.finish("`vcs commit [-m msg] [-S]`; `vcs git commit -a/--amend` also work (no --allow-empty/--fixup/--author/--date/-s/-C)")?;
+    p.finish("`vcs commit [-m msg] [-S]`; `vcs git commit -a/--amend` also work (no --fixup/--date/-s/-C)")?;
     let mut message = if msgs.is_empty() { None } else { Some(msgs.join("\n\n")) };
     if let Some(f) = file {
         message = Some(std::fs::read_to_string(&f).map_err(|source| Error::Io { path: f.into(), source })?);
@@ -1494,6 +1496,15 @@ fn translate_commit(rest: &[String]) -> Result<Vec<Step>, Error> {
     }
     if nosign {
         commit.push("--no-sign".into());
+    }
+    if let Some(a) = author {
+        commit.extend(["--author".to_owned(), a]);
+    }
+    if allow_empty {
+        if amend {
+            return Err(Error::Msg("git commit --allow-empty with --amend: an amend already allows an unchanged tree".into()));
+        }
+        commit.push("--allow-empty".into());
     }
     let mut steps = vec![];
     if all {

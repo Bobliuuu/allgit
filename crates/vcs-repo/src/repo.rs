@@ -2061,6 +2061,18 @@ impl Repo {
     /// Like [`Repo::commit`]; with `signer`, every commit object is passed through it (it returns
     /// the signed commit, see `vcs_objects::signing::sign_commit`) before it is stored.
     pub fn commit_signed(&self, message: &str, author: Signature, signer: Option<&dyn Fn(&Commit) -> Commit>) -> Result<CommitReport> {
+        self.commit_with(message, author, signer, None)
+    }
+
+    /// Like [`Repo::commit_signed`]; with `empty_zone` (a zone id) that zone gets a commit even when
+    /// nothing in it changed (`git commit --allow-empty`): same tree as its parent.
+    pub fn commit_with(
+        &self,
+        message: &str,
+        author: Signature,
+        signer: Option<&dyn Fn(&Commit) -> Commit>,
+        empty_zone: Option<&str>,
+    ) -> Result<CommitReport> {
         if message.trim().is_empty() {
             return msg("empty commit message");
         }
@@ -2092,7 +2104,7 @@ impl Repo {
             let zpath = zones.path_of(zone).unwrap_or("");
             let cached = img.trees()?.filter(|(f, _)| *f == fp).map(|(_, m)| m);
             let mut it = treeops::IndexTrees::new(&self.store, &img, &zones, zone, cached);
-            if parent_root.is_none() && it.is_empty(zpath)? {
+            if parent_root.is_none() && it.is_empty(zpath)? && empty_zone != Some(zone.as_str()) {
                 continue;
             }
             let root = it.build_root(zpath, parent_root)?;
@@ -2102,7 +2114,7 @@ impl Repo {
                 .as_ref()
                 .filter(|m| !is_pick && m.zone == *zone && Some(m.ours) == parent)
                 .map(|m| m.theirs);
-            if Some(root) == parent_root && second.is_none() {
+            if Some(root) == parent_root && second.is_none() && empty_zone != Some(zone.as_str()) {
                 continue;
             }
             let change_id = fresh_change_id(zone, &root, parent.as_ref(), &author);

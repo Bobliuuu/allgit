@@ -148,6 +148,12 @@ enum Cmd {
         /// Do not sign even when `commit.sign` is true
         #[arg(long, conflicts_with = "sign")]
         no_sign: bool,
+    /// Record this identity (`Name <email>`) as the commit's author instead of `user.name`/`user.email`
+    #[arg(long, value_name = "NAME <EMAIL>")]
+    author: Option<String>,
+    /// Commit the current zone even when nothing in it changed (like `git commit --allow-empty`)
+    #[arg(long)]
+    allow_empty: bool,
     },
     /// Check the Ed25519 signature of a commit against `signing.allowedSigners` (exit 1 unless good)
     VerifyCommit {
@@ -893,6 +899,22 @@ fn author() -> Result<Signature, Error> {
     })
 }
 
+/// `--author "Name <email>"`.
+fn parse_author(s: &str) -> Result<Signature, Error> {
+    let bad = || Error::Msg(format!("--author {s:?}: expected `Name <email>`"));
+    let (name, rest) = s.split_once('<').ok_or_else(bad)?;
+    let email = rest.strip_suffix('>').ok_or_else(bad)?.trim();
+    let name = name.trim();
+    if name.is_empty() || email.is_empty() {
+        return Err(bad());
+    }
+    Ok(Signature {
+        name: name.to_owned(),
+        email: email.to_owned(),
+        timestamp: timestamp(),
+    })
+}
+
 /// Identity used for lock decisions: `VCS_PRINCIPAL`, else the author email.
 fn principal() -> String {
     std::env::var("VCS_PRINCIPAL")
@@ -1157,11 +1179,24 @@ fn run(cli: Cli) -> Result<(), Error> {
             force_no_lock,
             sign,
             no_sign,
+            author: author_override,
+            allow_empty,
         } => {
             let (repo, cwd) = open()?;
             lockable_cmd::guard(&repo, lockable_cmd::Stage::Commit, &[], force_no_lock)?;
             let cfg = config::Config::load()?;
-            cfg.identity()?;
+            let who = match &author_override {
+                Some(a) => parse_author(a)?,
+                None => {
+                    cfg.identity()?;
+                    author()?
+                }
+            };
+            let empty_zone = if allow_empty {
+                Some(repo.resolve_zone(&zone_of_cwd(&repo, &cwd, None)?)?)
+            } else {
+                None
+            };
             let key = if no_sign {
                 None
             } else if let Some(k) = &sign {
@@ -1181,10 +1216,11 @@ fn run(cli: Cli) -> Result<(), Error> {
             let signer = key
                 .as_ref()
                 .map(|k| move |c: &vcs_objects::Commit| vcs_objects::signing::sign_commit(c, k));
-            let rep = repo.commit_signed(
+            let rep = repo.commit_with(
                 &message,
-                author()?,
+                who,
                 signer.as_ref().map(|f| f as &dyn Fn(&vcs_objects::Commit) -> vcs_objects::Commit),
+                empty_zone.as_deref(),
             )?;
             hooks::fire_simple(&repo, &hz, "post-commit", &[])?;
             let defs = repo.zones()?;
