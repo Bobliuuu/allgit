@@ -1,5 +1,12 @@
 # Benchmarks (first baseline)
 
+> **Audit note (2026-11-06).** This file is chronological. The first tables (1,000 and 10,000 files, Apple M2 Pro, 2026-10-31) and the two 100k runs
+> on a shared 30-core Linux box (git 2.34.1, load1 up to 36, vcs cells run at higher load than git cells) show vcs **slower** than git and are
+> **superseded**; their vcs columns come from builds that predate #229, #374 to #418 and the watcher. The current numbers are in
+> [research/command-scoreboard.md](research/command-scoreboard.md) (box c, build `845610a`, 9 interleaved runs, load gate) and the README.
+> Different sections use different git versions (2.34.1, 2.43.0, 2.52.0, 2.56.0), machines and load, so cells from different sections must not be
+> compared with each other. See [research/benchmark-audit.md](research/benchmark-audit.md).
+
 Everything here was measured by the harness in `crates/vcs-bench` and `scripts/bench_vs_git.sh`. Nothing is
 extrapolated: sizes that were not run (100k commits; see the 100k-file scale run below) have no numbers. This is a **first baseline on one
 machine**, not a conclusion about vcs vs git.

@@ -27,14 +27,14 @@ none is a statement about other hardware. Where vcs loses, it says so in the sam
 
 | claim | vcs | reference | source |
 |---|---|---|---|
-| **1,000,000 files**: `clone` (local path) | **40.5 s** | git 603.1 s | [huge-scale](docs/research/huge-scale.md) |
-| 1M files: `add` all | **18.9 s** | git 215.5 s | same |
+| **1,000,000 files**: `clone` (local path; **not like for like**, see [audit](docs/research/benchmark-audit.md) #1) | **40.5 s** | git 603.1 s (loose objects, `--no-hardlinks`; git cloned the same 1M files in 24 s in [monorepo-stress](docs/research/monorepo-stress.md)) | [huge-scale](docs/research/huge-scale.md) |
+| 1M files: `add` all (git is I/O bound: wall 215 s, CPU 59 s; loose objects on EBS) | **18.9 s** | git 215.5 s | same |
 | 1M files: `diff` of a 1% change | **3.7 s** | git 19.7 s | same |
 | 1M files: `add` with nothing changed | 6.8 s (**loss**) | git 0.9 s | same |
-| 512 writers on one manifest, group commit on vs off | **69.7 vs 27.3 publishes/s**, p95 8.5 vs 37.2 s | (same server, feature off) | [scalability](docs/scalability.md) #6 |
+| 512 writers on one manifest, group commit on vs off (box load1 17 to 22, in-process backend) | **69.7 vs 27.3 publishes/s**, p95 8.5 vs 37.2 s | (same server, feature off) | [scalability](docs/scalability.md) #6 |
 | 128 pushers to S3-compatible storage | **42.2 pushes/s** | walgit 15.5 | [highload-matrix](docs/research/highload-matrix.md) |
 | 128 pushers, local disk | 85.3 pushes/s (**loss**) | git 222.0 | same |
-| 100,000 files `add` (flat, fresh index) | **538 ms** | git 4,810 ms | [command-scoreboard](docs/research/command-scoreboard.md) |
+| 100,000 files `add` (flat, fresh index; 3 runs) | **733 ms** | git 5,383 ms | [command-scoreboard](docs/research/command-scoreboard.md) |
 | `kill -9` of the server, 157 times in 14 min | **0 acknowledged files lost** | n/a | [box-harvest](docs/research/box-harvest.md) |
 | 64 to 256 CLI writers on a 1M-file, 200k-commit, 64.7 GB monorepo, server `kill -9`ed 8 times per run | **0 acknowledged files lost** (5,038 to 7,223 acked per run) | n/a | [monorepo-stress](docs/research/monorepo-stress.md) |
 | Zones chosen from your usage profile | **37 MB** downloaded | 189.5 MB full clone | [zone-profile-bench](docs/research/zone-profile-bench.md) |
@@ -110,7 +110,7 @@ manifest, with group commit in front*. "Not seen" is our reading of their public
 | **Operation log** | `vcs op log / undo / restore` over branches and workspace. | [operations](docs/operations.md) |
 | **First-class conflicts** | A conflicted merge or rebase is recorded state you can list, show and resolve (`vcs conflict`, `vcs resolve`). | [merge](docs/merge.md) |
 | **Lease locks in the manifest** | Acquire, renew, release and break are transaction ops with fencing, atomic with publishes. Enforced when you publish through `vcs-server`; advisory on a plain bucket. | [locks](docs/locks.md) |
-| **Lazy tag table** (PR #481, pending merge) | The tag table is validated without allocating and parsed only when a command looks at it; an untouched table is written back byte for byte. On 300,000 tags `log -n 1` went 0.307 to 0.062 s (loaded laptop). | [scalability](docs/scalability.md) |
+| **Lazy tag table** (PR #481, merged; the refs delta log #527 builds on it) | The tag table is validated without allocating and parsed only when a command looks at it; an untouched table is written back byte for byte. On 300,000 tags `log -n 1` went 0.307 to 0.062 s (loaded laptop). | [scalability](docs/scalability.md) |
 | **Built-in large-file engine** | Content-defined chunking (kind 9, no format bump), streaming add and checkout, no separate LFS tool. | [object-model](docs/object-model.md#large-files-chunked-kind-9-no-format-bump) |
 | **Pack formats** | v2 (zstd per object) ships; v3 (sketch-ordered deltas) is opt-in for transfers because it measured slower for clone wall time. | [remote-packs](docs/remote-packs.md), [delta-gate](docs/research/storage/delta-gate.md) |
 
@@ -147,12 +147,12 @@ statement about a real WAN or about AWS S3 latency**.
 **Real S3 (new, [real-s3](docs/research/real-s3.md)).** From a c6i.4xlarge in the bucket's region, 100,000 files, job-sized slice (2000 files) cloned straight
 from S3 with no server: cold clone 341 ms on a standard bucket (git blobless partial clone from a `git daemon` on the same box, no WAN: 426 to 480 ms), 245 ms on an
 S3 Express One Zone directory bucket; warm fetch + checkout 264 ms (Express 149 ms) vs git 231 to 245 ms; a 3-file push p50 232 ms (Express 60 ms) vs git 83 ms.
-The git baseline has no network in the path, so it flatters git. Express has no remote GC or compaction yet: a clone after 300 uncompacted pushes needs 1850
+These are the best-case cells (fresh history, 3 rounds). After the benchmark's push series the same cold slice clone took 1,492 ms (std) and 3,641 ms (Express) against git's 555 to 635 ms (`data/real-s3/std100k.json`, `exp100k.json`). The git baseline has no network in the path, so it flatters git. Express has no remote GC or compaction yet: a clone after 300 uncompacted pushes needs 1850
 requests and 3.6 s. Real `SlowDown` (503) was not triggered (3,900 req/s from one box, zero 503s). walgit was not run on real S3.
 
 **1M files.** On a c6i.4xlarge, one run per cell, a 4 GB tree of 1,000,000 files: `clone` 40.5 s vs git 603.1 s, `add` 18.9 s vs
 215.5 s, `commit` 1.5 s vs 4.5 s, `diff` 3.7 s vs 19.7 s, `gc` 3.5 s vs 15.2 s, `publish` 11.2 s (git: n/a). vcs peaks at 1.0 to
-2.3 GiB RSS on add, publish and clone, and a no-op `add` is about 7.6x slower than git's stat cache. The `diff` result uses all 16 cores
+2.2 GiB RSS on add, publish and clone, and a no-op `add` is about 7.6x slower than git's stat cache. The `diff` result uses all 16 cores
 (51.9 s user for 3.7 s wall), so it shrinks on small machines. Layout tested: nested only. Details: [huge-scale](docs/research/huge-scale.md).
 
 **Many pushers on one repository.** Every publish contends on one manifest key. Group commit in `vcs-server` merges disjoint
@@ -160,7 +160,7 @@ publishes. At 512 writers: 27.3 to 69.7 publishes/s, p95 37.2 to 8.5 s, requests
 
 **Hundreds of writers on real S3 (us-east-1, c6i.4xlarge, one run per cell).** The old server did one conditional manifest PUT per
 push, so disjoint writers capped at **19 to 22 pushes/s at any of 64 to 1024 writers** (p99 up to 54 s). A batch commit (one PUT carries
-every write that queued during the previous one) gives **215 to 350 pushes/s at 256 to 1024 writers, p99 1.3 to 7.4 s**; soak with 177
+every write that queued during the previous one) gives **157 to 348 pushes/s at 256 to 1024 writers (512 writers: 157), p99 1.3 to 7.4 s; each writer made only 2 pushes**; soak with 177
 server `kill -9`: 2,254 acked files, none lost. **One hot branch is still a retry storm** (6.7 pushes/s at 256 writers, tail 110 s);
 use branches or zones per writer. SlowDown counts, replicas and git/walgit at this scale were not run.
 [many-writers-s3](docs/research/many-writers-s3.md).
@@ -219,8 +219,7 @@ faster in wall time, but makes 71 requests instead of 28 and loses to `git pull`
 
 <p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/charts/zone-profile-dark.svg"><img src="docs/img/charts/zone-profile-light.svg" alt="Auto zone selection: bytes and clone time vs full clone and git partial clone" width="820"></picture></p>
 
-**Other limits, stated.** Refs are one file read whole: fine to about 100k refs; 1M tags cost seconds per command (the lazy tag table in PR #481 helps
-once merged; the delta log is not built). `vcs-server` uses a thread per connection (256 default cap). First `status` after importing a
+**Other limits, stated.** Refs are one file read whole: fine to about 100k refs; 1M tags cost seconds per command (the lazy tag table and, from 50,000 tags, the refs delta log (#527, opt-out `VCS_REFS_DELTA=0`) help: see [scalability](docs/scalability.md#refs-delta-log-436-item-2c-527)). `vcs-server` uses a thread per connection (256 default cap). First `status` after importing a
 300,000-file wide tree took 22 s. Direct-to-store publishers (S3 without a server) get no group commit: keep fewer than 8 per
 repository. Real S3 `SlowDown` counts under load were not captured (throughput on real S3 was measured). Not run: 10M files, 1M-commit history, remote GC concurrent with
 pushes at scale. Full list: [scalability](docs/scalability.md#not-run).
@@ -246,7 +245,7 @@ Summary (counts are cells, not importance; rows sharing a scenario count once pe
 | **Total** | **136** | **68** | **14** | single pass, one box, build `845610a`, except six git cells re-measured after #534, #535, #537 (see the scoreboard); jj/Sapling flat layout only (deep and binary not re-run) |
 
 Beyond the scoreboards: 1M-file `clone`, `add`, `diff`, `checkout` and `gc` win against git; 100k-file `add`, `commit`, `switch`,
-`grep` and `archive` win; `status` on a clean tree is a CPU tie; `log -n 5` is a tie (start-up cost under the 2 ms floor). Remote
+`grep` and `archive` win; `status` on a clean tree wins only because vcs runs a background watcher and git has no fsmonitor (see above); `log -n 5` is a tie (start-up cost under the 2 ms floor). Remote
 workflows against walgit on a quiet box (100,000 files, 3 reps, loopback RustFS): initial push 788 ms vs 8,398, full clone warm 2,174
 vs 3,392, no-op fetch 5 vs 19; warm one-commit fetch is a tie with git.
 
@@ -263,27 +262,35 @@ carry machine, load, run count and version, and none of them is a general statem
 
 #### 🏁 Local commands against git, 100,000 files
 
-Flat layout (`datagen flat 100000`, seed 42), warm cache, interleaved with git in random order per round, 5 runs (3 for
-the slowest cells), medians, vcs divided by git, **below 1 means vcs used less**. Machine: AWS c6i.4xlarge (box E),
-16 vCPU, load1 about 1.5 to 2.1 during the timed groups, git 2.43.0, run 2026-11-02, vcs release build of
-`origin/main` at `8da0be2`. Wall and CPU are user+sys from `wait4`.
+Flat layout (`datagen flat 100000`, seed 42), warm cache, interleaved with git in random order per round, 9 runs (3 for
+`add` and `commit`, 5 for `switch`), medians, vcs divided by git, **below 1 means vcs used less**. Machine: AWS c6i.4xlarge
+(box c), 16 vCPU, load1 about 1.0 (gated), git 2.43.0 with an empty config, run 2026-11-04, vcs release build `845610a`.
+Wall and CPU are user+sys of the command from `wait4`. An earlier run of this table (2026-11-02, box E, `8da0be2`) showed
+add 4,810 vs 538 ms and `status` 65 vs 55 ms; it is superseded by the numbers below.
 
 | cell (flat 100k) | git wall / CPU ms | vcs wall / CPU ms | wall ratio | CPU ratio |
 |---|---|---|---|---|
-| add (fresh index) | 4,810 / 4,751 | 538 / 1,772 | 0.11 | 0.37 |
-| commit (all staged) | 357 / 459 | 227 / 92 | 0.45 | 0.20 |
-| status, clean | 65 / 182 | 55 / 189 | 0.88 | **1.04** |
-| log -n 5 | 1.4 / 1.3 | 2.1 / 2.1 | **1.54** | **1.58** |
-| switch (1% of files differ) | 233 / 346 | 179 / 279 | 0.77 | 0.81 |
+| add (fresh index; n=3) | 5,383 / 5,275 | 733 / 1,997 | 0.14 | 0.38 |
+| commit (all staged; n=3, vcs 113 to 335 ms) | 414 / 534 | 240 / 95 | 0.58 | 0.18 |
+| status, clean (**vcs uses a background watcher**, see below) | 100 / 236 | 30.8 / 44.7 | 0.31 | 0.19 |
+| log -n 5 | 2.2 / 2.0 | 2.9 / 2.8 | **1.36** | **1.38** |
+| switch (1% of files differ; n=5) | 252 / 385 | 244 / 289 | 0.98 | 0.74 (TIE) |
+
+**Read the `status` row with care.** Since 2026-11-03 a vcs repository with an index of 1 MB or more (about 14,000 files)
+auto-starts a detached `vcs watch` daemon, and later `status`/`diff` read its journal instead of scanning
+([benchmarks](docs/benchmarks.md#watcher-on-by-default-for-big-repositories-2026-11-03)). The harness neither disables it
+(`VCS_NO_AUTOWATCH=1`) nor counts the daemon's CPU, and git ran **without** `core.fsmonitor` or the untracked cache. So
+this row compares vcs-with-a-daemon to git-without-one; a fair pair is not measured yet
+([audit](docs/research/benchmark-audit.md) #2, script `scripts/bench_status_fair.sh`).
 
 Source: [docs/research/data/command-scoreboard](docs/research/data/command-scoreboard) (`git-fresh.json`,
 `git-clean.json`, `git-small.json`), rendered by `scripts/command_scoreboard_render.py`; the complete per-command table
 is [docs/research/command-scoreboard.md](docs/research/command-scoreboard.md). The older interleaved harness
 (`scripts/bench_compare.py`, [docs/research/interleaved-comparison.md](docs/research/interleaved-comparison.md)) has
 other runs in `docs/research/interleaved-data/`; they predate the work in PRs #374 to #418 and are not quoted here.
-`status` on a clean tree is a CPU tie with git (1.04x) and about 12% faster in wall time; `log` of a handful of
+`log` of a handful of
 commits costs about 0.7 ms more process time than git (a start-up cost, below the 2 ms noise floor of the scoreboard,
-so it is scored a TIE). Not measured here: cold cache, git with fsmonitor, the optional `watcher` feature, other
+so it is scored a TIE). Not measured here: cold cache, git with fsmonitor or untracked cache, vcs with the watcher off, other
 machines, deep and binary layouts for the per-command git/p4 scoreboards.
 
 #### 🏆 Per-command scoreboards
@@ -302,12 +309,12 @@ cell under 2 ms wall difference or inside the MAD noise). Green is a win, amber 
 | tool | 🟢 WIN | 🟡 TIE | 🔴 LOSS | not measured / n/a | how fresh |
 |---|---|---|---|---|---|
 | git (flat 100k, every doc row; rows sharing a scenario count once per row) | 64 | 59 | 8 | 93 not measured, 44 missing in vcs | 2026-11-04, build `845610a`, box c, 9 interleaved runs, load1 < 1.0 gate |
-| Perforce (p4d on loopback) | 17 | 7 | 6 | 27 not measured, 2 missing | 2026-11-02, build `8da0be2`, box E, interleaved |
-| walgit (remote workflows) | 24 | 0 | 0 | 8 not measured | same build, 5 reps, walgit 80e9a20 |
-| Jujutsu (flat 100k, 17 cells) | 16 | 1 | 0 | describe and amend n/a | vcs `8da0be2` re-run, **jj numbers from the earlier `34315b6` run, not interleaved** |
+| Perforce (p4d on loopback) | 17 | 7 | 6 | 27 not measured, 2 missing | 2026-11-04, build `845610a`, box c, interleaved (`data/command-scoreboard/p4.json`) |
+| walgit (remote workflows) | 24 | 0 | 0 | 8 not measured | 2026-11-04, build `845610a`, 5 reps, walgit 80e9a20 (`data/walgit-final`) |
+| Jujutsu (flat 100k, 17 cells) | 16 | 1 | 0 | describe and amend n/a | 2026-11-04, build `845610a`, 9 interleaved runs (`data/jj-sl-final`) |
 | Sapling (flat 100k, 16 cells) | 15 | 1 | 0 | gc, describe and amend n/a | same as Jujutsu |
 
-Before this refresh (2026-11-02, build `8da0be2`, box E): git 46 WIN / 68 TIE / 17 LOSS, Perforce 9 / 7 / 14. Caveats: p4 CPU
+Counts are per doc-table row, and rows that share one scenario (`git init` / `git init proj`, `git add .` / `git add -A`) count once per row: counting each git scenario once gives 55 WIN / 51 TIE / 6 LOSS (112) instead of 64 / 59 / 8 (131). Before this refresh (2026-11-02, build `8da0be2`, box E): git 46 WIN / 68 TIE / 17 LOSS, Perforce 9 / 7 / 14. Caveats: p4 CPU
 is a lower bound (the p4d process is read in 10 ms ticks), p4 and jj/Sapling are different architectures than vcs, the
 git/p4/walgit/jj/Sapling runs are flat 100k only (the older deep and binary jj/Sapling charts above are from earlier runs).
 
