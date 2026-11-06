@@ -75,7 +75,7 @@ pub enum SyncAction {
     },
     /// Local branch has commits the remote lacks.
     Ahead,
-    /// Both sides have new commits; needs merge/rebase (not implemented yet).
+    /// Both sides have new commits; `sync` only reports it and leaves the zone alone; resolve with `Repo::merge_remote` (`vcs merge`) or a rebase.
     Diverged,
     /// Zone has uncommitted changes; left untouched.
     Dirty,

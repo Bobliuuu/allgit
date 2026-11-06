@@ -472,7 +472,7 @@ pub fn ops() -> Vec<OpDef> {
     }));
     v.push(od("gc", Fix::Repo, true, |cx| {
         let mut p = tp(vec![], vec![cx.tc(&["gc", "-q"], &["gc", "--dry-run"], &cx.work())])?;
-        p.note = "vcs gc is --dry-run only (destructive gc not implemented)".into();
+        p.note = "vcs side runs gc --dry-run: real gc is implemented (docs/gc.md) but its grace period keeps a fresh repo from being swept, so the timing would not compare with git gc".into();
         Ok(p)
     }));
     let mut cold = od("cold_restart", Fix::Repo, false, |cx| {
