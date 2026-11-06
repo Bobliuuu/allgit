@@ -852,8 +852,9 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             let f = p.take(&["-f", "--force"]);
             let n = p.take(&["-n", "--dry-run"]);
             let d = p.take(&["-d"]);
+            let x = p.take(&["-x"]);
             p.take(&["-q", "--quiet"]);
-            p.finish("`vcs clean [-n|-f] [-d] [paths]` (no -x/-X: ignored files are never removed)")?;
+            p.finish("`vcs clean [-n|-f] [-d] [-x] [paths]` (no -X: removing only ignored files)")?;
             let mut a = v(&["clean"]);
             if n {
                 a.push("-n".into());
@@ -863,6 +864,9 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             }
             if d {
                 a.push("-d".into());
+            }
+            if x {
+                a.push("-x".into());
             }
             a.extend(p.all_pos());
             vec![Step::Vcs(a)]
@@ -991,11 +995,18 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
         "ls-files" => {
             let mut p = parse(cmd, rest, &[]);
             let s = p.take(&["-s", "--stage"]);
-            p.take(&["-c", "--cached"]);
-            p.finish("`vcs ls-files [-s] [--rev R] [paths]` (tracked files only; no -o/-m/-d/-i/-z)")?;
+            let o = p.take(&["-o", "--others"]);
+            p.take(&["-c", "--cached", "--exclude-standard"]);
+            p.finish("`vcs ls-files [-s|-o] [--rev R] [paths]` (no -m/-d/-i/-z)")?;
             let mut a = v(&["ls-files"]);
+            if s && o {
+                return Err(missing(cmd, "-s together with -o", "`vcs ls-files -s` and `vcs ls-files -o` separately"));
+            }
             if s {
                 a.push("-s".into());
+            }
+            if o {
+                a.push("-o".into());
             }
             a.extend(p.all_pos());
             vec![Step::Vcs(a)]
@@ -1029,7 +1040,18 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
                     a.push(f.into());
                 }
             }
-            p.finish("`vcs cat-file (-t|-s|-p) <object>` (no -e, --batch)")?;
+            for f in ["--batch", "--batch-check"] {
+                if p.take(&[f]) {
+                    a.push(f.into());
+                }
+            }
+            p.finish("`vcs cat-file (-t|-s|-p) <object> | --batch | --batch-check` (no -e, --batch=<format>, --batch-all-objects)")?;
+            if a.iter().any(|x| x.starts_with("--batch")) {
+                if !p.pos.is_empty() {
+                    return Err(Error::Msg("git cat-file --batch reads object names from standard input, not the command line".into()));
+                }
+                return Ok(vec![Step::Vcs(a)]);
+            }
             if p.pos.len() != 1 {
                 return Err(missing(cmd, "the `<type> <object>` form", "`vcs cat-file -p <object>`"));
             }
@@ -1045,9 +1067,13 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             }
             let short = p.val(&["--short"]);
             let top = p.take(&["--show-toplevel"]);
+            let git_dir = p.take(&["--git-dir"]);
             p.take(&["--verify", "-q", "--quiet"]);
-            p.finish("`vcs rev-parse [--short] [--show-toplevel] <rev>...` (no --git-dir, --is-inside-work-tree)")?;
+            p.finish("`vcs rev-parse [--short] [--show-toplevel] [--git-dir] <rev>...` (no --is-inside-work-tree)")?;
             let mut a = v(&["rev-parse"]);
+            if git_dir {
+                a.push("--git-dir".into());
+            }
             if short.is_some() {
                 a.push("--short".into());
             }

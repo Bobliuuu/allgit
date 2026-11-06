@@ -144,7 +144,7 @@ Status: exact (same command and flags), renamed (other spelling, same meaning), 
 semantics differ as the notes say), missing (no equivalent; the notes name the native route).
 
 <!-- BEGIN GENERATED TABLE -->
-261 rows: 152 exact, 41 renamed, 37 different, 31 missing.
+261 rows: 153 exact, 41 renamed, 40 different, 27 missing.
 
 | git | vcs | status | notes | test |
 |---|---|---|---|---|
@@ -337,7 +337,7 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git reflog -n 5` | `vcs op log -n 5` | renamed |  | translation |
 | `git clean -n` | `vcs clean -n` | exact |  | `clean` |
 | `git clean -fd` | `vcs clean -f -d` | exact |  | `clean` |
-| `git clean -fx` | none | missing | ignored files are never removed | translation |
+| `git clean -fx` | `vcs clean -f -x` | exact | ignored directories are removed only with -d as well; no -X (ignored files only) | `clean` |
 | `git grep -n needle` | `vcs grep -n needle` | exact | Rust regex syntax | `grep` |
 | `git grep -i -e needle HEAD` | `vcs grep -i needle HEAD` | exact |  | `grep` |
 | `git grep -F a.b -- src` | `vcs grep -F a.b -- src` | exact |  | `grep` |
@@ -363,17 +363,17 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git config --system x y` | none | missing | no system scope | translation |
 | `git ls-files` | `vcs ls-files` | exact |  | translation |
 | `git ls-files -s` | `vcs ls-files -s` | exact | sha256 object ids, not sha1 | translation |
-| `git ls-files -o` | none | missing | `vcs status` lists untracked files | translation |
+| `git ls-files -o` | `vcs ls-files -o` | different | never lists files matched by `.vcsignore` (git needs --exclude-standard for that, which is accepted and implied); one line per file | `clean` |
 | `git ls-tree -r --name-only HEAD` | `vcs ls-files --rev HEAD` | renamed | always recursive | translation |
 | `git ls-tree HEAD` | `vcs ls-files -s --rev HEAD --depth 1` | renamed | one level from the top tree; directories are mode 040000 with their tree id, no type column | translation |
 | `git cat-file -p HEAD:f.txt` | `vcs cat-file -p HEAD:f.txt` | exact |  | translation |
 | `git cat-file -t HEAD` | `vcs cat-file -t HEAD` | exact |  | translation |
-| `git cat-file --batch` | none | missing | one object per call | translation |
+| `git cat-file --batch` | `vcs cat-file --batch` | different | object names come from standard input; ids are 64 hex digits; the content of a commit or tag is vcs's own text form | translation |
 | `git rev-parse HEAD` | `vcs rev-parse HEAD` | exact | 64-hex ids | translation |
 | `git rev-parse --short HEAD` | `vcs rev-parse --short HEAD` | exact |  | translation |
 | `git rev-parse --show-toplevel` | `vcs rev-parse --show-toplevel` | exact |  | translation |
 | `git rev-parse --abbrev-ref HEAD` | `vcs branch (the * line)` | renamed |  | translation |
-| `git rev-parse --git-dir` | none | missing | state lives in `<worktree>/.vcs` | translation |
+| `git rev-parse --git-dir` | `vcs rev-parse --git-dir` | different | prints `.vcs` (the state directory of this worktree), absolute below the root; not `.git` | `plumbing` |
 | `git shortlog -sn` | `vcs shortlog -s -n` | exact |  | translation |
 | `git merge-base main feature` | `vcs merge-base main feature` | exact |  | translation |
 | `git diff-tree -r A B` | `vcs diff-tree A B` | different | prints `A/D/M path` lines, not git's raw format | translation |
