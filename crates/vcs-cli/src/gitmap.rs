@@ -1295,6 +1295,7 @@ fn translate_format_patch(rest: &[String]) -> Result<Vec<Step>, Error> {
     let no_numbered_flag = ns.iter().any(String::is_empty);
     let stdout = p.take(&["--stdout"]);
     let root = p.take(&["--root"]);
+    let cover = p.take(&["--cover-letter"]);
     let out = p.val(&["-o", "--output-directory"]);
     let start = p.val(&["--start-number"]);
     let prefix = p.val(&["--subject-prefix"]);
@@ -1312,7 +1313,7 @@ fn translate_format_patch(rest: &[String]) -> Result<Vec<Step>, Error> {
         "--quiet",
         "--no-binary-never",
     ]);
-    p.finish("`vcs format-patch [-n N | <rev> | A..B] [-o DIR] [--stdout] [--root] [--start-number N] [--subject-prefix P]`; no --cover-letter/--attach/--inline/--to/--cc/-v<n>/--numbered-files")?;
+    p.finish("`vcs format-patch [-n N | <rev> | A..B] [-o DIR] [--stdout] [--root] [--start-number N] [--subject-prefix P]`; no --attach/--inline/--to/--cc/-v<n>/--numbered-files")?;
     let mut a = v(&["format-patch"]);
     if let Some(n) = &count {
         a.push("-n".into());
@@ -1323,6 +1324,9 @@ fn translate_format_patch(rest: &[String]) -> Result<Vec<Step>, Error> {
     }
     if no_numbered {
         a.push("--no-numbered".into());
+    }
+    if cover {
+        a.push("--cover-letter".into());
     }
     if let Some(n) = start {
         a.push("--start-number".into());
@@ -1380,6 +1384,7 @@ fn translate_am(rest: &[String]) -> Result<Vec<Step>, Error> {
 fn translate_apply(rest: &[String]) -> Result<Vec<Step>, Error> {
     let mut p = parse("apply", rest, &["-p", "--whitespace", "-C"]);
     let check = p.take(&["--check"]);
+    let stat = p.take(&["--stat"]);
     let index = p.take(&["--index"]);
     let rev = p.take(&["-R", "--reverse"]);
     let verbose = p.take(&["-v", "--verbose"]);
@@ -1403,9 +1408,14 @@ fn translate_apply(rest: &[String]) -> Result<Vec<Step>, Error> {
     }
     p.take(&["-q", "--quiet"]);
     p.finish(
-        "`vcs apply [--check] [--index] [-R] [-p N] <patch>...`; no --stat/--numstat/--summary/--reject/--directory/-C/--unidiff-zero",
+        "`vcs apply [--check] [--stat] [--index] [-R] [-p N] <patch>...`; no --numstat/--summary/--reject/--directory/-C/--unidiff-zero",
     )?;
     let mut a = v(&["apply"]);
+    if stat {
+        a.push("--stat".into());
+        a.extend(p.all_pos());
+        return Ok(vec![Step::Vcs(a)]);
+    }
     if three {
         a.push("-3".into());
     }

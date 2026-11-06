@@ -341,9 +341,28 @@ impl Repo {
         start: usize,
         prefix: &str,
     ) -> Result<Vec<(String, Vec<u8>)>> {
+        self.format_patches_cover(zone, ids, numbered, start, prefix, None)
+    }
+
+    /// Like [`Repo::format_patches`]; with `cover` (the sender), a `0000-cover-letter.patch` comes
+    /// first (subject `[PREFIX 0/N] *** SUBJECT HERE ***`, a `*** BLURB HERE ***` placeholder, the
+    /// shortlog and the diffstat of the whole series) and every patch is numbered `n/N`, even a
+    /// series of one, as git does.
+    pub fn format_patches_cover(
+        &self,
+        zone: &str,
+        ids: &[ObjectId],
+        numbered: bool,
+        start: usize,
+        prefix: &str,
+        cover: Option<&Signature>,
+    ) -> Result<Vec<(String, Vec<u8>)>> {
         let zone = self.resolve_zone(zone)?;
         let total = ids.len();
-        let mut out = Vec::with_capacity(total);
+        let mut out = Vec::with_capacity(total + 1);
+        if let Some(sender) = cover {
+            out.push(self.cover_letter(&zone, ids, start, prefix, sender)?);
+        }
         for (k, id) in ids.iter().enumerate() {
             let c = self.commit_obj(id)?;
             let pairs = self.commit_pairs(&zone, id)?;
@@ -351,7 +370,7 @@ impl Repo {
             let subject = c.message.lines().next().unwrap_or("").trim_end();
             let body: String = c.message.lines().skip(1).collect::<Vec<_>>().join("\n");
             let body = body.trim_matches('\n');
-            let tag = if numbered && total > 1 {
+            let tag = if numbered && (total > 1 || cover.is_some()) {
                 format!("[{prefix} {n}/{}] ", start + total - 1)
             } else {
                 format!("[{prefix}] ")
@@ -387,6 +406,69 @@ impl Repo {
             out.push((patch_file_name(n, subject), text.into_bytes()));
         }
         Ok(out)
+    }
+
+    /// The cover letter of a series (see [`Repo::format_patches_cover`]).
+    fn cover_letter(&self, zone: &str, ids: &[ObjectId], start: usize, prefix: &str, sender: &Signature) -> Result<(String, Vec<u8>)> {
+        let last = start + ids.len() - 1;
+        let mut text = mbox::format_header(&ids[ids.len() - 1].to_string(), sender, &format!("[{prefix} {}/{last}] ", 0), "*** SUBJECT HERE ***");
+        text.push_str("\n*** BLURB HERE ***\n\n");
+        // shortlog: per author in first-appearance order, subjects oldest first
+        let mut order: Vec<String> = vec![];
+        let mut by: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for id in ids {
+            let c = self.commit_obj(id)?;
+            let who = c.author.name.clone();
+            if !by.contains_key(&who) {
+                order.push(who.clone());
+            }
+            by.entry(who).or_default().push(c.message.lines().next().unwrap_or("").trim_end().to_owned());
+        }
+        for who in &order {
+            let subs = &by[who];
+            text.push_str(&format!("{who} ({}):\n", subs.len()));
+            for s in subs {
+                text.push_str(&format!("  {s}\n"));
+            }
+            text.push('\n');
+        }
+        // diffstat of the whole series: first parent -> last commit when it has one, else the sum of the commits
+        let first = self.commit_obj(&ids[0])?;
+        let mut stats: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+        let net = match first.parents.first() {
+            Some(par) => self.rev_rev_pairs(&par.to_hex(), &ids[ids.len() - 1].to_hex(), &[]).ok(),
+            None => None,
+        };
+        let pair_sets = match net {
+            Some(p) => vec![p],
+            None => ids.iter().map(|id| self.commit_pairs(zone, id)).collect::<Result<Vec<_>>>()?,
+        };
+        for pairs in &pair_sets {
+            for p in pairs {
+                let (_, i, r) = file_diff(p).map_err(|e| Error::Msg(format!("cover letter: {e}")))?;
+                let e = stats.entry(p.path.clone()).or_default();
+                e.0 += i;
+                e.1 += r;
+            }
+        }
+        let (mut ins, mut del) = (0usize, 0usize);
+        for (path, (i, r)) in &stats {
+            ins += i;
+            del += r;
+            text.push_str(&format!(" {path} | {}\n", i + r));
+        }
+        let plural = |n: usize| if n == 1 { "" } else { "s" };
+        // git leaves out a zero count
+        let mut sum = format!(" {} file{} changed", stats.len(), plural(stats.len()));
+        if ins > 0 {
+            sum.push_str(&format!(", {ins} insertion{}(+)", plural(ins)));
+        }
+        if del > 0 {
+            sum.push_str(&format!(", {del} deletion{}(-)", plural(del)));
+        }
+        text.push_str(&sum);
+        text.push_str("\n\n-- \nvcs\n\n");
+        Ok(("0000-cover-letter.patch".to_owned(), text.into_bytes()))
     }
 
     // ---------- am ----------

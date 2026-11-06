@@ -144,7 +144,7 @@ Status: exact (same command and flags), renamed (other spelling, same meaning), 
 semantics differ as the notes say), missing (no equivalent; the notes name the native route).
 
 <!-- BEGIN GENERATED TABLE -->
-261 rows: 152 exact, 40 renamed, 36 different, 33 missing.
+261 rows: 152 exact, 41 renamed, 37 different, 31 missing.
 
 | git | vcs | status | notes | test |
 |---|---|---|---|---|
@@ -391,7 +391,7 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git format-patch main` | `vcs format-patch main` | exact | the commits of the branch that main lacks | translation |
 | `git format-patch HEAD~2..HEAD` | `vcs format-patch HEAD~2..HEAD` | exact |  | translation |
 | `git format-patch --root` | `vcs format-patch --root` | exact |  | translation |
-| `git format-patch --cover-letter -1` | none | missing | no cover letter; write it by hand | translation |
+| `git format-patch --cover-letter -1` | `vcs format-patch -n 1 --cover-letter` | renamed | `0000-cover-letter.patch` first (placeholders for subject and blurb, shortlog, diffstat); `vcs am` needs the cover letter left out | `patch` |
 | `git am x.patch` | `vcs am x.patch` | exact | commits with the mail's author, date and message; a patch that does not apply stops the run, nothing is half-applied | `patch` |
 | `git am --continue` | `vcs am --continue` | exact | commits what you staged for the stopped patch | translation |
 | `git am --skip` | `vcs am --skip` | exact |  | translation |
@@ -404,7 +404,7 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git apply -p0 x.patch` | `vcs apply -p 0 x.patch` | exact |  | translation |
 | `git apply -3 x.patch` | `vcs apply -3 x.patch` | different | same hunk-local three-way merge as `am -3`; conflicts leave markers, are not staged, and exit non-zero | translation |
 | `git apply --cached x.patch` | none | missing | index-only application: `vcs apply --index` then `vcs restore` the file | translation |
-| `git apply --stat x.patch` | none | missing | no summary modes; `vcs apply --check -v x.patch` lists the files | translation |
+| `git apply --stat x.patch` | `vcs apply --stat x.patch` | different | applies nothing, as git; the counts are `+added -deleted` per file (git draws a bar graph); no --numstat/--summary | `patch` |
 | `git mergetool` | none | missing | `vcs conflict show <path>`, edit, `vcs resolve --mark <path>` | translation |
 | `git lfs track` | none | missing | large files are chunked natively | translation |
 | `git filter-branch` | none | missing | `vcs zone apply` splits history by path; otherwise none | translation |

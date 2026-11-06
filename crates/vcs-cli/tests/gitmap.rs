@@ -843,6 +843,8 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
                 Mk(Kind::Git, "git format-patch -1 --stdout"),
                 G("git reset --hard HEAD~1"),
                 G("git apply --check x.patch"),
+                GC("git apply --stat x.patch", "f.txt"),
+                GC("git apply --stat x.patch", "new.txt"),
                 G("git apply x.patch"),
                 G("git apply -R x.patch"),
                 G("git apply --index x.patch"),
@@ -855,6 +857,9 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
                 G("git apply --index x.patch"),
                 G("git reset --hard HEAD"),
                 G("git am x.patch"),
+                V("git format-patch --cover-letter -1", "0000-cover-letter.patch"),
+                Rm("0000-cover-letter.patch"),
+                Rm("0001-second.patch"),
             ],
         ),
         (
@@ -1296,4 +1301,62 @@ fn blame_line_ranges_select_the_lines_git_selects() {
         assert_eq!(got, want, "-L {range}: {out}");
     }
     assert!(!vcs(&["blame", "-L", "9,12", "m.txt"]).0, "a range past the end is an error");
+}
+
+#[test]
+fn cover_letter_has_gits_layout() {
+    let t = tempfile::tempdir().unwrap();
+    let mut out = vec![];
+    for (name, use_git) in [("v", false), ("g", true)] {
+        if use_git && !have_git() {
+            continue;
+        }
+        let dir = t.path().join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        let run = |args: &[&str]| {
+            let mut c = if use_git {
+                let mut c = Command::new("git");
+                c.args(args);
+                c
+            } else {
+                let mut c = Command::new(env!("CARGO_BIN_EXE_vcs"));
+                c.arg("git").args(args);
+                c
+            };
+            let o = c
+                .current_dir(&dir)
+                .env("VCS_AUTHOR_NAME", "Dev")
+                .env("VCS_AUTHOR_EMAIL", "dev@example.com")
+                .env("VCS_GIT_QUIET", "1")
+                .env("GIT_AUTHOR_NAME", "Dev")
+                .env("GIT_AUTHOR_EMAIL", "dev@example.com")
+                .env("GIT_COMMITTER_NAME", "Dev")
+                .env("GIT_COMMITTER_EMAIL", "dev@example.com")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .output()
+                .unwrap();
+            assert!(o.status.success(), "{args:?}: {}", String::from_utf8_lossy(&o.stderr));
+            String::from_utf8_lossy(&o.stdout).into_owned()
+        };
+        run(&["init", "-q"]);
+        for (f, c, m) in [("a.txt", "1\n", "first"), ("b.txt", "2\n", "second"), ("a.txt", "1\n1\n", "third")] {
+            std::fs::write(dir.join(f), c).unwrap();
+            run(&["add", f]);
+            run(&["commit", "-m", m]);
+        }
+        out.push(run(&["format-patch", "--cover-letter", "-2", "--stdout"]));
+    }
+    for mail in &out {
+        let cover: &str = mail.split("\nFrom ").next().unwrap();
+        let subjects: Vec<&str> = mail.lines().filter(|l| l.starts_with("Subject:")).collect();
+        assert_eq!(
+            subjects,
+            ["Subject: [PATCH 0/2] *** SUBJECT HERE ***", "Subject: [PATCH 1/2] second", "Subject: [PATCH 2/2] third"],
+            "{mail}"
+        );
+        assert!(cover.contains("\n*** BLURB HERE ***\n"), "{cover}");
+        assert!(cover.contains("Dev (2):\n  second\n  third\n"), "{cover}");
+        assert!(cover.contains(" a.txt |") && cover.contains(" b.txt |"), "{cover}");
+        assert!(cover.contains("2 files changed, 2 insertions(+)"), "{cover}");
+    }
 }
