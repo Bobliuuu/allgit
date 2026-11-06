@@ -35,6 +35,10 @@ pub struct FormatPatchArgs {
     /// Subject prefix inside the brackets (default PATCH)
     #[arg(long, value_name = "TEXT", default_value = "PATCH")]
     pub subject_prefix: String,
+    /// Write a `0000-cover-letter.patch` first: a subject and blurb to fill in, the shortlog and the
+    /// diffstat of the series; the patches are then always numbered n/N
+    #[arg(long)]
+    pub cover_letter: bool,
     /// Zone (default: the zone containing the current directory)
     #[arg(long)]
     pub zone: Option<String>,
@@ -63,6 +67,9 @@ pub struct ApplyArgs {
     /// Print the files that were (or would be) changed
     #[arg(short = 'v', long)]
     pub verbose: bool,
+    /// Show the per-file added and deleted line counts of the patch and apply nothing
+    #[arg(long)]
+    pub stat: bool,
 }
 
 #[derive(Args, Clone)]
@@ -128,7 +135,8 @@ pub fn format_patch(repo: &Repo, cwd: &Path, a: FormatPatchArgs) -> Result<(), E
     if ids.is_empty() {
         return err("no commits to format");
     }
-    let files = repo.format_patches(&zone, &ids, !a.no_numbered, a.start_number, &a.subject_prefix)?;
+    let sender = if a.cover_letter { Some(crate::author()?) } else { None };
+    let files = repo.format_patches_cover(&zone, &ids, !a.no_numbered, a.start_number, &a.subject_prefix, sender.as_ref())?;
     if a.stdout {
         use std::io::Write;
         let mut so = std::io::stdout().lock();
@@ -160,7 +168,72 @@ pub fn format_patch(repo: &Repo, cwd: &Path, a: FormatPatchArgs) -> Result<(), E
     Ok(())
 }
 
+/// `apply --stat`: ` path | +added -deleted` per file of each patch, then a total line.
+fn patch_stat(data: &[u8], strip: usize) -> String {
+    let text = String::from_utf8_lossy(data);
+    let mut files: Vec<(String, usize, usize, bool)> = vec![];
+    let (mut in_hunk, mut binary) = (false, false);
+    let strip_path = |p: &str| -> String {
+        let p = p.split('\t').next().unwrap_or(p).trim();
+        p.splitn(strip + 1, '/').last().unwrap_or(p).to_owned()
+    };
+    let mut old_name = String::new();
+    for l in text.lines() {
+        if let Some(rest) = l.strip_prefix("diff --git ") {
+            in_hunk = false;
+            binary = false;
+            let b = rest.rsplit_once(" b/").map_or(rest, |(_, b)| b);
+            files.push((b.to_owned(), 0, 0, false));
+        } else if in_hunk && l.starts_with('+') && !l.starts_with("+++ ") {
+            if let Some(f) = files.last_mut() {
+                f.1 += 1;
+            }
+        } else if in_hunk && l.starts_with('-') && !l.starts_with("--- ") {
+            if let Some(f) = files.last_mut() {
+                f.2 += 1;
+            }
+        } else if let Some(r) = l.strip_prefix("--- ") {
+            old_name = strip_path(r);
+            in_hunk = false;
+        } else if let Some(r) = l.strip_prefix("+++ ") {
+            // plain unified diffs have no `diff --git` line: the +++ line opens the file
+            let new = strip_path(r);
+            let name = if new == "dev/null" || r.trim() == "/dev/null" { old_name.clone() } else { new };
+            if files.last().is_none_or(|f| f.0 != name) {
+                files.push((name, 0, 0, false));
+            }
+        } else if l.starts_with("@@") {
+            in_hunk = true;
+        } else if l.starts_with("GIT binary patch") || l.starts_with("Binary files ") {
+            binary = true;
+            if let Some(f) = files.last_mut() {
+                f.3 = true;
+            }
+        }
+    }
+    let _ = binary;
+    let mut out = String::new();
+    let (mut ti, mut td) = (0, 0);
+    for (name, i, d, bin) in &files {
+        if *bin {
+            out.push_str(&format!(" {name} | Bin\n"));
+        } else {
+            out.push_str(&format!(" {name} | +{i} -{d}\n"));
+        }
+        ti += i;
+        td += d;
+    }
+    out.push_str(&format!(" {} file(s) changed, {ti} insertion(s), {td} deletion(s)\n", files.len()));
+    out
+}
+
 pub fn apply(repo: &Repo, a: ApplyArgs) -> Result<(), Error> {
+    if a.stat {
+        for data in read_input(&a.files)? {
+            print!("{}", patch_stat(&data, a.strip.unwrap_or(1)));
+        }
+        return Ok(());
+    }
     let opts = ApplyOpts {
         check: a.check,
         index: a.index,
