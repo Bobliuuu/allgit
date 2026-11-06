@@ -796,8 +796,15 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
         "blame" | "annotate" => {
             let mut p = parse(cmd, rest, &["-L", "--rev"]);
             let m = p.take(&["-M"]);
+            let ranges = p.vals(&["-L"]);
             p.take(&["-C", "--show-name", "-f", "-n", "--show-number"]);
-            p.finish("`vcs blame [--rev R] [-M] <file>` (no -L line ranges, -w, -e)")?;
+            p.finish("`vcs blame [--rev R] [-L START,END] [-M] <file>` (no -w, -e, regex ranges, `:funcname`)")?;
+            if ranges.len() > 1 {
+                return Err(missing(cmd, "several -L ranges", "`vcs blame -L` once per range"));
+            }
+            if ranges.iter().any(|r| r.contains('/') || r.contains(':')) {
+                return Err(missing(cmd, "regex and function-name line ranges", "`vcs blame -L START,END` with line numbers"));
+            }
             let pos = p.all_pos();
             let (rev, file) = match pos.as_slice() {
                 [f] => (None, f.clone()),
@@ -810,6 +817,9 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             }
             if let Some(r) = rev {
                 a.extend(["--rev".to_owned(), r]);
+            }
+            if let Some(r) = ranges.first() {
+                a.extend(["-L".to_owned(), r.clone()]);
             }
             a.push(file);
             vec![Step::Vcs(a)]
@@ -895,14 +905,22 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             let mut p = parse(cmd, rest, &["--abbrev"]);
             let tags = p.take(&["--tags"]);
             let always = p.take(&["--always"]);
+            let dirty = p.opts.iter().find(|(k, _)| k == "--dirty").map(|(_, m)| m.clone());
+            p.take(&["--dirty"]);
             p.val(&["--abbrev"]);
-            p.finish("`vcs describe [--tags] [--always] [rev]` (no --long/--dirty/--match/--contains)")?;
+            p.finish("`vcs describe [--tags] [--always] [--dirty[=MARK]] [rev]` (no --long/--match/--contains)")?;
             let mut a = v(&["describe"]);
             if tags {
                 a.push("--tags".into());
             }
             if always {
                 a.push("--always".into());
+            }
+            if let Some(m) = dirty {
+                a.push(match m {
+                    Some(m) => format!("--dirty={m}"),
+                    None => "--dirty".into(),
+                });
             }
             a.extend(p.pos.first().cloned());
             vec![Step::Vcs(a)]
