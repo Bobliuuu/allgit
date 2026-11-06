@@ -8,8 +8,8 @@ use vcs_repo::{AssistResult, ChangeKind, Error, MergeOutcome, RebaseOutcome, Rep
 
 mod auth;
 mod bisect;
-mod cmds;
 mod bundle_cmd;
+mod cmds;
 mod config;
 mod generate;
 mod json;
