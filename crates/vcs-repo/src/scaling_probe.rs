@@ -146,7 +146,7 @@ pub fn reach_write(path: &Path, ns: usize, nroots: usize) -> std::io::Result<u64
             let mut byte = 0u8;
             for b in 0..8 {
                 let k = i + b;
-                let set = k < ns && if which == 0 { k % 4 != 3 } else { k % 1000 == 0 };
+                let set = k < ns && if which == 0 { k % 4 != 3 } else { k.is_multiple_of(1000) };
                 if set {
                     byte |= 1 << b;
                 }

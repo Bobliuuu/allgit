@@ -348,7 +348,7 @@ impl Repo {
         let now = now_ms();
         Ok(paths
             .iter()
-            .filter(|p| attrs.lookup(p).lockable && !held.get(p.as_str()).is_some_and(|h| h.expires_ms > now))
+            .filter(|p| attrs.lookup(p).lockable && held.get(p.as_str()).is_none_or(|h| h.expires_ms <= now))
             .cloned()
             .collect())
     }

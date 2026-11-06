@@ -19,7 +19,7 @@ impl ColorWhen {
         match self {
             ColorWhen::Always => true,
             ColorWhen::Never => false,
-            ColorWhen::Auto => !std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) && std::io::stdout().is_terminal(),
+            ColorWhen::Auto => std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty()) && std::io::stdout().is_terminal(),
         }
     }
 }

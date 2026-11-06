@@ -200,7 +200,9 @@ fn open_dir_at(root: &fs::File, path: &str) -> Option<fs::File> {
 
 /// `lstat` of `path` relative to the open directory `dir`; `None` if the path cannot be passed to
 /// the kernel (embedded NUL), in which case the caller uses the std path.
+// `libc::stat` field widths differ per target (32-bit Linux has `i32` times); the casts are no-ops only on LP64.
 #[cfg(unix)]
+#[allow(clippy::unnecessary_cast)]
 fn stat_at(dir: &fs::File, path: &str) -> Option<io::Result<FsStat>> {
     use std::os::unix::io::AsRawFd;
     // NUL-terminated copy on the stack: no allocation (and no allocator lock) per stat.
