@@ -140,3 +140,32 @@ fn accept_loop_does_not_spin_when_descriptors_are_exhausted() {
         "accept loop burned {used:.2}s CPU in {wall:.2}s while out of descriptors"
     );
 }
+
+#[test]
+fn unauthenticated_clients_cannot_reserve_the_inflight_budget() {
+    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let (srv, addr) = start(|c| {
+        c.max_inflight_body = 1 << 20;
+        c.body_timeout = Duration::from_secs(30);
+    });
+    // No token (and a wrong one): announce a huge body and stall. It must be refused outright, not hold budget.
+    let mut held = vec![];
+    for head in [
+        "PUT /v1/o/objects/zz HTTP/1.1\r\nContent-Length: 900000\r\n\r\n",
+        "PUT /v1/o/objects/zz HTTP/1.1\r\nAuthorization: Bearer nope\r\nContent-Length: 900000\r\n\r\n",
+    ] {
+        let mut s = TcpStream::connect(&addr).unwrap();
+        s.write_all(head.as_bytes()).unwrap();
+        held.push(s);
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    // An authenticated writer's 800 KiB announcement still fits the budget.
+    let mut a = TcpStream::connect(&addr).unwrap();
+    a.write_all(put_head(800 << 10).as_bytes()).unwrap();
+    a.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
+    let mut buf = [0u8; 64];
+    // Stalls waiting for the body (timeout), instead of an immediate 503.
+    let r = a.read(&mut buf);
+    assert!(r.is_err(), "authenticated writer was shed: {:?}", &buf[..r.unwrap_or(0)]);
+    drop((a, held, srv));
+}
