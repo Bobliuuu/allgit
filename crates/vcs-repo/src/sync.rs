@@ -220,7 +220,11 @@ impl Repo {
             if seen.len() == budget {
                 budget = usize::MAX;
                 if let Some(g) = self.commit_graph(&[anc, desc]) {
-                    return vcs_merge::is_ancestor(&g, &anc, &desc).map_err(|e| Error::Corrupt(e.to_string()));
+                    let r = vcs_merge::is_ancestor(&g, &anc, &desc);
+                    if !g.is_bad() {
+                        return r.map_err(|e| Error::Corrupt(e.to_string()));
+                    }
+                    // the cache file contradicts itself: keep walking the objects
                 }
             }
             if !seen.insert(id) {

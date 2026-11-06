@@ -324,7 +324,7 @@ impl Repo {
             }
             let Some(g) = self.commit_graph(&[*head]) else { continue };
             let mut blooms = self.load_path_blooms(zone);
-            let todo: Vec<ObjectId> = g.ids().iter().filter(|id| blooms.get(id).is_none()).copied().collect();
+            let todo: Vec<ObjectId> = g.iter_ids().filter(|id| blooms.get(id).is_none()).collect();
             if todo.is_empty() {
                 continue;
             }

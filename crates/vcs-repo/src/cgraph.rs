@@ -31,7 +31,13 @@ impl Repo {
     }
 
     fn load_cg_file(&self, zone: &str) -> Option<CommitGraphFile> {
-        CommitGraphFile::decode(&fs::read(self.common.join(CG_DIR).join(cg_name(zone))).ok()?).ok()
+        let path = self.common.join(CG_DIR).join(cg_name(zone));
+        let g = CommitGraphFile::open(&path).ok()?;
+        if g.upgraded() {
+            // an old-format file was converted in memory: write it back as v2 so the next open is lazy
+            let _ = write_cache_atomic(&path, &g.encode());
+        }
+        Some(g)
     }
 
     /// `(parents, commit time)` of the real commit, the loader for building and verifying.
@@ -125,12 +131,14 @@ impl Repo {
     /// Best common ancestors of two commits (see `vcs_merge::merge_base`), via the
     /// commit-graph when available.
     pub fn merge_bases(&self, a: &ObjectId, b: &ObjectId) -> Result<Vec<ObjectId>> {
-        let r = match self.commit_graph(&[*a, *b]) {
-            Some(g) => g
+        let from_graph = self.commit_graph(&[*a, *b]).and_then(|g| {
+            let r = g
                 .merge_bases_indexed(a, b)
-                .map_or_else(|| vcs_merge::merge_base(&g as &dyn CommitGraph, a, b), Ok),
-            None => vcs_merge::merge_base(&vcs_merge::StoreGraph(&self.store), a, b),
-        };
+                .map_or_else(|| vcs_merge::merge_base(&g as &dyn CommitGraph, a, b), Ok);
+            // a cache file that contradicts itself is not trusted: walk the objects instead
+            (!g.is_bad()).then_some(r)
+        });
+        let r = from_graph.unwrap_or_else(|| vcs_merge::merge_base(&vcs_merge::StoreGraph(&self.store), a, b));
         r.map_err(|e| Error::Msg(format!("merge base: {e}")))
     }
 
@@ -146,16 +154,17 @@ impl Repo {
             if name.contains('.') {
                 continue; // temp file of a crashed cache write
             }
-            let bytes = match fs::read(&path) {
-                Ok(b) => b,
-                Err(_) => continue,
-            };
-            match CommitGraphFile::decode(&bytes) {
+            if fs::metadata(&path).is_err() {
+                continue;
+            }
+            // open lazily, then do the whole-file validation explicitly (this is the only place that pays for it)
+            let opened = CommitGraphFile::open(&path).and_then(|g| g.verify_full().map(|()| g));
+            match opened {
                 Err(e) => problems.push(format!("{name}: {e} (it is only a cache and is rebuilt on next use)")),
                 Ok(g) => {
                     problems.extend(g.verify_against(|id| self.cg_load(id)).into_iter().map(|m| format!("{name}: {m}")));
-                    for id in g.ids() {
-                        if let Ok(c) = self.commit_obj(id) {
+                    for id in g.iter_ids() {
+                        if let Ok(c) = self.commit_obj(&id) {
                             if cg_name(&c.zone) != name {
                                 problems.push(format!("commit-graph {name}: {id} belongs to another zone"));
                             }
