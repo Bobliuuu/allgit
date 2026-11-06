@@ -65,7 +65,16 @@ pub enum GcError {
     #[error(transparent)]
     Backend(#[from] BackendError),
     #[error(transparent)]
-    Format(#[from] crate::format::FormatError),
+    Format(crate::format::FormatError),
+}
+
+impl From<crate::format::FormatError> for GcError {
+    fn from(e: crate::format::FormatError) -> Self {
+        match e {
+            crate::format::FormatError::Backend(b) => GcError::Backend(b),
+            other => GcError::Format(other),
+        }
+    }
 }
 
 impl From<PublishError> for GcError {
