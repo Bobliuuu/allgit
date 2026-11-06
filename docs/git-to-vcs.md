@@ -99,7 +99,7 @@ cheap and an unchanged list recreates identical commits. `edit` and a failed `ex
 branch and working tree at the new tip (commit freely, then `--continue`); conflicts stop as in
 `vcs rebase`, with `--continue`, `--skip` and `--abort`. The whole rebase is ONE operation:
 `vcs op undo` restores the pre-rebase branch and working tree. Not supported: `label`, `reset`,
-`merge`, `break`, `--onto`, `--root`, `--rebase-merges`, `fixup -C`.
+`merge`, `break`, `fixup -C`, and `-i` together with `--onto`, `--root` or `--rebase-merges`.
 
 ### Patch files
 
