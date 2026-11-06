@@ -18,7 +18,7 @@ install "vcs-$tag-$target/vcs" /usr/local/bin/vcs
 
 ## From source
 
-Requires Rust 1.80 or newer.
+Requires Rust 1.88 or newer (checked with 1.88 and 1.89; some dependencies need 1.88).
 
 ```sh
 git clone https://github.com/Bobliuuu/allgit && cd allgit
