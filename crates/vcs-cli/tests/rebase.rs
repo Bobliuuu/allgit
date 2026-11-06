@@ -74,3 +74,51 @@ fn rebase_conflict_continue_and_undo() {
     ok(&d, &["rebase", "--abort"]);
     assert_eq!(std::fs::read_to_string(d.join("f")).unwrap(), "1\n2\n3\n4\n5\n6\n7\nFEAT\n");
 }
+
+#[test]
+fn rebase_merges_flag_recreates_merges_and_rejects_bad_combinations() {
+    let t = tempfile::tempdir().unwrap();
+    let d = t.path().join("r");
+    ok(t.path(), &["init", "r"]);
+    write(&d, "f", "base\n");
+    commit_all(&d, "base");
+    ok(&d, &["branch", "feature"]);
+    ok(&d, &["switch", "feature"]);
+    write(&d, "a", "a\n");
+    commit_all(&d, "add a");
+    ok(&d, &["branch", "side"]);
+    ok(&d, &["switch", "side"]);
+    write(&d, "s", "s\n");
+    commit_all(&d, "add s");
+    ok(&d, &["switch", "feature"]);
+    write(&d, "b", "b\n");
+    commit_all(&d, "add b");
+    ok(&d, &["merge", "side"]);
+    ok(&d, &["switch", "main"]);
+    write(&d, "h", "h\n");
+    commit_all(&d, "main h");
+    ok(&d, &["switch", "feature"]);
+
+    // the linear rebase still refuses, and says what to do
+    let o = vcs(&d, &["rebase", "main"]);
+    assert!(!o.status.success());
+    assert!(String::from_utf8_lossy(&o.stderr).contains("--rebase-merges"));
+    // bad combinations and modes are refused before anything changes
+    for args in [
+        &["rebase", "--rebase-merges", "-i", "main"][..],
+        &["rebase", "--rebase-merges", "--continue"][..],
+        &["rebase", "--rebase-merges=bogus", "main"][..],
+    ] {
+        assert!(!vcs(&d, args).status.success(), "{args:?}");
+    }
+    let out = ok(&d, &["rebase", "--rebase-merges", "main"]);
+    assert!(out.contains("rebased 4 commit(s)"), "{out}");
+    for f in ["a", "b", "s", "h"] {
+        assert!(d.join(f).exists(), "{f}");
+    }
+    assert!(ok(&d, &["op", "log"]).contains("rebase root/feature onto main"));
+    ok(&d, &["op", "undo"]);
+    assert!(!d.join("h").exists());
+    // a mode that is accepted
+    ok(&d, &["rebase", "--rebase-merges=rebase-cousins", "main"]);
+}

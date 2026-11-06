@@ -1990,6 +1990,8 @@ Options:
           Replay onto NEWBASE (any revision) the commits that the positional upstream lacks (`git rebase --onto`)
       --root
           With --onto: replay every commit of the branch, root commit included (no upstream)
+  -r, --rebase-merges[=<MODE>]
+          Recreate the merge commits of the range instead of refusing it (`git rebase --rebase-merges`). MODE `no-rebase-cousins` (default) keeps commits that do not descend from the merge base where they are; `rebase-cousins` replays them too. Not combinable with -i or -x
       --no-structural
           Do not use the structural Rust merge (only matters when built with `--features structural`)
       --renames

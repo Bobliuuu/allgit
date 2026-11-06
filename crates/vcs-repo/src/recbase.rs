@@ -19,6 +19,7 @@ use crate::treemerge::Merge3;
 use std::collections::BTreeSet;
 use vcs_merge::{ConflictKind, MarkerLabels};
 use vcs_objects::ObjectId;
+use vcs_store::ObjectStore;
 
 /// How many levels of criss-cross inside criss-cross are followed before giving up (git: 1000
 /// "recursion" levels in practice, never reached; this bound only keeps a corrupt graph finite).

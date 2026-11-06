@@ -152,7 +152,11 @@ impl Side {
                 {
                     let b = self.raw(&["symbolic-ref", "--short", "HEAD"]);
                     if b.trim().is_empty() {
-                        "HEAD".to_owned()
+                        // during a rebase git's HEAD is detached; vcs keeps naming the branch being rebased
+                        std::fs::read_to_string(self.dir.join(".git/rebase-merge/head-name"))
+                            .ok()
+                            .and_then(|h| h.trim().strip_prefix("refs/heads/").map(str::to_owned))
+                            .unwrap_or_else(|| "HEAD".to_owned())
                     } else {
                         b
                     }
@@ -1009,7 +1013,7 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
                 G("git add m1.txt"),
                 commit(),
                 G("git switch topic"),
-                G(r#"git merge --no-ff -m "merge main into topic" main"#),
+                G(r#"git merge --no-ff -m "Merge main into topic" main"#),
                 W("t2.txt", "t2\n"),
                 G("git add t2.txt"),
                 G(r#"git commit -m "t2""#),
@@ -1037,7 +1041,7 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
                 G("git add m1.txt"),
                 commit(),
                 G("git switch topic"),
-                G(r#"git merge --no-ff -m "merge main into topic" main"#),
+                G(r#"git merge --no-ff -m "Merge main into topic" main"#),
                 W("t2.txt", "t2\n"),
                 G("git add t2.txt"),
                 G(r#"git commit -m "t2""#),
@@ -1065,7 +1069,7 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
                 G("git add m1.txt"),
                 commit(),
                 G("git switch topic"),
-                G(r#"git merge --no-ff -m "merge main into topic" main"#),
+                G(r#"git merge --no-ff -m "Merge main into topic" main"#),
                 W("t2.txt", "t2\n"),
                 G("git add t2.txt"),
                 G(r#"git commit -m "t2""#),
@@ -1098,7 +1102,7 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
                 G("git add m1.txt"),
                 commit(),
                 G("git switch topic"),
-                G(r#"git merge --no-ff -m "merge main into topic" main"#),
+                G(r#"git merge --no-ff -m "Merge main into topic" main"#),
                 W("t2.txt", "t2\n"),
                 G("git add t2.txt"),
                 G(r#"git commit -m "t2""#),
