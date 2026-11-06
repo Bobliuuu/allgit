@@ -157,6 +157,27 @@ docker run -d --name vcs -p 127.0.0.1:8480:8480 -v vcs-data:/data \
 The image runs as an unprivileged user (uid 10001) and listens on 0.0.0.0 inside the container; publish the port on loopback or a
 private interface only. `.dockerignore` keeps `target*`, `.git`, `fuzz` and `docs/img` out of the build context.
 
+## Verify a release
+
+A tagged release (`v*`) publishes, per target (Linux x86_64/aarch64, macOS x86_64/arm64), a `vcs` and a `vcs-server`
+tarball, two CycloneDX SBOMs (`vcs-<tag>.cdx.json`, `vcs-server-<tag>.cdx.json`), `SHA256SUMS` and its cosign bundle
+`SHA256SUMS.sigstore.json`. The `vcs-server` image is `ghcr.io/bobliuuu/allgit/vcs-server:<version>` (linux/amd64,
+built from `deploy/Dockerfile` with the `tls` feature, base images pinned by digest). Release binaries are built with
+a pinned Rust toolchain and `--remap-path-prefix`; tarballs are gzip `-n`, but byte-for-byte reproducibility across
+runners is not claimed.
+
+```
+# 1. the checksum file was signed by this repository's release workflow
+cosign verify-blob --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/Bobliuuu/allgit/.github/workflows/release.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
+# 2. the files match it
+sha256sum --check --ignore-missing SHA256SUMS
+# 3. GitHub build provenance for a tarball or SBOM, and for the image
+gh attestation verify vcs-server-<tag>-x86_64-unknown-linux-gnu.tar.gz --repo Bobliuuu/allgit
+gh attestation verify oci://ghcr.io/bobliuuu/allgit/vcs-server:<version> --repo Bobliuuu/allgit
+```
+
 ## Verified: Docker image, systemd unit, MinIO (issue #216)
 
 Run on a Mac with Docker Desktop 28.4 (linux/arm64), nothing outside the machine. Reproduce with the commands below; the tests
