@@ -81,6 +81,21 @@ From the final scoreboard ([research/command-scoreboard.md](research/command-sco
   byte inside the pack body passes it; `--full`, `fetch` and `clone` hash every
   object.
 
+## Merge family
+
+- **File/directory conflicts park the file as `path~ours` / `path~theirs`.**
+  They are representable and resolvable in `merge`, `cherry-pick`, `rebase`
+  and `stash pop` ([merge.md](merge.md)). Not done: a `stash pop` of such a
+  conflict has no resolve state (settle it by hand, then drop the entry), and
+  the parking name must be free (the command refuses before changing anything
+  otherwise).
+- **`cherry-pick -m N`, `A...B` in `cherry-pick` and `format-patch` work.**
+  Still missing: `revert -m` (a merge commit cannot be reverted) and
+  `rebase --rebase-merges`.
+- **Symmetric ranges order commits by author time** (the `log` order,
+  reversed), not by topology, so two commits with the same timestamp are
+  picked in id order.
+
 ## Other
 
 - Merge assist is verified on 77 real conflicts with parse checks only, not

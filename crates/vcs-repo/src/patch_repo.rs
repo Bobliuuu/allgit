@@ -332,6 +332,28 @@ impl Repo {
         Ok(out)
     }
 
+    /// `A...B`: the non-merge commits reachable from either `a` or `b` but not from both (their
+    /// merge bases and everything below are left out), oldest first, as `git format-patch A...B`.
+    /// `count` keeps only the newest N.
+    pub fn patch_range_sym(&self, zone: &str, a: &str, b: &str, count: Option<usize>) -> Result<Vec<ObjectId>> {
+        let zone = self.resolve_zone(zone)?;
+        let spec = crate::revrange::RevSpec {
+            sym: vec![(a.to_owned(), b.to_owned())],
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+        for id in self.rev_list_ids(&zone, &spec, usize::MAX)? {
+            if self.commit_obj(&id)?.parents.len() <= 1 {
+                out.push(id);
+                if count.is_some_and(|n| out.len() >= n) {
+                    break;
+                }
+            }
+        }
+        out.reverse();
+        Ok(out)
+    }
+
     /// Mail text for each commit: `(file name, text)`.
     pub fn format_patches(
         &self,

@@ -33,7 +33,7 @@ reuse (#243), one manifest read per publish (#240), local object-cache eviction 
 ✅ merge-base (commit-graph accelerated), three-way tree merge, diff3 text merge, structured conflicts, `merge`,
 `conflict`, `resolve`, `cherry-pick`, `revert`, `rebase` (keeps change ids, linear ranges), operation log + undo
 (local state only, never rewinds published refs), opt-in rename-aware merge.
-⬜ criss-cross merges, file/directory conflicts, copy detection. See [merge.md](merge.md), [rebase.md](rebase.md),
+⬜ criss-cross merges, copy detection. File/directory conflicts are representable and resolvable. See [merge.md](merge.md), [rebase.md](rebase.md),
 [operations.md](operations.md).
 
 ## M5 – Performance 🟡

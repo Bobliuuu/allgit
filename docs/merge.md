@@ -72,8 +72,17 @@ stores `new_blobs`, and moves the working tree/index/ref.
 * `vcs conflict list` and `vcs conflict show <path>` inspect the state. `vcs merge --abort` restores the pre-merge
   tree, index and files exactly (discarding edits to merge-touched files); it refuses if any other file in the zone
   changed. `checkout`/`zone remove` refuse during a merge.
-* Not done: file<->directory conflicts (the merge is refused before anything is touched), merging several zones in
-  one command. Rename detection exists but is opt-in (`--renames`, see "Rename-aware merge"). Merge quality of Myers vs patience was only compared on a
+* File<->directory conflicts (a path that is a file on one side and a directory on the other, and neither side left it
+  as the base had it) are real conflicts of kind `file/directory`, in `merge`, `cherry-pick`, `rebase` and
+  `stash pop`. The path itself keeps the directory (the directory side's files, merged normally); the file side is
+  parked beside it as `<path>~ours` / `<path>~theirs` (left / right of the conflict), staged like any other conflicted
+  file. `vcs resolve <path> --ours|--theirs` keeps that side's shape: a file replaces the directory (its tracked files
+  are removed) and the other side's parked file is dropped; a directory (or nothing) stays and the other side's parked
+  file is dropped. `--base` and `--file` do not apply. Arranging the files by hand also works: move or delete the
+  parked file(s), `vcs add` them (and the new names), and the conflict counts as resolved once no `~ours`/`~theirs`
+  file of it is staged any more. The merge is refused before anything changes when a parking name is already in use.
+  In `stash pop` there is no conflict state: the parked file is staged, the entry is kept, and you settle it by hand.
+* Not done: merging several zones in one command. Rename detection exists but is opt-in (`--renames`, see "Rename-aware merge"). Merge quality of Myers vs patience was only compared on a
 small hand-written corpus, not on real repositories; no timing numbers exist.
 
 ## Structural merge prototype (feature `structural`, off by default)

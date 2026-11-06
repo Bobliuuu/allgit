@@ -235,7 +235,7 @@ cherry-pick creates a new id (records the source in metadata); two live commits 
 | D9 | Tree flatten | whole-tree per zone | O(n); subtree-skipping + lazy loading in M5 after measurement |
 
 ## Known limitations (honest list)
-- Merge: criss-cross merges and file/directory conflicts are errors; rename detection is opt-in. Rebase handles linear ranges only.
+- Merge: criss-cross merges are errors; file/directory conflicts park the file side as `path~ours`/`path~theirs` ([merge.md](merge.md)); rename detection is opt-in. Rebase handles linear ranges only.
 - Operation log covers local refs/workspace only: snapshots, remote-tracking refs and unrecorded crash-window changes are not undoable, and `undo` across several zones is not atomic ([operations.md](operations.md)).
 - Packs: `repack` only, no delta or entry compression, loose objects cost 4 KiB each on ext4 (no automatic repack yet). Chunk manifests cover big files.
 - GC: S3 and HTTP remotes are not supported; remote packs are never rewritten or compacted, so pack count grows with publishes.

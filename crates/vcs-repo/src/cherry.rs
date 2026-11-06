@@ -31,9 +31,8 @@ impl Repo {
     pub fn pick_sources(&self, zone: &str, args: &[String]) -> Result<Vec<ObjectId>> {
         let mut out = Vec::new();
         for a in args {
-            if a.contains("...") {
-                return msg("`A...B` is not supported in cherry-pick; use `A..B`");
-            }
+            // `A..B`: the commits of B that A lacks. `A...B`: the commits of either side that the
+            // other lacks (everything but their merge bases' history), as `git cherry-pick A...B`.
             if a.contains("..") {
                 let spec = RevSpec::parse(std::slice::from_ref(a))?;
                 let mut ids = self.rev_list_ids(zone, &spec, usize::MAX)?;
@@ -54,6 +53,12 @@ impl Repo {
     /// nothing. A pick that stops on conflicts ends the run (finish it with `vcs commit`, then
     /// pick the commits reported as remaining); a pick that would change nothing is skipped.
     pub fn cherry_pick_many(&self, zone: &str, args: &[String], author: Signature) -> Result<PickSeq> {
+        self.cherry_pick_many_mainline(zone, args, None, author)
+    }
+
+    /// [`Repo::cherry_pick_many`] with `-m <parent>`: merge commits among the sources are picked
+    /// against that (1-based) parent. Without it a merge commit is refused, as in git.
+    pub fn cherry_pick_many_mainline(&self, zone: &str, args: &[String], mainline: Option<usize>, author: Signature) -> Result<PickSeq> {
         let zone = self.resolve_zone(zone)?;
         let ids = self.pick_sources(&zone, args)?;
         for id in &ids {
@@ -61,16 +66,24 @@ impl Repo {
             if c.zone != zone {
                 return msg(format!("{} belongs to zone {:?}, not {zone:?}", id.short(), c.zone));
             }
-            if c.parents.len() > 1 {
+            if c.parents.len() > 1 && mainline.is_none() {
                 return msg(format!(
-                    "{} is a merge commit; cherry-pick of merge commits is not supported (nothing was changed)",
-                    id.short()
+                    "{} is a merge commit with {} parents; give the mainline parent with `-m <parent>` (nothing was changed)",
+                    id.short(),
+                    c.parents.len()
                 ));
+            }
+            if let Some(m) = mainline {
+                if c.parents.len() > 1 && (m == 0 || m > c.parents.len()) {
+                    return msg(format!("{} has {} parents; -m {m} is out of range (nothing was changed)", id.short(), c.parents.len()));
+                }
             }
         }
         let mut seq = PickSeq::default();
         for (k, id) in ids.iter().enumerate() {
-            match self.cherry_pick_id(&zone, *id, author.clone()) {
+            // -m names a parent only a merge commit has; a plain commit in the list is picked normally
+            let m = if self.commit_obj(id)?.parents.len() > 1 { mainline } else { None };
+            match self.cherry_pick_id_mainline(&zone, *id, m, author.clone()) {
                 Ok(MergeOutcome::Merged { commit }) => seq.done.push((*id, commit)),
                 Ok(MergeOutcome::Conflicted { paths }) => {
                     seq.stopped = Some((*id, paths, ids[k + 1..].to_vec()));

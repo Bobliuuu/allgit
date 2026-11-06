@@ -332,3 +332,30 @@ fn publish_mirror_forces_with_lease_prunes_and_sends_tags() {
     // --mirror and --tags/--delete do not mix
     assert!(!vcs(&b, &["publish", "--mirror", "--tags"]).status.success());
 }
+
+#[test]
+fn symmetric_difference_in_cherry_pick_and_format_patch() {
+    let t = tempfile::tempdir().unwrap();
+    let d = feat_repo(t.path());
+    commit_file(&d, "m1.txt", "m1\n", "m1");
+    ok(&d, &["switch", "-c", "target", "HEAD~1"]);
+    // main...feat: m1 (only on main) and c1..c3 (only on feat); base is common and left out
+    ok(&d, &["cherry-pick", "main...feat"]);
+    for f in ["m1.txt", "c1.txt", "c2.txt", "c3.txt"] {
+        assert_eq!(read(&d, f), format!("{}\n", f.trim_end_matches(".txt")), "{f}");
+    }
+    let subs = subjects(&d);
+    assert!(subs.contains(&"m1".to_owned()) && subs.contains(&"c3".to_owned()), "{subs:?}");
+    assert_eq!(subs.iter().filter(|s| s.as_str() == "base").count(), 1);
+
+    let mbox = ok(&d, &["format-patch", "--stdout", "main...feat"]);
+    for s in ["m1", "c1", "c2", "c3"] {
+        assert!(mbox.contains(&format!("Subject: [PATCH")) && mbox.contains(&format!("] {s}\n")), "{s} missing:\n{mbox}");
+    }
+    assert!(!mbox.contains("] base\n"), "{mbox}");
+    // -n keeps only the newest N of the set
+    let one = ok(&d, &["format-patch", "--stdout", "-n", "1", "main...feat"]);
+    assert_eq!(one.matches("\nSubject: ").count() + usize::from(one.starts_with("Subject: ")), 1, "{one}");
+    // a symmetric range with a missing side is an error naming it
+    assert!(fail(&d, &["cherry-pick", "main...nosuchbranch"]).contains("nosuchbranch"));
+}
