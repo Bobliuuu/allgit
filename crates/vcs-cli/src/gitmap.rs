@@ -1167,6 +1167,51 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             a.extend(p.pos.first().cloned());
             vec![Step::Vcs(a)]
         }
+        "range-diff" => {
+            let mut p = parse(cmd, rest, &["--creation-factor"]);
+            let cf = p.val(&["--creation-factor"]);
+            let np = p.take(&["-s", "--no-patch"]);
+            p.take(&["--no-dual-color", "--dual-color"]);
+            p.finish("`vcs range-diff [--creation-factor N] [-s] <old range> <new range>` (no --left-only/--right-only, --diff-merges, diff options)")?;
+            let mut a = v(&["range-diff"]);
+            if let Some(c) = cf {
+                a.push("--creation-factor".into());
+                a.push(c);
+            }
+            if np {
+                a.push("--no-patch".into());
+            }
+            a.extend(p.pos.iter().cloned());
+            vec![Step::Vcs(a)]
+        }
+        "show-branch" => {
+            let mut p = parse(cmd, rest, &["--more"]);
+            let more = p.val(&["--more"]);
+            let flags: Vec<(&str, &[&str])> = vec![
+                ("--list", &["--list"]),
+                ("--merge-base", &["--merge-base"]),
+                ("--independent", &["--independent"]),
+                ("--current", &["--current"]),
+                ("--sha1-name", &["--sha1-name"]),
+                ("--no-name", &["--no-name"]),
+            ];
+            let on: Vec<&str> = flags.iter().filter(|(_, names)| p.take(names)).map(|(f, _)| *f).collect();
+            if p.take(&["-a", "--all", "-r", "--remotes"]) {
+                return Err(missing(cmd, "remote-tracking branches are not shown", "`vcs show-branch <revs>` with the revisions spelled out"));
+            }
+            if p.take(&["--topics"]) {
+                return Err(missing(cmd, "--topics is not implemented", "`vcs show-branch <revs>`; `vcs rev-list A..B` lists the commits only one side has"));
+            }
+            p.finish("`vcs show-branch [--list] [--more N] [--merge-base] [--independent] [--current] [--sha1-name] [--no-name] [<rev>...]` (no globs, -g, --topo-order, --date-order, --color)")?;
+            let mut a = v(&["show-branch"]);
+            a.extend(on.iter().map(|s| s.to_string()));
+            if let Some(m) = more {
+                a.push("--more".into());
+                a.push(m);
+            }
+            a.extend(p.pos.iter().cloned());
+            vec![Step::Vcs(a)]
+        }
         "merge-base" => {
             let mut p = parse(cmd, rest, &[]);
             let all = p.take(&["--all", "-a"]);
@@ -1263,7 +1308,7 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
         "lfs" => return Err(missing(cmd, "large files are native", "files are chunked automatically; see docs/guide/06-large-files.md")),
         "filter-branch" => translate_filter_branch(rest)?,
         "filter-repo" => translate_filter_repo(rest)?,
-        "replace" | "range-diff" | "show-branch" | "stripspace" => {
+        "replace" | "stripspace" => {
             return Err(missing(cmd, "annotation and ref-substitution tools are not implemented", "`vcs rebase`, `vcs op undo`; history rewriting by path, message, author or tree is `vcs rewrite`"))
         }
         "ls-remote" | "for-each-ref" | "show-ref" | "name-rev" | "update-ref" | "update-index" | "hash-object" | "write-tree" | "read-tree" | "commit-tree" | "count-objects" | "prune" | "pack-objects" | "index-pack" | "unpack-objects" | "check-ignore" | "check-attr" | "var" | "mktag" => {
