@@ -32,7 +32,10 @@ fn server_refuses_to_start_on_a_repository_newer_than_itself() {
     mem.put_if_absent(format::KEY, &marker(format::LEVEL + 1)).unwrap();
     let e = Server::start(mem, cfg(), "127.0.0.1:0").err().expect("must refuse");
     let m = e.to_string();
-    assert!(m.contains("requires vcs format level") && m.contains("docs/upgrade-rollback.md"), "{m}");
+    assert!(
+        m.contains("requires vcs format level") && m.contains("docs/upgrade-rollback.md"),
+        "{m}"
+    );
 }
 
 #[test]
@@ -54,7 +57,9 @@ fn raise_over_http_and_lower_needs_admin() {
     assert!(format::raise(&w, 3).unwrap(), "a write token may raise");
     assert_eq!(format::level(&*mem).unwrap(), 3);
     // garbage is rejected
-    assert!(w.put_if_match(format::KEY, b"junk", &mem.get(format::KEY).unwrap().unwrap().tag).is_err());
+    assert!(w
+        .put_if_match(format::KEY, b"junk", &mem.get(format::KEY).unwrap().unwrap().tag)
+        .is_err());
     // lowering: refused for a write token, accepted for an admin
     let tag = mem.get(format::KEY).unwrap().unwrap().tag;
     assert!(w.put_if_match(format::KEY, &marker(2), &tag).is_err());
