@@ -10,7 +10,7 @@
 
 use crate::base::CommitGraph;
 use crate::error::MergeError;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use vcs_objects::ObjectId;
 
 const MAGIC: &[u8; 4] = b"AGCG";
@@ -258,8 +258,11 @@ impl CommitGraphFile {
         let keys: Vec<ObjectId> = new.keys().copied().collect();
         for k in keys {
             let mut path = vec![k];
+            // membership of `path`, so the cycle check is O(1) (a linear scan made a deep history quadratic)
+            let mut on_path: HashSet<ObjectId> = HashSet::from([k]);
             while let Some(&n) = path.last() {
                 if new[&n].2.is_some() {
+                    on_path.remove(&n);
                     path.pop();
                     continue;
                 }
@@ -280,35 +283,64 @@ impl CommitGraphFile {
                 }
                 match pending {
                     Some(p) => {
-                        if path.contains(&p) {
+                        if !on_path.insert(p) {
                             return corrupt("cycle");
                         }
                         path.push(p);
                     }
                     None => {
                         new.get_mut(&n).unwrap().2 = Some(max.checked_add(1).ok_or(MergeError::Corrupt("generation overflow".into()))?);
+                        on_path.remove(&n);
                         path.pop();
                     }
                 }
             }
         }
-        // Merge into one id-sorted table and re-index parents.
-        let mut all: BTreeMap<ObjectId, (Vec<ObjectId>, u64, u32)> = BTreeMap::new();
-        for i in 0..self.ids.len() {
-            let ps = self.par(i).iter().map(|&p| self.ids[p as usize]).collect();
-            all.insert(self.ids[i], (ps, self.time[i], self.gen[i]));
+        // Merge the (already id-sorted) new commits into the id-sorted table: one linear pass over the old arrays,
+        // no per-commit map. Old parent indexes are shifted by the number of new ids that sort before them.
+        let new: Vec<(ObjectId, (Vec<ObjectId>, u64, Option<u32>))> = new.into_iter().collect();
+        let total = self.ids.len() + new.len();
+        let mut ids: Vec<ObjectId> = Vec::with_capacity(total);
+        let mut remap: Vec<u32> = Vec::with_capacity(self.ids.len());
+        // slot -> Ok(old index) | Err(new index)
+        let mut slots: Vec<Result<u32, u32>> = Vec::with_capacity(total);
+        let (mut i, mut j) = (0usize, 0usize);
+        while i < self.ids.len() || j < new.len() {
+            let take_old = j >= new.len() || (i < self.ids.len() && self.ids[i] < new[j].0);
+            if take_old {
+                remap.push(ids.len() as u32);
+                ids.push(self.ids[i]);
+                slots.push(Ok(i as u32));
+                i += 1;
+            } else {
+                ids.push(new[j].0);
+                slots.push(Err(j as u32));
+                j += 1;
+            }
         }
-        for (id, (ps, t, g)) in new {
-            all.insert(id, (ps, t, g.expect("computed")));
-        }
-        let ids: Vec<ObjectId> = all.keys().copied().collect();
-        let mut out = CommitGraphFile::default();
-        for id in &ids {
-            let (ps, t, g) = &all[id];
-            out.ids.push(*id);
-            out.time.push(*t);
-            out.gen.push(*g);
-            out.pflat.extend(ps.iter().map(|p| ids.binary_search(p).expect("closed") as u32));
+        let mut out = CommitGraphFile {
+            ids,
+            time: Vec::with_capacity(total),
+            gen: Vec::with_capacity(total),
+            pflat: Vec::with_capacity(self.pflat.len() + new.len() * 2),
+            pend: Vec::with_capacity(total),
+        };
+        for s in slots {
+            match s {
+                Ok(o) => {
+                    let o = o as usize;
+                    out.time.push(self.time[o]);
+                    out.gen.push(self.gen[o]);
+                    out.pflat.extend(self.par(o).iter().map(|&p| remap[p as usize]));
+                }
+                Err(n) => {
+                    let (_, (ps, t, g)) = &new[n as usize];
+                    out.time.push(*t);
+                    out.gen.push(g.expect("computed"));
+                    out.pflat
+                        .extend(ps.iter().map(|p| out.ids.binary_search(p).expect("closed") as u32));
+                }
+            }
             out.pend.push(out.pflat.len() as u32);
         }
         Ok(out)
@@ -474,6 +506,27 @@ mod tests {
             })
             .unwrap();
         (m, f)
+    }
+
+    /// Regression (scaling suite): the cycle check scanned the DFS path linearly, so building the graph of a
+    /// linear history was quadratic (300,000 commits took 69 s), and extending by one commit rebuilt a BTreeMap of
+    /// the whole graph. A 200,000-commit chain must now build in well under the time the old code needed for 60,000.
+    #[test]
+    fn deep_chain_builds_in_linear_time_and_extends_like_a_rebuild() {
+        let n = 200_000u32;
+        let t = std::time::Instant::now();
+        let parents = |c: &ObjectId| -> Result<(Vec<ObjectId>, u64), MergeError> {
+            let k = u32::from_be_bytes(c.as_bytes()[..4].try_into().unwrap());
+            Ok((if k == 0 { vec![] } else { vec![id(k - 1)] }, k as u64))
+        };
+        let half = CommitGraphFile::default().extend(&[id(n / 2)], parents).unwrap();
+        let both = half.extend(&[id(n - 1)], parents).unwrap();
+        let all = CommitGraphFile::default().extend(&[id(n - 1)], parents).unwrap();
+        assert!(t.elapsed().as_secs() < 20, "chain build took {:?}", t.elapsed());
+        assert_eq!(both, all);
+        assert_eq!(all.len(), n as usize);
+        assert_eq!(all.gen[all.index_of(&id(n - 1)).unwrap()], n);
+        assert_eq!(CommitGraphFile::decode(&all.encode()).unwrap(), all);
     }
 
     proptest! {
