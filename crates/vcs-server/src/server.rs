@@ -568,6 +568,10 @@ fn handle_conn(sh: &Shared, conn: TcpStream) {
     let body_limit = |r: &Request| -> usize {
         if r.method != "PUT" {
             64 * 1024
+        } else if !has_valid_token(sh, r) {
+            // An unauthenticated client must not be able to reserve the in-flight body budget (or push
+            // up to max_body bytes) before route() rejects it with 401: small cap, answered 413.
+            64 * 1024
         } else if pct_decode(r.path.strip_prefix("/v1/o/").unwrap_or("")).as_deref() == Some(manifest::KEY) {
             sh.cfg.max_manifest_body
         } else {
@@ -748,6 +752,20 @@ fn tag_matches(header: &str, tag: &str) -> bool {
 
 fn unquote(s: &str) -> &str {
     s.strip_prefix('"').and_then(|s| s.strip_suffix('"')).unwrap_or(s)
+}
+
+/// True if the request carries a bearer token the table accepts right now (role is checked later).
+fn has_valid_token(sh: &Shared, req: &Request) -> bool {
+    let Some(t) = req
+        .header("authorization")
+        .and_then(|h| h.strip_prefix("Bearer ").or_else(|| h.strip_prefix("bearer ")))
+        .map(str::trim)
+    else {
+        return false;
+    };
+    let now = (sh.cfg.clock)();
+    let table = sh.tokens.read().unwrap_or_else(|e| e.into_inner()).clone();
+    table.authenticate_at(t, now).is_ok()
 }
 
 fn route(sh: &Shared, req: &Request, ctx: &mut Ctx) -> Response {
