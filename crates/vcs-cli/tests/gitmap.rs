@@ -901,6 +901,7 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
                 commit(),
                 G("git remote add origin ssh://host/app.git"),
                 G("git push -u origin main"),
+                L("git branch -r"),
                 W("f.txt", "one\ntwo\n"),
                 G("git add f.txt"),
                 G(r#"git commit -m "two""#),
@@ -925,6 +926,10 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
                 G("git switch main"),
                 G("git push origin --delete feature"),
                 Op::BF("git push origin --delete feature"),
+                G("git remote remove origin"),
+                L("git branch -r"),
+                Op::BF("git push"),
+                Op::BF("git remote remove origin"),
             ],
         ),
         (

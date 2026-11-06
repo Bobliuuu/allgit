@@ -644,11 +644,22 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
                     out.push(Step::Vcs(v(&["remote", "set", &args[1]])));
                     out
                 }
+                "remove" | "rm" => {
+                    if args.len() != 1 {
+                        return Err(Error::Msg("usage: git remote remove <name>".into()));
+                    }
+                    let mut out = vec![];
+                    if args[0] != "origin" {
+                        out.push(note("vcs has ONE remote; the name is ignored (it is always 'origin')"));
+                    }
+                    out.push(Step::Vcs(v(&["remote", "remove"])));
+                    out
+                }
                 _ => {
                     return Err(missing(
                         &format!("remote {sub}"),
                         "vcs has a single remote",
-                        "`vcs remote set <url>` replaces it; there is nothing to remove, rename or prune",
+                        "`vcs remote set <url>` replaces it, `vcs remote remove` forgets it; there is no rename or prune",
                     ))
                 }
             }
@@ -1727,11 +1738,11 @@ fn translate_branch(rest: &[String]) -> Result<Vec<Step>, Error> {
         return Ok(vec![Step::Vcs(a)]);
     }
     if p.take(&["-r", "--remotes"]) {
-        return Err(missing(
-            "branch -r",
-            "listing remote-tracking branches",
-            "`vcs remote show` lists them",
-        ));
+        p.finish("`vcs branch -r`")?;
+        if !p.pos.is_empty() {
+            return Err(missing("branch -r <pattern>", "pattern filtering", "`vcs branch -r` lists the zone's remote-tracking branches"));
+        }
+        return Ok(vec![Step::Vcs(v(&["branch", "-r"]))]);
     }
     let force = p.take(&["-f", "--force"]);
     p.finish("`vcs branch [name]` / `vcs branch -d [--force] <name>` (no --merged/--contains/-u)")?;
