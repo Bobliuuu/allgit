@@ -1,5 +1,0 @@
-deep load_start 4.79 1.67 1.37 1/356 536395
-deep load_end 1.00 1.19 2.12 1/352 594547
-binary load_start 1.00 1.10 1.58 1/363 636831
-binary load_end 3.09 3.56 4.06 1/365 678048
-ALLDONE
