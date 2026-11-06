@@ -207,9 +207,11 @@ impl CommitGraphFile {
         let (a, b) = self.par_range(i).unwrap_or((0, 0));
         let n = self.n;
         self.buf[self.o_par + 4 * a..self.o_par + 4 * b]
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter_map(move |c| {
-                let p = u32::from_le_bytes(c.try_into().unwrap()) as usize;
+                let p = u32::from_le_bytes(*c) as usize;
                 if p < n && p != i {
                     Some(p)
                 } else {
@@ -590,8 +592,8 @@ impl CommitGraphFile {
                 return corrupt("parent offsets inconsistent");
             }
             let mut max = 0u32;
-            for c in self.buf[self.o_par + 4 * prev_end..self.o_par + 4 * end].chunks_exact(4) {
-                let p = u32::from_le_bytes(c.try_into().unwrap()) as usize;
+            for c in self.buf[self.o_par + 4 * prev_end..self.o_par + 4 * end].as_chunks::<4>().0 {
+                let p = u32::from_le_bytes(*c) as usize;
                 if p >= self.n || p == i {
                     return corrupt("parent index out of range");
                 }
