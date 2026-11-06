@@ -881,8 +881,10 @@ impl Repo {
         // A large batch is written as bounded local packs while it arrives (no per-object pending map, ordering map or
         // barrier: 1e8 files); a small one takes the ordinary store path.
         const STREAM_MIN: usize = 20_000;
-        const SEG_OBJECTS: usize = 400_000;
-        const SEG_BYTES: usize = 1 << 29;
+        // Every lookup in the store tries the packs one after the other, so few large packs beat many small ones (25
+        // packs of 400k blobs made the 10M-file checkout 36 percent slower than one pack).
+        const SEG_OBJECTS: usize = 8_000_000;
+        const SEG_BYTES: usize = 2 << 30;
         // Objects at least this big keep the store's own path (written straight to files, outside the memory budget).
         const BIG: usize = 1 << 20;
         let mut total = 0;
