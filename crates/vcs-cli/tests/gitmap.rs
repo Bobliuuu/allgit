@@ -989,6 +989,11 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
                 G("git add f.txt"),
                 G("git stash drop"),
                 G("git stash list"),
+                W("n.txt", "new\n"),
+                W("f.txt", "3\n"),
+                G("git stash -u"),
+                G("git stash list"),
+                G("git stash drop"),
             ],
         ),
         (
@@ -1003,6 +1008,11 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
                 G("git tag v1"),
                 GC("git tag", "v1"),
                 G("git tag v0 HEAD~1"),
+                BF("git tag v0"),
+                G("git tag -f v0"),
+                G("git tag -f v9"),
+                G("git tag -d v9"),
+                G("git tag -f v1"),
                 G("git tag -d v0"),
                 G("git tag -a v2 -m rel"),
                 GC("git describe --tags", "v"),
@@ -1209,4 +1219,35 @@ fn native_reset_clean_stash_apply_switch_c() {
         .output()
         .unwrap();
     assert!(!o.status.success(), "clean needs -f or -n");
+}
+
+#[test]
+fn stash_include_untracked_round_trip() {
+    let t = tempfile::tempdir().unwrap();
+    let vcs = |args: &[&str]| {
+        let o = Command::new(env!("CARGO_BIN_EXE_vcs"))
+            .arg("git")
+            .args(args)
+            .current_dir(t.path())
+            .env("VCS_AUTHOR_NAME", "Dev")
+            .env("VCS_AUTHOR_EMAIL", "dev@example.com")
+            .env("VCS_GIT_QUIET", "1")
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    };
+    vcs(&["init"]);
+    std::fs::write(t.path().join("f.txt"), "1\n").unwrap();
+    vcs(&["add", "f.txt"]);
+    vcs(&["commit", "-m", "base"]);
+    std::fs::write(t.path().join("f.txt"), "2\n").unwrap();
+    std::fs::create_dir(t.path().join("sub")).unwrap();
+    std::fs::write(t.path().join("sub/n.txt"), "new\n").unwrap();
+    vcs(&["stash", "-u"]);
+    assert!(!t.path().join("sub/n.txt").exists(), "untracked file is set aside");
+    assert_eq!(std::fs::read_to_string(t.path().join("f.txt")).unwrap(), "1\n");
+    vcs(&["stash", "pop"]);
+    assert_eq!(std::fs::read_to_string(t.path().join("sub/n.txt")).unwrap(), "new\n");
+    assert_eq!(std::fs::read_to_string(t.path().join("f.txt")).unwrap(), "2\n");
 }

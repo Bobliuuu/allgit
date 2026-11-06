@@ -313,6 +313,9 @@ enum Cmd {
         /// Delete the named tag
         #[arg(short = 'd', long)]
         delete: bool,
+        /// Replace the tag when it already exists (the old tag is only dropped once the new target resolves)
+        #[arg(short = 'f', long, conflicts_with = "delete")]
+        force: bool,
     },
     /// Write commits as mail-format patch files (one per commit: author, date, message, diff)
     FormatPatch(patchcmd::FormatPatchArgs),
@@ -870,6 +873,9 @@ enum StashCmd {
     Push {
         #[arg(short, long)]
         message: Option<String>,
+        /// Also set aside untracked files (not ignored ones): they are added first, so `pop` brings them back staged
+        #[arg(short = 'u', long)]
+        include_untracked: bool,
     },
     /// Apply a stash entry (staged) and drop it; on conflicts it is kept
     Pop {
@@ -1484,9 +1490,20 @@ fn run(cli: Cli) -> Result<(), Error> {
             signature,
             sign,
             delete,
+            force,
         } => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
+            if force {
+                if let Some(n) = &name {
+                    let zone_id = repo.resolve_zone(&zone)?;
+                    repo.resolve_rev(&zone_id, rev.as_deref().unwrap_or("HEAD"))?;
+                    if repo.tag_list(&zone)?.iter().any(|t| t.name == *n) {
+                        let old = repo.tag_delete(&zone, n)?;
+                        println!("replacing tag {n} (was {})", old.short());
+                    }
+                }
+            }
             match name {
                 None if delete => return Err(Error::Msg("--delete needs a tag name".into())),
                 None => {
@@ -1909,7 +1926,14 @@ fn run(cli: Cli) -> Result<(), Error> {
         Cmd::Stash(c) => {
             let (repo, _) = open()?;
             match c {
-                StashCmd::Push { message } => {
+                StashCmd::Push { message, include_untracked } => {
+                    if include_untracked {
+                        let root = repo.rel_path(repo.worktree(), ".")?;
+                        let rep = repo.add(&[root])?;
+                        for s in &rep.skipped {
+                            eprintln!("warning: skipped {s}");
+                        }
+                    }
                     let zs = repo.stash_push(message.as_deref(), author()?)?;
                     println!("stashed changes in zone(s): {}", zs.join(", "));
                 }
