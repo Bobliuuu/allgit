@@ -26,7 +26,7 @@ jobs:
         include:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
-          - # macos-13 images were retired by GitHub (Dec 2025); a job on that label never starts
+          # macos-13 images were retired by GitHub (Dec 2025); a job on that label never starts
           - { os: macos-15-intel, target: x86_64-apple-darwin }
           - { os: macos-latest, target: aarch64-apple-darwin }
     steps:
