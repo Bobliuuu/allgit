@@ -89,3 +89,6 @@ From the final scoreboard ([research/command-scoreboard.md](research/command-sco
 - No resident daemon: it was built and measured, and did not beat the
   in-process path ([research/resident-daemon.md](research/resident-daemon.md)).
 - Remote GC on S3 Express One Zone is not available (hybrid layout not built).
+- Minimum-reader marker (issue #567, [upgrade-rollback.md](upgrade-rollback.md)) covers the remote only. Binaries built
+  before it do not know the marker, so the first release with it is the rollback floor. Local repositories (pack/index
+  v3/v4, journal) have no marker. Restoring an S3 manifest version during rollback is documented, not automated or tested.

@@ -239,6 +239,12 @@ fn file_sig(p: &std::path::Path) -> Option<(std::time::SystemTime, u64)> {
 impl Server {
     /// Bind and serve on a background thread. Use port 0 for an ephemeral port.
     pub fn start(backend: Arc<dyn Backend>, mut cfg: Config, addr: &str) -> std::io::Result<Server> {
+        // A server binary older than the repository's format must not serve it (issue #567). An unreachable backend
+        // is not a verdict: only a definite "too new" or an unreadable marker stops startup.
+        match vcs_remote::format::check(backend.as_ref()) {
+            Err(vcs_remote::format::FormatError::Backend(_)) | Ok(()) => {}
+            Err(e) => return Err(std::io::Error::other(e.to_string())),
+        }
         let listener = TcpListener::bind(addr)?;
         let addr = listener.local_addr()?;
         let tokens = std::mem::take(&mut cfg.tokens);
@@ -1196,7 +1202,7 @@ fn restricted(sh: &Shared, who: &Principal) -> bool {
 /// keys that are not reachable only from zones it may not read. Everything else (packs, tx, tomb,
 /// non-canonical spellings) is reported as absent, the same answer as for a key that does not exist.
 fn read_allowed(sh: &Shared, who: &Principal, key: &str) -> Result<bool, BackendError> {
-    if key == manifest::KEY {
+    if key == manifest::KEY || key == vcs_remote::format::KEY {
         return Ok(true);
     }
     let Some(id) = crate::readguard::canonical_object_id(key) else {
@@ -1607,6 +1613,20 @@ fn object_put(sh: &Shared, req: &Request, who: &Principal, key: &str, extra: &mu
                 Ok(m) if m.principal == p && m.name == n => {}
                 Ok(_) => return text(422, "Invalid: meta names a different principal or shelf than its key"),
                 Err(e) => return text(422, &format!("Invalid: {e}")),
+            }
+        }
+    }
+    if key == vcs_remote::format::KEY {
+        // The minimum-reader marker (issue #567): well-formed, and only ever raised through the API.
+        let new = match vcs_remote::format::Format::decode(&req.body) {
+            Ok(f) => f,
+            Err(e) => return text(422, &format!("Invalid: {e}")),
+        };
+        if let Ok(Some(cur)) = sh.backend.get(key) {
+            if let Ok(cur) = vcs_remote::format::Format::decode(&cur.data) {
+                if new.min_reader < cur.min_reader && who.role < Role::Admin {
+                    return text(403, "Forbidden: lowering the format level needs an admin token (docs/upgrade-rollback.md)");
+                }
             }
         }
     }

@@ -64,12 +64,15 @@ pub enum GcError {
     Damaged(String),
     #[error(transparent)]
     Backend(#[from] BackendError),
+    #[error(transparent)]
+    Format(#[from] crate::format::FormatError),
 }
 
 impl From<PublishError> for GcError {
     fn from(e: PublishError) -> Self {
         match e {
             PublishError::Backend(b) => GcError::Backend(b),
+            PublishError::Format(f) => GcError::Format(f),
             other => GcError::Damaged(other.to_string()),
         }
     }
@@ -614,6 +617,7 @@ pub fn remote_gc_with(
             hold_ms: opts.hold_ms,
         });
     }
+    crate::format::check(b)?;
     let mut rep = RemoteGcReport {
         dry_run: opts.dry_run,
         ..Default::default()

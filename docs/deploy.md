@@ -295,10 +295,10 @@ timeout on a conditional write may have applied and is resolved by the caller's 
   only safe if GC has not swept what that version references (versioning keeps the bytes; a delete marker is undone by deleting
   it). Take the manifest version you intend to restore from before the last `vcs gc --remote` run. Nothing in the tool
   automates or tests restore yet; rehearse it once on a copy (`aws s3 sync` of the prefix, then point a server at the copy).
-* Upgrades and rollback: there is no minimum-reader marker. A manifest over a size threshold is rewritten in the v5 layout and
-  `migrate-sharded` is one-way, so an older `vcs-server` cannot read a manifest a newer one wrote. Roll back by restoring the
-  manifest version written before the upgrade (above), not by only swapping the binary; upgrade one replica first and keep
-  the previous manifest version until you are satisfied.
+* Upgrades and rollback: a minimum-reader marker (`format` key) makes a binary older than the repository refuse with a clear
+  message instead of a decode error, and `vcs-server` refuses to start on a repository newer than itself. A manifest over a
+  size threshold is rewritten in the v5 layout and `migrate-sharded` is one-way, so the level rises and a rollback needs more
+  than swapping the binary. Follow [upgrade-rollback.md](upgrade-rollback.md); `vcs-server format --backend ...` shows the level.
 * The server is stateless between requests; restarting loses nothing.
 * `curl -H "Authorization: Bearer $VCS_TOKEN" http://host:8480/v1/whoami` shows how the server sees you.
 

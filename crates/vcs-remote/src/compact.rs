@@ -272,6 +272,10 @@ fn merge_packs(
         }
         return Ok(rep);
     }
+    if !groups.is_empty() && matches!(opts.format, PackFormat::V3 | PackFormat::V4) {
+        // v3/v4 packs are unreadable to older binaries: raise the minimum-reader marker before writing one (#567).
+        crate::format::raise(b, crate::format::LEVEL_COMPACT)?;
+    }
     let by_stem: BTreeMap<&str, &(PackInfo, PackIndex)> = loaded.iter().map(|l| (l.0.stem.as_str(), l)).collect();
     for g in groups {
         // Read and verify the inputs.
