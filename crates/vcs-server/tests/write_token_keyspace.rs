@@ -70,14 +70,14 @@ fn write_token_keyspace_allowlist() {
     assert!(put(&addr, "t-w", "packs/p.pack", inm, "x").starts_with("HTTP/1.1 2"));
     // strict allowlist: unknown prefixes are refused, real key shapes still work
     for k in ["k/one", "misc/a", "services/x", "gcx", "manifest/x", "objects"] {
-        assert!(
-            put(&addr, "t-w", k, inm, "x").starts_with("HTTP/1.1 403"),
-            "write token wrote {k}"
-        );
+        assert!(put(&addr, "t-w", k, inm, "x").starts_with("HTTP/1.1 403"), "write token wrote {k}");
     }
     assert!(put(&addr, "t-w", "tx/abc", inm, "x").starts_with("HTTP/1.1 2"));
     assert!(put(&addr, "t-w", "tx/abc", "If-Match: \"a\"\r\n", "x").starts_with("HTTP/1.1 403"));
-    assert!(put(&addr, "t-a", "k/one", inm, "x").starts_with("HTTP/1.1 2"), "admin keeps ad-hoc keys");
+    assert!(
+        put(&addr, "t-a", "k/one", inm, "x").starts_with("HTTP/1.1 2"),
+        "admin keeps ad-hoc keys"
+    );
     // an admin keeps the coordination keys
     assert!(put(&addr, "t-a", "gc/lock", inm, "me 1").starts_with("HTTP/1.1 2"));
 }

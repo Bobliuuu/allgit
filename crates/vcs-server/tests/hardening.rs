@@ -112,7 +112,7 @@ fn rate_limit_per_principal_with_retry_after() {
     assert!(matches!(get("t-alice"), Err(ureq::Error::Status(429, _))));
     // the HttpBackend client surfaces 429 as Unavailable
     let c = HttpBackend::new(&url, "t-alice").unwrap();
-    assert!(matches!(c.get("k/x"), Err(BackendError::Unavailable(m)) if m.contains("429")));
+    assert!(matches!(c.get("tx/x"), Err(BackendError::Unavailable(m)) if m.contains("429")));
 }
 
 #[test]
@@ -126,19 +126,19 @@ fn audit_log_records_every_authenticated_put_and_detects_tampering() {
     cfg.clock = Arc::new(move || c2.load(Ordering::SeqCst));
     let (_s, _m, url) = start_cfg(cfg);
     let c = HttpBackend::new(&url, "t-alice").unwrap();
-    c.put_if_absent("k/one", b"1").unwrap(); // 201
-    c.put_if_absent("k/one", b"2").unwrap(); // 412
-    let _ = c.get("k/one"); // reads are not audited
-    let _ = ureq::put(&format!("{url}/v1/o/k/two"))
+    c.put_if_absent("tx/one", b"1").unwrap(); // 201
+    c.put_if_absent("tx/one", b"2").unwrap(); // 412
+    let _ = c.get("tx/one"); // reads are not audited
+    let _ = ureq::put(&format!("{url}/v1/o/tx/two"))
         .set("Authorization", "Bearer t-bob")
         .send_bytes(b"x"); // 428
-    let _ = ureq::put(&format!("{url}/v1/o/k/three")).send_bytes(b"x"); // unauthenticated: not audited
-    let _ = HttpBackend::new(&url, "bad-token").unwrap().put_if_absent("k/four", b"x"); // 401: not audited
+    let _ = ureq::put(&format!("{url}/v1/o/tx/three")).send_bytes(b"x"); // unauthenticated: not audited
+    let _ = HttpBackend::new(&url, "bad-token").unwrap().put_if_absent("tx/four", b"x"); // 401: not audited
     let text = std::fs::read_to_string(&path).unwrap();
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines.len(), 3, "{text}");
     assert!(
-        lines[0].contains("\"principal\":\"alice\"") && lines[0].contains("\"key\":\"k/one\"") && lines[0].contains("\"outcome\":\"201\"")
+        lines[0].contains("\"principal\":\"alice\"") && lines[0].contains("\"key\":\"tx/one\"") && lines[0].contains("\"outcome\":\"201\"")
     );
     assert!(lines[0].contains("\"ts_ms\":42") && lines[0].contains("\"op\":\"PUT\""));
     assert!(lines[1].contains("\"outcome\":\"412\""));
@@ -276,15 +276,15 @@ fn size_limits_give_clean_errors() {
         r.extend(std::iter::repeat_n(b'x', n));
         raw(a, &r).0
     };
-    assert_eq!(put("k/ok", 1000), Some(201));
-    assert_eq!(put("k/big", 1001), Some(413));
-    assert_eq!(mem.get("k/big").unwrap(), None);
+    assert_eq!(put("tx/ok", 1000), Some(201));
+    assert_eq!(put("tx/big", 1001), Some(413));
+    assert_eq!(mem.get("tx/big").unwrap(), None);
     assert_eq!(put("manifest", 101), Some(413), "manifest has its own, smaller limit");
     // announced huge body, none sent: rejected from the header alone, no allocation, no stall
     let t0 = Instant::now();
     let (code, _) = raw(
         a,
-        b"PUT /v1/o/k/h HTTP/1.1\r\nAuthorization: Bearer t-alice\r\nIf-None-Match: *\r\nContent-Length: 99999999999\r\n\r\n",
+        b"PUT /v1/o/tx/h HTTP/1.1\r\nAuthorization: Bearer t-alice\r\nIf-None-Match: *\r\nContent-Length: 99999999999\r\n\r\n",
     );
     assert_eq!(code, Some(413));
     assert!(t0.elapsed() < Duration::from_secs(5));
@@ -346,7 +346,7 @@ fn slowloris_stalls_time_out() {
     let t0 = Instant::now();
     let (code, _) = raw(
         a,
-        b"PUT /v1/o/k/s HTTP/1.1\r\nAuthorization: Bearer t-alice\r\nIf-None-Match: *\r\nContent-Length: 10\r\n\r\nabc",
+        b"PUT /v1/o/tx/s HTTP/1.1\r\nAuthorization: Bearer t-alice\r\nIf-None-Match: *\r\nContent-Length: 10\r\n\r\nabc",
     );
     assert_eq!(code, Some(408));
     assert!(t0.elapsed() < Duration::from_secs(5));
