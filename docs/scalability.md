@@ -142,6 +142,44 @@ files, 0 missing, 0 wrong content, fresh-clone and copy-of-store `fsck` ok, remo
 found a real bug (a delta repository with zero tags tried to read a nonexistent table; fixed, test
 `a_delta_repository_with_no_tags_works`). Short run, not the 2 h soak; `server_alive_at_end` was false after the last chaos kill.
 
+## Lazy mmap readers: commit-graph, reach cache, path filters (trillion-scaling follow-up)
+
+Problem (docs/research/trillion-scaling-findings.md, MEASURED): the three cache readers decoded or verified the whole file on
+every open: commit-graph 55 s and 99 GB anonymous at 1e9 commits, reach cache 19 s and 32 GB at 1e9 objects, path filters
+4.2 s and 6.5 GB at 1e8 commits. Now all three map the file and open in O(1); `fsck` (and gc, for the destructive reach
+cache) does the whole-file validation explicitly.
+
+What changed:
+
+* `vcs_store::mapfile::MapFile`: read-only `mmap` (heap bytes off unix), `MADV_RANDOM`; `blake3_big` hashes on all cores.
+* Commit-graph **format v2** (gated by the version byte; `crates/vcs-merge/src/cgraph.rs` has the layout). v1 entries are
+  variable length, so a lazy reader is impossible without a decode; v2 is columns (ids, times, generations, parent-end offsets,
+  parents) with a 32-byte checksummed header. A v1 file still loads: it is fully validated, converted in memory and written back
+  as v2 on first use (test `old_format_graph_still_loads_and_is_rewritten_as_v2`). Reach cache and path-filter formats are
+  UNCHANGED (they were already random access).
+* Open checks only the header and the exact file length (truncation is always caught) and, for files up to 4 MiB, the whole
+  checksum and structure. Bigger files are not checksummed at open. Every query step on a lazily opened graph checks what it
+  touches (parent index in range, generation strictly above the parents'); a violation poisons the graph (`is_bad`), the query
+  answers `None`, and callers fall back to walking objects (`merge_bases`, `is_ancestor` check it explicitly). Path-filter
+  lookups treat a malformed record as absent. Not detectable without a full pass: a flipped bit inside a time, a bloom filter or
+  a reach bit that keeps the structure valid. That is what `fsck` is for (checksum plus structure plus comparison with the
+  real commits; it now also checks `gc-reach`). **gc keeps verifying `gc-reach` completely** before trusting it (it deletes what the
+  cache calls unreachable), but streams the check over the mapping on all cores, with no anonymous memory.
+* `count_reachable_not_from` was O(history behind `hide`) (22 s at 1e8, 280 s at 1e9, allocated two bitmaps of n); it is now
+  `range_ids(from, hide).len()`, which walks only the answer and the commits between it and `hide`.
+* Path-filter save merges the sorted file and the new filters record by record (no `BTreeMap` of the whole file) and refuses to
+  write when the 32-bit offsets of the format would overflow (about 1.4e8 commits of 30-byte records; this limit is NOT
+  lifted, see open work).
+
+Measured on the shared trillion box (i4i.8xlarge, release build, synthetic structures from `scalebench`, one run per cell, page
+cache warm because the files had just been written; "before" is the commit before the change, same box and same day):
+
+RESULTS_TABLE
+
+Notes: RSS of the "after" rows includes mapped file pages (reclaimable page cache); the anonymous column is `RssAnon`.
+Cold point queries are bounded by the disk, not by this change: right after the 1e9 file was written and partly evicted,
+`index_of` p50 was 0.94 ms (about 17 page faults per lookup on NVMe) instead of 2 us.
+
 ## Designs and open work
 
 1. **Manifest write fan-in (findings 6, 12). Server side DONE (#452).** The paragraph below is the original analysis; what is built is the reconciliation of stale writes inside `vcs-server` (`groupcommit.rs`), which validates and stores the merged manifest by CAS on the current tag; the per-zone sharded protocol remains the answer for publishers that write the store directly. One key admits one winner per round trip, so throughput cannot grow with
