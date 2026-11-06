@@ -71,7 +71,7 @@ fn delete_needs_admin_and_never_deletes_the_manifest() {
 fn auth_failures_and_whoami() {
     let (_s, _m, url) = start(1);
     for tok in ["", "nope"] {
-        let e = client(&url, tok).get("k/one").unwrap_err().to_string();
+        let e = client(&url, tok).get("tx/one").unwrap_err().to_string();
         assert!(e.contains("401"), "{e}");
     }
     let r = ureq::get(&format!("{url}/v1/whoami")).call();
@@ -84,25 +84,25 @@ fn auth_failures_and_whoami() {
 #[test]
 fn roles_read_cannot_write() {
     let (_s, _m, url) = start(1);
-    client(&url, "t-alice").put_if_absent("k/one", b"x").unwrap();
+    client(&url, "t-alice").put_if_absent("tx/one", b"x").unwrap();
     let r = client(&url, "t-reader");
-    assert_eq!(r.get("k/one").unwrap().unwrap().data, b"x");
-    assert!(r.exists("k/one").unwrap());
-    assert_eq!(r.list("k/").unwrap(), vec!["k/one"]);
-    assert!(r.put_if_absent("k/two", b"y").unwrap_err().to_string().contains("403"));
-    let t = r.get("k/one").unwrap().unwrap().tag;
-    assert!(r.put_if_match("k/one", b"y", &t).unwrap_err().to_string().contains("403"));
-    assert_eq!(r.get("k/two").unwrap(), None);
+    assert_eq!(r.get("tx/one").unwrap().unwrap().data, b"x");
+    assert!(r.exists("tx/one").unwrap());
+    assert_eq!(r.list("tx/").unwrap(), vec!["tx/one"]);
+    assert!(r.put_if_absent("tx/two", b"y").unwrap_err().to_string().contains("403"));
+    let t = r.get("tx/one").unwrap().unwrap().tag;
+    assert!(r.put_if_match("tx/one", b"y", &t).unwrap_err().to_string().contains("403"));
+    assert_eq!(r.get("tx/two").unwrap(), None);
 }
 
 #[test]
 fn unconditional_put_and_bad_keys_rejected() {
     let (_s, _m, url) = start(1);
-    let r = ureq::put(&format!("{url}/v1/o/k/one"))
+    let r = ureq::put(&format!("{url}/v1/o/tx/one"))
         .set("Authorization", "Bearer t-alice")
         .send_bytes(b"x");
     assert!(matches!(r, Err(ureq::Error::Status(428, _))));
-    let r = ureq::get(&format!("{url}/v1/o/k/%5Cx"))
+    let r = ureq::get(&format!("{url}/v1/o/tx/%5Cx"))
         .set("Authorization", "Bearer t-alice")
         .call();
     assert!(matches!(r, Err(ureq::Error::Status(400, _))));
