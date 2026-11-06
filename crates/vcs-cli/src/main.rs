@@ -22,6 +22,7 @@ mod gitmap;
 mod grep;
 mod histcli;
 mod histcmds;
+mod rangecmds;
 mod hooks;
 mod json;
 mod lockable_cmd;
