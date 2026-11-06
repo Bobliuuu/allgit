@@ -49,6 +49,9 @@ pub struct Config {
     pub body_timeout: Duration,
     /// Simultaneous connections served; further ones are refused with 503 (plain) or dropped (TLS).
     pub max_connections: usize,
+    /// Extra connections accepted beyond `max_connections` that may only fetch `/healthz` and `/readyz` (anything else
+    /// on them gets 503 and a close), so a saturated node still answers its orchestrator's probes. 0 = none.
+    pub probe_reserve: usize,
     /// Most bytes of request bodies buffered at once across all connections (announced Content-Length is
     /// reserved before the body is read); a request that does not fit gets 503 + Retry-After. 0 = unlimited.
     pub max_inflight_body: usize,
@@ -104,6 +107,7 @@ impl Config {
             header_timeout: Duration::from_secs(10),
             body_timeout: Duration::from_secs(600),
             max_connections: 256,
+            probe_reserve: 32,
             max_inflight_body: 2 << 30,
             group_commit: true,
             ticket_lease: Duration::from_secs(15),
@@ -168,8 +172,17 @@ struct Shared {
     fail_throttle: Option<crate::ratelimit::FailThrottle>,
     per_ip: Mutex<std::collections::HashMap<std::net::IpAddr, usize>>,
     active: AtomicUsize,
+    /// Connections in the probe-only lane (over the cap; see `Config::probe_reserve`).
+    probe_active: AtomicUsize,
     inflight_body: AtomicUsize,
     stop: AtomicBool,
+}
+
+struct ProbeGuard(Arc<Shared>);
+impl Drop for ProbeGuard {
+    fn drop(&mut self) {
+        self.0.probe_active.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 struct ConnGuard(Arc<Shared>, Option<std::net::IpAddr>);
@@ -263,6 +276,7 @@ impl Server {
             batched_writes: AtomicU64::new(0),
             cfg,
             active: AtomicUsize::new(0),
+            probe_active: AtomicUsize::new(0),
             inflight_body: AtomicUsize::new(0),
             stop: AtomicBool::new(false),
         });
@@ -289,6 +303,21 @@ impl Server {
                 };
                 if s2.active.fetch_add(1, Ordering::SeqCst) >= s2.cfg.max_connections {
                     s2.active.fetch_sub(1, Ordering::SeqCst);
+                    // Over the cap: the connection may still be a health probe. It gets a separate, small lane that
+                    // answers only /healthz and /readyz, so saturation cannot make the node fail its own probes.
+                    if s2.probe_active.fetch_add(1, Ordering::SeqCst) < s2.cfg.probe_reserve {
+                        let s3 = s2.clone();
+                        let spawned = std::thread::Builder::new().spawn(move || {
+                            let _lane = ProbeGuard(s3.clone());
+                            handle_conn(&s3, conn, true)
+                        });
+                        if spawned.is_ok() {
+                            continue;
+                        }
+                        s2.probe_active.fetch_sub(1, Ordering::SeqCst);
+                        continue;
+                    }
+                    s2.probe_active.fetch_sub(1, Ordering::SeqCst);
                     refuse(&s2, conn);
                     continue;
                 }
@@ -313,7 +342,7 @@ impl Server {
                 // If the spawn fails the closure (and its guard) is dropped, releasing the slot.
                 let _ = std::thread::Builder::new().spawn(move || {
                     let _guard = guard;
-                    handle_conn(&s3, conn)
+                    handle_conn(&s3, conn, false)
                 });
             }
         });
@@ -530,14 +559,19 @@ impl Drop for BodyReservation<'_> {
     }
 }
 
-fn handle_conn(sh: &Shared, conn: TcpStream) {
+fn handle_conn(sh: &Shared, conn: TcpStream, probe_only: bool) {
     let _ = conn.set_nodelay(true);
     let peer = if sh.fail_throttle.is_some() {
         conn.peer_addr().ok().map(|a| a.ip())
     } else {
         None
     };
-    let deadline = Arc::new(Mutex::new(Instant::now() + sh.cfg.header_timeout));
+    let header_timeout = if probe_only {
+        sh.cfg.header_timeout.min(Duration::from_secs(2))
+    } else {
+        sh.cfg.header_timeout
+    };
+    let deadline = Arc::new(Mutex::new(Instant::now() + header_timeout));
     let ds = DeadlineTcp {
         tcp: conn,
         deadline: deadline.clone(),
@@ -618,9 +652,13 @@ fn handle_conn(sh: &Shared, conn: TcpStream) {
                 if sh.cfg.client_cert_map.is_some() {
                     ctx.cert_cn = rd.get_ref().peer_leaf().and_then(|d| crate::certmap::subject_common_name(&d));
                 }
-                let r = route(sh, &req, &mut ctx);
+                let r = if probe_only && !matches!(req.path.as_str(), "/healthz" | "/readyz") {
+                    text(503, "too many connections").with("Retry-After", "1")
+                } else {
+                    route(sh, &req, &mut ctx)
+                };
                 set_request_deadline(None);
-                (r, head, req.keep_alive)
+                (r, head, req.keep_alive && !probe_only)
             }
             Err(ParseError::Io(e)) => {
                 error_reply = true;

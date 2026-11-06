@@ -237,6 +237,7 @@ fn reload_tokens_api_and_expiry_with_injected_clock() {
 fn connection_cap_refuses_extra_connections_then_recovers() {
     let mut cfg = Config::new(table());
     cfg.max_connections = 2;
+    cfg.probe_reserve = 0; // no probe lane: over-cap connections are refused outright (the lane is tested in probe_lane.rs)
     cfg.header_timeout = Duration::from_secs(20);
     let (s, _m, url) = start_cfg(cfg);
     // two idle connections that never send a request occupy the slots
