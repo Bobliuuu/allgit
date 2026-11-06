@@ -594,11 +594,14 @@ impl Repo {
             misses.extend(shard.lock().unwrap().drain());
         }
         misses.sort_unstable_by_key(|(id, _)| *id);
+        trace.at("gather misses");
         if !misses.is_empty() {
             // A lazily cloned repository misses every file blob: ask which of them a remote-tracking head reaches
             // with one parallel walk, not with a single-threaded closure over the whole repository.
             let set = IdSet::new(misses.iter().map(|(i, _)| *i).collect());
+            trace.at("miss index");
             let reached = self.reachable_misses(&ctx, &accs, &set)?;
+            trace.at("reachability walk");
             let mut lost = Vec::new();
             for (k, (id, m)) in misses.iter().enumerate() {
                 // the workers asked the store already; this only catches an object stored since (no stat per miss)
