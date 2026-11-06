@@ -43,6 +43,9 @@ pub struct CleanArgs {
     /// Also delete untracked directories (here: untracked files inside them are always listed, so this only removes the emptied directories)
     #[arg(short = 'd')]
     pub dirs: bool,
+    /// Also delete files matched by `.vcsignore` (ignored directories need -d as well)
+    #[arg(short = 'x')]
+    pub ignored: bool,
     /// Only below these paths
     pub paths: Vec<String>,
 }
@@ -93,6 +96,18 @@ pub fn reset(a: &ResetArgs) -> Result<(), Error> {
     Ok(())
 }
 
+/// Remove the empty directories below (and including) `dir`.
+fn prune_empty(dir: &std::path::Path) {
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            if e.file_type().is_ok_and(|t| t.is_dir()) {
+                prune_empty(&e.path());
+            }
+        }
+    }
+    let _ = std::fs::remove_dir(dir);
+}
+
 pub fn clean(a: &CleanArgs) -> Result<(), Error> {
     if !a.force && !a.dry_run {
         return Err(Error::Msg(
@@ -101,7 +116,36 @@ pub fn clean(a: &CleanArgs) -> Result<(), Error> {
     }
     let (repo, cwd) = open()?;
     // Only the untracked walk: a clean does not need every tracked file stat-ed.
-    let (untracked, _unsupported) = repo.untracked_only(Default::default())?;
+    let (mut untracked, _unsupported) = repo.untracked_only(Default::default())?;
+    // file-level view, only when it is needed: -d deletes inside directories, -x adds the ignored files
+    let (untracked_files, ignored_all) = if a.dirs || a.ignored { repo.others()? } else { (vec![], vec![]) };
+    let ignored_dirs: Vec<String> = if a.ignored { ignored_all.iter().filter(|f| f.ends_with('/')).cloned().collect() } else { vec![] };
+    let ignored_files: Vec<String> = if a.ignored { ignored_all.clone() } else { vec![] };
+    if a.ignored {
+        // a listed entry per ignored file/dir that is not inside an untracked directory entry already listed
+        let dirs_listed: Vec<String> = untracked.iter().filter(|u| u.ends_with('/')).cloned().collect();
+        // without -d, git does not go into a directory that holds no tracked file
+        let tracked_dirs: std::collections::BTreeSet<String> = if a.dirs {
+            Default::default()
+        } else {
+            repo.tracked_files()?
+                .iter()
+                .flat_map(|(p, _, _)| p.match_indices('/').map(|(i, _)| p[..i].to_owned()).collect::<Vec<_>>())
+                .collect()
+        };
+        for f in &ignored_all {
+            if dirs_listed.iter().any(|d| f.starts_with(d.as_str())) {
+                continue;
+            }
+            let parent = f.trim_end_matches('/').rsplit_once('/').map(|(p, _)| p);
+            if !a.dirs && parent.is_some_and(|p| !tracked_dirs.contains(p)) {
+                continue;
+            }
+            untracked.push(f.clone());
+        }
+        untracked.sort();
+        untracked.dedup();
+    }
     let filters: Vec<String> = a.paths.iter().map(|p| repo.rel_path(&cwd, p)).collect::<Result<_, _>>()?;
     let mut dirs = std::collections::BTreeSet::new();
     let mut n = 0;
@@ -127,7 +171,23 @@ pub fn clean(a: &CleanArgs) -> Result<(), Error> {
                 n -= 1;
                 continue;
             }
-            std::fs::remove_dir_all(&abs).map_err(|source| Error::Io { path: abs.clone(), source })?;
+            if ignored_dirs.iter().any(|d| d == u) {
+                // an ignored directory with nothing tracked below (listed only with -x)
+                std::fs::remove_dir_all(&abs).map_err(|source| Error::Io { path: abs.clone(), source })?;
+            } else {
+                // an untracked directory: remove its untracked files (and ignored ones with -x), never the
+                // ignored files of a run without -x; the directory itself goes when nothing is left in it
+                let pre = format!("{rel}/");
+                for f in untracked_files.iter().chain(ignored_files.iter()).filter(|f| f.starts_with(&pre)) {
+                    if f.ends_with('/') {
+                        std::fs::remove_dir_all(repo.worktree().join(f.trim_end_matches('/')))
+                    } else {
+                        std::fs::remove_file(repo.worktree().join(f))
+                    }
+                    .map_err(|source| Error::Io { path: repo.worktree().join(f), source })?;
+                }
+                prune_empty(&abs);
+            }
         } else {
             std::fs::remove_file(&abs).map_err(|source| Error::Io { path: abs.clone(), source })?;
             if let Some(p) = abs.parent() {

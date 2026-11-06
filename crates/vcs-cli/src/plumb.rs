@@ -37,6 +37,9 @@ pub struct RevParseArgs {
     /// Print the absolute path of the working tree root instead
     #[arg(long)]
     pub show_toplevel: bool,
+    /// Print the directory that holds this worktree's state (`.vcs`; relative at the repository root, else absolute)
+    #[arg(long)]
+    pub git_dir: bool,
     /// Zone (default: the zone containing the current directory)
     #[arg(long)]
     pub zone: Option<String>,
@@ -48,8 +51,14 @@ pub fn rev_parse(a: &RevParseArgs, json: bool) -> Result<(), Error> {
         let p = repo.worktree().display().to_string();
         return out(json, format!("{p}\n"), || doc("rev-parse", vec![("toplevel", J::Str(p.clone()))]));
     }
+    if a.git_dir {
+        let dir = repo.worktree().join(vcs_objects::names::META_DIR);
+        let here = cwd.canonicalize().ok() == repo.worktree().canonicalize().ok();
+        let p = if here { vcs_objects::names::META_DIR.to_owned() } else { dir.display().to_string() };
+        return out(json, format!("{p}\n"), || doc("rev-parse", vec![("git_dir", J::Str(p.clone()))]));
+    }
     if a.revs.is_empty() {
-        return bad("usage: vcs rev-parse [--short] <rev>... | --show-toplevel");
+        return bad("usage: vcs rev-parse [--short] <rev>... | --show-toplevel | --git-dir");
     }
     let zone = repo.resolve_zone(&zone_of_cwd(&repo, &cwd, a.zone.clone())?)?;
     let mut ids = Vec::new();
@@ -82,6 +91,10 @@ pub struct LsFilesArgs {
     /// as mode 040000 with their tree id, like `git ls-tree <rev>`; reads one tree
     #[arg(long, value_name = "N", requires = "rev")]
     pub depth: Option<u32>,
+    /// List the untracked files instead (one per file, not collapsed to directories); files matched by
+    /// `.vcsignore` are left out, like `git ls-files -o --exclude-standard`
+    #[arg(short = 'o', long, conflicts_with_all = ["stage", "rev", "depth"])]
+    pub others: bool,
     /// Only these paths (files or directories)
     pub paths: Vec<String>,
 }
@@ -112,6 +125,17 @@ pub fn ls_files(a: &LsFilesArgs, json: bool) -> Result<(), Error> {
                 .iter()
                 .any(|f| f.is_empty() || p == f || p.strip_prefix(f.as_str()).is_some_and(|r| r.starts_with('/')))
     };
+    if a.others {
+        let mut files = repo.others()?.0;
+        files.retain(|p| keep(p));
+        let text: String = files.iter().map(|p| format!("{p}\n")).collect();
+        return out(json, text, || {
+            doc(
+                "ls-files",
+                vec![("files", J::Arr(files.iter().map(|p| J::Obj(vec![("path", J::Str(p.clone()))])).collect()))],
+            )
+        });
+    }
     if a.rev.is_none() && !json {
         // Plain listing of the index: stream it straight into the output text, no entry list.
         let parts = repo.scan_tracked(String::new, |t, p, e| {
@@ -206,7 +230,14 @@ pub fn ls_files(a: &LsFilesArgs, json: bool) -> Result<(), Error> {
 #[derive(Args, Clone, Debug)]
 pub struct CatFileArgs {
     /// An object id (64 hex digits), a revision, or `<rev>:<path>` for a file
+    #[arg(default_value = "")]
     pub object: String,
+    /// Read object names from standard input, one per line, and print `<id> <type> <size>`, the content and a newline for each (`<name> missing` for an unknown one)
+    #[arg(long, conflicts_with_all = ["type_", "size", "print", "batch_check"])]
+    pub batch: bool,
+    /// Like --batch but only the `<id> <type> <size>` line
+    #[arg(long, conflicts_with_all = ["type_", "size", "print"])]
+    pub batch_check: bool,
     /// Print the object's type
     #[arg(short = 't', conflicts_with_all = ["size", "print"])]
     pub type_: bool,
@@ -235,19 +266,66 @@ fn locate(repo: &Repo, cwd: &std::path::Path, a: &CatFileArgs) -> Result<ObjectI
     repo.resolve_rev(&zone, &a.object)
 }
 
+/// Type name and content bytes of an object, as `cat-file -t` / `-p` give them.
+fn load(repo: &Repo, id: &ObjectId) -> Result<(&'static str, Vec<u8>), Error> {
+    let obj = repo.store().get(id)?;
+    Ok(match &obj {
+        Object::Commit(_) => ("commit", commit_text(&obj).into_bytes()),
+        Object::Blob(_) | Object::Chunked(_) => ("blob", repo.content(id)?),
+        Object::Tag(_) => ("tag", obj.encode()),
+        other => (kind_name(other), obj.encode()),
+    })
+}
+
+fn batch(repo: &Repo, cwd: &std::path::Path, a: &CatFileArgs) -> Result<(), Error> {
+    use std::io::BufRead;
+    let w = |e: std::io::Error| Error::Io {
+        path: "stdout".into(),
+        source: e,
+    };
+    let mut o = std::io::BufWriter::new(std::io::stdout().lock());
+    let mut one = a.clone();
+    for line in std::io::stdin().lock().lines() {
+        let line = line.map_err(|source| Error::Io {
+            path: "<stdin>".into(),
+            source,
+        })?;
+        let name = line.trim_end_matches('\r');
+        if name.is_empty() {
+            continue;
+        }
+        one.object = name.to_owned();
+        let found = locate(repo, cwd, &one).and_then(|id| load(repo, &id).map(|(k, b)| (id, k, b)));
+        match found {
+            Ok((id, kind, bytes)) => {
+                writeln!(o, "{} {kind} {}", id.to_hex(), bytes.len()).map_err(w)?;
+                if a.batch {
+                    o.write_all(&bytes).map_err(w)?;
+                    o.write_all(b"\n").map_err(w)?;
+                }
+            }
+            Err(_) => writeln!(o, "{name} missing").map_err(w)?,
+        }
+    }
+    o.flush().map_err(w)
+}
+
 pub fn cat_file(a: &CatFileArgs, json: bool) -> Result<(), Error> {
     let (repo, cwd) = open()?;
+    if a.batch || a.batch_check {
+        if json {
+            return bad("--batch has no --json form");
+        }
+        return batch(&repo, &cwd, a);
+    }
     if !(a.type_ || a.size || a.print) {
+        return bad("usage: vcs cat-file (-t | -s | -p) <object> | --batch | --batch-check");
+    }
+    if a.object.is_empty() {
         return bad("usage: vcs cat-file (-t | -s | -p) <object>");
     }
     let id = locate(&repo, &cwd, a)?;
-    let obj = repo.store().get(&id)?;
-    let (kind, bytes): (&str, Vec<u8>) = match &obj {
-        Object::Commit(_) => ("commit", commit_text(&obj).into_bytes()),
-        Object::Blob(_) | Object::Chunked(_) => ("blob", repo.content(&id)?),
-        Object::Tag(_) => ("tag", obj.encode()),
-        other => (kind_name(other), obj.encode()),
-    };
+    let (kind, bytes) = load(&repo, &id)?;
     if json {
         let mut f = vec![
             ("id", J::Str(id.to_hex())),
