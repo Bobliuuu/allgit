@@ -7,7 +7,7 @@ Arms: git loose (clone --no-hardlinks BEFORE gc: what huge_s1.sh timed, cold onl
   vcs_clone (published local-path remote). Each arm: N cold runs then N warm runs, arms interleaved per round.
 COLD = clean pages of the source repo and the vcs remote evicted with posix_fadvise(DONTNEED) after sync (drop_caches would hurt the
 other users of the shared box); dentry/inode caches stay warm. WARM = right after a previous clone of the same source.
-Each timed run takes the shared box lock. Output: JSON with meta, raw runs, file counts, sizes, medians."""
+The shared box lock is held per interleaved round (all arms), not per run. Output: JSON with meta, raw runs, file counts, sizes, medians."""
 import json, os, shutil, subprocess, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fair_lib import *
@@ -61,8 +61,7 @@ def one(arm, argv, mode, r, seen=set()):
     if mode == "cold":
         evict(f"{G}/.git")
         evict(R)
-    with box_lock():
-        x = run_timed(argv)
+    x = run_timed(argv)
     x.update(arm=arm, mode=mode, round=r)
     if arm not in seen and x["rc"] == 0:
         seen.add(arm)
@@ -73,8 +72,9 @@ def one(arm, argv, mode, r, seen=set()):
     print(json.dumps(res_x), flush=True)
 
 
-for r in range(N):
-    one("git_loose_nohardlinks", ["git", "clone", "-q", "--no-hardlinks", G, C], "cold", r)
+with box_lock():  # one hold for the loose arm's N runs
+    for r in range(N):
+        one("git_loose_nohardlinks", ["git", "clone", "-q", "--no-hardlinks", G, C], "cold", r)
 t0 = time.time()
 sh("git gc -q", cwd=G)
 res["setup"]["git_gc"] = round(time.time() - t0, 1)
@@ -86,8 +86,9 @@ arms = [("git_packed_file_url", ["git", "clone", "-q", f"file://{G}", C]),
         ("vcs_clone", [VCS, "clone", R, C])]
 for mode in ("cold", "warm"):
     for r in range(N):
-        for arm, argv in arms:
-            one(arm, argv, mode, r)
+        with box_lock():  # one hold per interleaved round of all arms
+            for arm, argv in arms:
+                one(arm, argv, mode, r)
 shutil.rmtree(C, ignore_errors=True)
 summ = {}
 for arm, mode in sorted({(x["arm"], x["mode"]) for x in res["runs_raw"]}):
