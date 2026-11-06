@@ -13,6 +13,9 @@ use crate::error::MergeError;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use vcs_objects::ObjectId;
 
+/// A commit being added to the graph: (parents, generation seed, resolved generation).
+type NewEntry = (Vec<ObjectId>, u64, Option<u32>);
+
 const MAGIC: &[u8; 4] = b"AGCG";
 const VERSION: u8 = 1;
 /// Commits with more parents than this are not representable; building fails (caller falls back).
@@ -238,7 +241,7 @@ impl CommitGraphFile {
         F: FnMut(&ObjectId) -> Result<(Vec<ObjectId>, u64), MergeError>,
     {
         // new: id -> (parents, time, generation once known)
-        let mut new: BTreeMap<ObjectId, (Vec<ObjectId>, u64, Option<u32>)> = BTreeMap::new();
+        let mut new: BTreeMap<ObjectId, NewEntry> = BTreeMap::new();
         let mut stack: Vec<ObjectId> = tips.iter().filter(|t| !self.contains(t)).copied().collect();
         while let Some(id) = stack.pop() {
             if self.contains(&id) || new.contains_key(&id) {
@@ -298,7 +301,7 @@ impl CommitGraphFile {
         }
         // Merge the (already id-sorted) new commits into the id-sorted table: one linear pass over the old arrays,
         // no per-commit map. Old parent indexes are shifted by the number of new ids that sort before them.
-        let new: Vec<(ObjectId, (Vec<ObjectId>, u64, Option<u32>))> = new.into_iter().collect();
+        let new: Vec<(ObjectId, NewEntry)> = new.into_iter().collect();
         let total = self.ids.len() + new.len();
         let mut ids: Vec<ObjectId> = Vec::with_capacity(total);
         let mut remap: Vec<u32> = Vec::with_capacity(self.ids.len());
