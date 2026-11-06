@@ -1947,17 +1947,21 @@ fn translate_stash(rest: &[String]) -> Result<Vec<Step>, Error> {
     let mut p = parse("stash", args, &["-m", "--message"]);
     let m = p.val(&["-m", "--message"]);
     p.take(&["-q", "--quiet", "--index"]);
-    if p.take(&["-u", "--include-untracked", "-a", "--all", "-k", "--keep-index", "-p", "--patch"]) {
+    let untracked = p.take(&["-u", "--include-untracked"]);
+    if p.take(&["-a", "--all", "-k", "--keep-index", "-p", "--patch"]) {
         return Err(missing(
-            "stash -u/-a/-k/-p",
-            "stashing untracked files, or partially",
-            "`vcs stash push` (tracked changes only; untracked files stay in place)",
+            "stash -a/-k/-p",
+            "stashing ignored files, keeping the index, or partially",
+            "`vcs stash push` (-u adds untracked files too; ignored files and a kept index are not supported)",
         ));
     }
     p.finish("`vcs stash push [-m msg]` / `pop` / `apply` / `list` / `drop`")?;
     Ok(match sub {
         None | Some("push" | "save") => {
             let mut a = v(&["stash", "push"]);
+            if untracked {
+                a.push("--include-untracked".into());
+            }
             let msg = m.or_else(|| p.pos.first().cloned());
             if let Some(msg) = msg {
                 a.extend(["-m".to_owned(), msg]);
@@ -1995,13 +1999,7 @@ fn translate_tag(rest: &[String]) -> Result<Vec<Step>, Error> {
     let verify = p.take(&["-v", "--verify"]);
     let list = p.take(&["-l", "--list"]);
     p.take(&["--no-column", "-i", "--ignore-case"]);
-    if p.take(&["-f", "--force"]) {
-        return Err(missing(
-            "tag -f",
-            "moving an existing tag",
-            "`vcs tag -d <name>` then `vcs tag <name> [rev]`",
-        ));
-    }
+    let force = p.take(&["-f", "--force"]);
     p.finish("`vcs tag [name [rev]] [-m msg] [-s] [-d name]` (no --contains/--points-at/--sort)")?;
     if verify {
         let mut a = v(&["verify-tag"]);
@@ -2025,6 +2023,9 @@ fn translate_tag(rest: &[String]) -> Result<Vec<Step>, Error> {
             "the editor prompt for a tag message",
             "`vcs tag <name> -m <message>`",
         ));
+    }
+    if force {
+        a.push("--force".into());
     }
     a.extend(p.pos.iter().take(2).cloned());
     if let Some(m) = m {

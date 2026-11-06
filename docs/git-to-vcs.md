@@ -144,7 +144,7 @@ Status: exact (same command and flags), renamed (other spelling, same meaning), 
 semantics differ as the notes say), missing (no equivalent; the notes name the native route).
 
 <!-- BEGIN GENERATED TABLE -->
-261 rows: 149 exact, 40 renamed, 35 different, 37 missing.
+261 rows: 150 exact, 40 renamed, 36 different, 35 missing.
 
 | git | vcs | status | notes | test |
 |---|---|---|---|---|
@@ -292,7 +292,7 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git stash apply stash@{0}` | `vcs stash apply 0` | different | keeps the entry; the restored changes come back STAGED (git leaves them unstaged) | `stash` |
 | `git stash list` | `vcs stash list` | exact |  | `stash` |
 | `git stash drop` | `vcs stash drop` | exact |  | `stash` |
-| `git stash -u` | none | missing | untracked files cannot be stashed; `vcs add` them first | translation |
+| `git stash -u` | `vcs stash push --include-untracked` | different | untracked files are added first, so `pop` brings them back staged, not untracked; ignored files are never stashed | `stash` |
 | `git tag` | `vcs tag` | exact |  | `tags` |
 | `git tag v1` | `vcs tag v1` | exact |  | `tags` |
 | `git tag -a v1 -m rel` | `vcs tag v1 -m rel` | exact | annotated | translation |
@@ -300,7 +300,7 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git tag -d v1` | `vcs tag -d v1` | exact |  | translation |
 | `git tag -s v1 -m rel` | `vcs tag v1 -m rel -s` | different | Ed25519 OpenSSH key, not GPG | translation |
 | `git tag -v v1` | `vcs verify-tag v1` | renamed |  | translation |
-| `git tag -f v1` | none | missing | `vcs tag -d v1` then `vcs tag v1` | translation |
+| `git tag -f v1` | `vcs tag --force v1` | exact | replaces the tag; the old one is dropped only after the new target resolves | `tags` |
 | `git remote add origin /srv/app` | `vcs remote set /srv/app` | renamed | vcs has exactly one remote | translation |
 | `git remote -v` | `vcs remote show` | renamed |  | translation |
 | `git remote set-url origin /srv/b` | `vcs remote set /srv/b` | renamed |  | translation |

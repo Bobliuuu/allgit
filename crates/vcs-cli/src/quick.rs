@@ -53,6 +53,7 @@ fn tag(name: Option<String>, rev: Option<String>, message: Option<String>, delet
         signature: None,
         sign: false,
         delete,
+        force: false,
     }
 }
 
@@ -150,7 +151,8 @@ mod tests {
                 signature,
                 sign,
                 delete,
-            } => format!("tag {name:?} {rev:?} {zone:?} {message:?} {signature:?} {sign} {delete}"),
+                force,
+            } => format!("tag {name:?} {rev:?} {zone:?} {message:?} {signature:?} {sign} {delete} {force}"),
             Cmd::Show { rev, zone, opts } => format!("show {rev:?} {zone:?} {opts:?}"),
             Cmd::More(More::CatFile(a)) => format!("cat-file {a:?}"),
             Cmd::More(More::LsFiles(a)) => format!("ls-files {a:?}"),
