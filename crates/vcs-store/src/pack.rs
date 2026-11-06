@@ -361,12 +361,59 @@ pub struct PackIndex {
 /// pack must not read tens of megabytes before the first lookup).
 enum Src {
     Mem(Vec<u8>),
+    /// A big index file (>= [`IDX_MMAP_MIN`]) mapped read-only: lookups touch only the pages they need and the
+    /// kernel can drop them again, so resident memory stays bounded by the page cache instead of growing to the
+    /// size of the index (the bucket cache of `File` keeps every bucket it ever read).
+    #[cfg(unix)]
+    Map(MapBytes),
     File {
         file: fs::File,
         len: u64,
         /// Entries of one first-byte bucket, read the first time a lookup lands in it.
         buckets: Vec<std::sync::OnceLock<Vec<u8>>>,
     },
+}
+
+/// Index files at least this big are memory mapped by [`PackIndex::open_lazy`] (about 1.5 million objects).
+pub const IDX_MMAP_MIN: u64 = 64 << 20;
+
+/// A read-only private mapping of an immutable index file (a pack index is never modified in place; it is
+/// replaced by rename).
+#[cfg(unix)]
+struct MapBytes {
+    ptr: *const u8,
+    len: usize,
+}
+// SAFETY: the mapping is PROT_READ and the file is immutable by the format's contract.
+#[cfg(unix)]
+unsafe impl Send for MapBytes {}
+#[cfg(unix)]
+unsafe impl Sync for MapBytes {}
+#[cfg(unix)]
+impl MapBytes {
+    fn open(f: &fs::File, len: usize) -> Option<MapBytes> {
+        use std::os::fd::AsRawFd;
+        // SAFETY: plain read-only private mapping of an open file; MAP_FAILED is checked.
+        let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_PRIVATE, f.as_raw_fd(), 0) };
+        if p == libc::MAP_FAILED {
+            return None;
+        }
+        // lookups are random: do not read ahead
+        // SAFETY: p/len is the mapping just created.
+        unsafe { libc::madvise(p, len, libc::MADV_RANDOM) };
+        Some(MapBytes { ptr: p as *const u8, len })
+    }
+    fn as_slice(&self) -> &[u8] {
+        // SAFETY: ptr/len describe a live PROT_READ mapping owned by self.
+        unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
+    }
+}
+#[cfg(unix)]
+impl Drop for MapBytes {
+    fn drop(&mut self) {
+        // SAFETY: unmapping the mapping created in `open`, once.
+        unsafe { libc::munmap(self.ptr as *mut libc::c_void, self.len) };
+    }
 }
 
 #[cfg(unix)]
@@ -417,6 +464,11 @@ impl PackIndex {
     /// must match the entry count); v1 indexes and non-unix platforms read the whole file (v1 is
     /// verified in full at open).
     pub fn open_lazy(path: &Path) -> Result<PackIndex, StoreError> {
+        Self::open_lazy_with(path, IDX_MMAP_MIN)
+    }
+
+    /// [`PackIndex::open_lazy`] with the size from which the file is memory mapped instead of read bucket by bucket.
+    pub fn open_lazy_with(path: &Path, mmap_min: u64) -> Result<PackIndex, StoreError> {
         #[cfg(unix)]
         {
             let f = fs::File::open(path).map_err(|source| StoreError::Io {
@@ -439,6 +491,19 @@ impl PackIndex {
                     source,
                 })?;
                 let (version, count, pack_len, checksum, fanout, base) = Self::parse_header(&head, len, path)?;
+                if len >= mmap_min {
+                    if let Some(m) = MapBytes::open(&f, len as usize) {
+                        return Ok(PackIndex {
+                            src: Src::Map(m),
+                            version,
+                            count,
+                            base,
+                            pack_len,
+                            checksum,
+                            fanout,
+                        });
+                    }
+                }
                 return Ok(PackIndex {
                     src: Src::File {
                         file: f,
@@ -502,6 +567,8 @@ impl PackIndex {
         match &self.src {
             Src::Mem(b) => Ok(std::borrow::Cow::Borrowed(b)),
             #[cfg(unix)]
+            Src::Map(m) => Ok(std::borrow::Cow::Borrowed(m.as_slice())),
+            #[cfg(unix)]
             Src::File { file, len, .. } => pread_exact(file, 0, *len as usize)
                 .map(std::borrow::Cow::Owned)
                 .map_err(|e| format!("index read: {e}")),
@@ -563,7 +630,7 @@ impl PackIndex {
     /// All entries as `(id, offset, len)`, sorted by id. `len` covers the whole entry payload
     /// (for v2 including the codec byte).
     pub fn iter(&self) -> impl Iterator<Item = (ObjectId, u64, u32)> + '_ {
-        let all = self.all_bytes().map(|c| c.into_owned()).unwrap_or_default();
+        let all = self.all_bytes().unwrap_or_default();
         let (base, count) = (self.base, if all.is_empty() { 0 } else { self.count });
         (0..count).map(move |i| entry_at(&all, base, i))
     }
@@ -587,6 +654,8 @@ impl PackIndex {
         };
         match &self.src {
             Src::Mem(b) => self.search(&b[self.base + lo * IDX_ENTRY..self.base + hi * IDX_ENTRY], id),
+            #[cfg(unix)]
+            Src::Map(m) => self.search(&m.as_slice()[self.base + lo * IDX_ENTRY..self.base + hi * IDX_ENTRY], id),
             #[cfg(unix)]
             Src::File { file, buckets, .. } => {
                 let first = id.as_bytes()[0] as usize;
