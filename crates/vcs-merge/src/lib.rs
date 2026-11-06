@@ -20,7 +20,7 @@ pub mod text;
 pub mod tree;
 
 pub use base::{is_ancestor, merge_base, CommitGraph, MemGraph, StoreGraph};
-pub use cgraph::CommitGraphFile;
+pub use cgraph::{CommitGraphFile, EAGER_VERIFY_MAX};
 pub use diff::Algorithm;
 pub use error::MergeError;
 pub use rename::{copies_by_content, detect_renames, merge_flat_renames, pair_by_content, Rename, RenameMerge};

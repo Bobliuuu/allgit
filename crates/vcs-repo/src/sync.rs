@@ -224,7 +224,8 @@ impl Repo {
                     if !g.is_bad() {
                         return r.map_err(|e| Error::Corrupt(e.to_string()));
                     }
-                    // the cache file contradicts itself: keep walking the objects
+                    // the cache file contradicts itself: drop it and keep walking the objects
+                    self.discard_bad_commit_graph(&desc);
                 }
             }
             if !seen.insert(id) {

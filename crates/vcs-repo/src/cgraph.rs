@@ -32,7 +32,12 @@ impl Repo {
 
     fn load_cg_file(&self, zone: &str) -> Option<CommitGraphFile> {
         let path = self.common.join(CG_DIR).join(cg_name(zone));
-        let g = CommitGraphFile::open(&path).ok()?;
+        // `VCS_CACHE_EAGER_VERIFY_MAX` (bytes) overrides the size up to which a graph is verified completely at open
+        let eager = std::env::var("VCS_CACHE_EAGER_VERIFY_MAX")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(vcs_merge::EAGER_VERIFY_MAX);
+        let g = CommitGraphFile::from_map_with(vcs_store::mapfile::MapFile::open(&path, true).ok()?, eager).ok()?;
         if g.upgraded() {
             // an old-format file was converted in memory: write it back as v2 so the next open is lazy
             let _ = write_cache_atomic(&path, &g.encode());
@@ -128,6 +133,14 @@ impl Repo {
         }
     }
 
+    /// A lazily opened graph file met data that contradicts the format: delete it so the next use rebuilds it
+    /// (`fsck` reports such a file; it cannot repair a cache it did not write).
+    pub(crate) fn discard_bad_commit_graph(&self, any_commit: &ObjectId) {
+        if let Ok(c) = self.commit_obj(any_commit) {
+            let _ = fs::remove_file(self.common.join(CG_DIR).join(cg_name(&c.zone)));
+        }
+    }
+
     /// Best common ancestors of two commits (see `vcs_merge::merge_base`), via the
     /// commit-graph when available.
     pub fn merge_bases(&self, a: &ObjectId, b: &ObjectId) -> Result<Vec<ObjectId>> {
@@ -136,7 +149,11 @@ impl Repo {
                 .merge_bases_indexed(a, b)
                 .map_or_else(|| vcs_merge::merge_base(&g as &dyn CommitGraph, a, b), Ok);
             // a cache file that contradicts itself is not trusted: walk the objects instead
-            (!g.is_bad()).then_some(r)
+            if g.is_bad() {
+                self.discard_bad_commit_graph(a);
+                return None;
+            }
+            Some(r)
         });
         let r = from_graph.unwrap_or_else(|| vcs_merge::merge_base(&vcs_merge::StoreGraph(&self.store), a, b));
         r.map_err(|e| Error::Msg(format!("merge base: {e}")))
