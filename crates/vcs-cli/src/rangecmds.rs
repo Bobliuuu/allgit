@@ -106,14 +106,24 @@ pub fn show_branch(a: &ShowBranchArgs) -> Result<(), Error> {
     }
     let heads = repo.show_branch_heads(&zone, &revs)?;
     if a.independent {
-        return write_out(repo.show_branch_independent(&heads)?.iter().map(|i| format!("{}\n", i.to_hex())).collect());
+        return write_out(
+            repo.show_branch_independent(&heads)?
+                .iter()
+                .map(|i| format!("{}\n", i.to_hex()))
+                .collect(),
+        );
     }
     let n = heads.len();
     let cur_idx = cur.as_ref().and_then(|c| heads.iter().position(|h| &h.name == c));
     if a.list {
         let mut out = String::new();
         for (i, h) in heads.iter().enumerate() {
-            out.push_str(&format!("{} [{}] {}\n", if Some(i) == cur_idx { '*' } else { ' ' }, h.name, h.subject));
+            out.push_str(&format!(
+                "{} [{}] {}\n",
+                if Some(i) == cur_idx { '*' } else { ' ' },
+                h.name,
+                h.subject
+            ));
         }
         return write_out(out);
     }

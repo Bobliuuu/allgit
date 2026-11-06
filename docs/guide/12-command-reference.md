@@ -67,6 +67,8 @@ Commands:
   clean          Delete untracked files (-n lists, -f deletes)
   profile        Local usage profile that `sync --auto` / `pull --auto` / `clone --auto` predict zones from (docs/zone-profile.md)
   pull           Same as `sync` (fetch, then fast-forward); `--auto` chooses zones from your usage profile
+  range-diff     Compare two commit ranges by patch: which commits were kept (=), changed (!), dropped (<) or added (>)
+  show-branch    Show which commits each of several revisions has, as a matrix (git show-branch)
   git            Run a git command line as its vcs equivalent, e.g. `vcs git log --oneline` (table: docs/git-to-vcs.md; `--map` lists it)
   switch         Switch branch (in the zone containing cwd, or --zone); `--detach` checks out any revision without a branch
   merge          Merge a branch into the checked-out branch (fast-forward when possible)
@@ -2047,6 +2049,61 @@ Options:
       --dry-run              With --auto: print the plan, download no file contents, change nothing but zone metadata
       --stats                Print the number of remote requests and bytes transferred
   -h, --help                 Print help
+```
+
+## `vcs range-diff`
+
+```text
+Compare two commit ranges by patch: which commits were kept (=), changed (!), dropped (<) or added (>)
+
+Usage: vcs range-diff [OPTIONS] <RANGES>...
+
+Arguments:
+  <RANGES>...  `OLD_BASE..OLD_TIP NEW_BASE..NEW_TIP`, or `BASE OLD_TIP NEW_TIP`, or `A...B` (= `B..A A..B`)
+
+Options:
+  -C <DIR>
+          Run as if vcs was started in <DIR> (applied before repository discovery)
+      --creation-factor <CREATION_FACTOR>
+          How much a commit that has no partner is penalised, in percent of its patch size (higher pairs more commits) [default: 60]
+      --json
+          Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+  -s, --no-patch
+          List the pairs only, without the diff between the two patches
+      --ca-pem <FILE>
+          PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --zone <ZONE>
+          Zone (default: the zone containing the current directory)
+      --no-hooks
+          Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help
+          Print help
+```
+
+## `vcs show-branch`
+
+```text
+Show which commits each of several revisions has, as a matrix (git show-branch)
+
+Usage: vcs show-branch [OPTIONS] [REVS]...
+
+Arguments:
+  [REVS]...  Revisions to compare (default: every local branch of the zone)
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --list           Show the heads only, no commit rows
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --more <N>       Go N commits past the first common ancestor
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --merge-base     Print the best common ancestor(s) of the revisions instead of the matrix
+      --independent    Print the revisions that are not an ancestor of another one
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+      --current        Also include the checked-out branch
+      --sha1-name      Name commits by short id instead of `branch~N`
+      --no-name        Leave the `[name]` out of the rows
+      --zone <ZONE>    Zone (default: the zone containing the current directory)
+  -h, --help           Print help
 ```
 
 ## `vcs git`
