@@ -12,11 +12,13 @@ calls (inside about 20 percent) as unresolved. The raw data of both runs is kept
 `jj-sapling-raw/merged-8da0be2/` (made by `scripts/jj_sl_merge_refresh.py`). This replaces the earlier single-layout notes in
 [jujutsu-benchmark.md](jujutsu-benchmark.md) and [sapling-benchmark.md](sapling-benchmark.md) (kept for history and for the feature comparison). Nothing was estimated.
 
+The charts below are of this partial refresh (3 layouts, 10% tie band). The final flat-100k run on build `845610a` (5% band with MAD noise, jj and Sapling re-run interleaved) is in [jj-sl-final.md](jj-sl-final.md) and drives `docs/img/scoreboard-jj.svg` and `scoreboard-sapling.svg`, the ones the README shows.
+
 Scoreboards (green = vcs WIN, amber = TIE, red = vcs LOSS, grey = N/A):
 
-![vcs vs Jujutsu](../img/scoreboard-jj.svg)
+![vcs vs Jujutsu](../img/scoreboard-jj-8da0be2.svg)
 
-![vcs vs Sapling](../img/scoreboard-sapling.svg)
+![vcs vs Sapling](../img/scoreboard-sapling-8da0be2.svg)
 
 ## Setup
 
