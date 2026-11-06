@@ -52,6 +52,12 @@ impl<'a> CountingBackend<'a> {
     fn req(&self) {
         self.requests.fetch_add(1, Ordering::Relaxed);
     }
+    /// With `VCS_TRACE_REQUESTS` set, one stderr line per transfer: what, key, bytes.
+    fn trace(&self, what: &str, key: &str, bytes: usize) {
+        if std::env::var_os("VCS_TRACE_REQUESTS").is_some() {
+            eprintln!("trace {what} {key} {bytes}");
+        }
+    }
 }
 
 impl Backend for CountingBackend<'_> {
@@ -60,6 +66,7 @@ impl Backend for CountingBackend<'_> {
         let r = self.inner.get(key)?;
         if let Some(v) = &r {
             self.down.fetch_add(v.data.len() as u64, Ordering::Relaxed);
+            self.trace("GET", key, v.data.len());
         }
         Ok(r)
     }
@@ -76,6 +83,7 @@ impl Backend for CountingBackend<'_> {
         let r = self.inner.get_range(key, offset, len)?;
         if let Some(v) = &r {
             self.down.fetch_add(v.len() as u64, Ordering::Relaxed);
+            self.trace(&format!("RANGE@{offset}"), key, v.len());
         }
         Ok(r)
     }

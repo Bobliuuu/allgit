@@ -651,7 +651,16 @@ impl Repo {
         // Remote pack indexes never change: keep them locally so a fetch reads only the new ones.
         let idx_cache = vcs_remote::IdxCacheBackend::new(backend, self.common.join("remote-idx"));
         idx_cache.prune();
-        let backend: &dyn Backend = &idx_cache;
+        self.fetch_locked_with(&idx_cache, zones, &Arc::new(PackCatalog::new()))
+    }
+
+    /// [`Self::fetch_locked`] on a backend that already caches indexes, sharing `cat` with the caller.
+    fn fetch_locked_with(
+        &self,
+        backend: &dyn Backend,
+        zones: Option<&[String]>,
+        cat: &Arc<PackCatalog>,
+    ) -> Result<Vec<(String, String, ObjectId)>> {
         let ws = self.workspace()?;
         let zones = self.resolve_filter(zones)?;
         let want: Vec<String> = match zones.as_deref() {
@@ -681,14 +690,13 @@ impl Repo {
         if changed {
             write_atomic(&self.common.join("zones"), &defs.encode())?;
         }
-        let cat = Arc::new(PackCatalog::new());
-        let got = fetch_heads_lazy_shared(backend, &self.store, Some(&want), &m, &cat).map_err(publish_err)?;
+        let got = fetch_heads_lazy_shared(backend, &self.store, Some(&want), &m, cat).map_err(publish_err)?;
         let mut rr = self.remote_refs()?;
         for (a, b, id) in &got {
             rr.branches.insert((a.clone(), b.clone()), *id);
         }
         self.save_remote_refs(&rr)?;
-        self.adopt_remote_tags(backend, Some(&want), &m, &cat)?;
+        self.adopt_remote_tags(backend, Some(&want), &m, cat)?;
         Ok(got)
     }
 
@@ -814,7 +822,9 @@ impl Repo {
 
     /// Download `files` (and the chunks of chunked ones) that are not stored, in batches.
     pub(crate) fn prefetch_ids(&self, backend: &dyn Backend, files: BTreeSet<ObjectId>) -> Result<usize> {
-        self.prefetch_ids_with(backend, &PackCatalog::new(), files)
+        // Remote pack indexes never change: keep them (a 100k-object index is 4 MB).
+        let idx = vcs_remote::IdxCacheBackend::new(backend, self.common.join("remote-idx"));
+        self.prefetch_ids_with(&idx, &PackCatalog::new(), files)
     }
 
     /// [`Self::prefetch_ids`] with a shared pack catalog. Packs are read by parallel ranged GETs;
@@ -868,7 +878,13 @@ impl Repo {
     /// Fetch, then fast-forward each subscribed zone's checked-out branch when safe.
     pub fn sync(&self, backend: &dyn Backend) -> Result<SyncReport> {
         let _l = self.lock()?;
-        self.fetch_locked(backend, None)?;
+        // One index cache and one pack catalog for the whole sync: each pack's index is read once,
+        // not once per zone that has changes.
+        let idx_cache = vcs_remote::IdxCacheBackend::new(backend, self.common.join("remote-idx"));
+        idx_cache.prune();
+        let backend: &dyn Backend = &idx_cache;
+        let cat = Arc::new(PackCatalog::new());
+        self.fetch_locked_with(backend, None, &cat)?;
         let defs = self.zones()?;
         let mut ws = self.workspace()?;
         let mut refs = self.refs()?;
@@ -909,7 +925,7 @@ impl Repo {
                                 want.insert(*id);
                             }
                         }
-                        self.prefetch_ids(backend, want)?;
+                        self.prefetch_ids_with(backend, &cat, want)?;
                         self.transition_diff(&zone, &defs, &diff, &mut ix)?;
                         verified.extend(clean.into_iter().filter(|p| !diff.old.contains_key(p) && !diff.new.contains_key(p)));
                         // The index equalled the old tree, so the directories read on the way give
