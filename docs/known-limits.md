@@ -26,6 +26,30 @@ unless noted; see the linked research docs for method.
   zone on each manifest read, and the per-branch ticket queue is not wired
   into the CLI push path.
 
+## `vcs-server` memory under concurrent whole-pack reads
+
+Found by the monorepo stress run ("What broke" item 5 in [research/monorepo-stress.md](research/monorepo-stress.md): RSS climbing
+to 6 to 13 GiB with 64 to 256 clients). Two causes, no leak and no unbounded cache (the read memo is capped, idle RSS is flat):
+
+1. An un-ranged `GET /v1/o/<key>` reads the whole object into memory (`Backend::get`) and holds it until the client has taken it,
+   so server memory is the sum of the objects being downloaded at that moment. A full clone fetches whole packs; slice clones and
+   fetches use ranged reads (`offset`/`len`) and are bounded. The request-body side is bounded (`--max-inflight-body`, default
+   2 GiB); the response side is not. **Not fixed**: it needs large reads streamed from the backend in windows, which needs a length
+   from the backend.
+2. glibc malloc retention: one arena per thread and a mmap threshold that rises to 32 MiB keep freed pack buffers resident.
+   **Mitigated**: `vcs-server` now sets `M_ARENA_MAX` 4 and `M_MMAP_THRESHOLD` 1 MiB at startup (Linux/glibc; an explicit
+   `MALLOC_ARENA_MAX` / `MALLOC_MMAP_THRESHOLD_` wins).
+
+Measured in a small setup (release build, Linux arm64 in Docker, directory backend, 120 files x 256 KiB base, 24 concurrent
+clients per round that each clone, add 5 files, commit and publish; the 80 MB packs are fetched whole by the clones; one run
+per cell, so read the ratios, not the digits): peak RSS with the glibc defaults 2.6 and 2.3 GiB (174 to 177 threads); with
+`MALLOC_ARENA_MAX=2` 0.88 GiB; with `MALLOC_ARENA_MAX=4 MALLOC_MMAP_THRESHOLD_=1048576` 1.17 GiB; with the built-in tuning (no environment) 1.10 GiB peak and 144 MB after the first round. Idle RSS after a round stayed flat
+(355 MB with the defaults, 196 MB with two arenas, over 20 minutes), so a long-running server shows a staircase to the high-water
+mark, not growth at idle. Fewer arenas can cost allocation throughput under many cores; that was not measured here.
+
+Until large reads are streamed: bound simultaneous clones with `--max-connections`, give the server memory for connections x
+largest pack, and prefer slice or `--auto` clones, which read ranges.
+
 ## `status` at 100k files (issue #293)
 
 - **No path arena.** `Entries` is a public `BTreeMap`, and the AGI5 mmap
