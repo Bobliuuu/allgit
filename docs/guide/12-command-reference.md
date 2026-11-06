@@ -142,6 +142,7 @@ Arguments:
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --force-no-lock  Stage changes to lockable files (`.vcsattributes`) even without holding their lock
+  -f, --force          Also stage files and directories that `.vcsignore` hides
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
@@ -371,6 +372,7 @@ Usage: vcs status [OPTIONS]
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --ignored        Also list untracked files and directories that `.vcsignore` hides
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
@@ -1147,8 +1149,9 @@ Options:
       --index          Also stage the changes (the files must match the index)
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
-  -R, --reverse        Apply the patch backwards
+      --cached         Apply to the index only: check against the staged content, stage the result, leave the working tree alone
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -R, --reverse        Apply the patch backwards
   -p <N>               Strip N leading path components (default 1)
   -3, --3way           Three-way application: a hunk that does not fit is merged against its own pre-image; overlapping edits leave conflict markers in the file
   -v, --verbose        Print the files that were (or would be) changed
@@ -1316,13 +1319,15 @@ Binary-search a zone's history for the commit that introduced a bug
 Usage: vcs bisect [OPTIONS] <COMMAND>
 
 Commands:
-  start  Start bisecting; optionally give the bad commit and good commits right away
-  good   Mark revisions (default: the checked-out commit) as good
-  bad    Mark revisions (default: the checked-out commit) as bad
-  skip   Mark revisions (default: the checked-out commit) as untestable
-  reset  End the bisection and return to the original branch
-  run    Run a command at each step: exit 0 = good, 125 = skip, 1-127 = bad, above 127 aborts
-  help   Print this message or the help of the given subcommand(s)
+  start   Start bisecting; optionally give the bad commit and good commits right away
+  good    Mark revisions (default: the checked-out commit) as good
+  bad     Mark revisions (default: the checked-out commit) as bad
+  skip    Mark revisions (default: the checked-out commit) as untestable
+  reset   End the bisection and return to the original branch
+  log     Print what has been marked so far, in the order it was marked (feed it to `replay`)
+  replay  Redo the marks of a saved `bisect log` on a fresh bisection
+  run     Run a command at each step: exit 0 = good, 125 = skip, 1-127 = bad, above 127 aborts
+  help    Print this message or the help of the given subcommand(s)
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
@@ -1420,7 +1425,40 @@ Options:
   -h, --help           Print help
 ```
 
-######## `vcs bisect run`
+######## `vcs bisect log`
+
+```text
+Print what has been marked so far, in the order it was marked (feed it to `replay`)
+
+Usage: vcs bisect log [OPTIONS]
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+######### `vcs bisect replay`
+
+```text
+Redo the marks of a saved `bisect log` on a fresh bisection
+
+Usage: vcs bisect replay [OPTIONS] <FILE>
+
+Arguments:
+  <FILE>  
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+########## `vcs bisect run`
 
 ```text
 Run a command at each step: exit 0 = good, 125 = skip, 1-127 = bad, above 127 aborts
@@ -2776,6 +2814,7 @@ Commands:
   add     Create a linked worktree sharing this repository's objects and refs
   list    List worktrees and what each has checked out
   remove  Delete a linked worktree (refuses when it has uncommitted work unless --force)
+  prune   Forget linked worktrees whose directory no longer exists (never deletes a directory)
   help    Print this message or the help of the given subcommand(s)
 
 Options:
@@ -2833,6 +2872,22 @@ Arguments:
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --force          
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+###### `vcs worktree prune`
+
+```text
+Forget linked worktrees whose directory no longer exists (never deletes a directory)
+
+Usage: vcs worktree prune [OPTIONS]
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+  -n, --dry-run        Only list what would be forgotten
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md

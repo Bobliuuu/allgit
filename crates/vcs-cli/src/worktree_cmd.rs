@@ -55,7 +55,11 @@ pub fn run(repo: &Repo, cmd: WorktreeCmd) -> Result<(), Error> {
         WorktreeCmd::Prune { dry_run } => {
             let gone = repo.worktree_prune(dry_run)?;
             for (name, path) in &gone {
-                println!("{} {name}: {} is gone", if dry_run { "would prune" } else { "pruned" }, path.display());
+                println!(
+                    "{} {name}: {} is gone",
+                    if dry_run { "would prune" } else { "pruned" },
+                    path.display()
+                );
             }
             if gone.is_empty() {
                 println!("nothing to prune");

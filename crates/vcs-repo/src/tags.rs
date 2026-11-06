@@ -219,7 +219,9 @@ impl Repo {
             if let (false, Ok(n)) = (name.is_empty(), n.parse::<usize>()) {
                 return self.reflog_rev(zone, name, n);
             }
-            return msg(format!("bad revision {base:?}: only <name>@{{N}} (N operations back) is supported, not dates"));
+            return msg(format!(
+                "bad revision {base:?}: only <name>@{{N}} (N operations back) is supported, not dates"
+            ));
         }
         let ws = self.workspace()?;
         let refs = self.refs()?;

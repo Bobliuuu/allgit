@@ -264,7 +264,11 @@ impl Repo {
     /// leave the value alone count once, so `@{1}` is the previous value, as in git's reflog.
     pub(crate) fn reflog_rev(&self, zone: &str, name: &str, n: usize) -> Result<ObjectId> {
         let head = name == "HEAD";
-        let cur = if head { self.head_commit(zone)? } else { self.refs()?.head(zone, name) };
+        let cur = if head {
+            self.head_commit(zone)?
+        } else {
+            self.refs()?.head(zone, name)
+        };
         let mut vals: Vec<ObjectId> = cur.into_iter().collect();
         let mut op = self.op_head()?;
         while let Some(id) = op {
