@@ -198,7 +198,11 @@ fn patch_stat(data: &[u8], strip: usize) -> String {
         } else if let Some(r) = l.strip_prefix("+++ ") {
             // plain unified diffs have no `diff --git` line: the +++ line opens the file
             let new = strip_path(r);
-            let name = if new == "dev/null" || r.trim() == "/dev/null" { old_name.clone() } else { new };
+            let name = if new == "dev/null" || r.trim() == "/dev/null" {
+                old_name.clone()
+            } else {
+                new
+            };
             if files.last().is_none_or(|f| f.0 != name) {
                 files.push((name, 0, 0, false));
             }

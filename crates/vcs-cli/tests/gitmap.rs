@@ -1382,7 +1382,11 @@ fn cover_letter_has_gits_layout() {
         let subjects: Vec<&str> = mail.lines().filter(|l| l.starts_with("Subject:")).collect();
         assert_eq!(
             subjects,
-            ["Subject: [PATCH 0/2] *** SUBJECT HERE ***", "Subject: [PATCH 1/2] second", "Subject: [PATCH 2/2] third"],
+            [
+                "Subject: [PATCH 0/2] *** SUBJECT HERE ***",
+                "Subject: [PATCH 1/2] second",
+                "Subject: [PATCH 2/2] third"
+            ],
             "{mail}"
         );
         assert!(cover.contains("\n*** BLURB HERE ***\n"), "{cover}");
@@ -1458,11 +1462,24 @@ fn init_initial_branch_names_the_first_branch_like_git() {
     assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "trunk");
     let o = vcs(&proj, &["rev-parse", "--abbrev-ref", "HEAD"]);
     assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "trunk");
-    assert!(!vcs(t.path(), &["init", "-b", "bad name", "other"]).status.success(), "invalid branch names are refused");
+    assert!(
+        !vcs(t.path(), &["init", "-b", "bad name", "other"]).status.success(),
+        "invalid branch names are refused"
+    );
     if have_git() {
         let g = t.path().join("g");
-        assert!(Command::new("git").args(["init", "-q", "-b", "trunk"]).arg(&g).env("GIT_CONFIG_GLOBAL", "/dev/null").status().unwrap().success());
-        let o = Command::new("git").args(["symbolic-ref", "--short", "HEAD"]).current_dir(&g).output().unwrap();
+        assert!(Command::new("git")
+            .args(["init", "-q", "-b", "trunk"])
+            .arg(&g)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .status()
+            .unwrap()
+            .success());
+        let o = Command::new("git")
+            .args(["symbolic-ref", "--short", "HEAD"])
+            .current_dir(&g)
+            .output()
+            .unwrap();
         assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "trunk");
     }
 }
@@ -1563,7 +1580,10 @@ fn pull_rebase_replays_local_commits_on_the_fetched_branch() {
         std::fs::write(b.join("c.txt"), "from b\n").unwrap();
         ok(&b, &["add", "c.txt"]);
         ok(&b, &["commit", "-m", "b side"]);
-        assert!(!run(&b, &["pull", "--rebase"]).status.success(), "a conflicting pull --rebase stops");
+        assert!(
+            !run(&b, &["pull", "--rebase"]).status.success(),
+            "a conflicting pull --rebase stops"
+        );
     }
     assert_eq!(logs[0], ["local two", "local one", "upstream", "base"], "{logs:?}");
     if logs.len() == 2 {
@@ -1590,7 +1610,12 @@ fn config_system_is_the_lowest_layer() {
     };
     let out = |args: &[&str]| {
         let o = vcs(args);
-        assert!(o.status.success(), "{args:?}: {}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+        assert!(
+            o.status.success(),
+            "{args:?}: {}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
         String::from_utf8_lossy(&o.stdout).trim().to_owned()
     };
     out(&["git", "config", "--system", "user.name", "SysDev"]);
@@ -1604,5 +1629,8 @@ fn config_system_is_the_lowest_layer() {
     assert_eq!(out(&["config", "get", "user.name"]), "SysDev");
     out(&["config", "unset", "user.name", "--system"]);
     assert!(!vcs(&["config", "get", "user.name"]).status.success());
-    assert!(!vcs(&["config", "set", "user.name", "x", "--user", "--system"]).status.success(), "one scope at a time");
+    assert!(
+        !vcs(&["config", "set", "user.name", "x", "--user", "--system"]).status.success(),
+        "one scope at a time"
+    );
 }

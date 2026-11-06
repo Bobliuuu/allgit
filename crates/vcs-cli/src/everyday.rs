@@ -119,7 +119,11 @@ pub fn clean(a: &CleanArgs) -> Result<(), Error> {
     let (mut untracked, _unsupported) = repo.untracked_only(Default::default())?;
     // file-level view, only when it is needed: -d deletes inside directories, -x adds the ignored files
     let (untracked_files, ignored_all) = if a.dirs || a.ignored { repo.others()? } else { (vec![], vec![]) };
-    let ignored_dirs: Vec<String> = if a.ignored { ignored_all.iter().filter(|f| f.ends_with('/')).cloned().collect() } else { vec![] };
+    let ignored_dirs: Vec<String> = if a.ignored {
+        ignored_all.iter().filter(|f| f.ends_with('/')).cloned().collect()
+    } else {
+        vec![]
+    };
     let ignored_files: Vec<String> = if a.ignored { ignored_all.clone() } else { vec![] };
     if a.ignored {
         // a listed entry per ignored file/dir that is not inside an untracked directory entry already listed
@@ -184,7 +188,10 @@ pub fn clean(a: &CleanArgs) -> Result<(), Error> {
                     } else {
                         std::fs::remove_file(repo.worktree().join(f))
                     }
-                    .map_err(|source| Error::Io { path: repo.worktree().join(f), source })?;
+                    .map_err(|source| Error::Io {
+                        path: repo.worktree().join(f),
+                        source,
+                    })?;
                 }
                 prune_empty(&abs);
             }

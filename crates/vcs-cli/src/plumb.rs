@@ -54,7 +54,11 @@ pub fn rev_parse(a: &RevParseArgs, json: bool) -> Result<(), Error> {
     if a.git_dir {
         let dir = repo.worktree().join(vcs_objects::names::META_DIR);
         let here = cwd.canonicalize().ok() == repo.worktree().canonicalize().ok();
-        let p = if here { vcs_objects::names::META_DIR.to_owned() } else { dir.display().to_string() };
+        let p = if here {
+            vcs_objects::names::META_DIR.to_owned()
+        } else {
+            dir.display().to_string()
+        };
         return out(json, format!("{p}\n"), || doc("rev-parse", vec![("git_dir", J::Str(p.clone()))]));
     }
     if a.revs.is_empty() {
@@ -132,7 +136,10 @@ pub fn ls_files(a: &LsFilesArgs, json: bool) -> Result<(), Error> {
         return out(json, text, || {
             doc(
                 "ls-files",
-                vec![("files", J::Arr(files.iter().map(|p| J::Obj(vec![("path", J::Str(p.clone()))])).collect()))],
+                vec![(
+                    "files",
+                    J::Arr(files.iter().map(|p| J::Obj(vec![("path", J::Str(p.clone()))])).collect()),
+                )],
             )
         });
     }
