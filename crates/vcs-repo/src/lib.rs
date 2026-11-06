@@ -36,6 +36,7 @@ pub mod manage;
 pub mod mbox;
 pub mod merge;
 pub mod meta;
+pub mod notes;
 pub mod ops;
 pub mod p4_marshal;
 pub mod patch;

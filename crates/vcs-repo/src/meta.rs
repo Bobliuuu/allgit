@@ -302,9 +302,13 @@ impl Refs {
     pub fn branches_of(&self, zone: &str) -> Vec<(String, ObjectId)> {
         self.branches
             .iter()
-            .filter(|((a, b), _)| a == zone && b != DETACHED_BRANCH)
+            .filter(|((a, b), _)| a == zone && b != DETACHED_BRANCH && b != vcs_objects::names::NOTES_BRANCH)
             .map(|((_, b), id)| (b.clone(), *id))
             .collect()
+    }
+    /// The head of `zone`'s commit-notes ref (see `vcs notes`), if it has one.
+    pub fn notes_head(&self, zone: &str) -> Option<ObjectId> {
+        self.head(zone, vcs_objects::names::NOTES_BRANCH)
     }
     /// The commit `zone`'s detached HEAD points at, if the zone has one.
     pub fn detached(&self, zone: &str) -> Option<ObjectId> {

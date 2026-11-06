@@ -126,6 +126,15 @@ From the final scoreboard ([research/command-scoreboard.md](research/command-sco
 - **Symmetric ranges order commits by author time** (the `log` order,
   reversed), not by topology, so two commits with the same timestamp are
   picked in id order.
+## Commit notes ([notes.md](notes.md))
+
+- **Notes do not follow rewritten commits.** `commit --amend`, `rebase`, `cherry-pick` and `zone apply` create new
+  commits that carry no note (git copies them with `notes.rewriteRef`; not implemented).
+- **`fetch` merges diverged notes by union.** A note removed on one side comes back from the other, and a commit annotated
+  on both sides gets both texts. There is no `notes merge`, `copy`, `prune` or `edit`, one notes ref per zone, and
+  `log`/`show` do not print notes.
+- **Not measured at scale.** The notes tree is a two-level fan-out; a note write rewrites two small trees. Nothing was
+  timed with more than a few notes.
 
 ## Other
 

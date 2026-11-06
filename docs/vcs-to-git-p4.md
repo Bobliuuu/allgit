@@ -44,6 +44,7 @@ How to read it:
 | `vcs clean -n/-f` | `git clean -n/-f` | `p4 clean` (restores; `vcs p4 clean` does not delete untracked files) | |
 | `vcs stash push/pop/list/drop` | `git stash` | none (`p4 shelve` is the nearest, but it parks on the server) | |
 | `vcs shelve name` / `vcs shelves` / `vcs unshelve name` | none (a pushed WIP branch) | `p4 shelve -c`, `p4 changes -s shelved`, `p4 unshelve -s` | shelves are named and live on the remote, see [shelves.md](shelves.md) |
+| `vcs notes add/show/list/append/remove` | `git notes add/show/list/append/remove` | none (`p4 change` descriptions are edited, not annotated) | per zone, published with the branches, see [notes.md](notes.md) |
 | `vcs reset` | `git reset` | none | acts on one zone |
 | `vcs op log/undo/restore` | `git reflog` plus `git reset` | none | operation log of local branches and workspace |
 

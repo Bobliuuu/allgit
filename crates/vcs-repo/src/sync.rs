@@ -32,6 +32,9 @@ pub struct PublishReport {
     pub forced: Vec<(String, String, ObjectId, ObjectId)>,
     /// Branches deleted from the remote: (zone, branch, head they had).
     pub deleted: Vec<(String, String, ObjectId)>,
+    /// Zones whose notes (`vcs notes`) were not published because the remote notes are not an
+    /// ancestor of the local ones; `vcs fetch` merges them, then publish again.
+    pub notes_diverged: Vec<String>,
 }
 
 /// How a non-fast-forward publish is allowed to replace a remote branch head. There is no blind
@@ -365,6 +368,40 @@ impl Repo {
                 }
             }
         }
+        // Commit notes ride along with a full publish (like `git push` of refs/notes/*, but without asking):
+        // not with a scoped publish (named branches, deletions) or a tags-only one.
+        let mut notes_diverged = Vec::new();
+        if !opts.tags_only && opts.branches.is_empty() && opts.delete.is_empty() {
+            for zone in ws.subs.keys() {
+                if zones.is_some_and(|w| !w.contains(zone)) {
+                    continue;
+                }
+                let notes = vcs_objects::names::NOTES_BRANCH;
+                let Some(local) = refs.notes_head(zone) else { continue };
+                let remote = manifest.head(zone, notes);
+                if remote == Some(local) || tracked.head(zone, notes) == Some(local) {
+                    continue;
+                }
+                if let Some(r) = remote {
+                    if !self.is_ancestor(r, local)? {
+                        notes_diverged.push(zone.clone());
+                        continue;
+                    }
+                }
+                updates.push(RefUpdate {
+                    zone: zone.clone(),
+                    branch: notes.to_owned(),
+                    old: remote,
+                    new: local,
+                });
+                if zone != ROOT_ZONE {
+                    zone_defs.insert(zone.clone(), defs.path_of(zone).unwrap().to_owned());
+                    if defs.label(zone) != zone {
+                        label_defs.insert(zone.clone(), defs.label(zone).to_owned());
+                    }
+                }
+            }
+        }
         let delete_names: &[String] = if opts.tags_only { &[] } else { &opts.delete };
         for name in delete_names {
             let mut hit = false;
@@ -385,6 +422,7 @@ impl Repo {
         if opts.prune && !opts.tags_only {
             for (zone, branch) in manifest.branches.keys() {
                 if !ws.subs.contains_key(zone)
+                    || branch == vcs_objects::names::NOTES_BRANCH
                     || zones.is_some_and(|w| !w.contains(zone))
                     || refs.head(zone, branch).is_some()
                     || deletes.iter().any(|(z, b, _)| z == zone && b == branch)
@@ -429,6 +467,7 @@ impl Repo {
                 tag_conflicts,
                 forced: vec![],
                 deleted: vec![],
+                notes_diverged,
             });
         }
         updates.sort();
@@ -515,6 +554,7 @@ impl Repo {
             tag_conflicts,
             forced,
             deleted: deletes,
+            notes_diverged,
         })
     }
 
@@ -713,7 +753,26 @@ impl Repo {
         }
         self.save_remote_refs(&rr)?;
         self.adopt_remote_tags(backend, Some(&want), &m, &cat)?;
+        self.adopt_remote_notes(backend, &want, &cat)?;
         Ok(got)
+    }
+
+    /// Bring the local notes ref of each of `zones` up to the remote-tracking one fetched just now
+    /// (see [`Repo::notes_reconcile`]). The note blobs are downloaded first: a lazy fetch stores
+    /// commits and trees only. Caller holds the lock.
+    fn adopt_remote_notes(&self, backend: &dyn Backend, zones: &[String], cat: &Arc<PackCatalog>) -> Result<()> {
+        let rr = self.remote_refs()?;
+        for z in zones {
+            let Some(r) = rr.notes_head(z) else { continue };
+            if self.refs()?.notes_head(z) == Some(r) {
+                continue;
+            }
+            let mut files = BTreeSet::new();
+            self.collect_missing_files(self.commit_obj(&r)?.root, "", None, &mut files)?;
+            self.prefetch_ids_with(backend, cat, files)?;
+            self.notes_reconcile(z, r)?;
+        }
+        Ok(())
     }
 
     /// Fetch the remote's tags of `zones` and add the ones this repository lacks. A local tag
@@ -1123,6 +1182,9 @@ impl Repo {
             let mut files = BTreeSet::new();
             for a in &want {
                 if let Some(h) = local.head(a, crate::meta::DEFAULT_BRANCH) {
+                    repo.collect_missing_files(repo.commit_obj(&h)?.root, "", None, &mut files)?;
+                }
+                if let Some(h) = local.notes_head(a) {
                     repo.collect_missing_files(repo.commit_obj(&h)?.root, "", None, &mut files)?;
                 }
             }

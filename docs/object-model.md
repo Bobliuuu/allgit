@@ -46,6 +46,8 @@ round-trip, order-independence of tree construction, and no panics on arbitrary 
 | Operation | parents[], view (local branch heads + workspace subs), description, author | Kind 6; see operations.md |
 | Conflict | – | *(designed, Milestone 4)* |
 
+Commit notes need no object kind of their own: see "Commit notes" below.
+
 ## Symlinks and portable paths (format v3)
 
 Format v3 adds the tree entry mode `Symlink` (byte 4). Its id names a Blob holding the raw link target, so identical
@@ -72,6 +74,24 @@ Windows limits: symlink entries are tracked and hashed, but checkout of a Symlin
 non-unix platforms (creating links needs privilege or Developer Mode, and file-versus-directory links differ). Reserved
 device names (`CON`, `NUL`, ...), trailing dots or spaces and the 260-character path limit are not checked. None of the
 Windows behavior is exercised by tests (the suite runs on unix).
+
+## Commit notes
+
+`vcs notes` annotates commits without changing them (docs/notes.md). The notes of a zone are the tree of a **Commit** of
+that zone, on the internal ref `refs[(zone, "refs/notes/commits")]` (`vcs_objects::names::NOTES_BRANCH`). The tree maps
+the annotated commit's id to the note: a Directory entry `<first 2 hex digits>` holding File entries named by the other 62
+digits, each naming a Blob (a note is always below the 1 MiB chunk threshold). One logical value, one byte string, as for
+every tree. Each change is a new commit whose parent is the previous notes head (a merge of two heads after `fetch`
+reconciled diverged notes), so the notes have a history and `op undo` reverts them.
+
+Consequences for the invariants below: the ref is a branch ref, so invariants 2 to 4 apply to it unchanged (its commits are
+commits of its own zone; `fsck` checks that its head is one). Invariant 5 holds because the tree is zone-relative and the
+fan-out names are hex digits. A branch is reachable for `gc` (local, remote-tracking and manifest) whatever its name, so
+notes and their history are kept with no GC change. The annotated commit is named by id inside a tree, not referenced as an
+edge: a note does not keep its commit alive, and the note of a commit that is gone is just an entry nobody asks for.
+The name is a valid branch name so manifests, shards, bundles and the wire protocol carry it unchanged; the user-facing
+entry points (`branch`, `switch`, `checkout`, `init -b`, detach) reject it with `validate_user_branch_name`, and
+`Refs::branches_of` leaves it out.
 
 ## Graph invariants
 
