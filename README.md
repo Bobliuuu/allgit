@@ -31,7 +31,7 @@ none is a statement about other hardware. Where vcs loses, it says so in the sam
 | 1M files: `add` all (git is I/O bound: wall 215 s, CPU 59 s; loose objects on EBS) | **18.9 s** | git 215.5 s | same |
 | 1M files: `diff` of a 1% change | **3.7 s** | git 19.7 s | same |
 | 1M files: `add` with nothing changed | 6.8 s (**loss**) | git 0.9 s | same |
-| 512 writers on one manifest, group commit on vs off (box load1 17 to 22, in-process backend) | **69.7 vs 27.3 publishes/s**, p95 8.5 vs 37.2 s | (same server, feature off) | [scalability](docs/scalability.md) #6 |
+| 512 writers on one manifest, group commit on vs off (box load1 17 to 22; no raw data committed) | **69.7 vs 27.3 publishes/s**, p95 8.5 vs 37.2 s | (same server, feature off) | [scalability](docs/scalability.md) #6 |
 | 128 pushers to S3-compatible storage | **42.2 pushes/s** | walgit 15.5 | [highload-matrix](docs/research/highload-matrix.md) |
 | 128 pushers, local disk | 85.3 pushes/s (**loss**) | git 222.0 | same |
 | 100,000 files `add` (flat, fresh index; 3 runs) | **733 ms** | git 5,383 ms | [command-scoreboard](docs/research/command-scoreboard.md) |

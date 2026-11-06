@@ -6,6 +6,10 @@ commit + push, 10 commits per pusher (5 for the same-branch runs). Three repetit
 arm order. "pushes/s" is commit plus push per second over the push phase only (clones excluded).
 Raw JSON is in `docs/research/highload-data/`.
 
+**Audit caveats.** The group-commit raw file (`highload-data/branches-groupcommit-pr452.json`) records load average 11.6 to 14.6 at the start on this 16-vCPU box
+(not a quiet box) and `vcs_rev: "?"` (the build is not recorded). git here is 2.56.0, while the scoreboards on box c used 2.43.0. The git arm is `git daemon` (no auth, no TLS, no HTTP)
+against `vcs-server` over HTTP, and pushes/s counts commit plus push. Treat the vcs-vs-git rows as indicative; see [benchmark-audit](benchmark-audit.md).
+
 Arms: **git** = `git daemon` on local disk; **vcs disk** = `vcs-server --root`; **walgit** and **vcs RustFS** = the
 same RustFS on local disk. Pairs compared: vcs disk vs git, vcs RustFS vs walgit.
 
