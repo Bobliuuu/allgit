@@ -162,6 +162,17 @@ reason in the model, and the refusal names the native way:
 - `HEAD@{N}` counts operations that change the value; git's reflog also records operations that leave it
   unchanged (`reset --hard HEAD`), and dates (`@{yesterday}`) do not resolve.
 
+## Interactive commands (`-p`, `mergetool`)
+
+Details in [interactive.md](interactive.md). Landed: `add -p`, `restore -p [--staged]`, `checkout -p [<rev>]`,
+`stash push -p`, `mergetool` (the old "no interactive staging / no mergetool" limits are gone). What is still
+not there:
+
+- No `/` search, no mode-change hunks, no intent-to-add; binary files and symlinks are not offered.
+- `e` (edit hunk) works for `add -p` and `checkout -p <rev>` only; the discard and stash forms do not offer it.
+- `checkout -p <rev>` needs the index and working file to agree; `stash push -p` refuses a staged new file.
+- `mergetool` has no built-in tool presets and skips delete/rename conflicts (use `vcs resolve --ours|--theirs`).
+
 ## Other
 
 - Backup and restore ([backup-restore.md](backup-restore.md)): no continuous replication (RPO = backup interval); a backup copies

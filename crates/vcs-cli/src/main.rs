@@ -24,10 +24,12 @@ mod grep;
 mod histcli;
 mod histcmds;
 mod hooks;
+mod interactive;
 mod json;
 mod lockable_cmd;
 mod logfmt;
 mod logopts;
+mod mergetool;
 mod notes_cmd;
 mod ontology;
 mod p4map;
@@ -122,6 +124,9 @@ enum Cmd {
         /// Also stage files and directories that `.vcsignore` hides
         #[arg(short = 'f', long)]
         force: bool,
+        /// Choose hunks to stage one by one (answers y/n/q/a/d/s/e/? on standard input; no path = everything)
+        #[arg(short = 'p', long)]
+        patch: bool,
     },
     /// Discard working-tree changes (from the index) or unstage them (--staged, from HEAD)
     Restore {
@@ -129,6 +134,32 @@ enum Cmd {
         /// Restore the index from HEAD instead of the working tree from the index
         #[arg(long)]
         staged: bool,
+        /// Choose hunks to discard (or, with --staged, unstage) one by one (answers on standard input)
+        #[arg(short = 'p', long)]
+        patch: bool,
+    },
+    /// Choose hunks to take from the index or a revision into the working tree (`checkout -p`); branches: `vcs switch`
+    Checkout {
+        /// Discard hunks one by one: from the index into the working tree, or from <REV> into the index
+        /// and the working tree. Required: `checkout` does nothing else (use `switch` and `restore`)
+        #[arg(short = 'p', long)]
+        patch: bool,
+        /// Revision to take the content from (default: the index)
+        rev: Option<String>,
+        /// Paths (after `--`; default: everything)
+        #[arg(last = true)]
+        paths: Vec<String>,
+    },
+    /// Run a merge tool on each conflicted file of a merge or rebase and mark the file resolved
+    Mergetool {
+        /// Tool name (default: merge.tool); its command is mergetool.<name>.cmd, run with $BASE $LOCAL $REMOTE $MERGED
+        #[arg(short = 't', long)]
+        tool: Option<String>,
+        /// Do not ask before starting the tool on each file
+        #[arg(short = 'y', long)]
+        no_prompt: bool,
+        /// Only these conflicted paths (default: all unresolved ones)
+        paths: Vec<String>,
     },
     /// Remove tracked files from the index and working tree
     Rm {
@@ -967,6 +998,12 @@ enum StashCmd {
         /// Also set aside untracked files (not ignored ones): they are added first, so `pop` brings them back staged
         #[arg(short = 'u', long)]
         include_untracked: bool,
+        /// Choose hunks to stash one by one (answers on standard input); the rest stays in the working tree
+        #[arg(short = 'p', long, conflicts_with = "include_untracked")]
+        patch: bool,
+        /// With -p: only these paths
+        #[arg(last = true)]
+        paths: Vec<String>,
     },
     /// Apply a stash entry (staged) and drop it; on conflicts it is kept
     Pop {
@@ -1248,6 +1285,86 @@ fn run(cli: Cli) -> Result<(), Error> {
         Cmd::Add {
             paths,
             force_no_lock,
+            patch: true,
+            force: _,
+        } => {
+            let (repo, cwd) = open()?;
+            let rel: Vec<String> = paths.iter().map(|p| repo.rel_path(&cwd, p)).collect::<Result<_, _>>()?;
+            lockable_cmd::guard(&repo, lockable_cmd::Stage::Add, &rel, force_no_lock)?;
+            interactive::run(
+                &repo,
+                &cwd,
+                interactive::Args {
+                    kind: interactive::Kind::Add,
+                    paths: &paths,
+                    message: None,
+                },
+                author,
+            )?;
+        }
+        Cmd::Restore {
+            paths,
+            staged,
+            patch: true,
+        } => {
+            let (repo, cwd) = open()?;
+            if paths.is_empty() {
+                return Err(Error::Msg(
+                    "nothing specified; use `vcs restore -p .` to go through everything".into(),
+                ));
+            }
+            let kind = if staged {
+                interactive::Kind::RestoreStaged
+            } else {
+                interactive::Kind::RestoreWorktree
+            };
+            interactive::run(
+                &repo,
+                &cwd,
+                interactive::Args {
+                    kind,
+                    paths: &paths,
+                    message: None,
+                },
+                author,
+            )?;
+        }
+        Cmd::Checkout { patch, rev, paths } => {
+            if !patch {
+                return Err(Error::Msg(
+                    "`vcs checkout` only exists for `-p`; use `vcs switch <branch>` to change branch and `vcs restore <paths>` for files"
+                        .into(),
+                ));
+            }
+            let (repo, cwd) = open()?;
+            // `checkout -p f.txt`: a lone word that is a file and no revision is a path
+            let (rev, paths) = match rev {
+                Some(r) if paths.is_empty() && (cwd.join(&r).exists() || repo.rev_files(&r).is_err()) => (None, vec![r]),
+                r => (r, paths),
+            };
+            let kind = match rev {
+                Some(r) => interactive::Kind::CheckoutRev(r),
+                None => interactive::Kind::RestoreWorktree,
+            };
+            interactive::run(
+                &repo,
+                &cwd,
+                interactive::Args {
+                    kind,
+                    paths: &paths,
+                    message: None,
+                },
+                author,
+            )?;
+        }
+        Cmd::Mergetool { tool, no_prompt, paths } => {
+            let (repo, cwd) = open()?;
+            mergetool::run(&repo, &cwd, mergetool::Opts { tool, no_prompt, paths })?;
+        }
+        Cmd::Add {
+            paths,
+            force_no_lock,
+            patch: false,
             force,
         } => {
             let (repo, cwd) = open()?;
@@ -1263,7 +1380,11 @@ fn run(cli: Cli) -> Result<(), Error> {
             println!("staged {} file(s), {} removal(s)", rep.staged, rep.removed);
             maybe_auto_repack(&repo);
         }
-        Cmd::Restore { paths, staged } => {
+        Cmd::Restore {
+            paths,
+            staged,
+            patch: false,
+        } => {
             let (repo, cwd) = open()?;
             let rel: Vec<String> = paths.iter().map(|p| repo.rel_path(&cwd, p)).collect::<Result<_, _>>()?;
             let rep = repo.restore(&rel, staged)?;
@@ -2121,11 +2242,29 @@ fn run(cli: Cli) -> Result<(), Error> {
             );
         }
         Cmd::Stash(c) => {
-            let (repo, _) = open()?;
+            let (repo, cwd) = open()?;
             match c {
                 StashCmd::Push {
                     message,
+                    patch: true,
+                    paths,
+                    ..
+                } => {
+                    interactive::run(
+                        &repo,
+                        &cwd,
+                        interactive::Args {
+                            kind: interactive::Kind::Stash,
+                            paths: &paths,
+                            message: message.as_deref(),
+                        },
+                        author,
+                    )?;
+                }
+                StashCmd::Push {
+                    message,
                     include_untracked,
+                    ..
                 } => {
                     if include_untracked {
                         let root = repo.rel_path(repo.worktree(), ".")?;

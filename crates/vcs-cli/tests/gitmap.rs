@@ -535,7 +535,6 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
                 BF("git diff --exit-code"),
                 L("git diff --numstat"),
                 G("git restore f.txt"),
-                X("git add -p", "no vcs equivalent"),
             ],
         ),
         (

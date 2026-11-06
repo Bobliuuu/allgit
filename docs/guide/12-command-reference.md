@@ -21,6 +21,8 @@ Commands:
   init           Create a new repository (default: current directory)
   add            Stage files or directories (also stages deletions)
   restore        Discard working-tree changes (from the index) or unstage them (--staged, from HEAD)
+  checkout       Choose hunks to take from the index or a revision into the working tree (`checkout -p`); branches: `vcs switch`
+  mergetool      Run a merge tool on each conflicted file of a merge or rebase and mark the file resolved
   rm             Remove tracked files from the index and working tree
   mv             Move or rename a tracked file or directory (within one zone)
   commit         Commit staged changes in all subscribed zones atomically
@@ -144,6 +146,7 @@ Options:
       --force-no-lock  Stage changes to lockable files (`.vcsattributes`) even without holding their lock
   -f, --force          Also stage files and directories that `.vcsignore` hides
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+  -p, --patch          Choose hunks to stage one by one (answers y/n/q/a/d/s/e/? on standard input; no path = everything)
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
@@ -163,6 +166,47 @@ Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
       --staged         Restore the index from HEAD instead of the working tree from the index
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+  -p, --patch          Choose hunks to discard (or, with --staged, unstage) one by one (answers on standard input)
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+## `vcs checkout`
+
+```text
+Choose hunks to take from the index or a revision into the working tree (`checkout -p`); branches: `vcs switch`
+
+Usage: vcs checkout [OPTIONS] [REV] [-- <PATHS>...]
+
+Arguments:
+  [REV]       Revision to take the content from (default: the index)
+  [PATHS]...  Paths (after `--`; default: everything)
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+  -p, --patch          Discard hunks one by one: from the index into the working tree, or from <REV> into the index and the working tree. Required: `checkout` does nothing else (use `switch` and `restore`)
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+  -h, --help           Print help
+```
+
+## `vcs mergetool`
+
+```text
+Run a merge tool on each conflicted file of a merge or rebase and mark the file resolved
+
+Usage: vcs mergetool [OPTIONS] [PATHS]...
+
+Arguments:
+  [PATHS]...  Only these conflicted paths (default: all unresolved ones)
+
+Options:
+  -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
+  -t, --tool <TOOL>    Tool name (default: merge.tool); its command is mergetool.<name>.cmd, run with $BASE $LOCAL $REMOTE $MERGED
+      --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+  -y, --no-prompt      Do not ask before starting the tool on each file
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
@@ -643,7 +687,10 @@ Options:
 ```text
 Save staged and unstaged changes of tracked files and reset to the branch heads
 
-Usage: vcs stash push [OPTIONS]
+Usage: vcs stash push [OPTIONS] [-- <PATHS>...]
+
+Arguments:
+  [PATHS]...  With -p: only these paths
 
 Options:
   -C <DIR>                 Run as if vcs was started in <DIR> (applied before repository discovery)
@@ -651,6 +698,7 @@ Options:
       --json               Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
   -u, --include-untracked  Also set aside untracked files (not ignored ones): they are added first, so `pop` brings them back staged
       --ca-pem <FILE>      PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+  -p, --patch              Choose hunks to stash one by one (answers on standard input); the rest stays in the working tree
       --no-hooks           Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help               Print help
 ```
