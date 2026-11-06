@@ -828,19 +828,27 @@ impl Repo {
         use vcs_objects::EntryMode;
         use vcs_store::ObjectStore;
         let mut trees = vec![(root, prefix.to_owned())];
+        // Without a sparse set a tree's files do not depend on where it sits: key `seen` by id alone and build no
+        // path strings (one allocation per entry, 1e8 of them in a wide repository).
         let mut seen = BTreeSet::new();
+        let mut seen_ids: std::collections::HashSet<ObjectId> = std::collections::HashSet::new();
         while let Some((t, dir)) = trees.pop() {
-            if !seen.insert((t, dir.clone())) {
+            let fresh = if set.is_some() {
+                seen.insert((t, dir.clone()))
+            } else {
+                seen_ids.insert(t)
+            };
+            if !fresh {
                 continue;
             }
             let Object::Tree(t) = self.store.get(&t)? else {
                 return msg(format!("object {t} is not a tree"));
             };
             for e in t.entries() {
-                let path = if dir.is_empty() {
-                    e.name.clone()
-                } else {
-                    format!("{dir}/{}", e.name)
+                let path = match set {
+                    None => String::new(),
+                    Some(_) if dir.is_empty() => e.name.clone(),
+                    Some(_) => format!("{dir}/{}", e.name),
                 };
                 if e.mode == EntryMode::Directory {
                     if set.is_none_or(|s| crate::meta::sparse_may_contain(s, &path)) {
