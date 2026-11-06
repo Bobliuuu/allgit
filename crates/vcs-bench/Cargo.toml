@@ -19,6 +19,7 @@ vcs-remote.workspace = true
 tempfile.workspace = true
 blake3.workspace = true
 vcs-store-s3 = { path = "../vcs-store-s3" }
+vcs-server = { path = "../vcs-server" }
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false }
@@ -63,3 +64,7 @@ path = "src/bin/packfmtbench.rs"
 [[bin]]
 name = "manifestbench"
 path = "src/bin/manifestbench.rs"
+
+[[bin]]
+name = "netbench"
+path = "src/bin/netbench.rs"
