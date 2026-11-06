@@ -794,18 +794,24 @@ enum ZoneCmd {
 enum ConfigCmd {
     /// Print the effective value of a key (exit 1 if unset)
     Get { key: String },
-    /// Set a key in the repository config (or the user config with --user)
+    /// Set a key in the repository config (or the user config with --user, the machine-wide one with --system)
     Set {
         key: String,
         value: String,
         #[arg(long)]
         user: bool,
+        /// The machine-wide config (`$VCS_SYSTEM_CONFIG`, else /etc/vcs/config; usually needs root)
+        #[arg(long, conflicts_with = "user")]
+        system: bool,
     },
-    /// Remove a key from the repository config (or the user config with --user)
+    /// Remove a key from the repository config (or the user config with --user, the machine-wide one with --system)
     Unset {
         key: String,
         #[arg(long)]
         user: bool,
+        /// The machine-wide config
+        #[arg(long, conflicts_with = "user")]
+        system: bool,
     },
     /// List effective settings and where each comes from
     List,
@@ -1191,7 +1197,15 @@ fn run(cli: Cli) -> Result<(), Error> {
         }
         Cmd::Config(c) => {
             use config::{Config, Scope};
-            let sc = |user: bool| if user { Scope::User } else { Scope::Repo };
+            let sc = |user: bool, system: bool| {
+                if system {
+                    Scope::System
+                } else if user {
+                    Scope::User
+                } else {
+                    Scope::Repo
+                }
+            };
             match c {
                 ConfigCmd::Get { key } => {
                     config::validate_key(&key)?;
@@ -1200,12 +1214,18 @@ fn run(cli: Cli) -> Result<(), Error> {
                         None => return Err(Error::Msg(format!("{key} is not set"))),
                     }
                 }
-                ConfigCmd::Set { key, value, user } => config::set(sc(user), &key, &value)?,
-                ConfigCmd::Unset { key, user } => {
-                    if !config::unset(sc(user), &key)? {
+                ConfigCmd::Set { key, value, user, system } => config::set(sc(user, system), &key, &value)?,
+                ConfigCmd::Unset { key, user, system } => {
+                    if !config::unset(sc(user, system), &key)? {
                         return Err(Error::Msg(format!(
                             "{key} is not set in the {} config",
-                            if user { "user" } else { "repository" }
+                            if system {
+                                "system"
+                            } else if user {
+                                "user"
+                            } else {
+                                "repository"
+                            }
                         )));
                     }
                 }
