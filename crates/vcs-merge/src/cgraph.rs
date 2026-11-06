@@ -218,17 +218,16 @@ impl CommitGraphFile {
                 }
             })
     }
-    /// Like `par`, additionally requiring each parent's generation to be below `gen_i` (the walk orders by it).
-    fn par_g(&self, i: usize, gen_i: u32) -> impl Iterator<Item = (usize, u32)> + '_ {
-        self.par(i).filter_map(move |p| {
-            let g = self.gen_at(p);
-            if g < gen_i {
-                Some((p, g))
-            } else {
-                self.poison();
-                None
-            }
-        })
+    /// Generation of parent `p` of a commit with generation `gen_child`, for pushing it on a walk's heap. The walks
+    /// order by generation, so a parent not strictly below its child contradicts the file: poison and refuse.
+    fn parent_gen(&self, p: usize, gen_child: u32) -> Option<u32> {
+        let g = self.gen_at(p);
+        if g < gen_child {
+            Some(g)
+        } else {
+            self.poison();
+            None
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -300,12 +299,14 @@ impl CommitGraphFile {
                 f |= STALE;
                 flags[n] = f;
             }
-            for (p, gp) in self.par_g(n, gn) {
+            for p in self.par(n) {
                 let new = flags[p] | (f & (P1 | P2 | STALE));
                 if new != flags[p] {
                     flags[p] = new;
                     if !done[p] {
-                        heap.push((gp, p));
+                        if let Some(gp) = self.parent_gen(p, gn) {
+                            heap.push((gp, p));
+                        }
                     }
                 }
             }
@@ -382,14 +383,17 @@ impl CommitGraphFile {
             let f = flags[i];
             if f & LIVE != 0 {
                 live -= 1;
+                // popped: a (corrupt, mis-ordered) file must not be able to count this node out a second time
+                flags[i] &= !LIVE;
             }
             if f & UN == 0 {
                 out.push(self.id_at(i));
             }
             let pass = f & (INT | UN);
-            for (p, gp) in self.par_g(i, gi) {
+            for p in self.par(i) {
                 flags[p] |= pass;
                 if flags[p] & QUEUED == 0 {
+                    let Some(gp) = self.parent_gen(p, gi) else { continue };
                     flags[p] |= QUEUED;
                     heap.push((gp, p));
                     if flags[p] & UN == 0 {

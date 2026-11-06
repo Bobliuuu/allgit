@@ -42,6 +42,11 @@ page cache); open time and anonymous memory are still flat.
 The commit-graph, reach-bitmap and path-filter readers decode the whole file into heap structures. They must become
 mmap-style lazy readers to reach 1e12; at 1e9 the commit-graph already needs 99 GB of RAM to open.
 
+**Update: done for all three** (commit-graph format v2 with a v1 fallback; reach cache and path filters unchanged on disk).
+Open is O(1) with no anonymous memory growth, whole-file validation is explicit (`fsck`, and gc for the reach cache), and
+`count_reachable_not_from` no longer walks all of `hide`'s history. Measured before/after in docs/scalability.md
+("Lazy mmap readers").
+
 ## End to end (MEASURED, vcs only; single runs)
 
 Deep = N linear commits, one file touched per commit (4 objects per commit). Wide = one commit with N files in N/100 dirs.
@@ -117,7 +122,7 @@ That is about 100 to 150 B/object, not 1.3 KB.
 
 ## Priorities toward 1e12 (ranked by how far each is from feasible)
 
-1. Commit-graph, reach-bitmap, path-filter: lazy/mmap readers (100 TB, 32 TB, 64 TB projected resident).
+1. ~~Commit-graph, reach-bitmap, path-filter: lazy/mmap readers~~ (done, see the update above). What is still O(n) there: extending the commit-graph (rewrites the file), path-filter save (rewrites the file, 32-bit offsets cap it near 1.4e8 commits), fsck's comparison with the real commits.
 2. publish: streaming pack writer (10.8 KB/commit anonymous; 106 GB at 10M commits).
 3. One-file commit in a wide repo: lazy commit (74 s at 1e8 files, linear).
 4. fsck: 6x slower than git at 10M commits and linear in anonymous memory (1.6 KB/commit).
