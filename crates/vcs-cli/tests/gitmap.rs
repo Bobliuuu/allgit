@@ -1423,3 +1423,36 @@ fn cat_file_batch_reads_names_from_stdin() {
     assert_eq!(check.lines().count(), 1);
     assert!(check.trim_end().ends_with(" blob 6"), "{check}");
 }
+
+#[test]
+fn init_initial_branch_names_the_first_branch_like_git() {
+    let t = tempfile::tempdir().unwrap();
+    let vcs = |dir: &Path, args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_vcs"))
+            .arg("git")
+            .args(args)
+            .current_dir(dir)
+            .env("VCS_AUTHOR_NAME", "Dev")
+            .env("VCS_AUTHOR_EMAIL", "dev@example.com")
+            .env("VCS_GIT_QUIET", "1")
+            .output()
+            .unwrap()
+    };
+    let o = vcs(t.path(), &["init", "-b", "trunk", "proj"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let proj = t.path().join("proj");
+    std::fs::write(proj.join("f.txt"), "1\n").unwrap();
+    assert!(vcs(&proj, &["add", "f.txt"]).status.success());
+    assert!(vcs(&proj, &["commit", "-m", "first"]).status.success());
+    let o = vcs(&proj, &["branch", "--show-current"]);
+    assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "trunk");
+    let o = vcs(&proj, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "trunk");
+    assert!(!vcs(t.path(), &["init", "-b", "bad name", "other"]).status.success(), "invalid branch names are refused");
+    if have_git() {
+        let g = t.path().join("g");
+        assert!(Command::new("git").args(["init", "-q", "-b", "trunk"]).arg(&g).env("GIT_CONFIG_GLOBAL", "/dev/null").status().unwrap().success());
+        let o = Command::new("git").args(["symbolic-ref", "--short", "HEAD"]).current_dir(&g).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "trunk");
+    }
+}

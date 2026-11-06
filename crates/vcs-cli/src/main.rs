@@ -101,7 +101,12 @@ struct Cli {
 #[derive(Subcommand, Clone)]
 enum Cmd {
     /// Create a new repository (default: current directory)
-    Init { path: Option<PathBuf> },
+    Init {
+        path: Option<PathBuf>,
+        /// Name of the first branch of the root zone (default `main`)
+        #[arg(short = 'b', long, value_name = "BRANCH")]
+        initial_branch: Option<String>,
+    },
     /// Stage files or directories (also stages deletions)
     Add {
         paths: Vec<String>,
@@ -1138,9 +1143,12 @@ fn run(cli: Cli) -> Result<(), Error> {
     }
     match cli.cmd {
         Cmd::More(_) => unreachable!("handled by cmds::dispatch"),
-        Cmd::Init { path } => {
+        Cmd::Init { path, initial_branch } => {
             let p = path.unwrap_or_else(|| PathBuf::from("."));
-            let r = Repo::init(&p)?;
+            let r = match initial_branch {
+                Some(b) => Repo::init_with_branch(&p, &b)?,
+                None => Repo::init(&p)?,
+            };
             println!("Initialized empty vcs repository in {}", r.worktree().join(".vcs").display());
         }
         Cmd::Add { paths, force_no_lock } => {
