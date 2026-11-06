@@ -28,8 +28,9 @@ use vcs_store::LocalStore;
 /// Bytes read from a remote pack per request.
 const CHUNK: u64 = 16 << 20;
 /// Objects (and bytes) per local pack written by the bulk fetch.
-const SEG_OBJECTS: usize = 400_000;
-const SEG_BYTES: usize = 1 << 30;
+// Every lookup in the store tries the packs one after the other: few large packs, not many small ones.
+const SEG_OBJECTS: usize = 8_000_000;
+const SEG_BYTES: usize = 2 << 30;
 /// File objects remembered for the caller's existence probe (see `LAZY_VERIFY_BUDGET`).
 const FILE_BUDGET: usize = 128;
 
