@@ -397,6 +397,25 @@ impl Repo {
         io(&reg, fs::remove_dir_all(&reg))
     }
 
+    /// Forget the registration of every linked worktree whose directory is gone (or no longer holds a
+    /// repository state directory); git's `worktree prune`. Directories are never deleted. With
+    /// `dry_run` nothing changes. Returns the (name, path) of each pruned (or prunable) entry.
+    pub fn worktree_prune(&self, dry_run: bool) -> Result<Vec<(String, PathBuf)>> {
+        let _l = self.lock()?;
+        let mut out = Vec::new();
+        for (name, path) in self.linked_worktrees()? {
+            if path.join(META_DIR).join(FORMAT_FILE).is_file() {
+                continue;
+            }
+            if !dry_run {
+                let reg = self.common.join(REGISTRY).join(&name);
+                io(&reg, fs::remove_dir_all(&reg))?;
+            }
+            out.push((name, path));
+        }
+        Ok(out)
+    }
+
     /// fsck: registry entries must point at readable worktrees, and a branch must be checked out
     /// in at most one of them. Also returns every worktree's index entries for the blob check.
     /// Every worktree's view (name, repo) for fsck, which reads each index itself, streaming (see `fsck.rs`).

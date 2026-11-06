@@ -33,6 +33,10 @@ pub enum BisectCmd {
     Skip { revs: Vec<String> },
     /// End the bisection and return to the original branch
     Reset,
+    /// Print what has been marked so far, in the order it was marked (feed it to `replay`)
+    Log,
+    /// Redo the marks of a saved `bisect log` on a fresh bisection
+    Replay { file: PathBuf },
     /// Run a command at each step: exit 0 = good, 125 = skip, 1-127 = bad, above 127 aborts
     Run {
         #[arg(trailing_var_arg = true, required = true, allow_hyphen_values = true)]
@@ -51,6 +55,17 @@ struct State {
 
 fn path(repo: &Repo) -> PathBuf {
     repo.worktree().join(".vcs").join("bisect")
+}
+
+fn log_path(repo: &Repo) -> PathBuf {
+    repo.worktree().join(".vcs").join("bisect.log")
+}
+
+/// Append one event (`start`, `bad <id>`, `good <id>`, `skip <id>`) to the ordered log.
+fn log_event(repo: &Repo, line: &str) -> Result<(), Error> {
+    let p = log_path(repo);
+    let mut f = fs::OpenOptions::new().create(true).append(true).open(&p).map_err(|source| Error::Io { path: p.clone(), source })?;
+    writeln!(f, "{line}").map_err(|source| Error::Io { path: p, source })
 }
 
 fn err<T>(m: impl Into<String>) -> Result<T, Error> {
@@ -208,6 +223,7 @@ fn mark(repo: &Repo, st: &mut State, kind: &str, ids: Vec<ObjectId>) -> Result<(
             "bad" => st.bad.push(id),
             _ => st.skip.push(id),
         }
+        log_event(repo, &format!("{kind} {}", id.to_hex()))?;
     }
     st.save(repo)
 }
@@ -235,8 +251,16 @@ pub fn run(cmd: &BisectCmd) -> Result<(), Error> {
                 }
             }
             st.save(&repo)?;
+            let _ = fs::remove_file(log_path(&repo));
+            log_event(&repo, "start")?;
+            for (k, ids) in [("bad", &st.bad), ("good", &st.good)] {
+                for id in ids {
+                    log_event(&repo, &format!("{k} {}", id.to_hex()))?;
+                }
+            }
             if let Err(e) = advance(&repo, &st) {
                 let _ = fs::remove_file(path(&repo));
+                let _ = fs::remove_file(log_path(&repo));
                 return Err(e);
             }
         }
@@ -257,11 +281,65 @@ pub fn run(cmd: &BisectCmd) -> Result<(), Error> {
                 repo.checkout(&st.zone, &st.orig)?;
             }
             let _ = repo.branch_delete(&st.zone, BRANCH, true);
+            let _ = fs::remove_file(log_path(&repo));
             fs::remove_file(path(&repo)).map_err(|source| Error::Io {
                 path: ".vcs/bisect".into(),
                 source,
             })?;
             println!("bisect ended; back on {}/{}", st.zone, st.orig);
+        }
+        BisectCmd::Log => {
+            let st = load(&repo)?;
+            let text = fs::read_to_string(log_path(&repo)).unwrap_or_default();
+            for l in text.lines() {
+                let (verb, id) = l.split_once(' ').unwrap_or((l, ""));
+                if let Ok(oid) = ObjectId::from_hex(id) {
+                    let subject = repo.commit_of(&oid).map(|c| c.message.lines().next().unwrap_or("").to_owned()).unwrap_or_default();
+                    println!("# {verb}: [{id}] {subject}");
+                }
+                println!("vcs bisect {l}");
+            }
+            if let Next::Found(id) = plan(&repo, &st)? {
+                let subject = repo.commit_of(&id)?.message.lines().next().unwrap_or("").to_owned();
+                println!("# first bad commit: [{}] {subject}", id.to_hex());
+            }
+        }
+        BisectCmd::Replay { file } => {
+            if path(&repo).exists() {
+                return err("a bisection is already in progress; `vcs bisect reset` ends it first");
+            }
+            let text = fs::read_to_string(file).map_err(|source| Error::Io { path: file.clone(), source })?;
+            // all lines are checked before the first one runs
+            let mut todo: Vec<BisectCmd> = Vec::new();
+            for (n, l) in text.lines().enumerate() {
+                let l = l.trim();
+                if l.is_empty() || l.starts_with('#') {
+                    continue;
+                }
+                let mut w = l.split_whitespace().map(|x| x.trim_matches(|c| c == '\'' || c == '"').to_owned()).peekable();
+                if matches!(w.peek().map(String::as_str), Some("git" | "vcs")) {
+                    w.next();
+                }
+                if w.peek().map(String::as_str) == Some("bisect") {
+                    w.next();
+                }
+                let verb = w.next().unwrap_or_default();
+                let args: Vec<String> = w.filter(|x| x != "--").collect();
+                todo.push(match verb.as_str() {
+                    "start" => BisectCmd::Start { revs: args, zone: None },
+                    "good" | "old" => BisectCmd::Good { revs: args },
+                    "bad" | "new" => BisectCmd::Bad { revs: args },
+                    "skip" => BisectCmd::Skip { revs: args },
+                    other => return err(format!("{}:{}: cannot replay {other:?} (only start, good, bad, skip, old, new)", file.display(), n + 1)),
+                });
+            }
+            if !matches!(todo.first(), Some(BisectCmd::Start { .. })) {
+                return err("the log must begin with `bisect start`");
+            }
+            drop(repo);
+            for c in &todo {
+                run(c)?;
+            }
         }
         BisectCmd::Run { cmd } => {
             let mut st = load(&repo)?;

@@ -215,6 +215,12 @@ impl Repo {
     }
 
     fn resolve_base(&self, zone: &str, base: &str) -> Result<ObjectId> {
+        if let Some((name, n)) = base.strip_suffix('}').and_then(|b| b.split_once("@{")) {
+            if let (false, Ok(n)) = (name.is_empty(), n.parse::<usize>()) {
+                return self.reflog_rev(zone, name, n);
+            }
+            return msg(format!("bad revision {base:?}: only <name>@{{N}} (N operations back) is supported, not dates"));
+        }
         let ws = self.workspace()?;
         let refs = self.refs()?;
         if base == "HEAD" {

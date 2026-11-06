@@ -1121,7 +1121,7 @@ pub fn observe(cmd: &Cmd, before: Option<BTreeMap<String, vcs_objects::ObjectId>
             | Cmd::Mv { .. }
             | Cmd::Restore { .. }
             | Cmd::Commit { .. }
-            | Cmd::Status
+            | Cmd::Status { .. }
             | Cmd::Diff { .. }
             | Cmd::Log { .. }
             | Cmd::Zone(ZoneCmd::Checkout { .. } | ZoneCmd::Add { .. })
@@ -1158,7 +1158,7 @@ fn observe_inner(repo: &Repo, cwd: &Path, cmd: &Cmd, before: Option<BTreeMap<Str
                 .collect();
             (Kind::Edit, h)
         }
-        Cmd::Status | Cmd::Diff { .. } | Cmd::Log { .. } => {
+        Cmd::Status { .. } | Cmd::Diff { .. } | Cmd::Log { .. } => {
             let here = repo.rel_path(cwd, ".")?;
             (Kind::Read, vec![hit(&zones, &here, true)])
         }

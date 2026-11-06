@@ -208,7 +208,7 @@ pub fn stat_json(stats: &[FileStat], staged: bool) -> J {
 /// Build the JSON document for `cmd`, or `None` when the command has no JSON form.
 pub fn build(cmd: &Cmd) -> Option<Result<J, Error>> {
     match cmd {
-        Cmd::Status | Cmd::Log { .. } | Cmd::Branch { .. } | Cmd::Diff { .. } | Cmd::Zone(ZoneCmd::List) => {}
+        Cmd::Status { .. } | Cmd::Log { .. } | Cmd::Branch { .. } | Cmd::Diff { .. } | Cmd::Zone(ZoneCmd::List) => {}
         Cmd::Conflict(ConflictCmd::List) | Cmd::Op(OpCmd::Log { .. }) => {}
         _ => return None,
     }
@@ -218,7 +218,7 @@ pub fn build(cmd: &Cmd) -> Option<Result<J, Error>> {
 fn build_inner(cmd: &Cmd) -> Result<J, Error> {
     let (repo, cwd) = open()?;
     Ok(match cmd {
-        Cmd::Status => {
+        Cmd::Status { ignored } => {
             let st = repo.status()?;
             let defs = repo.zones()?;
             let zones = st
@@ -247,9 +247,7 @@ fn build_inner(cmd: &Cmd) -> Result<J, Error> {
                 None => J::Null,
             };
             let clean = st.zones.iter().all(|a| a.staged.is_empty() && a.unstaged.is_empty()) && st.untracked.is_empty();
-            doc(
-                "status",
-                vec![
+            let mut fields = vec![
                     ("zones", J::Arr(zones)),
                     ("untracked", strs(&st.untracked)),
                     ("unsubscribed", strs(&st.unsubscribed)),
@@ -257,8 +255,11 @@ fn build_inner(cmd: &Cmd) -> Result<J, Error> {
                     ("merging", merging),
                     ("rebasing", J::Bool(repo.rebase_state()?.is_some())),
                     ("clean", J::Bool(clean)),
-                ],
-            )
+            ];
+            if *ignored {
+                fields.push(("ignored", strs(&repo.ignored_paths()?)));
+            }
+            doc("status", fields)
         }
         Cmd::Log {
             zone,
