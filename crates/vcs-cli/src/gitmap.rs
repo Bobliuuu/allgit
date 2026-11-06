@@ -384,9 +384,14 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             let upd = p.take(&["-u", "--update"]);
             p.take(&["-v", "--verbose"]);
             let force = p.take(&["-f", "--force"]);
-            p.finish("`vcs add [-f] <paths>` stages new, modified and deleted files; no -p/-i/-n/-N")?;
+            let patch = p.take(&["-p", "--patch"]);
+            p.finish("`vcs add [-f] [-p] <paths>` stages new, modified and deleted files; no -i/-n/-N")?;
             let paths = p.all_pos();
-            if upd {
+            if patch {
+                let mut a = v(&["add", "-p"]);
+                a.extend(paths);
+                vec![Step::Vcs(a)]
+            } else if upd {
                 vec![Step::AddTracked(paths)]
             } else if paths.is_empty() && all {
                 let mut a = v(&["add"]);
@@ -1329,7 +1334,22 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             vec![Step::Vcs(v(&["fsck"]))]
         }
         "verify-commit" | "verify-tag" => passthrough(cmd, rest),
-        "mergetool" => return Err(missing(cmd, "no external merge tool launcher", "`vcs conflict show <path>`, edit, then `vcs resolve --mark <path>` (or --ours/--theirs/--base/--file)")),
+        "mergetool" => {
+            let mut p = parse(cmd, rest, &["-t", "--tool"]);
+            let tool = p.val(&["-t", "--tool"]);
+            let yes = p.take(&["-y", "--no-prompt"]);
+            p.take(&["--prompt"]);
+            p.finish("`vcs mergetool [-t <tool>] [-y] [<paths>]`")?;
+            let mut a = v(&["mergetool"]);
+            if let Some(t) = tool {
+                a.extend(["--tool".to_owned(), t]);
+            }
+            if yes {
+                a.push("-y".into());
+            }
+            a.extend(p.all_pos());
+            vec![Step::Vcs(a)]
+        }
         "credential" => passthrough("credential", rest),
         "format-patch" => translate_format_patch(rest)?,
         "am" => translate_am(rest)?,
@@ -2205,10 +2225,22 @@ fn translate_checkout(rest: &[String]) -> Result<Vec<Step>, Error> {
             _ => Err(Error::Msg("usage: git checkout --detach [<commit>]".into())),
         };
     }
-    if p.take(&["-f", "--force", "-B", "--orphan", "-m", "--merge", "-p", "--patch"]) {
+    if p.take(&["-p", "--patch"]) {
+        p.finish("`vcs checkout -p [<rev>] [-- <paths>]`")?;
+        let mut a = v(&["checkout", "-p"]);
+        if p.had_dd {
+            a.extend(p.pos.first().cloned());
+            a.push("--".into());
+            a.extend(p.dd.clone());
+        } else {
+            a.extend(p.pos.clone());
+        }
+        return Ok(vec![Step::Vcs(a)]);
+    }
+    if p.take(&["-f", "--force", "-B", "--orphan", "-m", "--merge"]) {
         return Err(missing(
             "checkout",
-            "forced, merging, orphan or interactive checkout",
+            "forced, merging or orphan checkout",
             "`vcs switch <branch>`; discard changes with `vcs restore .`; `vcs worktree add <dir> <branch>` for a second checkout",
         ));
     }
@@ -2258,10 +2290,27 @@ fn translate_restore(rest: &[String]) -> Result<Vec<Step>, Error> {
         a.extend(p.all_pos());
         return Ok(vec![Step::Vcs(a)]);
     }
-    p.finish("`vcs restore [--staged] <paths>` (no -p, --ignore-unmerged)")?;
+    let patch = p.take(&["-p", "--patch"]);
+    p.finish("`vcs restore [-p] [--staged] <paths>` (no --ignore-unmerged)")?;
     let paths = p.all_pos();
     if paths.is_empty() {
         return Err(Error::Msg("you must specify path(s) to restore".into()));
+    }
+    if patch {
+        if src.is_some() || worktree {
+            return Err(missing(
+                "restore -p --source/--worktree",
+                "interactive restore from another revision, or of index and working tree together",
+                "`vcs checkout -p <rev> -- <paths>`, or `vcs restore -p --staged` then `vcs restore -p`",
+            ));
+        }
+        let mut a = v(&["restore"]);
+        if staged {
+            a.push("--staged".into());
+        }
+        a.push("-p".into());
+        a.extend(paths);
+        return Ok(vec![Step::Vcs(a)]);
     }
     if let Some(r) = src.filter(|r| r != "HEAD" || !staged) {
         if staged {
@@ -2361,15 +2410,34 @@ fn translate_stash(rest: &[String]) -> Result<Vec<Step>, Error> {
     let m = p.val(&["-m", "--message"]);
     p.take(&["-q", "--quiet", "--index"]);
     let untracked = p.take(&["-u", "--include-untracked"]);
-    if p.take(&["-a", "--all", "-k", "--keep-index", "-p", "--patch"]) {
+    let patch = p.take(&["-p", "--patch"]);
+    if p.take(&["-a", "--all", "-k", "--keep-index"]) {
         return Err(missing(
-            "stash -a/-k/-p",
-            "stashing ignored files, keeping the index, or partially",
+            "stash -a/-k",
+            "stashing ignored files, or keeping the index",
             "`vcs stash push` (-u adds untracked files too; ignored files and a kept index are not supported)",
         ));
     }
+    if patch && !matches!(sub, None | Some("push")) {
+        return Err(Error::Msg("`-p` goes with `git stash` or `git stash push`".into()));
+    }
     p.finish("`vcs stash push [-m msg]` / `pop` / `apply` / `list` / `drop`")?;
     Ok(match sub {
+        None | Some("push") if patch => {
+            if untracked {
+                return Err(Error::Msg("`vcs stash push -p` cannot be combined with -u".into()));
+            }
+            let mut a = v(&["stash", "push", "-p"]);
+            if let Some(msg) = m {
+                a.extend(["-m".to_owned(), msg]);
+            }
+            let paths = p.all_pos();
+            if !paths.is_empty() {
+                a.push("--".into());
+                a.extend(paths);
+            }
+            vec![Step::Vcs(a)]
+        }
         None | Some("push" | "save") => {
             let mut a = v(&["stash", "push"]);
             if untracked {
