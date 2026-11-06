@@ -39,6 +39,7 @@ pub mod meta;
 pub mod notes;
 pub mod ops;
 pub mod p4_marshal;
+pub mod partial;
 pub mod patch;
 pub mod patch3;
 pub mod patch_repo;

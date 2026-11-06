@@ -20,6 +20,9 @@ pub const KEYS: &[(&str, &str, &str)] = &[
         "`refs`: fsync every ref-only operation (branch, tag, branch -d, switch -c) as it happens; default defers it to the next object write, gc or flush like git (docs/durability.md; env VCS_FSYNC_REFS=1 also works)",
     ),
     ("merge.structural", "VCS_MERGE_STRUCTURAL", "on/off: structural merge (default on)"),
+    ("merge.tool", "VCS_MERGE_TOOL", "name of the tool `vcs mergetool` runs; its command is mergetool.<name>.cmd"),
+    ("mergetool.keepBackup", "VCS_MERGETOOL_KEEPBACKUP", "on/off: keep `<file>.orig` (the conflicted text) after `vcs mergetool` resolved a file (default on)"),
+    ("mergetool.prompt", "VCS_MERGETOOL_PROMPT", "on/off: ask before starting the tool on each file (default on; `mergetool -y` skips it)"),
     (
         "merge.assist",
         "VCS_MERGE_ASSIST",
@@ -132,8 +135,22 @@ pub fn parse_bool(v: &str) -> Option<bool> {
     }
 }
 
+/// `mergetool.<name>.cmd` and `mergetool.<name>.trustExitCode`: per-tool settings, so the key has a
+/// free part. Returns the setting (`cmd` or `trustExitCode`).
+pub fn mergetool_setting(key: &str) -> Option<&str> {
+    let rest = key.strip_prefix("mergetool.")?;
+    let (name, setting) = rest.rsplit_once('.')?;
+    let name_ok = !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'));
+    (name_ok && matches!(setting, "cmd" | "trustExitCode")).then_some(setting)
+}
+
+/// Keys that name a program to run: only the user config (and the environment) may set them.
+pub fn is_command_key(key: &str) -> bool {
+    COMMAND_KEYS.contains(&key) || mergetool_setting(key) == Some("cmd")
+}
+
 pub fn validate_key(key: &str) -> Result<(), Error> {
-    if KEYS.iter().any(|k| k.0 == key) {
+    if KEYS.iter().any(|k| k.0 == key) || mergetool_setting(key).is_some() {
         Ok(())
     } else {
         let known: Vec<&str> = KEYS.iter().map(|k| k.0).collect();
@@ -148,6 +165,8 @@ pub fn validate_value(key: &str, value: &str) -> Result<(), Error> {
     match key {
         "core.fsync" if !matches!(value, "refs" | "default") => msg("core.fsync must be 'refs' or 'default'"),
         "merge.renames" if !matches!(value, "on" | "off") => msg("merge.renames must be 'on' or 'off'"),
+        "mergetool.keepBackup" | "mergetool.prompt" if !matches!(value, "on" | "off") => msg(format!("{key} must be 'on' or 'off'")),
+        k if mergetool_setting(k) == Some("trustExitCode") && !matches!(value, "on" | "off") => msg(format!("{k} must be 'on' or 'off'")),
         "merge.structural" if !matches!(value, "on" | "off") => msg("merge.structural must be 'on' or 'off'"),
         "rerere.enabled" | "rerere.autoUpdate" if parse_bool(value).is_none() => msg(format!("{key} must be 'on' or 'off'")),
         "gc.rerereResolved" | "gc.rerereUnresolved" if value.trim().parse::<u64>().is_err() => {
@@ -157,7 +176,9 @@ pub fn validate_value(key: &str, value: &str) -> Result<(), Error> {
         "lock.releaseOnPublish" if !matches!(value, "on" | "off") => msg("lock.releaseOnPublish must be 'on' or 'off'"),
         "lock.offline" if !matches!(value, "warn" | "refuse") => msg("lock.offline must be 'warn' or 'refuse'"),
         "gc.autoPackLimit" if value.trim().parse::<usize>().is_err() => msg("gc.autoPackLimit must be a non-negative integer"),
-        "user.name" | "user.email" | "core.editor" | "remote.default" | "remote.cainfo" | "merge.assist" if value.trim().is_empty() => {
+        "user.name" | "user.email" | "core.editor" | "remote.default" | "remote.cainfo" | "merge.assist" | "merge.tool"
+            if value.trim().is_empty() =>
+        {
             msg(format!("{key} cannot be empty (use `vcs config unset {key}`)"))
         }
         _ => Ok(()),
@@ -337,6 +358,13 @@ impl Config {
         self.get_with_source(key).map(|x| x.0)
     }
 
+    /// The command of merge tool `name` (`mergetool.<name>.cmd`); user and system config only.
+    pub fn mergetool_cmd(&self, name: &str) -> Option<String> {
+        let key = format!("mergetool.{name}.cmd");
+        mergetool_setting(&key)?;
+        self.command_setting(&key)
+    }
+
     /// merge.structural, default on. An invalid value is an error.
     pub fn structural(&self) -> Result<bool, Error> {
         match self.get("merge.structural").as_deref() {
@@ -462,7 +490,7 @@ pub const COMMAND_KEYS: &[&str] = &["core.editor", "merge.assist"];
 pub fn set(scope: Scope, key: &str, value: &str) -> Result<(), Error> {
     validate_key(key)?;
     validate_value(key, value)?;
-    if scope == Scope::Repo && COMMAND_KEYS.contains(&key) && !matches!(value.trim(), "" | "off") {
+    if scope == Scope::Repo && is_command_key(key) && !matches!(value.trim(), "" | "off") {
         return msg(format!(
             "{key} names a command, and commands from a repository config are refused; set it with `vcs config set --user {key} ...`"
         ));
