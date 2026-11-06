@@ -191,7 +191,7 @@ Gaps and what was done:
   (not run: needs a tag push).
 * Release builds only `vcs` (CLI); `vcs-server` is not shipped and no image is published. Release is not reproducible-by-claim:
   floating `stable` toolchain, no `SOURCE_DATE_EPOCH`/`--remap-path-prefix`, no provenance attestation (`actions/attest-build-provenance`),
-  no SBOM, `SHA256SUMS` is unsigned and produced by the same workflow. Filed.
+  no SBOM, `SHA256SUMS` is unsigned and produced by the same workflow. Filed (#571; now addressed: server tarballs, CycloneDX SBOMs, build-provenance attestations, cosign-signed `SHA256SUMS`, ghcr image, pinned release toolchain; see docs/deploy.md "Verify a release").
 * Actions pinned by tag (`@v4`, `@v2.7.8`) not commit SHA; `dtolnay/rust-toolchain@stable`; `go install minio@latest` unpinned.
   Dependabot covers actions but cannot update unpinned `@stable`/`@latest`.
 * Tests run without `--locked`. Fuzz: nothing in CI (19 targets, only manual campaigns). Sanitizers: none (ASan only inside

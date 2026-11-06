@@ -142,3 +142,9 @@ From the final scoreboard ([research/command-scoreboard.md](research/command-sco
 - Minimum-reader marker (issue #567, [upgrade-rollback.md](upgrade-rollback.md)) covers the remote only. Binaries built
   before it do not know the marker, so the first release with it is the rollback floor. Local repositories (pack/index
   v3/v4, journal) have no marker. Restoring an S3 manifest version during rollback is documented, not automated or tested.
+- **Release and supply chain (issue #571).** Not covered: the container image is linux/amd64 only (an arm64 build under
+  QEMU would take hours; a native-arm64 job plus manifest merge is not built); Miri runs only the quick `vcs-objects`
+  tests because blake3 under Miri makes the object, chunk and signing tests take more than 9 minutes; there is no
+  UBSan or TSan (not supported on stable Rust / needs a full instrumented std plus deps); the release workflow's
+  new jobs (SBOM, image, attestation, cosign) have never run in Actions. The weekly fuzz job is scheduled, not a pull
+  request gate, so it stays advisory.
