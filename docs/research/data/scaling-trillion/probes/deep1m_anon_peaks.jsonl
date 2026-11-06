@@ -1,0 +1,7 @@
+{"repo":"deep 1M commits (4.0M objects, 4.25 GiB packs)","label":"fsck_after_gc","wall_s":243.3,"peak_anon_kb":1626172,"peak_file_kb":4328728,"note":"box busy with wide-1e8 clone/gc (concurrent)"}
+{"repo":"deep 1M","label":"publish_first","wall_s":218.1,"peak_anon_kb":10822420,"peak_file_kb":180036,"note":"concurrent load"}
+{"repo":"deep 1M","label":"clone_full","wall_s":94.6,"peak_anon_kb":2713204,"peak_file_kb":139288,"note":"concurrent load"}
+{"repo":"deep 1M","label":"gc_first_before_fix","wall_s":53.9,"peak_anon_kb":5101452,"peak_file_kb":139028,"note":"unbounded cache; chunked read (default budget then 16GiB equivalent)"}
+{"repo":"deep 1M","label":"gc_first_original_binary","wall_s":53.88,"peak_anon_kb":5197528,"peak_file_kb":138456,"note":"binary before any gc change"}
+{"repo":"deep 1M","label":"gc_first_after_fix_budget0","wall_s":55.4,"peak_anon_kb":1665668,"peak_file_kb":138956,"note":"VCS_GC_KNOWN_BYTES=0 with chunked mark"}
+{"repo":"deep 1M","label":"gc_second_already_collected","wall_s":6.3,"maxrss_kb":882460,"note":"reach cache hit"}

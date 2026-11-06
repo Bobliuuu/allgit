@@ -1,0 +1,45 @@
+stream 1 MB in 0s
+{"tool": "vcs", "kind": "wide", "n": 10000, "step": "init", "wall_s": 0.007, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 7188, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000, "step": "import", "wall_s": 0.214, "user_s": 0.07, "sys_s": 0.19, "maxrss_kb": 22888, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000, "step": "disk_after_import", "disk_kb": 2004}
+{"tool": "vcs", "kind": "wide", "n": 10000, "step": "status_first", "wall_s": 0.032, "user_s": 0.01, "sys_s": 0.14, "maxrss_kb": 12464, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000, "step": "status_second", "wall_s": 0.032, "user_s": 0.02, "sys_s": 0.13, "maxrss_kb": 12024, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000, "step": "log_n20", "wall_s": 0.003, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 10492, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000, "step": "rev_list_head", "wall_s": 0.003, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 9876, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000, "step": "tag_create", "wall_s": 0.003, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 9844, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000, "step": "add_one_file", "wall_s": 0.007, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 10776, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000, "step": "commit_one_file", "wall_s": 0.015, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 12528, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000, "step": "remote_set", "wall_s": 0.003, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 9060, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000, "step": "publish_first", "wall_s": 0.031, "user_s": 0.01, "sys_s": 0.01, "maxrss_kb": 15764, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000, "step": "add_one_file2", "wall_s": 0.007, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 10520, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000, "step": "commit_one_file2", "wall_s": 0.015, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 12596, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000, "step": "publish_incremental", "wall_s": 0.007, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 11416, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000, "step": "disk_remote", "disk_kb": 1072}
+{"tool": "vcs", "kind": "wide", "n": 10000, "step": "clone_full", "wall_s": 0.164, "user_s": 0.07, "sys_s": 0.17, "maxrss_kb": 22764, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000, "step": "gc_first", "wall_s": 0.032, "user_s": 0.02, "sys_s": 0.02, "maxrss_kb": 15932, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000, "step": "gc_second", "wall_s": 0.032, "user_s": 0.01, "sys_s": 0.0, "maxrss_kb": 15388, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000, "step": "fsck", "wall_s": 0.032, "user_s": 0.02, "sys_s": 0.01, "maxrss_kb": 17636, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 10000, "step": "disk_after_gc", "disk_kb": 2896}
+{"tool": "git", "kind": "wide", "n": 10000, "step": "init", "wall_s": 0.004, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 4404, "rc": 0}
+{"tool": "git", "kind": "wide", "n": 10000, "step": "import", "wall_s": 0.164, "user_s": 0.08, "sys_s": 0.05, "maxrss_kb": 7916, "rc": 0}
+{"tool": "git", "kind": "wide", "n": 10000, "step": "checkout", "wall_s": 0.164, "user_s": 0.02, "sys_s": 0.1, "maxrss_kb": 7204, "rc": 0}
+{"tool": "git", "kind": "wide", "n": 10000, "step": "disk_after_import", "disk_kb": 1708}
+{"tool": "git", "kind": "wide", "n": 10000, "step": "status_first", "wall_s": 0.064, "user_s": 0.01, "sys_s": 0.04, "maxrss_kb": 7016, "rc": 0}
+{"tool": "git", "kind": "wide", "n": 10000, "step": "status_second", "wall_s": 0.064, "user_s": 0.02, "sys_s": 0.03, "maxrss_kb": 7280, "rc": 0}
+{"tool": "git", "kind": "wide", "n": 10000, "step": "log_n20", "wall_s": 0.003, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 5140, "rc": 0}
+{"tool": "git", "kind": "wide", "n": 10000, "step": "rev_list_head", "wall_s": 0.003, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 5064, "rc": 0}
+{"tool": "git", "kind": "wide", "n": 10000, "step": "tag_create", "wall_s": 0.003, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 5052, "rc": 0}
+{"tool": "git", "kind": "wide", "n": 10000, "step": "add_one_file", "wall_s": 0.064, "user_s": 0.01, "sys_s": 0.02, "maxrss_kb": 6448, "rc": 0}
+{"tool": "git", "kind": "wide", "n": 10000, "step": "commit_one_file", "wall_s": 0.016, "user_s": 0.0, "sys_s": 0.01, "maxrss_kb": 7432, "rc": 0}
+{"tool": "git", "kind": "wide", "n": 10000, "step": "remote_init", "wall_s": 0.003, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 4136, "rc": 0}
+{"tool": "git", "kind": "wide", "n": 10000, "step": "publish_first", "wall_s": 0.064, "user_s": 0.02, "sys_s": 0.08, "maxrss_kb": 8184, "rc": 0}
+{"tool": "git", "kind": "wide", "n": 10000, "step": "add_one_file2", "wall_s": 0.016, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 6452, "rc": 0}
+{"tool": "git", "kind": "wide", "n": 10000, "step": "commit_one_file2", "wall_s": 0.016, "user_s": 0.01, "sys_s": 0.0, "maxrss_kb": 7216, "rc": 0}
+{"tool": "git", "kind": "wide", "n": 10000, "step": "publish_incremental", "wall_s": 0.032, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 6200, "rc": 0}
+{"tool": "git", "kind": "wide", "n": 10000, "step": "disk_remote", "disk_kb": 960}
+{"tool": "git", "kind": "wide", "n": 10000, "step": "clone_full", "wall_s": 0.164, "user_s": 0.06, "sys_s": 0.13, "maxrss_kb": 7752, "rc": 0}
+{"tool": "git", "kind": "wide", "n": 10000, "step": "gc_first", "wall_s": 0.064, "user_s": 0.02, "sys_s": 0.01, "maxrss_kb": 10684, "rc": 0}
+{"tool": "git", "kind": "wide", "n": 10000, "step": "gc_second", "wall_s": 0.064, "user_s": 0.02, "sys_s": 0.01, "maxrss_kb": 10708, "rc": 0}
+{"tool": "git", "kind": "wide", "n": 10000, "step": "commit_graph_write", "wall_s": 0.003, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 5340, "rc": 0}
+{"tool": "git", "kind": "wide", "n": 10000, "step": "fsck", "wall_s": 0.032, "user_s": 0.02, "sys_s": 0.0, "maxrss_kb": 8824, "rc": 0}
+{"tool": "git", "kind": "wide", "n": 10000, "step": "disk_after_gc", "disk_kb": 1768}

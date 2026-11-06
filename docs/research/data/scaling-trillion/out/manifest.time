@@ -1,0 +1,5 @@
+0.03 s wall, 3536 KB maxrss: manifest 100 /data/scaling-work/m
+0.31 s wall, 13188 KB maxrss: manifest 1000 /data/scaling-work/m
+3.22 s wall, 105300 KB maxrss: manifest 10000 /data/scaling-work/m
+25.54 s wall, 844464 KB maxrss: manifest 100000 /data/scaling-work/m
+23.07 s wall, 2107492 KB maxrss: manifest 1000000 /data/scaling-work/m

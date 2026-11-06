@@ -14,7 +14,8 @@ sharded = ["vcs-remote/sharded"]
 [dependencies]
 vcs-objects.workspace = true
 vcs-store.workspace = true
-vcs-repo.workspace = true
+vcs-repo = { workspace = true, features = ["scaling-probe"] }
+vcs-merge.workspace = true
 vcs-remote.workspace = true
 tempfile.workspace = true
 blake3.workspace = true
@@ -24,6 +25,11 @@ vcs-server = { path = "../vcs-server" }
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false }
+
+[[bin]]
+name = "scalebench"
+path = "src/bin/scalebench.rs"
+required-features = ["sharded"]
 
 [[bin]]
 name = "chunkbench"
