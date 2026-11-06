@@ -900,8 +900,12 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
                 }
             }
             p.take(&["-I", "-H", "-r", "--recursive", "-E", "--extended-regexp", "--no-color", "--color"]);
+            let cached = p.take(&["--cached"]);
             let pats = p.vals(&["-e", "--regexp"]);
-            p.finish("`vcs grep [-n -i -w -l -c -F] <regex> [rev] [-- paths]` (Rust regex syntax; no --cached/--untracked/-v/-A/-B/-C)")?;
+            p.finish("`vcs grep [-n -i -w -l -c -F] [--cached] <regex> [rev] [-- paths]` (Rust regex syntax; no --untracked/-v/-A/-B/-C)")?;
+            if cached {
+                a.push("--cached".into());
+            }
             let mut pos = p.pos.clone();
             let pat = if let Some(first) = pats.first() {
                 first.clone()
@@ -2108,9 +2112,12 @@ fn translate_tag(rest: &[String]) -> Result<Vec<Step>, Error> {
 fn translate_config(rest: &[String]) -> Result<Vec<Step>, Error> {
     let mut p = parse("config", rest, &["--get", "--unset", "--file", "-f", "--type"]);
     let user = p.take(&["--global", "--user"]);
+    let system = p.take(&["--system"]);
+    if user && system {
+        return Err(Error::Msg("git config: only one of --global and --system".into()));
+    }
     p.take(&["--local", "--show-origin", "--includes", "--no-includes"]);
     if p.take(&[
-        "--system",
         "--worktree",
         "-e",
         "--edit",
@@ -2123,7 +2130,7 @@ fn translate_config(rest: &[String]) -> Result<Vec<Step>, Error> {
     ]) {
         return Err(missing(
             "config",
-            "system scope, editing and multi-value keys",
+            "editing and multi-value keys",
             "`vcs config get|set|unset|list [--user]`",
         ));
     }
@@ -2132,10 +2139,13 @@ fn translate_config(rest: &[String]) -> Result<Vec<Step>, Error> {
     let list = p.take(&["-l", "--list"]);
     p.take(&["--bool", "--int", "--path", "-z"]);
     p.val(&["--type"]);
-    p.finish("`vcs config get|set|unset|list [--user]`")?;
+    p.finish("`vcs config get|set|unset|list [--user|--system]`")?;
     let u = |mut a: Vec<String>| {
         if user {
             a.push("--user".into());
+        }
+        if system {
+            a.push("--system".into());
         }
         a
     };

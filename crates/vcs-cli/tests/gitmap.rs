@@ -1081,6 +1081,11 @@ fn scenarios() -> Vec<(&'static str, Vec<Op>)> {
                 GC("git grep -n needle", "src/a.txt"),
                 GC("git grep -i -e needle HEAD", "b.txt"),
                 GC("git grep -F a.b -- src", ""),
+                W("c.txt", "staged needle\n"),
+                G("git add c.txt"),
+                W("c.txt", "on disk only\n"),
+                GC("git grep --cached needle", "staged needle"),
+                BF("git grep needle -- c.txt"),
             ],
         ),
     ]
@@ -1564,4 +1569,40 @@ fn pull_rebase_replays_local_commits_on_the_fetched_branch() {
     if logs.len() == 2 {
         assert_eq!(logs[0], logs[1], "vcs and git order the rebased history alike");
     }
+}
+
+#[test]
+fn config_system_is_the_lowest_layer() {
+    let t = tempfile::tempdir().unwrap();
+    let sys = t.path().join("etc-vcs-config");
+    let home = t.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let vcs = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_vcs"))
+            .args(args)
+            .current_dir(t.path())
+            .env("VCS_SYSTEM_CONFIG", &sys)
+            .env("VCS_CONFIG_HOME", &home)
+            .env_remove("VCS_AUTHOR_NAME")
+            .env_remove("VCS_AUTHOR_EMAIL")
+            .output()
+            .unwrap()
+    };
+    let out = |args: &[&str]| {
+        let o = vcs(args);
+        assert!(o.status.success(), "{args:?}: {}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).trim().to_owned()
+    };
+    out(&["git", "config", "--system", "user.name", "SysDev"]);
+    assert!(std::fs::read_to_string(&sys).unwrap().contains("user.name"));
+    assert_eq!(out(&["config", "get", "user.name"]), "SysDev");
+    assert!(out(&["config", "list"]).contains("user.name=SysDev  (system)"));
+    // the user layer wins over the system one, and unsetting the user layer shows the system value again
+    out(&["git", "config", "--global", "user.name", "Me"]);
+    assert_eq!(out(&["config", "get", "user.name"]), "Me");
+    out(&["git", "config", "--global", "--unset", "user.name"]);
+    assert_eq!(out(&["config", "get", "user.name"]), "SysDev");
+    out(&["config", "unset", "user.name", "--system"]);
+    assert!(!vcs(&["config", "get", "user.name"]).status.success());
+    assert!(!vcs(&["config", "set", "user.name", "x", "--user", "--system"]).status.success(), "one scope at a time");
 }

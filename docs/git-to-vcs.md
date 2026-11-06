@@ -144,7 +144,7 @@ Status: exact (same command and flags), renamed (other spelling, same meaning), 
 semantics differ as the notes say), missing (no equivalent; the notes name the native route).
 
 <!-- BEGIN GENERATED TABLE -->
-261 rows: 156 exact, 41 renamed, 41 different, 23 missing.
+261 rows: 157 exact, 42 renamed, 41 different, 21 missing.
 
 | git | vcs | status | notes | test |
 |---|---|---|---|---|
@@ -341,7 +341,7 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git grep -n needle` | `vcs grep -n needle` | exact | Rust regex syntax | `grep` |
 | `git grep -i -e needle HEAD` | `vcs grep -i needle HEAD` | exact |  | `grep` |
 | `git grep -F a.b -- src` | `vcs grep -F a.b -- src` | exact |  | `grep` |
-| `git grep --cached x` | none | missing | searches the working tree or a revision only | translation |
+| `git grep --cached needle` | `vcs grep --cached needle` | exact | searches the staged content, not the files on disk | `grep` |
 | `git describe --tags` | `vcs describe --tags` | exact |  | `tags` |
 | `git describe --always` | `vcs describe --always` | exact |  | `tags` |
 | `git describe --dirty` | `vcs describe --dirty` | exact | tracked changes only (staged or unstaged), as git; HEAD only | `tags` |
@@ -360,7 +360,7 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git config user.name` | `vcs config get user.name` | renamed |  | translation |
 | `git config --list` | `vcs config list` | renamed |  | translation |
 | `git config --unset user.name` | `vcs config unset user.name` | renamed |  | translation |
-| `git config --system x y` | none | missing | no system scope | translation |
+| `git config --system user.name Dev` | `vcs config set user.name Dev --system` | renamed | the file is `$VCS_SYSTEM_CONFIG`, else /etc/vcs/config; the lowest layer, below the user and repository configs | translation |
 | `git ls-files` | `vcs ls-files` | exact |  | translation |
 | `git ls-files -s` | `vcs ls-files -s` | exact | sha256 object ids, not sha1 | translation |
 | `git ls-files -o` | `vcs ls-files -o` | different | never lists files matched by `.vcsignore` (git needs --exclude-standard for that, which is accepted and implied); one line per file | `clean` |

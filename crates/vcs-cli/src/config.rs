@@ -1,7 +1,8 @@
 //! `vcs config`: layered key/value settings.
 //!
 //! Precedence, highest first: environment, repository (`.vcs/config`), user
-//! (`$VCS_CONFIG_HOME/config`, else `$XDG_CONFIG_HOME/vcs/config`, else `~/.config/vcs/config`).
+//! (`$VCS_CONFIG_HOME/config`, else `$XDG_CONFIG_HOME/vcs/config`, else `~/.config/vcs/config`),
+//! system (`$VCS_SYSTEM_CONFIG`, else `/etc/vcs/config`; the lowest layer, written with `--system`).
 //! File format: one `key = value` per line; `#` or `;` start a comment line; values may be
 //! double-quoted (with `\"` and `\\` escapes). Malformed files give an error, never a panic.
 use std::collections::BTreeMap;
@@ -95,6 +96,7 @@ pub const KEYS: &[(&str, &str, &str)] = &[
 pub enum Scope {
     Repo,
     User,
+    System,
 }
 
 fn msg<T>(s: impl Into<String>) -> Result<T, Error> {
@@ -213,6 +215,13 @@ pub fn user_path() -> Option<PathBuf> {
     env("HOME").map(|h| h.join(".config").join("vcs").join("config"))
 }
 
+/// The machine-wide config: `$VCS_SYSTEM_CONFIG`, else `/etc/vcs/config`.
+pub fn system_path() -> PathBuf {
+    std::env::var_os("VCS_SYSTEM_CONFIG")
+        .filter(|v| !v.is_empty())
+        .map_or_else(|| PathBuf::from("/etc/vcs/config"), PathBuf::from)
+}
+
 /// `.vcs/config` of the repository containing the current directory, if any.
 pub fn repo_path() -> Option<PathBuf> {
     let mut cur = std::env::current_dir().ok()?.canonicalize().ok()?;
@@ -232,6 +241,7 @@ fn scope_path(scope: Scope) -> Result<PathBuf, Error> {
         Scope::User => {
             user_path().ok_or_else(|| Error::Msg("cannot locate the user config directory (set HOME or VCS_CONFIG_HOME)".into()))
         }
+        Scope::System => Ok(system_path()),
     }
 }
 
@@ -241,6 +251,7 @@ pub enum Source {
     Env,
     Repo,
     User,
+    System,
 }
 
 impl Source {
@@ -249,6 +260,7 @@ impl Source {
             Source::Env => "env",
             Source::Repo => "repo",
             Source::User => "user",
+            Source::System => "system",
         }
     }
 }
@@ -256,6 +268,7 @@ impl Source {
 pub struct Config {
     repo: BTreeMap<String, String>,
     user: BTreeMap<String, String>,
+    system: BTreeMap<String, String>,
 }
 
 impl Config {
@@ -268,7 +281,8 @@ impl Config {
             Some(p) => read_file(&p)?,
             None => BTreeMap::new(),
         };
-        Ok(Config { repo, user })
+        let system = read_file(&system_path())?;
+        Ok(Config { repo, user, system })
     }
 
     pub fn get_with_source(&self, key: &str) -> Option<(String, Source)> {
@@ -280,7 +294,10 @@ impl Config {
         if let Some(v) = self.repo.get(key) {
             return Some((v.clone(), Source::Repo));
         }
-        self.user.get(key).map(|v| (v.clone(), Source::User))
+        if let Some(v) = self.user.get(key) {
+            return Some((v.clone(), Source::User));
+        }
+        self.system.get(key).map(|v| (v.clone(), Source::System))
     }
 
     pub fn get(&self, key: &str) -> Option<String> {
@@ -320,7 +337,7 @@ impl Config {
                         "warning: ignoring {key} from the repository config (commands from a repository config are refused); set it with `vcs config set --user {key} ...`"
                     );
                 }
-                self.user.get(key).cloned()
+                self.user.get(key).or_else(|| self.system.get(key)).cloned()
             }
             (v, _) => Some(v),
         }
@@ -420,7 +437,7 @@ fn write(p: &Path, m: &BTreeMap<String, String>) -> Result<(), Error> {
 /// All effective entries (key, value, source), for `vcs config list`.
 pub fn list(cfg: &Config) -> Vec<(String, String, Source)> {
     let mut keys: Vec<String> = KEYS.iter().map(|k| k.0.to_owned()).collect();
-    for k in cfg.repo.keys().chain(cfg.user.keys()) {
+    for k in cfg.repo.keys().chain(cfg.user.keys()).chain(cfg.system.keys()) {
         if !keys.contains(k) {
             keys.push(k.clone());
         }
