@@ -8,7 +8,7 @@ read through `ObjectStore`/`BlobSource`/`CommitGraph`; nothing is written. The o
 
 * **Merge base** (`merge_base`): ancestors of both commits, intersected, minus anything that is a strict ancestor of
   another common ancestor. Returns *all* best common ancestors sorted by id: empty for unrelated histories, several for
-  criss-cross (caller decides; recursive base merging is not done here). O(reachable commits) by default. With the
+  criss-cross (the repo layer merges them into a virtual base, see "Merge command"). O(reachable commits) by default. With the
   commit-graph cache (`.vcs/commit-graph`, see architecture.md) the walk paints down from both tips in generation order
   and only visits commits newer than the bases; the result is identical.
 * **Line diff** (`Algorithm::{Myers, Patience}`): Myers is the O(ND) shortest edit script (LCS-optimal). Patience
@@ -47,8 +47,12 @@ stores `new_blobs`, and moves the working tree/index/ref.
   remote-tracking head of `<branch>` (as last fetched, shown as `origin/<branch>`) instead; `vcs sync` prints this
   command when a branch has diverged.
 * Target already contained in head: "already up to date". Target descends from head: fast-forward (no commit).
-  Otherwise the merge base is computed; unrelated histories and criss-cross histories (several best bases) are
-  errors (recursive merge is not implemented). A dirty zone (staged or unstaged changes) refuses to start.
+  Otherwise the merge base is computed; unrelated histories are an error. Criss-cross histories (several best
+  bases) are merged recursively, as git's `recursive`/`ort` strategies do: the bases are merged with each other first
+  (pairwise; the merge base of that partial result is the best of its members' merge bases with the next base) and
+  the resulting tree is the base of the real merge. A conflict between the bases is not an error there: the marker
+  text becomes the content of the virtual base, exactly as in git. Only a file/directory conflict between the bases
+  is refused. The virtual base tree is written as ordinary objects that nothing references (gc removes them). A dirty zone (staged or unstaged changes) refuses to start.
 * Clean: a merge commit with two parents (`[ours, theirs]`), same zone, fresh change id, a one-update transaction;
   the working tree and index move first, the branch ref last.
 * Conflicts: nothing is lost. Merged files are written; each conflicted file is materialized with diff3 markers

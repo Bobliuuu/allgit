@@ -566,7 +566,7 @@ impl Repo {
         };
         let ours_root = self.commit_obj(&ours)?.root;
         let bases = self.merge_bases(&ours, &theirs)?;
-        let base = match bases.as_slice() {
+        match bases.as_slice() {
             [] => {
                 return msg(format!(
                     "refusing to merge unrelated histories ({label} shares no commit with {zone}/{branch})"
@@ -588,22 +588,16 @@ impl Repo {
                 return self.write_merge_commit(zone, &branch, ours, theirs, their_commit.root, message, author, &diff, &mut refs, &mut ix, msg_prefix);
             }
             [b] if *b == ours => return self.fast_forward(zone, &branch, Some(ours), Some(ours_root), theirs, &mut refs, &mut ix),
-            [_] if opts.ff_only => {
+            _ if opts.ff_only => {
                 return msg(format!(
                     "cannot fast-forward: {zone}/{branch} and {label} have diverged (--ff-only refuses to create a merge)\n\nOptions:\n  vcs merge {label}      (create a merge commit)\n  vcs rebase {label}     (replay your commits on top)"
                 ))
             }
-            [b] => *b,
-            many => {
-                let ids: Vec<String> = many.iter().map(|b| b.short()).collect();
-                return msg(format!(
-                    "criss-cross history: {zone}/{branch} and {label} have {} merge bases ({}); recursive merge is not supported",
-                    many.len(),
-                    ids.join(", ")
-                ));
-            }
-        };
-        let (base_root, their_root) = (self.commit_obj(&base)?.root, self.commit_obj(&theirs)?.root);
+            _ => {}
+        }
+        // One base: its tree. Several (criss-cross): the virtual merge of them, as git's recursive/ort.
+        let base_root = self.base_root_for(&prefix, &bases)?.expect("at least one merge base");
+        let their_root = self.commit_obj(&theirs)?.root;
         let mut tm = self.merge3_trees(&prefix, Some(base_root), Some(ours_root), Some(their_root))?;
         self.fd_preflight(&tm)?;
         if opts.squash && !tm.conflicts.is_empty() {

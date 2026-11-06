@@ -48,6 +48,7 @@ pub mod portable;
 pub mod prefetch;
 mod reachcache;
 pub mod rebase;
+mod recbase;
 pub mod rebase_todo;
 pub(crate) mod refsdelta;
 pub mod reftags;
