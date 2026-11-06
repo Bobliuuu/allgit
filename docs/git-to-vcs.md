@@ -144,7 +144,7 @@ Status: exact (same command and flags), renamed (other spelling, same meaning), 
 semantics differ as the notes say), missing (no equivalent; the notes name the native route).
 
 <!-- BEGIN GENERATED TABLE -->
-261 rows: 145 exact, 40 renamed, 32 different, 44 missing.
+261 rows: 148 exact, 40 renamed, 32 different, 41 missing.
 
 | git | vcs | status | notes | test |
 |---|---|---|---|---|
@@ -187,8 +187,8 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git diff main..feature` | `vcs git diff main feature` | renamed | as above | `history` |
 | `git diff HEAD` | `vcs git diff HEAD` | renamed | working tree against a revision, tracked files only | `history` |
 | `git diff -- f.txt` | `vcs git diff -- f.txt` | renamed | native `vcs diff` has no path filter; `vcs git diff` does | `history` |
-| `git diff --exit-code` | none | missing | use `vcs diff --name-only` and test for output | `basics` |
-| `git diff --numstat` | none | missing | use `vcs diff --stat` | translation |
+| `git diff --exit-code` | `vcs diff --exit-code` | exact | exit status 1 when there are differences, 0 when there are none | `basics` |
+| `git diff --numstat` | `vcs diff --numstat` | exact |  | `basics` |
 | `git diff main...feature` | `vcs git diff main...feature` | renamed | merge base of the two against the second; resolved by `vcs git diff` (native `vcs diff` has no revisions) | `ranges` |
 | `git commit -m "msg"` | `vcs commit -m msg` | exact | commits every zone that has staged changes, atomically | `basics` |
 | `git commit -a -m "msg"` | `vcs add <every modified or deleted tracked file> ; vcs commit -m msg` | exact |  | `basics` |
@@ -221,7 +221,7 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git rev-list --count main..feature` | `vcs rev-list --count main..feature` | exact |  | `ranges` |
 | `git rev-list --all` | `vcs rev-list --all` | exact | vcs commit ids, not git ids; same set and order | `ranges` |
 | `git shortlog -sn main..feature` | `vcs shortlog -s -n main..feature` | exact |  | `ranges` |
-| `git log -G regex` | none | missing | `vcs log -S string` or `vcs grep regex <rev>` | translation |
+| `git log -G v3` | `vcs log -n 1000000000 -G v3` | exact | Rust regex syntax; a line counts when it was added or removed in net (a moved line does not) | `history` |
 | `git show` | `vcs show` | exact |  | `history` |
 | `git show HEAD~1` | `vcs show HEAD~1` | exact |  | `history` |
 | `git show --stat HEAD` | `vcs show --stat HEAD` | exact |  | `history` |
