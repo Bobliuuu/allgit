@@ -256,7 +256,7 @@ rounds was refused with `another gc holds gc/lock` (dead holder, "What broke" it
 
 Four audits (two right after the kills; each is a fresh clone of the writers' zones plus fsck): 0 bad. At the end: 7,091 acked files, 0 missing,
 0 wrong, 61 last-wins files 0 mismatch, 5 big files ok, `fsck` ok, no locks. So a killed gc did not damage the store, writers continued, and
-the next gc ran. The leftover lease of a killed gc (rounds 2 and 5) is the part of item 4 that is not fixed. Run E for comparison (old
+the next gc ran. The leftover lease of a killed gc (rounds 2 and 5) was the part of item 4 that was not fixed at the time; it is fixed in #559 (10 min lease with a heartbeat). Run E for comparison (old
 binaries): 8 of 8 rounds refused, 5,738 acked files, 0 missing, packs grew to 1,731 without compaction.
 
 
@@ -292,7 +292,7 @@ Found by this run, in the order they were hit. Items 1 to 4 have a fix with a re
    lock, and the release also retries for about 8 s on `Unavailable` (a restarted server). Not fixed: a holder that is itself killed, or a server
    down for longer, still leaves the lease; an operator removes `gc/lock`. Run G repeats the chaos with the fixed binaries.
    (The first version of the harness also removed locks held by live admin clients; it now checks the pid.)
-5. **Server memory grows with time under load, no plateau seen** (not fixed, not root-caused). `vcs-server` RSS at the first and last
+5. **Server memory grows with time under load, no plateau seen** (mitigated in #563, see docs/known-limits.md; originally not root-caused). `vcs-server` RSS at the first and last
    quartile of the run: A 1.7 to 6.1 GiB (64 writers, 12 min), B 3.3 to 12.8 GiB (128, 12 min, peak 13.1). In C and D the eight restarts
    reset it (peaks 9.6 and 10.0 GiB). It is not packs or the manifest alone (1,500 to 2,000 packs). Could be a cache or allocator
    arena retention with 240 threads; `MALLOC_ARENA_MAX` and a heap profile are the next step.
@@ -313,7 +313,7 @@ Found by this run, in the order they were hit. Items 1 to 4 have a fix with a re
    item 3) against git 0.02 s.
 9. **`fsck` memory at 200k commits and 1M files is 12.6 GiB** (git: 0.8 GiB), 181 s (git 60 s). Local `gc --dry-run` 4.2 GiB. This is the
    "gc/fsck memory" known limit, now measured at 200k commits; the 1M-commit point is below.
-10. **Sporadic `untracked path ... would be overwritten` in `merge` / `publish --auto-merge` of slice clones** (observed, not root-caused):
+10. **Sporadic `untracked path ... would be overwritten` in `merge` / `publish --auto-merge` of slice clones** (root-caused and fixed in #557: a failed checkout or merge now removes the files it created; originally observed, not root-caused):
     1 in A, 19 in B, 73 in C, the path being a file another writer of the same zone published. The first failing call in the traces
     is a merge that fetched missing objects and then failed; later calls refuse because the file is now in the work tree but not in the
     index. Integrity was not affected (no acked write was lost), but a failed `merge` that leaves
