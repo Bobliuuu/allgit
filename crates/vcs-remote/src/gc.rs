@@ -60,6 +60,8 @@ pub enum GcError {
     Locked(u64),
     #[error("lost the {LOCK_KEY} lease (taken over or removed while sweeping); stopped before the next delete, re-run gc")]
     LeaseLost,
+    #[error("a backup holds a GC safe point ({0}); gc and compaction wait until it is released or expires (docs/backup-restore.md)")]
+    BackupHold(String),
     #[error("remote is damaged, refusing to collect: {0}")]
     Damaged(String),
     #[error(transparent)]
@@ -173,11 +175,11 @@ enum Unit {
 }
 
 /// A consistent-enough view of what the remote holds, rebuilt for every phase.
-struct View<'a> {
-    b: &'a dyn Backend,
+pub(crate) struct View<'a> {
+    pub(crate) b: &'a dyn Backend,
     /// stem -> index (None: a `.pack` with no usable `.idx`)
-    packs: BTreeMap<String, Option<PackIndex>>,
-    loose: Vec<ObjectId>,
+    pub(crate) packs: BTreeMap<String, Option<PackIndex>>,
+    pub(crate) loose: Vec<ObjectId>,
     /// object -> first pack holding it
     loc: HashMap<ObjectId, String>,
     /// recently decoded v3 blocks, by (pack stem, block offset)
@@ -228,7 +230,7 @@ fn parse_key(k: &str) -> Option<ObjectId> {
 }
 
 impl<'a> View<'a> {
-    fn load(b: &'a dyn Backend) -> Result<View<'a>, GcError> {
+    pub(crate) fn load(b: &'a dyn Backend) -> Result<View<'a>, GcError> {
         let loose: Vec<ObjectId> = b.list(OBJECT_PREFIX)?.iter().filter_map(|k| parse_key(k)).collect();
         let mut packs: BTreeMap<String, Option<PackIndex>> = BTreeMap::new();
         for k in b.list(PACK_PREFIX)? {
@@ -265,7 +267,7 @@ impl<'a> View<'a> {
             .unwrap_or_default()
     }
 
-    fn read(&self, id: &ObjectId) -> Result<Option<Object>, GcError> {
+    pub(crate) fn read(&self, id: &ObjectId) -> Result<Option<Object>, GcError> {
         let bytes = if let Some(stem) = self.loc.get(id) {
             let idx = self.packs[stem]
                 .as_ref()
@@ -491,7 +493,7 @@ impl Drop for LockGuard<'_> {
     }
 }
 
-fn lock_expiry(data: &[u8]) -> u64 {
+pub(crate) fn lock_expiry(data: &[u8]) -> u64 {
     String::from_utf8_lossy(data)
         .rsplit(' ')
         .next()
@@ -636,6 +638,8 @@ pub fn remote_gc_with(
         None
     } else {
         let g = acquire(b, &opts.owner, opts.lock_ttl_ms, now)?;
+        // Lock first, then look for a backup hold; a backup writes its hold, then looks at the lock: one of us sees the other.
+        crate::dr::check_no_hold(b, now)?;
         // We are the only sweeper: any tombstone now present is left over from a crashed one.
         for k in b.list(TOMB_PREFIX)? {
             b.delete(&k)?;
@@ -902,6 +906,10 @@ fn sweep(
         }
         b.delete(&tomb_of(&u))?;
         hook(GcPoint::AfterDelete);
+    }
+    if !rep.deleted.is_empty() || !rep.packs_rewritten.is_empty() {
+        // Best effort: the sweep is done, a failed note must not turn it into an error.
+        let _ = crate::dr::record_safe_point(b, rep.deleted.len() as u64, rep.deleted_packs.len() as u64);
     }
     Ok(rep)
 }
