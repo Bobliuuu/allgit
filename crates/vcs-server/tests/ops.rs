@@ -222,15 +222,15 @@ fn metrics_auth_and_counters_move() {
     let put = http(
         a,
         "PUT",
-        "/v1/o/misc/x",
+        "/v1/o/tx/x",
         Some(WRITER),
         "If-None-Match: *\r\nContent-Length: 3\r\n\r\nabc",
     );
     assert_eq!(put.0, 201, "{put:?}");
-    assert_eq!(http(a, "GET", "/v1/o/misc/x", Some(WRITER), "").0, 429);
+    assert_eq!(http(a, "GET", "/v1/o/tx/x", Some(WRITER), "").0, 429);
     // backend errors: 3 attempts fail (retries=2) -> one unavailable error, 2 retries; admin is not limited
     be.fail.store(3, Ordering::SeqCst);
-    assert_eq!(http(a, "GET", "/v1/o/misc/x", Some(ADMIN), "").0, 503);
+    assert_eq!(http(a, "GET", "/v1/o/tx/x", Some(ADMIN), "").0, 503);
     let m1 = metrics(a);
     let d = |k: &str| m1[k] - m0.get(k).copied().unwrap_or(0.0);
     assert_eq!(req_count(&m1, "GET", 404, "write") - req_count(&m0, "GET", 404, "write"), 1.0);
@@ -454,7 +454,7 @@ fn graceful_shutdown_waits_for_in_flight_requests_and_flushes_audit() {
     let mut s = TcpStream::connect(a).unwrap();
     write!(
         s,
-        "PUT /v1/o/misc/z HTTP/1.1\r\nConnection: close\r\nAuthorization: Bearer {WRITER}\r\nIf-None-Match: *\r\nContent-Length: 4\r\n\r\nab"
+        "PUT /v1/o/tx/z HTTP/1.1\r\nConnection: close\r\nAuthorization: Bearer {WRITER}\r\nIf-None-Match: *\r\nContent-Length: 4\r\n\r\nab"
     )
     .unwrap();
     std::thread::sleep(Duration::from_millis(100));
