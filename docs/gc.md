@@ -15,7 +15,7 @@ those are young and survive the grace check. The one hole is a dedup hit: `put` 
 nothing, so an old orphan that a new commit re-adopts stays old. **A destructive sweep therefore requires `put` to
 refresh the object's timestamp on a dedup hit (or the remote equivalent), and a lease for any writer that can outlive
 the grace period.** With those two, deleting never removes an object a live writer is about to reference.
-If the grace period is wrong (a writer stalls longer than it), data can be lost; this is why the sweep stays unimplemented.
+If the grace period is wrong (a writer stalls longer than it), data can be lost; this is why the sweep refuses a grace period at or below the touch-on-dedup threshold.
 
 ## Implemented
 

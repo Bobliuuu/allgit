@@ -77,7 +77,6 @@ From the final scoreboard ([research/command-scoreboard.md](research/command-sco
 - `bundle verify` is a header-only check by default (like git). A flipped
   byte inside the pack body passes it; `--full`, `fetch` and `clone` hash every
   object.
-- `vcs status | head` panics on a broken pipe.
 
 ## Other
 
