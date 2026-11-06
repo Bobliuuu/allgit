@@ -31,6 +31,26 @@ pub const KEYS: &[(&str, &str, &str)] = &[
         "on/off: detect renames in merge/rebase (default off)",
     ),
     (
+        "rerere.enabled",
+        "VCS_RERERE_ENABLED",
+        "on/off: record conflict resolutions and replay them when the same conflict comes up again (default: on when .vcs/rr-cache exists; docs/rerere.md)",
+    ),
+    (
+        "rerere.autoUpdate",
+        "VCS_RERERE_AUTOUPDATE",
+        "on/off: stage (and mark resolved) a file whose conflict rerere replayed (default off)",
+    ),
+    (
+        "gc.rerereResolved",
+        "VCS_GC_RERERERESOLVED",
+        "days a recorded resolution is kept after its last use by `vcs rerere gc` (default 60)",
+    ),
+    (
+        "gc.rerereUnresolved",
+        "VCS_GC_RERERERUNRESOLVED",
+        "days a conflict that was never resolved is kept by `vcs rerere gc` (default 15)",
+    ),
+    (
         "profile.autofetch",
         "VCS_AUTOFETCH",
         "on/off: fetch a zone that `--auto` skipped when a command names it or a path in it (default on; docs/zone-profile.md)",
@@ -103,6 +123,15 @@ fn msg<T>(s: impl Into<String>) -> Result<T, Error> {
     Err(Error::Msg(s.into()))
 }
 
+/// on/off in the spellings people use (git's true/false, yes/no, 1/0 included).
+pub fn parse_bool(v: &str) -> Option<bool> {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "on" | "true" | "yes" | "1" => Some(true),
+        "off" | "false" | "no" | "0" => Some(false),
+        _ => None,
+    }
+}
+
 pub fn validate_key(key: &str) -> Result<(), Error> {
     if KEYS.iter().any(|k| k.0 == key) {
         Ok(())
@@ -120,6 +149,10 @@ pub fn validate_value(key: &str, value: &str) -> Result<(), Error> {
         "core.fsync" if !matches!(value, "refs" | "default") => msg("core.fsync must be 'refs' or 'default'"),
         "merge.renames" if !matches!(value, "on" | "off") => msg("merge.renames must be 'on' or 'off'"),
         "merge.structural" if !matches!(value, "on" | "off") => msg("merge.structural must be 'on' or 'off'"),
+        "rerere.enabled" | "rerere.autoUpdate" if parse_bool(value).is_none() => msg(format!("{key} must be 'on' or 'off'")),
+        "gc.rerereResolved" | "gc.rerereUnresolved" if value.trim().parse::<u64>().is_err() => {
+            msg(format!("{key} must be a non-negative number of days"))
+        }
         "log.default-format" if !matches!(value, "full" | "oneline") => msg("log.default-format must be 'full' or 'oneline'"),
         "lock.releaseOnPublish" if !matches!(value, "on" | "off") => msg("lock.releaseOnPublish must be 'on' or 'off'"),
         "lock.offline" if !matches!(value, "warn" | "refuse") => msg("lock.offline must be 'warn' or 'refuse'"),
@@ -311,6 +344,36 @@ impl Config {
             Some("off") => Ok(false),
             Some(o) => msg(format!("merge.structural must be 'on' or 'off', got '{o}'")),
         }
+    }
+
+    /// rerere.enabled / rerere.autoUpdate for `Repo::set_rerere`. An invalid value is an error.
+    pub fn rerere(&self) -> Result<vcs_repo::rerere::RerereCfg, Error> {
+        let flag = |k: &str| -> Result<Option<bool>, Error> {
+            match self.get(k) {
+                None => Ok(None),
+                Some(v) => parse_bool(&v)
+                    .map(Some)
+                    .ok_or_else(|| Error::Msg(format!("{k} must be 'on' or 'off', got '{v}'"))),
+            }
+        };
+        Ok(vcs_repo::rerere::RerereCfg {
+            enabled: flag("rerere.enabled")?,
+            autoupdate: flag("rerere.autoUpdate")?.unwrap_or(false),
+        })
+    }
+
+    /// gc.rerereResolved / gc.rerereUnresolved in days (git's defaults 60 and 15).
+    pub fn rerere_gc_days(&self) -> Result<(u64, u64), Error> {
+        let days = |k: &str, d: u64| -> Result<u64, Error> {
+            match self.get(k) {
+                None => Ok(d),
+                Some(v) => v
+                    .trim()
+                    .parse()
+                    .or_else(|_| msg(format!("{k} must be a non-negative number of days, got '{v}'"))),
+            }
+        };
+        Ok((days("gc.rerereResolved", 60)?, days("gc.rerereUnresolved", 15)?))
     }
 
     /// gc.autoPackLimit, default 6700; 0 disables. An invalid value is an error.

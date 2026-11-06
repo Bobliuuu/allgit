@@ -123,6 +123,7 @@ impl Repo {
             store,
             structural: true,
             renames: false,
+            rerere: Default::default(),
             use_commit_graph: true,
             use_reach_cache: true,
             index_racy_ns: self.index_racy_ns,

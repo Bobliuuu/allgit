@@ -13,6 +13,8 @@ pub enum More {
     /// Binary-search a zone's history for the commit that introduced a bug
     #[command(subcommand)]
     Bisect(crate::bisect::BisectCmd),
+    /// Reuse recorded conflict resolutions (rerere.enabled; docs/rerere.md)
+    Rerere(crate::rerere_cmd::RerereArgs),
     /// Search tracked files (working tree, or a revision) for a regular expression
     Grep(crate::grep::GrepArgs),
     /// Name a commit after the nearest tag behind it
@@ -53,6 +55,7 @@ pub fn dispatch(cmd: &More, json: bool) -> Result<(), Error> {
     match cmd {
         More::Hook(c) => crate::hooks::run(c),
         More::Bisect(c) => crate::bisect::run(c),
+        More::Rerere(a) => crate::rerere_cmd::run(a),
         More::Grep(a) => crate::grep::run(a),
         More::Describe(a) => crate::describe::run(a),
         More::Archive(a) => crate::archive::run(a),

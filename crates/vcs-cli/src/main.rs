@@ -35,6 +35,7 @@ mod plumb;
 mod quick;
 mod rebase_i;
 mod remote;
+mod rerere_cmd;
 mod rewrite_cmd;
 mod shelve_cmd;
 mod signing_cmd;
@@ -1119,6 +1120,13 @@ fn open() -> Result<(Repo, PathBuf), Error> {
     Ok((repo, cwd))
 }
 
+/// `open()` for the commands that can stop on conflicts: also applies `rerere.*` from the config.
+fn open_rr() -> Result<(Repo, PathBuf), Error> {
+    let (mut repo, cwd) = open()?;
+    repo.set_rerere(config::Config::load()?.rerere()?);
+    Ok((repo, cwd))
+}
+
 pub(crate) fn zone_of_cwd(repo: &Repo, cwd: &Path, explicit: Option<String>) -> Result<String, Error> {
     if let Some(a) = explicit {
         return Ok(a);
@@ -1796,7 +1804,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             ff_only,
             message,
         } => {
-            let (mut repo, cwd) = open()?;
+            let (mut repo, cwd) = open_rr()?;
             repo.set_structural(!no_structural && config::Config::load()?.structural()?);
             repo.set_renames(renames || config::Config::load()?.renames()?);
             if abort {
@@ -1847,7 +1855,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             }
         }
         Cmd::CherryPick { revs, mainline, zone } => {
-            let (repo, cwd) = open()?;
+            let (repo, cwd) = open_rr()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
             if revs.len() == 1 && !revs[0].contains("..") {
                 let out = repo.cherry_pick_mainline(&zone, &revs[0], mainline, author()?)?;
@@ -1874,7 +1882,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             }
         }
         Cmd::Revert { rev, zone, no_commit } => {
-            let (repo, cwd) = open()?;
+            let (repo, cwd) = open_rr()?;
             let zone = zone_of_cwd(&repo, &cwd, zone)?;
             if no_commit {
                 match repo.revert_no_commit(&zone, &rev, author()?)? {
@@ -1908,7 +1916,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             assist_timeout,
             no_assist,
         } => {
-            let (mut repo, cwd) = open()?;
+            let (mut repo, cwd) = open_rr()?;
             repo.set_structural(!no_structural && config::Config::load()?.structural()?);
             repo.set_renames(renames || config::Config::load()?.renames()?);
             let merges: Option<bool> = match rebase_merges.as_deref() {
