@@ -221,6 +221,53 @@ structure valid (a commit time, a Bloom filter byte, a reach bit) is found only 
 check; a graph that a query finds self-contradicting is deleted and rebuilt on next use. Test hook:
 `VCS_CACHE_EAGER_VERIFY_MAX` (bytes) changes the size up to which a commit-graph is verified completely at open (default 4 MiB).
 
+## Streaming publish (bounded memory; trillion box, i4i.8xlarge, release, single runs under `flock /tmp/box-timing.lock`)
+
+Before, a packed publish (`Publisher::collect_packed`, crates/vcs-remote/src/protocol.rs) held every new object's encoding in one
+`Vec`, then `split_packs` and `build_pack` built every pack up front: about 2.5x the data, 10.8 KB per commit anonymous.
+Now Collect keeps only `(id, kind, encoded length)` per object (64 bytes) and buffers encodings up to a bound
+(`VCS_PUBLISH_MEM_BYTES` or `Publisher::with_pack_mem`, default 1 GiB). Past the bound an object is re-read from the local store
+(`get_encoded`, in parallel) when its pack is built. Each pack (`max_pack_bytes`, 256 MiB) is built in its `PutPack` step and dropped
+after its index is up. Peak is about the bound plus two packs plus 64 bytes per new object, whatever the transaction size.
+Same order, same format: the pack files are byte-identical for every bound (test `stream_publish.rs`; on the box the sha256 over
+all 16 packs of the 1M-commit publish is the same for the old binary (second run) and the new one at bounds of 256 MiB, 1 GiB and
+8 GiB). Caveat: the very first publish after an import wrote a different pack set than the later ones, for the old binary at 1M
+and for the new one at 10M (the repository's own state changes at its first publish; not investigated), so old-vs-new byte
+identity is shown on later publishes only. No format change, no gate: old readers read the same packs.
+
+`gen.py deep 1000000` (4.0M objects, `.vcs` 4.3 GB), first `vcs publish` to an empty directory remote, `/usr/bin/time` and
+`RssAnon` sampled every 0.5 s (`scripts/scaling/anon_peak.sh`). MEASURED, single runs; the first run of each binary hit a cold page
+cache and a busy box (other agents' jobs), so only the warm runs compare; differences under 20 percent are noise.
+
+| run | wall | anonymous peak |
+|---|---|---|
+| old (parent commit), cold | 267 s | 10.7 GB |
+| old, warm | 44.8 s | 10.7 GB |
+| new, default 1 GiB bound, cold | 114 s | 2.9 GB |
+| new, default 1 GiB bound, warm | 42.9 s | 2.9 GB |
+| new, bound 8 GiB (everything buffered) | 42.3 s | 6.7 GB |
+| new, bound 256 MiB | 40.3 s | 1.9 GB |
+
+10,000,000 commits: first publish of a 10,000,000-commit deep repository (40M objects, `.vcs` 44.6 GB, 158 packs, 42.9 GB on the remote), same box,
+same method. The old binary is the parent commit; MEASURED, one run each, new first (so the old run had the warmer page cache):
+
+| run | wall | anonymous peak |
+|---|---|---|
+| old | 771 s | **104.5 GB** (101-106 GiB reported before) |
+| new, 1 GiB bound | 803 s | **9.9 GB** (10x less) |
+
+Wall time is within noise (4 percent apart, one run each; the new run was first and cold). The 9.9 GB at 10M against 2.9 GB at 1M
+is the O(n) part: the walk's `known`/`done` id sets (the same on both paths) and 64 bytes per object of plan, about 1 KB per commit.
+Streaming removed the 10 KB per commit of object data, not the id sets (a competing system stays under 15 GiB here; bounding the
+id sets would need a disk-backed set).
+
+Reading: no slowdown at 1M commits (42.9 s against 44.8 s; the re-read of what is past the bound is hidden by building the
+packs on several threads and by not allocating 10 GB). The remaining O(n) memory is the walk's own `known`/`done` id sets and the
+64-byte plan entries, not data. #574: every `len as u32` in the pack writers (`build_pack*`, `write_pack_streaming`) is now a checked
+conversion; an object of 4 GiB or more, or more than 2^32 entries, returns `StoreError::TooLarge` and writes nothing
+(`try_build_pack*` return it; the old names panic with that message and are kept for tests). Single run each; the mid-size
+bound runs were not repeated.
+
 ## Designs and open work
 
 1. **Manifest write fan-in (findings 6, 12). Server side DONE (#452).** The paragraph below is the original analysis; what is built is the reconciliation of stale writes inside `vcs-server` (`groupcommit.rs`), which validates and stores the merged manifest by CAS on the current tag; the per-zone sharded protocol remains the answer for publishers that write the store directly. One key admits one winner per round trip, so throughput cannot grow with
