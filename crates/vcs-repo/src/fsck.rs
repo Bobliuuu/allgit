@@ -42,52 +42,73 @@ fn commit_fact(zone: u32) -> u64 {
     3 | ((zone as u64) << 2)
 }
 
-/// Sorted ids with an interpolation lookup (ids are blake3 outputs: the top 64 bits are uniform).
-struct IdSet(Vec<ObjectId>);
+/// Sorted ids with a bucket index: ids are blake3 outputs, so the top bits spread them evenly and a lookup reads
+/// `starts[bucket]`, `starts[bucket + 1]` and a handful of adjacent ids (two or three cache misses, where a binary
+/// search over 40M ids takes about fifteen dependent ones: that was 70 percent of fsck).
+struct IdSet {
+    ids: Vec<ObjectId>,
+    bits: u32,
+    starts: Vec<usize>,
+}
 
 impl IdSet {
-    fn find(&self, id: &ObjectId) -> Option<usize> {
-        let ids = &self.0;
+    fn new(ids: Vec<ObjectId>) -> Self {
         let n = ids.len();
-        if n == 0 {
-            return None;
+        let mut bits = 0u32;
+        while bits < 40 && (1usize << bits) * 4 < n {
+            bits += 1;
         }
-        let k = u64::from_be_bytes(id.as_bytes()[..8].try_into().expect("8 bytes"));
-        let g = ((k as u128 * n as u128) >> 64) as usize;
-        let (lo, hi);
-        if ids[g] < *id {
-            let mut l = g + 1;
-            let mut step = 8;
-            hi = loop {
-                let h = l + step;
-                if h >= n {
-                    break n;
-                }
-                if ids[h - 1] >= *id {
-                    break h;
-                }
-                l = h;
-                step *= 2;
-            };
-            lo = l;
-        } else {
-            let mut h = g + 1;
-            let mut step = 8;
-            lo = loop {
-                if h <= step {
-                    break 0;
-                }
-                let l = h - step;
-                if ids[l] < *id {
-                    break l + 1;
-                }
-                h = l + 1;
-                step *= 2;
-            };
-            hi = h;
+        let mut set = IdSet {
+            ids,
+            bits,
+            starts: vec![0; (1usize << bits) + 1],
+        };
+        for i in 0..n {
+            let b = set.bucket(&set.ids[i]);
+            set.starts[b + 1] += 1;
         }
-        ids[lo..hi].binary_search(id).ok().map(|i| lo + i)
+        for b in 0..(1usize << bits) {
+            set.starts[b + 1] += set.starts[b];
+        }
+        set
     }
+
+    fn bucket(&self, id: &ObjectId) -> usize {
+        if self.bits == 0 {
+            return 0;
+        }
+        (u64::from_be_bytes(id.as_bytes()[..8].try_into().expect("8 bytes")) >> (64 - self.bits)) as usize
+    }
+
+    fn find(&self, id: &ObjectId) -> Option<usize> {
+        let b = self.bucket(id);
+        let (lo, hi) = (self.starts[b], self.starts[b + 1]);
+        self.ids[lo..hi].binary_search(id).ok().map(|i| lo + i)
+    }
+
+    /// Start loading the bucket table entry for `id` (first step of a lookup issued a little later).
+    #[inline]
+    fn prefetch_bucket(&self, id: &ObjectId) {
+        prefetch(self.starts.as_ptr().wrapping_add(self.bucket(id)).cast());
+    }
+
+    /// Start loading the ids of `id`'s bucket (needs the bucket table entry, so call after `prefetch_bucket`).
+    #[inline]
+    fn prefetch_ids(&self, id: &ObjectId) {
+        let b = self.bucket(id);
+        prefetch(self.ids.as_ptr().wrapping_add(self.starts[b]).cast());
+    }
+}
+
+#[inline]
+fn prefetch(p: *const i8) {
+    #[cfg(target_arch = "x86_64")]
+    // SAFETY: a prefetch is a hint; it never faults, whatever the address.
+    unsafe {
+        core::arch::x86_64::_mm_prefetch(p, core::arch::x86_64::_MM_HINT_T0);
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    let _ = p;
 }
 
 /// Zone names, interned: a commit record carries the small number.
@@ -201,8 +222,18 @@ impl Ctx<'_> {
                 commit_fact(zone)
             }
             Object::Tree(t) => {
-                for e in t.entries() {
-                    self.exists(&e.id, acc, || format!("tree {id}: missing entry {} -> {}", e.name, e.id));
+                // Look the entries up a few at a time: their bucket tables and ids are fetched from memory together
+                // instead of one dependent miss after the other.
+                for part in t.entries().chunks(16) {
+                    for e in part {
+                        self.ids.prefetch_bucket(&e.id);
+                    }
+                    for e in part {
+                        self.ids.prefetch_ids(&e.id);
+                    }
+                    for e in part {
+                        self.exists(&e.id, acc, || format!("tree {id}: missing entry {} -> {}", e.name, e.id));
+                    }
                 }
                 OTHER
             }
@@ -267,7 +298,7 @@ impl Ctx<'_> {
         if self.facts[idx].load(Ordering::Acquire) != UNSEEN {
             return;
         }
-        let id = &self.ids.0[idx];
+        let id = &self.ids.ids[idx];
         let fact = match self.repo.store.get(id) {
             Err(e) => {
                 acc.problems.push(format!("{id}: {e}"));
@@ -332,12 +363,12 @@ impl Repo {
         let ctx = Ctx {
             repo: self,
             facts: (0..ids.len()).map(|_| AtomicU64::new(UNSEEN)).collect(),
-            ids: IdSet(ids),
+            ids: IdSet::new(ids),
             zones: Zones::default(),
         };
         // Packs: hash + decode in pack order on every core. Then whatever no pack delivered, through `store.get`.
         let (pack_problems, mut accs) = self.store.scan_packs(Acc::default, |acc, id, enc| ctx.packed(id, enc, acc));
-        accs.extend(par_items(ctx.ids.0.len(), fsck_batch(), &|i, acc| ctx.fallback(i, acc)));
+        accs.extend(par_items(ctx.ids.ids.len(), fsck_batch(), &|i, acc| ctx.fallback(i, acc)));
 
         // The remote closure is only worth computing once something is found missing.
         let mut refetchable: Option<BTreeSet<ObjectId>> = None;
@@ -410,8 +441,8 @@ impl Repo {
                     if f != UNSEEN && f & 3 == 3 && (f >> 2) as u32 != zone {
                         zone_problems.push(format!(
                             "commit {}: parent {} is in zone {} not {}",
-                            ctx.ids.0[idx],
-                            ctx.ids.0[pi],
+                            ctx.ids.ids[idx],
+                            ctx.ids.ids[pi],
                             ctx.zones.name((f >> 2) as u32),
                             ctx.zones.name(zone)
                         ));
