@@ -580,7 +580,8 @@ pub(crate) fn acquire<'a>(b: &'a dyn Backend, owner: &str, ttl_ms: u64, now: u64
     let Some(cur) = b.get(LOCK_KEY)? else {
         return Err(GcError::Locked(0)); // vanished between the two calls: let the caller retry
     };
-    let exp = lock_expiry(&cur.data);
+    // Clamp: a lease claiming to outlive our own TTL (planted or corrupt, e.g. u64::MAX) cannot wedge gc forever.
+    let exp = lock_expiry(&cur.data).min(now.saturating_add(ttl_ms));
     if exp > now && !local {
         return Err(GcError::Locked(exp));
     }
