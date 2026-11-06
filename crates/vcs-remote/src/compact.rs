@@ -220,6 +220,7 @@ pub fn compact_with(
     quirks: CompactQuirks,
     hook: &mut dyn FnMut(CompactPoint),
 ) -> Result<CompactReport, GcError> {
+    crate::format::check(b)?;
     let rep = CompactReport {
         dry_run: opts.dry_run,
         ..Default::default()
@@ -271,10 +272,6 @@ fn merge_packs(
             rep.merges.push((g, String::new()));
         }
         return Ok(rep);
-    }
-    if !groups.is_empty() && matches!(opts.format, PackFormat::V3 | PackFormat::V4) {
-        // v3/v4 packs are unreadable to older binaries: raise the minimum-reader marker before writing one (#567).
-        crate::format::raise(b, crate::format::LEVEL_COMPACT)?;
     }
     let by_stem: BTreeMap<&str, &(PackInfo, PackIndex)> = loaded.iter().map(|l| (l.0.stem.as_str(), l)).collect();
     for g in groups {
@@ -328,6 +325,11 @@ fn merge_packs(
             run_deletes(hook)?;
         }
         // C2: output pack, then index (the commit point).
+        if matches!(opts.format, PackFormat::V3 | PackFormat::V4) {
+            // v3/v4 packs are unreadable to older binaries: raise the minimum-reader marker (after the inputs
+            // verified, before the first byte of the new pack is written; issue #567).
+            crate::format::raise(b, crate::format::LEVEL_COMPACT)?;
+        }
         let (pk, ik) = (format!("{new_stem}.pack"), format!("{new_stem}.idx"));
         if quirks.idx_before_pack {
             b.put_if_absent(&ik, &built.idx)?;
