@@ -417,6 +417,16 @@ pub fn fuzz_entry(repo: Repo, state_dir: PathBuf, cmds: &[u8]) {
     }
 }
 
+fn main() -> std::process::ExitCode {
+    match run() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(m) => {
+            eprintln!("fatal: git-remote-allgit: {m}");
+            std::process::ExitCode::from(1)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -426,21 +436,15 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let sha = "a".repeat(40);
         let id = ObjectId::from_bytes([7; 32]).to_hex();
-        fs::write(d.path().join("marks"), format!(":5 {sha}\n:18446744073709551615 {sha}\n:99999999999 {sha}\n")).unwrap();
+        fs::write(
+            d.path().join("marks"),
+            format!(":5 {sha}\n:18446744073709551615 {sha}\n:99999999999 {sha}\n"),
+        )
+        .unwrap();
         fs::write(d.path().join("pending"), format!("c {id} :18446744073709551615\nc {id} :7\n")).unwrap();
         let st = State::load(d.path().to_path_buf()).unwrap();
         assert_eq!(st.marks.keys().copied().collect::<Vec<_>>(), vec![5]);
         assert_eq!(st.max_mark(), 7, "only the sane pending mark counts");
         assert_eq!(st.pending.len(), 1);
-    }
-}
-
-fn main() -> std::process::ExitCode {
-    match run() {
-        Ok(()) => std::process::ExitCode::SUCCESS,
-        Err(m) => {
-            eprintln!("fatal: git-remote-allgit: {m}");
-            std::process::ExitCode::from(1)
-        }
     }
 }

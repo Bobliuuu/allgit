@@ -98,7 +98,13 @@ fn encode_ops(ops: &[Op]) -> Vec<u8> {
     for op in ops {
         match op {
             Op::Set(p, e) => {
-                w.u8(1).str(p).u8(e.mode as u8).id(&e.id).varint(e.size).varint(e.mtime_ns).varint(e.ctime_ns);
+                w.u8(1)
+                    .str(p)
+                    .u8(e.mode as u8)
+                    .id(&e.id)
+                    .varint(e.size)
+                    .varint(e.mtime_ns)
+                    .varint(e.ctime_ns);
             }
             Op::Remove(p) => {
                 w.u8(2).str(p);
@@ -200,7 +206,8 @@ fn io_err(p: &Path, e: std::io::Error) -> Error {
 
 /// The valid frames of a log file's bytes for a base `(gen, sum)`: `(payload ranges, end offset)`.
 /// `None` when the header is missing, short or names another base.
-fn scan_log(b: &[u8], gen: u64, base_sum: u64) -> Option<(Vec<(usize, usize, u64)>, usize)> {
+type LogScan = (Vec<(usize, usize, u64)>, usize);
+fn scan_log(b: &[u8], gen: u64, base_sum: u64) -> Option<LogScan> {
     if b.len() < LOG_HDR || b[..LOG_HDR] != log_header(gen, base_sum) {
         return None;
     }
@@ -266,6 +273,7 @@ impl IndexImage {
     }
 
     /// A single-file image over `bytes` (any layout), no log. For callers that hold bytes.
+    #[allow(dead_code)]
     pub(crate) fn from_bytes(bytes: &[u8]) -> Result<IndexImage> {
         if Base5::is_agi5(bytes) {
             Ok(Self::from_backing(Backing::V5(Base5::parse(Bytes::Vec(bytes.to_vec()))?)))
@@ -354,7 +362,11 @@ impl IndexImage {
     }
 
     /// Logged edits with keys in `[lo, hi)` (`None` = unbounded), in order; `None` values are removals.
-    pub(crate) fn overlay_range<'a>(&'a self, lo: Option<&str>, hi: Option<&str>) -> impl Iterator<Item = (&'a String, &'a Option<IndexEntry>)> + 'a {
+    pub(crate) fn overlay_range<'a>(
+        &'a self,
+        lo: Option<&str>,
+        hi: Option<&str>,
+    ) -> impl Iterator<Item = (&'a String, &'a Option<IndexEntry>)> + 'a {
         use std::ops::Bound::{Excluded, Included, Unbounded};
         let l = lo.map_or(Unbounded, |l| Included(l.to_owned()));
         let h = hi.map_or(Unbounded, |h| Excluded(h.to_owned()));
@@ -366,6 +378,7 @@ impl IndexImage {
     }
 
     /// Edits waiting in the log.
+    #[allow(dead_code)]
     pub(crate) fn pending_ops(&self) -> usize {
         self.nops
     }
@@ -426,7 +439,7 @@ impl IndexImage {
         let mut out = Vec::new();
         let (lo, hi) = (format!("{prefix}/"), format!("{prefix}0")); // '0' == '/' + 1
         if prefix.is_empty() {
-            return Ok(self.list()?);
+            return self.list();
         }
         if let Some(e) = self.get(prefix)? {
             out.push((prefix.to_owned(), e));
@@ -530,7 +543,9 @@ impl IndexImage {
     /// that still want bytes. Free when there is no log.
     pub(crate) fn flat(&self) -> Result<Cow<'_, [u8]>> {
         match &self.backing {
-            Backing::V5(b) if self.overlay.is_empty() && self.tree_ops.is_empty() && self.written_ns == b.written_ns => Ok(Cow::Borrowed(b.raw())),
+            Backing::V5(b) if self.overlay.is_empty() && self.tree_ops.is_empty() && self.written_ns == b.written_ns => {
+                Ok(Cow::Borrowed(b.raw()))
+            }
             Backing::Legacy(_, raw) if self.overlay.is_empty() && self.tree_ops.is_empty() => Ok(Cow::Borrowed(raw)),
             _ => Ok(Cow::Owned(self.to_index()?.encode())),
         }
@@ -538,6 +553,7 @@ impl IndexImage {
 
     /// The mapped base when the log is empty and `written_ns` is the base's: lets scanners work on
     /// the file directly.
+    #[allow(dead_code)]
     pub(crate) fn pristine_base(&self) -> Option<&Base5> {
         match &self.backing {
             Backing::V5(b) if self.overlay.is_empty() && self.tree_ops.is_empty() && self.written_ns == b.written_ns => Some(b),
@@ -569,7 +585,9 @@ impl IndexImage {
                 len: fresh.len,
             });
         }
-        let Backing::V5(b) = &self.backing else { unreachable!("fold covers legacy") };
+        let Backing::V5(b) = &self.backing else {
+            unreachable!("fold covers legacy")
+        };
         let (gen, sum) = (b.gen, b.sums_sum());
         let payload = encode_ops(&ops);
         let seq = self.seq + 1;
@@ -604,13 +622,16 @@ impl IndexImage {
 
     fn write_frame(&self, logp: &Path, gen: u64, base_sum: u64, frame: &[u8]) -> Result<()> {
         if self.log_live {
-            use std::os::unix::fs::FileExt;
-            let f = std::fs::OpenOptions::new().write(true).open(logp).map_err(|e| io_err(logp, e))?;
+            use std::io::{Seek, SeekFrom};
+            let mut f = std::fs::OpenOptions::new().write(true).open(logp).map_err(|e| io_err(logp, e))?;
             // drop a torn tail left by an earlier crash, then write exactly at the valid end
             if f.metadata().map_err(|e| io_err(logp, e))?.len() > self.log_end {
                 f.set_len(self.log_end).map_err(|e| io_err(logp, e))?;
             }
-            return f.write_all_at(frame, self.log_end).map_err(|e| io_err(logp, e));
+            return f
+                .seek(SeekFrom::Start(self.log_end))
+                .and_then(|_| f.write_all(frame))
+                .map_err(|e| io_err(logp, e));
         }
         // no log for this base yet (or a stale one): header and first frame appear together
         let mut buf = Vec::with_capacity(LOG_HDR + frame.len());
@@ -676,7 +697,9 @@ impl Base5 {
             let per = n.div_ceil(threads);
             let parts: Vec<Result<Vec<_>>> = std::thread::scope(|sc| {
                 let one = &one;
-                let hs: Vec<_> = (0..threads).map(|t| sc.spawn(move || one((t * per).min(n), ((t + 1) * per).min(n)))).collect();
+                let hs: Vec<_> = (0..threads)
+                    .map(|t| sc.spawn(move || one((t * per).min(n), ((t + 1) * per).min(n))))
+                    .collect();
                 hs.into_iter().map(|h| h.join().expect("index decode worker panicked")).collect()
             });
             let mut out = Vec::with_capacity(n);
@@ -711,7 +734,8 @@ mod tests {
     fn base(n: u32) -> Index {
         let mut ix = Index::default();
         for k in 0..n {
-            ix.insert(&format!("d{:02}/f{k:05}.txt", k % 20), en((k % 200) as u8, k as u64 + 5)).unwrap();
+            ix.insert(&format!("d{:02}/f{k:05}.txt", k % 20), en((k % 200) as u8, k as u64 + 5))
+                .unwrap();
         }
         ix.written_ns = 99;
         ix
@@ -728,7 +752,12 @@ mod tests {
         let ix = base(500);
         let d = dir_with(&ix);
         let img = IndexImage::load(d.path()).unwrap();
-        let a = img.commit(d.path(), vec![Op::Set("zz.txt".into(), en(1, 1)), Op::Remove("d00/f00000.txt".into())]).unwrap();
+        let a = img
+            .commit(
+                d.path(),
+                vec![Op::Set("zz.txt".into(), en(1, 1)), Op::Remove("d00/f00000.txt".into())],
+            )
+            .unwrap();
         let img2 = IndexImage::load(d.path()).unwrap();
         assert_eq!((img2.digest(), img2.stored_len()), (a.digest, a.len));
         assert_ne!(img2.digest(), img.digest());
@@ -762,7 +791,8 @@ mod tests {
     #[test]
     fn upgrade_from_agi3_and_agi4_layouts() {
         let ix = base(3000);
-        for old in [ix.encode_v3()] {
+        {
+            let old = ix.encode_v3();
             let d = tempfile::tempdir().unwrap();
             std::fs::write(d.path().join("index"), &old).unwrap();
             let img = IndexImage::load(d.path()).unwrap();
@@ -855,9 +885,7 @@ mod tests {
                         while !stop.load(Ordering::Relaxed) {
                             let img = IndexImage::load(&path).unwrap();
                             // writer inserts n00000, n00001, ... in order: a reader must see a prefix, never a gap
-                            let seen = (0..)
-                                .take_while(|k| img.get(&format!("n{k:05}")).unwrap().is_some())
-                                .count();
+                            let seen = (0..).take_while(|k| img.get(&format!("n{k:05}")).unwrap().is_some()).count();
                             let total = img.list().unwrap().len();
                             assert!(seen >= last, "went back in time: {seen} < {last}");
                             assert_eq!(total, 300 + seen);

@@ -6,7 +6,6 @@ use std::time::Duration;
 use vcs_objects::{content_id, Object, ObjectId, Signature, LARGE_MAX, LARGE_MIN};
 use vcs_remote::MemBackend;
 use vcs_repo::Repo;
-use vcs_store::ObjectStore;
 
 const MIB: usize = 1 << 20;
 

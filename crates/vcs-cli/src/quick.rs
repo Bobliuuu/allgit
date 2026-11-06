@@ -198,7 +198,7 @@ mod tests {
             let fast = parse(&argv(s)).unwrap_or_else(|| panic!("no fast path for {s:?}"));
             let slow = Cli::try_parse_from(argv(s)).unwrap_or_else(|e| panic!("clap rejects {s:?}: {e}"));
             assert_eq!(sig(&fast), sig(&slow), "{s:?}");
-            assert_ne!(sig(&slow).split(' ').last(), Some("other"), "{s:?} is not a covered variant");
+            assert_ne!(sig(&slow).split(' ').next_back(), Some("other"), "{s:?} is not a covered variant");
         }
     }
 

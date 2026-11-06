@@ -530,7 +530,8 @@ impl Repo {
             let mut next = Vec::new();
             // Pass 1: forward stored v2 entries. This is a lookup and a copy per object, so wide
             // fan-out only buys allocator contention (about 3x the CPU for no wall time): two threads.
-            let probe = |id: &ObjectId| -> Result<(ObjectId, Option<(u8, Vec<u8>)>, Vec<ObjectId>)> {
+            type Probed = (ObjectId, Option<(u8, Vec<u8>)>, Vec<ObjectId>);
+            let probe = |id: &ObjectId| -> Result<Probed> {
                 let mut kids = Vec::new();
                 let hit = self.store.get_payload_v2(id)?;
                 if let Some((kind, pl)) = &hit {

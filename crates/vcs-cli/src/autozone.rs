@@ -686,7 +686,12 @@ fn run_assist(cmd: &str, task: &str, zones: &Zones) -> Result<Vec<String>, Error
         Ok(Err(e)) => return Err(Error::Msg(format!("--task-assist command failed: {e}"))),
         Err(_) => {
             // SAFETY: plain kill(2) on the child we spawned; a stale pid at worst fails with ESRCH.
-            unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(pid as i32, libc::SIGKILL)
+            };
+            #[cfg(not(unix))]
+            let _ = pid;
             return Err(Error::Msg("--task-assist command timed out after 30 s".into()));
         }
     };
@@ -1103,11 +1108,8 @@ pub(crate) fn inventory(
     let man = ids_where(&v, |p| {
         MANIFESTS.contains(&p.rsplit('/').next().unwrap_or("")) && only.is_none_or(|o| o.contains(v.zones.owner(p)))
     });
-    match backend {
-        Some(b) => {
-            repo.profile_fetch_objects(b, &man)?;
-        }
-        None => {}
+    if let Some(b) = backend {
+        repo.profile_fetch_objects(b, &man)?;
     }
     let deps = zd::dependencies(&v.files, &v.zones, &|id| v.read(id), false);
     if sizes {

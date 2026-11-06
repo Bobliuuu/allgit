@@ -36,6 +36,8 @@ fn spawn(root: &std::path::Path) -> std::process::Child {
         }
         l.clear();
     }
+    let _ = c.kill();
+    let _ = c.wait();
     panic!("no ready");
 }
 

@@ -20,7 +20,7 @@ fn one_gib_file_add_status_and_checkout_stay_under_a_memory_bound() {
         let mut x = 0x9E37_79B9_7F4A_7C15u64;
         let mut buf = vec![0u8; 8 << 20];
         for _ in 0..128 {
-            for b in buf.chunks_exact_mut(8) {
+            for b in buf.as_chunks_mut::<8>().0 {
                 x ^= x << 13;
                 x ^= x >> 7;
                 x ^= x << 17;

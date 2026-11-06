@@ -13,6 +13,9 @@ use crate::index::IndexEntry;
 use crate::index5::BLOCK5;
 use crate::worktree_fs::StatCursor;
 use std::collections::BTreeMap;
+
+/// A per-entry job for the parallel block scan.
+type StatWork<'a, T> = dyn Fn(&mut StatCursor, &str, &IndexEntry) -> Result<Option<T>> + Sync + 'a;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use vcs_objects::codec::Reader;
 use vcs_objects::{EntryMode, ObjectId};
@@ -250,12 +253,7 @@ impl<'a> IndexView<'a> {
 
     /// Run `work` over every entry of `blocks` on up to `threads` threads; the `Some` results come
     /// back in block order, entry order within a block.
-    pub fn par_filter_map<T: Send>(
-        &self,
-        blocks: &[usize],
-        threads: usize,
-        work: &(dyn Fn(&mut StatCursor, &str, &IndexEntry) -> Result<Option<T>> + Sync),
-    ) -> Result<Vec<T>> {
+    pub fn par_filter_map<T: Send>(&self, blocks: &[usize], threads: usize, work: &StatWork<'_, T>) -> Result<Vec<T>> {
         let one = |bi: usize| -> Result<Vec<T>> {
             let mut out = Vec::new();
             let mut cur = StatCursor::default();

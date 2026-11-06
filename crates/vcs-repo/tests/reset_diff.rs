@@ -80,12 +80,9 @@ fn dirty(r: &Repo) {
     write(r, "d2/f07.txt", "local edit on a changed file\n");
 }
 
-fn run(
-    mode: ResetMode,
-    back: usize,
-    make_dirty: bool,
-    limit: Option<usize>,
-) -> (usize, usize, Vec<(String, String)>, BTreeMap<String, Vec<u8>>, String) {
+type RunOut = (usize, usize, Vec<(String, String)>, BTreeMap<String, Vec<u8>>, String);
+
+fn run(mode: ResetMode, back: usize, make_dirty: bool, limit: Option<usize>) -> RunOut {
     let d = tempfile::tempdir().unwrap();
     let r = build(&d.path().join("r"));
     if make_dirty {
