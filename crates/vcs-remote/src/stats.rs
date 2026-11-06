@@ -109,6 +109,86 @@ impl Backend for CountingBackend<'_> {
     }
 }
 
+/// Wraps a backend and records `METHOD key` for every call, in order, so a test can print or
+/// assert the request breakdown of an operation.
+pub struct LoggingBackend<'a> {
+    inner: &'a dyn Backend,
+    log: std::sync::Mutex<Vec<String>>,
+}
+
+impl<'a> LoggingBackend<'a> {
+    pub fn new(inner: &'a dyn Backend) -> Self {
+        Self { inner, log: Default::default() }
+    }
+    fn note(&self, method: &str, key: &str) {
+        self.log.lock().unwrap().push(format!("{method} {key}"));
+    }
+    /// All calls so far.
+    pub fn calls(&self) -> Vec<String> {
+        self.log.lock().unwrap().clone()
+    }
+    /// Number of calls whose record starts with `prefix` (e.g. `"GET manifest"`).
+    pub fn count(&self, prefix: &str) -> usize {
+        self.log.lock().unwrap().iter().filter(|l| l.starts_with(prefix)).count()
+    }
+    pub fn clear(&self) {
+        self.log.lock().unwrap().clear();
+    }
+    /// Print the breakdown (use with `--nocapture`).
+    pub fn dump(&self, what: &str) {
+        let l = self.log.lock().unwrap();
+        println!("{what}: {} requests", l.len());
+        for x in l.iter() {
+            println!("    {x}");
+        }
+    }
+}
+
+impl Backend for LoggingBackend<'_> {
+    fn get(&self, k: &str) -> Result<Option<Versioned>, BackendError> {
+        self.note("GET", k);
+        self.inner.get(k)
+    }
+    fn get_range(&self, k: &str, o: u64, l: u64) -> Result<Option<Vec<u8>>, BackendError> {
+        self.note(&format!("RANGE[{o}+{l}]"), k);
+        self.inner.get_range(k, o, l)
+    }
+    fn exists(&self, k: &str) -> Result<bool, BackendError> {
+        self.note("HEAD", k);
+        self.inner.exists(k)
+    }
+    fn put_if_absent(&self, k: &str, d: &[u8]) -> Result<bool, BackendError> {
+        self.note("PUT-NEW", k);
+        self.inner.put_if_absent(k, d)
+    }
+    fn put_if_match(&self, k: &str, d: &[u8], t: &str) -> Result<Option<String>, BackendError> {
+        self.note("PUT-CAS", k);
+        self.inner.put_if_match(k, d, t)
+    }
+    fn list(&self, p: &str) -> Result<Vec<String>, BackendError> {
+        self.note("LIST", p);
+        self.inner.list(p)
+    }
+    fn delete(&self, k: &str) -> Result<(), BackendError> {
+        self.note("DELETE", k);
+        self.inner.delete(k)
+    }
+    fn supports_gc(&self) -> bool {
+        self.inner.supports_gc()
+    }
+    fn now_ms(&self) -> Result<u64, BackendError> {
+        self.inner.now_ms()
+    }
+    fn modified_ms(&self, k: &str) -> Result<Option<u64>, BackendError> {
+        self.note("HEAD-MTIME", k);
+        self.inner.modified_ms(k)
+    }
+    fn touch(&self, k: &str) -> Result<bool, BackendError> {
+        self.note("TOUCH", k);
+        self.inner.touch(k)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

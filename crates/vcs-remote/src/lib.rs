@@ -25,4 +25,4 @@ pub use protocol::{
     changed_paths, fetch_heads, fetch_heads_lazy, fetch_object, fetch_objects, fetch_tags_lazy, load_manifest, repair_remote, Outcome,
     PublishError, Publisher, Step, PUBLISH_VERIFY_BUDGET,
 };
-pub use stats::{CountingBackend, TransferStats};
+pub use stats::{CountingBackend, LoggingBackend, TransferStats};
