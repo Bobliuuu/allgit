@@ -10,6 +10,7 @@ pub mod bulkmeta;
 pub mod clientcache;
 pub mod compact;
 pub mod diskcache;
+pub mod dr;
 pub mod format;
 pub mod fsbackend;
 pub mod gc;
@@ -34,6 +35,7 @@ pub use backend::{Backend, BackendError, Conditional, LocalFlock, ObjectStream, 
 pub use clientcache::ClientCache;
 pub use compact::{compact, CompactOptions, CompactReport};
 pub use diskcache::DiskCacheBackend;
+pub use dr::{backup_copy, verify_remote, CopyOptions, CopyReport, DrError, Hold, SafePoint, VerifyOptions, VerifyReport};
 pub use fsbackend::FsBackend;
 pub use gc::{remote_gc, GcError, RemoteGcOptions, RemoteGcReport};
 pub use idxcache::IdxCacheBackend;
