@@ -1006,6 +1006,18 @@ impl<'a> Publisher<'a> {
                 }
             }
             State::Collect => {
+                // Refuse before uploading anything when the repository needs a newer binary (issue #567).
+                match crate::format::check(self.backend) {
+                    Ok(()) => {}
+                    Err(crate::format::FormatError::Backend(e)) => {
+                        self.state = State::Collect;
+                        return self.retry(e);
+                    }
+                    Err(e) => {
+                        self.state = State::Finished;
+                        return Err(e.into());
+                    }
+                }
                 let gc = self.backend.supports_gc();
                 if gc {
                     match self.backend.now_ms() {
