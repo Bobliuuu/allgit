@@ -111,6 +111,21 @@ fn prefetch(p: *const i8) {
     let _ = p;
 }
 
+/// `VCS_FSCK_TRACE=1` prints the time of each phase to stderr.
+struct Trace(Option<std::cell::Cell<std::time::Instant>>);
+
+impl Trace {
+    fn new() -> Self {
+        Trace(std::env::var_os("VCS_FSCK_TRACE").map(|_| std::cell::Cell::new(std::time::Instant::now())))
+    }
+    fn at(&self, phase: &str) {
+        if let Some(t) = &self.0 {
+            eprintln!("fsck phase {phase}: {:.2}s", t.get().elapsed().as_secs_f64());
+            t.set(std::time::Instant::now());
+        }
+    }
+}
+
 /// Zone names, interned: a commit record carries the small number.
 #[derive(Default)]
 struct Zones {
@@ -357,8 +372,36 @@ impl Repo {
 
     /// Verify every object (hash + canonical decode) and graph invariants.
     pub fn fsck(&self) -> Result<FsckReport> {
+        // The operation log, commit graph, path filters and reach cache are checked independently of the objects:
+        // alongside the object pass, not after it (the commit graph check alone is 47 s at 10M commits).
+        std::thread::scope(|sc| {
+            let side = |f: fn(&Repo, &mut Vec<String>)| {
+                sc.spawn(move || {
+                    let mut v = Vec::new();
+                    f(self, &mut v);
+                    v
+                })
+            };
+            let ops = side(Repo::fsck_ops);
+            let graph = side(Repo::fsck_commit_graph);
+            let filters = side(Repo::fsck_path_filters);
+            let reach = side(Repo::fsck_reach_cache);
+            let (mut rep, pack_problems) = self.fsck_objects()?;
+            for h in [ops, graph, filters, reach] {
+                rep.problems.extend(h.join().expect("fsck side check panicked"));
+            }
+            rep.problems.extend(pack_problems);
+            Ok(rep)
+        })
+    }
+
+    /// The object pass of [`Repo::fsck`]: every object, references, indexes, refs. Pack-level problems come back
+    /// separately so that they are reported last, as before.
+    fn fsck_objects(&self) -> Result<(FsckReport, Vec<String>)> {
         let mut rep = FsckReport::default();
+        let trace = Trace::new();
         let ids = self.store.list()?;
+        trace.at("list");
         rep.objects = ids.len();
         let ctx = Ctx {
             repo: self,
@@ -367,8 +410,11 @@ impl Repo {
             zones: Zones::default(),
         };
         // Packs: hash + decode in pack order on every core. Then whatever no pack delivered, through `store.get`.
+        trace.at("id index");
         let (pack_problems, mut accs) = self.store.scan_packs(Acc::default, |acc, id, enc| ctx.packed(id, enc, acc));
+        trace.at("pack scan");
         accs.extend(par_items(ctx.ids.ids.len(), fsck_batch(), &|i, acc| ctx.fallback(i, acc)));
+        trace.at("fallback reads");
 
         // The remote closure is only worth computing once something is found missing.
         let mut refetchable: Option<BTreeSet<ObjectId>> = None;
@@ -432,6 +478,7 @@ impl Repo {
             }
         }
 
+        trace.at("manifests");
         // Commit parents live in the zone of their child.
         let mut zone_problems = Vec::new();
         for a in &accs {
@@ -454,6 +501,7 @@ impl Repo {
         rep.problems.append(&mut zone_problems);
 
         // No index of any worktree may name a blob that is not in the store.
+        trace.at("parents");
         let views = self.fsck_worktrees(&mut rep.problems);
         let linked = views.len() > 1;
         for (wt, v) in &views {
@@ -498,6 +546,7 @@ impl Repo {
                 missing(self, &id, what, &mut rep.problems)?;
             }
         }
+        trace.at("index");
         let refs = self.refs()?;
         for ((a, b), h) in &refs.branches {
             let commit_zone = ctx
@@ -522,11 +571,7 @@ impl Repo {
             }
         }
         rep.evictable = evictable.into_iter().collect();
-        self.fsck_ops(&mut rep.problems);
-        self.fsck_commit_graph(&mut rep.problems);
-        self.fsck_path_filters(&mut rep.problems);
-        self.fsck_reach_cache(&mut rep.problems);
-        rep.problems.extend(pack_problems);
-        Ok(rep)
+        trace.at("refs");
+        Ok((rep, pack_problems))
     }
 }
