@@ -54,6 +54,9 @@ pub struct ApplyArgs {
     /// Also stage the changes (the files must match the index)
     #[arg(long)]
     pub index: bool,
+    /// Apply to the index only: check against the staged content, stage the result, leave the working tree alone
+    #[arg(long, conflicts_with_all = ["index", "three_way"])]
+    pub cached: bool,
     /// Apply the patch backwards
     #[arg(short = 'R', long)]
     pub reverse: bool,
@@ -252,6 +255,7 @@ pub fn apply(repo: &Repo, a: ApplyArgs) -> Result<(), Error> {
         reverse: a.reverse,
         strip: a.strip,
         three_way: a.three_way,
+        cached: a.cached,
     };
     let mut total = 0;
     for data in read_input(&a.files)? {

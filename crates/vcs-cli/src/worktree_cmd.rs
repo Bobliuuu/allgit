@@ -1,4 +1,4 @@
-//! `vcs worktree add|list|remove`. Logic and layout: `vcs_repo::worktree`, docs/worktrees.md.
+//! `vcs worktree add|list|remove|prune`. Logic and layout: `vcs_repo::worktree`, docs/worktrees.md.
 
 use clap::Subcommand;
 use std::path::PathBuf;
@@ -20,6 +20,12 @@ pub enum WorktreeCmd {
         #[arg(long)]
         force: bool,
     },
+    /// Forget linked worktrees whose directory no longer exists (never deletes a directory)
+    Prune {
+        /// Only list what would be forgotten
+        #[arg(short = 'n', long)]
+        dry_run: bool,
+    },
 }
 
 pub fn run(repo: &Repo, cmd: WorktreeCmd) -> Result<(), Error> {
@@ -39,11 +45,20 @@ pub fn run(repo: &Repo, cmd: WorktreeCmd) -> Result<(), Error> {
                     w.path.display(),
                     if w.main { "(main) " } else { "" },
                     if w.missing {
-                        "[MISSING: `vcs worktree remove --force` it]".to_owned()
+                        "[MISSING: `vcs worktree prune` it]".to_owned()
                     } else {
                         subs.join(" ")
                     }
                 );
+            }
+        }
+        WorktreeCmd::Prune { dry_run } => {
+            let gone = repo.worktree_prune(dry_run)?;
+            for (name, path) in &gone {
+                println!("{} {name}: {} is gone", if dry_run { "would prune" } else { "pruned" }, path.display());
+            }
+            if gone.is_empty() {
+                println!("nothing to prune");
             }
         }
         WorktreeCmd::Remove { path, force } => {

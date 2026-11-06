@@ -67,7 +67,7 @@ impl Repo {
     /// reachable from any branch of the zone.
     pub fn resolve_commit(&self, zone: &str, rev: &str) -> Result<ObjectId> {
         let zone = self.resolve_zone(zone)?;
-        if rev.contains(['~', '^']) {
+        if rev.contains(['~', '^', '@']) {
             return self.resolve_rev(&zone, rev);
         }
         let refs = self.refs()?;

@@ -19,6 +19,7 @@ mod dr_cmd;
 mod everyday;
 mod generate;
 mod gitmap;
+mod gitplumb;
 mod grep;
 mod histcli;
 mod histcmds;
@@ -118,6 +119,9 @@ enum Cmd {
         /// Stage changes to lockable files (`.vcsattributes`) even without holding their lock
         #[arg(long)]
         force_no_lock: bool,
+        /// Also stage files and directories that `.vcsignore` hides
+        #[arg(short = 'f', long)]
+        force: bool,
     },
     /// Discard working-tree changes (from the index) or unstage them (--staged, from HEAD)
     Restore {
@@ -182,7 +186,11 @@ enum Cmd {
     #[command(subcommand)]
     Config(ConfigCmd),
     /// Show staged, unstaged and untracked changes per zone
-    Status,
+    Status {
+        /// Also list untracked files and directories that `.vcsignore` hides
+        #[arg(long)]
+        ignored: bool,
+    },
     /// Watch the working tree and journal changed paths so `status` can skip a full scan (runs until killed)
     Watch {
         /// Stop after this many seconds without a `status` asking for the journal (set when a command starts the watcher itself)
@@ -1237,14 +1245,14 @@ fn run(cli: Cli) -> Result<(), Error> {
             };
             println!("Initialized empty vcs repository in {}", r.worktree().join(".vcs").display());
         }
-        Cmd::Add { paths, force_no_lock } => {
+        Cmd::Add { paths, force_no_lock, force } => {
             let (repo, cwd) = open()?;
             if paths.is_empty() {
                 return Err(Error::Msg("nothing specified; use `vcs add .` to stage everything".into()));
             }
             let rel: Vec<String> = paths.iter().map(|p| repo.rel_path(&cwd, p)).collect::<Result<_, _>>()?;
             lockable_cmd::guard(&repo, lockable_cmd::Stage::Add, &rel, force_no_lock)?;
-            let rep = repo.add(&rel)?;
+            let rep = if force { repo.add_force(&rel)? } else { repo.add(&rel)? };
             for s in &rep.skipped {
                 eprintln!("warning: skipped {s}");
             }
@@ -1414,7 +1422,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                 return Err(Error::Msg(format!("vcs-watchd exited with {st}")));
             }
         }
-        Cmd::Status => {
+        Cmd::Status { ignored } => {
             let (repo, _) = open()?;
             let st = repo.status_auto(Default::default())?;
             let defs = repo.zones()?;
@@ -1476,6 +1484,15 @@ fn run(cli: Cli) -> Result<(), Error> {
                 println!("untracked:");
                 for u in &st.untracked {
                     println!("    {u}");
+                }
+            }
+            if ignored {
+                let ig = repo.ignored_paths()?;
+                if !ig.is_empty() {
+                    println!("ignored:");
+                    for u in &ig {
+                        println!("    {u}");
+                    }
                 }
             }
             if !st.unsubscribed.is_empty() {

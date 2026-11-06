@@ -259,6 +259,44 @@ impl Repo {
         Ok(out)
     }
 
+    /// `HEAD@{n}` / `<branch>@{n}`: the commit the zone's HEAD (or the branch) pointed at `n` changes
+    /// ago, read from the operation log (first parents, newest first). Consecutive operations that
+    /// leave the value alone count once, so `@{1}` is the previous value, as in git's reflog.
+    pub(crate) fn reflog_rev(&self, zone: &str, name: &str, n: usize) -> Result<ObjectId> {
+        let head = name == "HEAD";
+        let cur = if head { self.head_commit(zone)? } else { self.refs()?.head(zone, name) };
+        let mut vals: Vec<ObjectId> = cur.into_iter().collect();
+        let mut op = self.op_head()?;
+        while let Some(id) = op {
+            if vals.len() > n {
+                break;
+            }
+            let o = self.op_get(&id)?;
+            let at = if head {
+                o.view
+                    .workspace
+                    .get(zone)
+                    .and_then(|b| o.view.branches.get(&(zone.to_owned(), b.clone())))
+                    .copied()
+            } else {
+                o.view.branches.get(&(zone.to_owned(), name.to_owned())).copied()
+            };
+            if let Some(v) = at {
+                if vals.last() != Some(&v) {
+                    vals.push(v);
+                }
+            }
+            op = o.parents.first().copied();
+        }
+        match vals.get(n) {
+            Some(v) => Ok(*v),
+            None => msg(format!(
+                "{name}@{{{n}}}: the operation log has only {} entr(ies) for {name} in zone {zone:?} (`vcs op log`)",
+                vals.len()
+            )),
+        }
+    }
+
     /// Resolve a hex id prefix among operations in the log.
     pub fn op_resolve(&self, prefix: &str) -> Result<ObjectId> {
         let p = prefix.to_ascii_lowercase();

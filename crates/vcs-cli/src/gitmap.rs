@@ -15,6 +15,8 @@ use super::{open, zone_of_cwd};
 use clap::{Args, Parser};
 use vcs_repo::Error;
 
+use super::gitplumb::Plumb;
+
 #[path = "gitmap_table.rs"]
 pub mod table;
 
@@ -52,7 +54,9 @@ pub enum Step {
     /// (or given) message; restores the old head when the commit fails.
     Amend { commit_argv: Vec<String>, message: Option<String> },
     /// `status --short`: `XY path` lines.
-    StatusShort { branch: bool },
+    StatusShort { branch: bool, ignored: bool },
+    /// A plumbing command run in process (see gitplumb.rs).
+    Plumb(Plumb),
     /// Print the checked-out branch of the current zone.
     ShowCurrent,
     /// Diff between revisions/worktree/index limited to paths (`diff A B`, `diff HEAD`, `diff -- f`).
@@ -84,7 +88,12 @@ impl Step {
             Step::AddTracked(p) => format!("vcs add <tracked changes under {}>", p.join(" ")),
             Step::Amend { message: Some(m), .. } => format!("vcs reset --soft HEAD^ && vcs commit -m {m}"),
             Step::Amend { message: None, .. } => "vcs reset --soft HEAD^ && vcs commit -m <old message>".into(),
-            Step::StatusShort { branch } => format!("vcs status (rendered as XY lines{})", if *branch { " with ## branch" } else { "" }),
+            Step::StatusShort { branch, ignored } => format!(
+                "vcs status (rendered as XY lines{}{})",
+                if *branch { " with ## branch" } else { "" },
+                if *ignored { " with !! ignored" } else { "" }
+            ),
+            Step::Plumb(p) => p.display(),
             Step::ShowCurrent => "vcs branch (the * line)".into(),
             Step::Diff { staged, specs, flags } => {
                 let mut v = vec!["vcs git diff".to_string()];
@@ -122,6 +131,8 @@ pub fn render(steps: &[Step]) -> String {
 }
 
 // ---------------------------------------------------------------- errors
+
+const ONE_ZONE_REFS: &str = "acts on ONE zone (the one containing the current directory); refs are named refs/heads/<branch>, refs/tags/<tag>, refs/remotes/origin/<branch> and object ids are blake3, not sha1";
 
 fn missing(git: &str, why: &str, native: &str) -> Error {
     Error::Msg(format!("git {git}: no vcs equivalent ({why})\n  native: {native}"))
@@ -372,14 +383,23 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             let all = p.take(&["-A", "--all"]);
             let upd = p.take(&["-u", "--update"]);
             p.take(&["-v", "--verbose"]);
-            p.finish("`vcs add <paths>` stages new, modified and deleted files; no -p/-i/-n/-f/-N (use .vcsignore for ignored files)")?;
+            let force = p.take(&["-f", "--force"]);
+            p.finish("`vcs add [-f] <paths>` stages new, modified and deleted files; no -p/-i/-n/-N")?;
             let paths = p.all_pos();
             if upd {
                 vec![Step::AddTracked(paths)]
             } else if paths.is_empty() && all {
-                vec![Step::Vcs(v(&["add", "."]))]
+                let mut a = v(&["add"]);
+                if force {
+                    a.push("-f".into());
+                }
+                a.push(".".into());
+                vec![Step::Vcs(a)]
             } else {
                 let mut a = v(&["add"]);
+                if force {
+                    a.push("-f".into());
+                }
                 a.extend(paths);
                 vec![Step::Vcs(a)]
             }
@@ -428,9 +448,12 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             p.take(&["--porcelain"]);
             let branch = p.take(&["-b", "--branch"]);
             p.take(&["-v", "--verbose", "--no-renames", "--renames"]);
-            p.finish("`vcs status` (no --ignored, -u<mode>, --column)")?;
+            let ignored = p.val(&["--ignored"]).is_some_and(|m| m != "no");
+            p.finish("`vcs status [--ignored]` (no -u<mode>, --column)")?;
             if short || porcelain {
-                vec![Step::StatusShort { branch }]
+                vec![Step::StatusShort { branch, ignored }]
+            } else if ignored {
+                vec![Step::Vcs(v(&["status", "--ignored"]))]
             } else {
                 vec![Step::Vcs(v(&["status"]))]
             }
@@ -856,10 +879,10 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
         "bisect" => {
             let sub = rest.first().map(String::as_str).unwrap_or("");
             match sub {
-                "start" | "good" | "bad" | "skip" | "reset" | "run" => passthrough("bisect", rest),
+                "start" | "good" | "bad" | "skip" | "reset" | "run" | "log" | "replay" => passthrough("bisect", rest),
                 "new" => passthrough("bisect", &[&["bad".to_owned()][..], &rest[1..]].concat()),
                 "old" => passthrough("bisect", &[&["good".to_owned()][..], &rest[1..]].concat()),
-                _ => return Err(missing(&format!("bisect {sub}"), "only start|good|bad|skip|reset|run exist", "`vcs bisect --help`")),
+                _ => return Err(missing(&format!("bisect {sub}"), "only start|good|bad|skip|reset|run|log|replay exist", "`vcs bisect --help`")),
             }
         }
         "rerere" => {
@@ -1016,7 +1039,20 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
                     a.extend(p.pos.first().cloned());
                     vec![Step::Vcs(a)]
                 }
-                _ => return Err(missing(&format!("worktree {sub}"), "only add|list|remove exist", "`vcs worktree --help`")),
+                "prune" => {
+                    let n = p.take(&["-n", "--dry-run"]);
+                    p.take(&["-v", "--verbose"]);
+                    if p.val(&["--expire"]).is_some() {
+                        return Err(missing("worktree prune --expire", "a missing worktree is forgotten at once", "`vcs worktree prune`"));
+                    }
+                    p.finish("`vcs worktree prune [-n]`")?;
+                    let mut a = v(&["worktree", "prune"]);
+                    if n {
+                        a.push("--dry-run".into());
+                    }
+                    vec![Step::Vcs(a)]
+                }
+                _ => return Err(missing(&format!("worktree {sub}"), "only add|list|remove|prune exist", "`vcs worktree --help`")),
             }
         }
         "submodule" => {
@@ -1311,12 +1347,118 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
         "replace" | "stripspace" => {
             return Err(missing(cmd, "annotation and ref-substitution tools are not implemented", "`vcs rebase`, `vcs op undo`; history rewriting by path, message, author or tree is `vcs rewrite`"))
         }
-        "ls-remote" | "for-each-ref" | "show-ref" | "name-rev" | "update-ref" | "update-index" | "hash-object" | "write-tree" | "read-tree" | "commit-tree" | "count-objects" | "prune" | "pack-objects" | "index-pack" | "unpack-objects" | "check-ignore" | "check-attr" | "var" | "mktag" => {
-            return Err(missing(
-                cmd,
-                "git plumbing with no vcs counterpart",
-                "`vcs branch`, `vcs tag`, `vcs rev-parse`, `vcs cat-file`, `vcs ls-files`, `vcs remote show`, `vcs fsck`, `vcs gc --dry-run`",
-            ))
+        "for-each-ref" => {
+            let mut p = parse(cmd, rest, &["--format", "--sort", "--count"]);
+            let format = p.val(&["--format"]);
+            let sort = p.vals(&["--sort"]);
+            let count = match p.val(&["--count"]) {
+                Some(c) => Some(c.parse::<usize>().map_err(|_| Error::Msg(format!("git for-each-ref: bad --count {c:?}")))?),
+                None => None,
+            };
+            p.finish("`vcs branch` / `vcs tag` list refs; for-each-ref supports --format, --sort, --count and ref patterns (no --contains/--merged/--points-at)")?;
+            vec![note(ONE_ZONE_REFS), Step::Plumb(Plumb::ForEachRef { patterns: p.pos.clone(), format, sort, count })]
+        }
+        "show-ref" => {
+            let mut p = parse(cmd, rest, &[]);
+            let heads = p.take(&["--heads", "--branches"]);
+            let tags = p.take(&["--tags"]);
+            let hash = p.val(&["-s", "--hash"]).map(|n| n.parse().unwrap_or(0));
+            let verify = p.take(&["--verify"]);
+            let quiet = p.take(&["-q", "--quiet"]);
+            p.finish("`vcs branch` / `vcs tag`; show-ref supports --heads, --tags, --hash, --verify, --quiet and patterns (no --dereference, --exclude-existing)")?;
+            vec![note(ONE_ZONE_REFS), Step::Plumb(Plumb::ShowRef { heads, tags, hash, verify, quiet, patterns: p.pos.clone() })]
+        }
+        "ls-remote" => {
+            let mut p = parse(cmd, rest, &[]);
+            let heads = p.take(&["--heads", "-h", "--branches"]);
+            let tags = p.take(&["--tags", "-t"]);
+            p.take(&["--refs", "-q", "--quiet"]);
+            p.finish("`vcs remote show` lists the refs fetched last time; ls-remote supports --heads, --tags and patterns (no --symref, --get-url, --sort)")?;
+            let remote = p.pos.first().cloned();
+            let patterns = p.pos.iter().skip(1).cloned().collect();
+            vec![note("refs of a zone other than root are named refs/zones/<zone>/heads/<branch>; there is no HEAD line"), Step::Plumb(Plumb::LsRemote { remote, heads, tags, patterns })]
+        }
+        "name-rev" => {
+            let mut p = parse(cmd, rest, &[]);
+            let name_only = p.take(&["--name-only"]);
+            p.finish("`vcs describe`; name-rev supports --name-only (no --tags/--refs/--all/--stdin)")?;
+            vec![note(ONE_ZONE_REFS), Step::Plumb(Plumb::NameRev { revs: p.pos.clone(), name_only })]
+        }
+        "update-ref" => {
+            let mut p = parse(cmd, rest, &["-m"]);
+            let delete = p.take(&["-d"]);
+            p.val(&["-m"]);
+            p.take(&["--no-deref", "--create-reflog"]);
+            p.finish("`vcs branch <name> <rev>`, `vcs branch -d`, `vcs tag`; update-ref supports -d, -m and the old value")?;
+            let mut it = p.pos.iter().cloned();
+            let Some(name) = it.next() else { return Err(Error::Msg("usage: git update-ref [-d] <ref> [<new-value> [<old-value>]]".into())) };
+            let (new, old) = if delete { (None, it.next()) } else { (it.next(), it.next()) };
+            vec![note(ONE_ZONE_REFS), Step::Plumb(Plumb::UpdateRef { name, new, old, delete })]
+        }
+        "check-ignore" => {
+            let mut p = parse(cmd, rest, &[]);
+            let quiet = p.take(&["-q", "--quiet"]);
+            p.finish("`vcs status --ignored` lists ignored files; check-ignore supports -q (no -v/-n/--stdin/--no-index)")?;
+            vec![Step::Plumb(Plumb::CheckIgnore { paths: p.all_pos(), quiet })]
+        }
+        "count-objects" => {
+            let mut p = parse(cmd, rest, &[]);
+            let verbose = p.take(&["-v", "--verbose"]);
+            p.finish("`vcs gc --dry-run`; count-objects supports -v")?;
+            vec![Step::Plumb(Plumb::CountObjects { verbose })]
+        }
+        "hash-object" => {
+            let mut p = parse(cmd, rest, &["-t", "--path"]);
+            let ty = p.val(&["-t"]);
+            p.val(&["--path"]);
+            let write = p.take(&["-w"]);
+            let stdin = p.take(&["--stdin"]);
+            p.finish("`vcs cat-file`; hash-object supports -w, --stdin and blobs")?;
+            if ty.as_deref().is_some_and(|t| t != "blob") {
+                return Err(missing(cmd, "only file content (blobs) can be hashed on its own", "`vcs write-tree`-style objects are built by `vcs add` and `vcs commit`"));
+            }
+            vec![note("the id is a blake3 hash of the content, not git's sha1"), Step::Plumb(Plumb::HashObject { write, stdin, files: p.all_pos() })]
+        }
+        "write-tree" => {
+            let mut p = parse(cmd, rest, &[]);
+            p.finish("`vcs commit`; write-tree takes no flags here")?;
+            vec![note(ONE_ZONE_REFS), Step::Plumb(Plumb::WriteTree)]
+        }
+        "commit-tree" => {
+            let mut p = parse(cmd, rest, &["-p", "-m", "-F"]);
+            let parents = p.vals(&["-p"]);
+            let messages = p.vals(&["-m"]);
+            let file = p.val(&["-F"]);
+            p.finish("`vcs commit`; commit-tree supports -p, -m, -F (no -S)")?;
+            let [tree] = p.pos.as_slice() else { return Err(Error::Msg("usage: git commit-tree <tree> [(-p <parent>)...] [-m <message>]".into())) };
+            vec![note(ONE_ZONE_REFS), Step::Plumb(Plumb::CommitTree { tree: tree.clone(), parents, messages, file })]
+        }
+        "prune" => {
+            let mut p = parse(cmd, rest, &["--expire"]);
+            let dry = p.take(&["-n", "--dry-run"]);
+            p.take(&["-v", "--verbose", "--progress"]);
+            if p.val(&["--expire"]).is_some() {
+                return Err(missing(cmd, "the grace period is fixed at 14 days (git's prune default is 2 weeks)", "`vcs gc --grace-secs <n>` (not below 3.5 days)"));
+            }
+            p.finish("`vcs gc [--dry-run]`")?;
+            let mut a = v(&["gc"]);
+            if dry {
+                a.push("--dry-run".into());
+                vec![Step::Vcs(a)]
+            } else {
+                vec![note("deletes unreachable objects older than the 14-day grace period; add -n to preview"), Step::Vcs(a)]
+            }
+        }
+        "update-index" | "read-tree" | "pack-objects" | "index-pack" | "unpack-objects" | "check-attr" | "var" | "mktag" => {
+            let (why, native) = match cmd {
+                "update-index" => ("the index is a binary image rewritten only by vcs commands", "`vcs add`, `vcs rm --cached`, `vcs restore --staged`"),
+                "read-tree" => ("the index cannot be loaded from an arbitrary tree; one zone's index follows its branch", "`vcs reset --mixed <rev>` (moves the branch too), `vcs restore --staged --source`-style: `vcs cat-file -p <rev>:<path>` then `vcs add`"),
+                "pack-objects" | "index-pack" | "unpack-objects" => ("vcs packs are its own format and are written by repack/gc and read by fetch", "`vcs repack`, `vcs gc`, `vcs bundle create|verify`"),
+                "check-attr" => ("there is no .gitattributes; `.vcsattributes` only marks lockable files", "`vcs lock` / docs/locks.md"),
+                "var" => ("vcs has no editor, pager or committer-ident variables", "`vcs config get user.name`, `vcs config get user.email`"),
+                _ => ("annotated tags are built by `vcs tag -a`, not from a raw tag object", "`vcs tag -a <name> -m <msg>`"),
+            };
+            return Err(missing(cmd, why, native));
         }
         other => {
             return Err(Error::Msg(format!(
@@ -1505,12 +1647,9 @@ fn translate_apply(rest: &[String]) -> Result<Vec<Step>, Error> {
     let verbose = p.take(&["-v", "--verbose"]);
     let strip = p.val(&["-p"]);
     let three = p.take(&["--3way"]) | p.val(&["-N"]).is_some_and(|n| n == "3");
-    if p.take(&["--cached"]) {
-        return Err(missing(
-            "apply",
-            "applying to the index only",
-            "`vcs apply --index` (working tree and index), then `vcs restore` the file if unwanted",
-        ));
+    let cached = p.take(&["--cached"]);
+    if cached && (index || three) {
+        return Err(Error::Msg("git apply: --cached cannot be combined with --index or --3way".into()));
     }
     if let Some(w) = p.val(&["--whitespace"]) {
         if w != "nowarn" && w != "warn" {
@@ -1539,6 +1678,9 @@ fn translate_apply(rest: &[String]) -> Result<Vec<Step>, Error> {
     }
     if index {
         a.push("--index".into());
+    }
+    if cached {
+        a.push("--cached".into());
     }
     if rev {
         a.push("-R".into());
@@ -2149,6 +2291,17 @@ fn translate_restore(rest: &[String]) -> Result<Vec<Step>, Error> {
     Ok(out)
 }
 
+/// Does `r` contain an `@{...}` that is not `@{N}` (dates, `@{upstream}`, `@{-1}`)?
+fn unsupported_reflog(r: &str) -> bool {
+    r.match_indices("@{").any(|(i, _)| {
+        let t = &r[i + 2..];
+        match t.find('}') {
+            Some(e) => e == 0 || !t[..e].bytes().all(|b| b.is_ascii_digit()),
+            None => true,
+        }
+    })
+}
+
 fn translate_reset(rest: &[String]) -> Result<Vec<Step>, Error> {
     let mut p = parse("reset", rest, &[]);
     let mut a = v(&["reset"]);
@@ -2176,10 +2329,10 @@ fn translate_reset(rest: &[String]) -> Result<Vec<Step>, Error> {
         }
     };
     if let Some(r) = &rev {
-        if r.contains("@{") || r == "ORIG_HEAD" || r == "FETCH_HEAD" {
+        if unsupported_reflog(r) || r == "ORIG_HEAD" || r == "FETCH_HEAD" {
             return Err(missing(
                 "reset",
-                "reflog revisions (HEAD@{n}, ORIG_HEAD)",
+                "reflog dates and special heads (HEAD@{yesterday}, ORIG_HEAD); only <name>@{N} is resolved",
                 "`vcs op log`, then `vcs op undo` or `vcs op restore <id>`",
             ));
         }
@@ -2512,7 +2665,8 @@ fn exec(s: &Step, json: bool) -> Result<(), Error> {
         Step::Vcs(a) => native(a, json),
         Step::AddTracked(paths) => add_tracked(paths),
         Step::Amend { commit_argv, message } => amend(commit_argv, message.clone()),
-        Step::StatusShort { branch } => status_short(*branch),
+        Step::StatusShort { branch, ignored } => status_short(*branch, *ignored),
+        Step::Plumb(p) => p.run(),
         Step::ShowCurrent => {
             let (repo, cwd) = open()?;
             let zone = zone_of_cwd(&repo, &cwd, None)?;
@@ -2594,7 +2748,7 @@ fn amend(commit_argv: &[String], message: Option<String>) -> Result<(), Error> {
     }
 }
 
-fn status_short(branch: bool) -> Result<(), Error> {
+fn status_short(branch: bool, ignored: bool) -> Result<(), Error> {
     use vcs_repo::ChangeKind::{Added, Deleted, Modified};
     let (repo, _) = open()?;
     let st = repo.status_auto(Default::default())?;
@@ -2627,6 +2781,11 @@ fn status_short(branch: bool) -> Result<(), Error> {
     }
     for u in &st.untracked {
         println!("?? {u}");
+    }
+    if ignored {
+        for i in repo.ignored_paths()? {
+            println!("!! {i}");
+        }
     }
     Ok(())
 }

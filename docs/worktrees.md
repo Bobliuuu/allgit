@@ -1,6 +1,6 @@
 # Linked worktrees
 
-`vcs worktree add <path> [branch]`, `vcs worktree list`, `vcs worktree remove <path> [--force]`: several working
+`vcs worktree add <path> [branch]`, `vcs worktree list`, `vcs worktree remove <path> [--force]`, `vcs worktree prune [-n]`: several working
 trees over one object store and one set of refs. Each has its own index, its own workspace (which zones are
 subscribed and the branch checked out in each, i.e. the HEAD per zone), its own merge / rebase / cherry-pick state and
 its own stash.
@@ -38,6 +38,9 @@ fails with a clear message when the main repository moved or the worktree was un
 - **`worktree add <path> [branch]`** checks out the root zone only (add other zones in the new worktree with
   `zone add`). The branch defaults to the directory name and is created at this worktree's root-zone head when it does
   not exist. The path must be new or an empty directory and may not be inside, or contain, another worktree.
+- **`worktree prune [-n]`** forgets the registration of every linked worktree whose directory is gone (or no longer
+  holds a repository state directory), at once (git's `--expire` grace does not exist). It never deletes a
+  directory; `-n` lists what it would forget. `worktree list` marks such an entry `[MISSING: ...]`.
 - **`worktree remove`** refuses (without `--force`) staged, unstaged or untracked changes, an unfinished merge / rebase
   / cherry-pick, and stash entries (a stash lives only in its worktree). It deletes only a directory whose
   `worktree-name` and `commondir` prove it belongs to this repository. Branches and commits are never touched. The

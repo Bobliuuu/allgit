@@ -147,6 +147,21 @@ From the final scoreboard ([research/command-scoreboard.md](research/command-sco
   not take globs, `-a`/`-r` (remote-tracking branches), `--topics`, `-g` or `--topo-order`, and shows at
   most 26 revisions.
 
+## Git commands with no faithful vcs meaning
+
+`vcs git` (docs/git-to-vcs.md) runs 280 git command lines as native steps. These stay refused, each for a
+reason in the model, and the refusal names the native way:
+
+- `clone --depth`, `fetch --depth`: history is not shallow-able per commit; a zone is the unit of partial
+  clones (`vcs clone --zone`, `--for PATH`).
+- `read-tree`, `update-index`: the index is a binary image that follows one zone's branch; it cannot be loaded
+  from an arbitrary tree or edited entry by entry. `pack-objects`, `index-pack`, `unpack-objects`: vcs packs are
+  its own format. `check-attr`, `var`, `mktag`: no `.gitattributes`, editor/ident variables or raw tag objects.
+- Ids are blake3 (64 hex digits), so `hash-object`, `write-tree`, `commit-tree`, `show-ref` and `for-each-ref`
+  print ids that never equal git's sha1 for the same content; refs are per zone, so they act on one zone.
+- `HEAD@{N}` counts operations that change the value; git's reflog also records operations that leave it
+  unchanged (`reset --hard HEAD`), and dates (`@{yesterday}`) do not resolve.
+
 ## Other
 
 - Backup and restore ([backup-restore.md](backup-restore.md)): no continuous replication (RPO = backup interval); a backup copies
