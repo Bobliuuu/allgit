@@ -34,6 +34,7 @@ mod plumb;
 mod quick;
 mod rebase_i;
 mod remote;
+mod rewrite_cmd;
 mod shelve_cmd;
 mod signing_cmd;
 mod worktree_cmd;

@@ -1243,8 +1243,10 @@ fn translate_cmd(cmd: &str, rest: &[String]) -> Result<Vec<Step>, Error> {
             ))
         }
         "lfs" => return Err(missing(cmd, "large files are native", "files are chunked automatically; see docs/guide/06-large-files.md")),
-        "filter-branch" | "filter-repo" | "replace" | "notes" | "rerere" | "range-diff" | "show-branch" | "stripspace" => {
-            return Err(missing(cmd, "history rewriting and annotation tools are not implemented", "`vcs rebase`, `vcs op undo`, `vcs zone apply` (splits history by path)"))
+        "filter-branch" => translate_filter_branch(rest)?,
+        "filter-repo" => translate_filter_repo(rest)?,
+        "replace" | "notes" | "rerere" | "range-diff" | "show-branch" | "stripspace" => {
+            return Err(missing(cmd, "annotation and ref-substitution tools are not implemented", "`vcs rebase`, `vcs op undo`; history rewriting by path, message, author or tree is `vcs rewrite`"))
         }
         "ls-remote" | "for-each-ref" | "show-ref" | "name-rev" | "update-ref" | "update-index" | "hash-object" | "write-tree" | "read-tree" | "commit-tree" | "count-objects" | "prune" | "pack-objects" | "index-pack" | "unpack-objects" | "check-ignore" | "check-attr" | "var" | "mktag" => {
             return Err(missing(
@@ -1486,6 +1488,112 @@ fn translate_apply(rest: &[String]) -> Result<Vec<Step>, Error> {
         a.push(n);
     }
     a.extend(p.all_pos());
+    Ok(vec![Step::Vcs(a)])
+}
+
+/// Revision arguments of filter-branch / filter-repo: `--all`/`--branches` mean every branch of the zone;
+/// `HEAD` is the default; any other ref is not representable (vcs rewrites the checked-out branch or all).
+fn rewrite_revs(cmd: &str, p: &P, a: &mut Vec<String>) -> Result<(), Error> {
+    for r in p.all_pos() {
+        match r.as_str() {
+            "--all" | "--branches" => {
+                if !a.iter().any(|x| x == "--all-branches") {
+                    a.push("--all-branches".into());
+                }
+            }
+            "HEAD" => {}
+            _ => {
+                return Err(missing(
+                    cmd,
+                    "only the checked-out branch or --all can be rewritten",
+                    "`vcs switch <branch>` first, then `vcs rewrite ...` (or `vcs rewrite --all-branches`)",
+                ))
+            }
+        }
+    }
+    Ok(())
+}
+
+fn translate_filter_branch(rest: &[String]) -> Result<Vec<Step>, Error> {
+    let mut p = parse(
+        "filter-branch",
+        rest,
+        &[
+            "--subdirectory-filter",
+            "--msg-filter",
+            "--env-filter",
+            "--tree-filter",
+            "--tag-name-filter",
+        ],
+    );
+    for unsupported in [
+        "--index-filter",
+        "--parent-filter",
+        "--commit-filter",
+        "--setup",
+        "--state-branch",
+        "-d",
+        "--original",
+    ] {
+        if p.opts.iter().any(|(k, _)| k == unsupported) {
+            return Err(missing(
+                "filter-branch",
+                &format!("{unsupported} has no equivalent"),
+                "`vcs rewrite --subdirectory-filter|--keep|--remove|--msg-filter|--env-filter|--tree-filter|--tag-name-filter`",
+            ));
+        }
+    }
+    let mut a = v(&["rewrite"]);
+    for (flag, name) in [
+        ("--subdirectory-filter", "--subdirectory-filter"),
+        ("--env-filter", "--env-filter"),
+        ("--tree-filter", "--tree-filter"),
+        ("--msg-filter", "--msg-filter"),
+        ("--tag-name-filter", "--tag-name-filter"),
+    ] {
+        if let Some(x) = p.val(&[flag]) {
+            a.push(name.into());
+            a.push(x);
+        }
+    }
+    let prune = p.take(&["--prune-empty"]);
+    p.take(&["-f", "--force"]); // git: overwrite refs/original backups; vcs keeps the old commits via `vcs op undo`
+    p.finish("`vcs rewrite [--subdirectory-filter D] [--msg-filter C] [--env-filter S] [--tree-filter C] [--tag-name-filter C] [--all-branches]`")?;
+    let _ = prune; // vcs drops commits that the path filters emptied by default (`--keep-empty` undoes it)
+    rewrite_revs("filter-branch", &p, &mut a)?;
+    Ok(vec![Step::Vcs(a)])
+}
+
+fn translate_filter_repo(rest: &[String]) -> Result<Vec<Step>, Error> {
+    let mut p = parse("filter-repo", rest, &["--path", "--subdirectory-filter", "--message-callback"]);
+    if p.opts
+        .iter()
+        .any(|(k, _)| k.ends_with("-callback") || k == "--path-rename" || k == "--path-regex" || k == "--replace-text" || k == "--mailmap")
+    {
+        return Err(missing(
+            "filter-repo",
+            "callbacks, renames, regexes and mailmaps are not supported",
+            "`vcs rewrite --keep|--remove|--subdirectory-filter|--msg-filter|--env-filter`",
+        ));
+    }
+    let invert = p.take(&["--invert-paths"]);
+    let paths = p.vals(&["--path"]);
+    let sub = p.val(&["--subdirectory-filter"]);
+    let force = p.take(&["--force", "-f"]);
+    p.finish("`vcs rewrite [--keep P]... [--remove P]... [--subdirectory-filter D] [--force]`")?;
+    let mut a = v(&["rewrite"]);
+    if let Some(d) = sub {
+        a.push("--subdirectory-filter".into());
+        a.push(d);
+    }
+    for path in paths {
+        a.push(if invert { "--remove" } else { "--keep" }.into());
+        a.push(path);
+    }
+    if force {
+        a.push("--force".into());
+    }
+    rewrite_revs("filter-repo", &p, &mut a)?;
     Ok(vec![Step::Vcs(a)])
 }
 
