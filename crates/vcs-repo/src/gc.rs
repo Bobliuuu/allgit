@@ -177,37 +177,32 @@ impl Repo {
             level.sort_unstable();
             level.dedup();
             level.retain(|id| !marked.contains(id) && !is_cached(id));
-            let todo: Vec<ObjectId> = level.iter().filter(|id| !known.contains_key(*id)).copied().collect();
-            let got = par_map(&todo, |id| match self.store.get(id) {
-                Ok(o) => Ok(Some(Info::of(&o))),
-                Err(vcs_store::StoreError::NotFound(_)) => Ok(None),
-                Err(e) => Err(crate::Error::from(e)),
-            });
-            let mut absent = std::collections::HashSet::new();
-            // Results the budget did not let `known` keep: still needed for this level.
-            let mut overflow: std::collections::HashMap<ObjectId, Info> = std::collections::HashMap::new();
-            for (id, r) in todo.iter().zip(got) {
-                match r? {
-                    Some(info) => {
+            // A chunk at a time: the decoded children of a whole level (every tree of a deep history) are tens of GB
+            // at 10M commits, and only `known`'s budget may keep them.
+            let mut next = Vec::new();
+            for chunk in level.chunks(GC_CHUNK) {
+                let todo: Vec<ObjectId> = chunk.iter().filter(|id| !known.contains_key(*id)).copied().collect();
+                let got = par_map(&todo, |id| match self.store.get(id) {
+                    Ok(o) => Ok(Some(Info::of(&o))),
+                    Err(vcs_store::StoreError::NotFound(_)) => Ok(None),
+                    Err(e) => Err(crate::Error::from(e)),
+                });
+                // Results the budget did not let `known` keep: still needed for this chunk.
+                let mut overflow: std::collections::HashMap<ObjectId, Info> = std::collections::HashMap::new();
+                for (id, r) in todo.iter().zip(got) {
+                    if let Some(info) = r? {
                         if let Some(info) = known.insert(*id, info) {
                             overflow.insert(*id, info);
                         }
                     }
-                    None => {
-                        absent.insert(*id);
-                    }
                 }
-            }
-            let mut next = Vec::new();
-            for id in &level {
-                match known.get(id).or_else(|| overflow.get(id)) {
-                    Some(info) => {
-                        marked.insert(*id);
-                        next.extend_from_slice(&info.kids);
-                    }
-                    None => {
-                        debug_assert!(absent.contains(id));
-                        missing += 1;
+                for id in chunk {
+                    match known.get(id).or_else(|| overflow.get(id)) {
+                        Some(info) => {
+                            marked.insert(*id);
+                            next.extend_from_slice(&info.kids);
+                        }
+                        None => missing += 1,
                     }
                 }
             }
@@ -302,10 +297,12 @@ impl Repo {
             .filter(|id| !known.contains_key(*id) && !cache.is_some_and(|c| c.scanned(id)))
             .copied()
             .collect();
-        let got = par_map(&todo, |id| self.store.get(id).ok().map(|o| Info::of(&o)));
-        for (id, info) in todo.into_iter().zip(got) {
-            if let Some(info) = info {
-                known.insert(id, info);
+        for chunk in todo.chunks(GC_CHUNK) {
+            let got = par_map(chunk, |id| self.store.get(id).ok().map(|o| Info::of(&o)));
+            for (id, info) in chunk.iter().zip(got) {
+                if let Some(info) = info {
+                    known.insert(*id, info);
+                }
             }
         }
         roots.extend(all.iter().filter(|id| known.is_tx(id)).copied());
@@ -338,9 +335,13 @@ impl Info {
     }
 }
 
-/// Default byte budget of [`Known`] (`VCS_GC_KNOWN_BYTES` overrides). Speed first: 16 GiB holds every object of a
-/// repository of about 10M commits; past it gc re-reads the overflow in its second pass instead of growing.
-const KNOWN_BUDGET: usize = 16 << 30;
+/// Objects read and decoded per batch while gc marks (bounds the transient decoded set).
+const GC_CHUNK: usize = 1 << 18;
+
+/// Default byte budget of [`Known`] (`VCS_GC_KNOWN_BYTES` overrides). Measured at 1M commits (4M objects): an
+/// unbounded cache cost 3.4 GB and bought nothing (gc 53.9 s with it, 55.4 s without), because the second pass
+/// re-reads from mapped packs about as fast as it looks up the cache.
+const KNOWN_BUDGET: usize = 1 << 30;
 
 /// Objects already read during one gc run (content-addressed, so a result never goes stale). Bounded: once the
 /// estimated size passes the budget, further results are not remembered (the caller still uses them for the level
