@@ -292,6 +292,12 @@ impl Repo {
     // ---------- open / init ----------
 
     pub fn init(path: &Path) -> Result<Repo> {
+        Self::init_with_branch(path, DEFAULT_BRANCH)
+    }
+
+    /// Like [`Repo::init`]; the root zone starts on `branch` (no commit yet) instead of `main`.
+    pub fn init_with_branch(path: &Path, branch: &str) -> Result<Repo> {
+        validate_branch_name(branch)?;
         io(path, fs::create_dir_all(path))?;
         let worktree = io(path, path.canonicalize())?;
         let vcs = worktree.join(META_DIR);
@@ -317,7 +323,7 @@ impl Repo {
         write_atomic(&r.vcs.join("zones"), &Zones::new().encode())?;
         write_atomic(&r.vcs.join("refs"), &Refs::default().encode())?;
         let mut ws = Workspace::default();
-        ws.subs.insert(ROOT_ZONE.into(), DEFAULT_BRANCH.into());
+        ws.subs.insert(ROOT_ZONE.into(), branch.into());
         write_atomic(&r.vcs.join("workspace"), &ws.encode())?;
         write_atomic(&r.vcs.join("index"), &Index::default().encode())?;
         // format marker written last: a crashed init leaves no valid repo

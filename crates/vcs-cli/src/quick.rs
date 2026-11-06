@@ -94,9 +94,13 @@ fn ls_files(stage: bool, rev: Option<String>) -> Cmd {
 pub fn parse(argv: &[OsString]) -> Option<Cli> {
     let strs: Vec<&str> = argv.iter().skip(1).map(|a| a.to_str()).collect::<Option<_>>()?;
     let cmd = match strs.as_slice() {
-        ["init"] => Cmd::Init { path: None },
+        ["init"] => Cmd::Init {
+            path: None,
+            initial_branch: None,
+        },
         ["init", p] => Cmd::Init {
             path: Some(PathBuf::from(pos(p)?)),
+            initial_branch: None,
         },
         ["branch"] => branch(None, None, false, false, false),
         ["branch", "-d", n] => branch(Some(pos(n)?), None, true, false, false),
@@ -134,7 +138,7 @@ mod tests {
     fn sig(c: &Cli) -> String {
         let head = format!("{:?}{}{:?}{}", c.chdir, c.json, c.ca_pem, c.no_hooks);
         let body = match &c.cmd {
-            Cmd::Init { path } => format!("init {path:?}"),
+            Cmd::Init { path, initial_branch } => format!("init {path:?} {initial_branch:?}"),
             Cmd::Branch {
                 name,
                 start,

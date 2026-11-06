@@ -144,14 +144,14 @@ Status: exact (same command and flags), renamed (other spelling, same meaning), 
 semantics differ as the notes say), missing (no equivalent; the notes name the native route).
 
 <!-- BEGIN GENERATED TABLE -->
-261 rows: 153 exact, 41 renamed, 40 different, 27 missing.
+261 rows: 154 exact, 41 renamed, 40 different, 26 missing.
 
 | git | vcs | status | notes | test |
 |---|---|---|---|---|
 | `git init` | `vcs init` | exact |  | translation |
 | `git init proj` | `vcs init proj` | exact |  | translation |
 | `git init --bare` | none | missing | a bare repository has no working tree; every vcs repository has one | translation |
-| `git init -b trunk` | none | missing | the first branch is always `main`; create others with `vcs switch -c` | translation |
+| `git init -b trunk` | `vcs init --initial-branch trunk` | exact | the root zone starts on that branch | translation |
 | `git clone ssh://host/app.git proj` | `vcs clone ssh://host/app.git proj` | exact | only the remotes vcs supports work (path, file://, http(s)://, s3://) | translation |
 | `git clone /srv/app.git` | `vcs clone /srv/app.git app` | exact | the directory name is inferred as git does | translation |
 | `git clone --depth 1 URL` | none | missing | vcs has no shallow clones; use `vcs clone --zone Z` / `--for PATH` to download only part | translation |
