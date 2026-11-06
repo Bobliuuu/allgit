@@ -61,6 +61,7 @@ Commands:
   merge-base     Best common ancestor of two revisions
   diff-tree      List the files that differ between two revisions (A/D/M and path)
   reset          Move the checked-out branch of a zone to another commit (--soft, --mixed, --hard); acts on one zone
+  rewrite        Rewrite a zone's history: keep/remove paths, change messages or authors, run a command on every tree (undo with `vcs op undo`)
   clean          Delete untracked files (-n lists, -f deletes)
   profile        Local usage profile that `sync --auto` / `pull --auto` / `clone --auto` predict zones from (docs/zone-profile.md)
   pull           Same as `sync` (fetch, then fast-forward); `--auto` chooses zones from your usage profile
@@ -1555,6 +1556,33 @@ Options:
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
       --zone <ZONE>    Zone (default: the zone containing the current directory)
   -h, --help           Print help
+```
+
+## `vcs rewrite`
+
+```text
+Rewrite a zone's history: keep/remove paths, change messages or authors, run a command on every tree (undo with `vcs op undo`)
+
+Usage: vcs rewrite [OPTIONS]
+
+Options:
+  -C <DIR>                         Run as if vcs was started in <DIR> (applied before repository discovery)
+      --subdirectory-filter <DIR>  Make this directory the root of every commit; commits without it vanish (filter-repo --subdirectory-filter)
+      --json                       Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
+      --keep <PATH>                Keep only this file or directory (repeatable; filter-repo --path)
+      --ca-pem <FILE>              PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --remove <PATH>              Remove this file or directory from every commit (repeatable; filter-repo --path with --invert-paths)
+      --msg-filter <CMD>           Shell command: old message on stdin, new message on stdout
+      --no-hooks                   Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+      --env-filter <SCRIPT>        Shell script that may set GIT_AUTHOR_NAME / GIT_AUTHOR_EMAIL / GIT_AUTHOR_DATE ('@SECONDS'); GIT_COMMITTER_* are readable but changes to them are ignored (a commit has one signature)
+      --tree-filter <CMD>          Shell command run in a checkout of each commit's tree (SLOW: one checkout and one re-hash per commit)
+      --tag-name-filter <CMD>      Shell command: tag name on stdin, new tag name on stdout (`cat` keeps the names; tags are moved either way)
+      --all-branches               Rewrite every branch of the zone, not only the checked-out one
+      --keep-empty                 Keep commits that the filters left empty (default: drop them)
+  -f, --force                      Rewrite although the changed commits are already published (held by origin as last fetched)
+  -n, --dry-run                    Show what would change; move nothing
+      --zone <ZONE>                Zone (default: the zone containing the current directory)
+  -h, --help                       Print help
 ```
 
 ## `vcs clean`

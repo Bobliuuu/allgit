@@ -148,3 +148,8 @@ From the final scoreboard ([research/command-scoreboard.md](research/command-sco
   UBSan or TSan (not supported on stable Rust / needs a full instrumented std plus deps); the release workflow's
   new jobs (SBOM, image, attestation, cosign) have never run in Actions. The weekly fuzz job is scheduled, not a pull
   request gate, so it stays advisory.
+- `vcs rewrite` (filter-branch / filter-repo core, [history-rewrite.md](history-rewrite.md)) has one
+  signature per commit, so `GIT_COMMITTER_*` changes in an env filter are ignored; it has no index,
+  parent or commit filter and no callbacks or regex path rules; signed commits it changes no longer
+  verify; its published-history check only knows the remote as of the last `vcs fetch`; a tree
+  filter costs one checkout per commit.

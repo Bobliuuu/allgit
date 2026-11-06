@@ -310,7 +310,7 @@ impl Repo {
 
     /// Move local branch refs, subscriptions, index and worktree to `target`.
     /// Never touches remote-tracking refs, the remote, or any object.
-    fn restore_view(&self, target: &OpView) -> Result<()> {
+    pub(crate) fn restore_view(&self, target: &OpView) -> Result<()> {
         // It rewrites every branch ref at once; another worktree's checked-out branch would move under it.
         self.require_no_linked_worktrees("op undo / op restore")?;
         let zones = self.zones()?;

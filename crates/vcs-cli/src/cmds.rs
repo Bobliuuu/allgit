@@ -35,6 +35,8 @@ pub enum More {
     DiffTree(crate::histcmds::DiffTreeArgs),
     /// Move the checked-out branch of a zone to another commit (--soft, --mixed, --hard); acts on one zone
     Reset(crate::everyday::ResetArgs),
+    /// Rewrite a zone's history: keep/remove paths, change messages or authors, run a command on every tree (undo with `vcs op undo`)
+    Rewrite(crate::rewrite_cmd::RewriteArgs),
     /// Delete untracked files (-n lists, -f deletes)
     Clean(crate::everyday::CleanArgs),
     /// Local usage profile that `sync --auto` / `pull --auto` / `clone --auto` predict zones from (docs/zone-profile.md)
@@ -62,6 +64,7 @@ pub fn dispatch(cmd: &More, json: bool) -> Result<(), Error> {
         More::MergeBase(a) => crate::histcmds::merge_base(a, json),
         More::DiffTree(a) => crate::histcmds::diff_tree(a, json),
         More::Reset(a) => crate::everyday::reset(a),
+        More::Rewrite(a) => crate::rewrite_cmd::run(a, json),
         More::Clean(a) => crate::everyday::clean(a),
         More::Profile(c) => {
             crate::zoneprofile_cmd::set_json(json);
