@@ -52,6 +52,9 @@ pub mod reftags;
 pub mod repo;
 pub mod reset;
 pub mod revrange;
+#[cfg(feature = "scaling-probe")]
+#[doc(hidden)]
+pub mod scaling_probe;
 pub mod shelve;
 mod snapcache;
 pub mod sparse;

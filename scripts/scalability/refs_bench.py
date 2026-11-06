@@ -20,7 +20,7 @@ def run(label, *args, cwd=None, stdin=None):
     _, st, ru = os.wait4(p.pid, 0)
     dt = time.time() - t
     rc = os.waitstatus_to_exitcode(st)
-    print(f"{label:28s} {dt:8.3f} s {ru.ru_maxrss/1048576:8.0f} MB" + ("" if rc == 0 else f"  (exit {rc})"), flush=True)
+    print(f"{label:28s} {dt:8.3f} s {ru.ru_maxrss/(1024 if sys.platform == 'linux' else 1048576):8.0f} MB" + ("" if rc == 0 else f"  (exit {rc})"), flush=True)
     return rc
 repo = os.path.join(work, "r")
 run("init", "init", repo)

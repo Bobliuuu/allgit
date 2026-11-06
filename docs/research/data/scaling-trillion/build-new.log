@@ -1,0 +1,21 @@
+   Compiling vcs-store v0.1.0 (/data/repo/crates/vcs-store)
+   Compiling vcs-remote v0.1.0 (/data/repo/crates/vcs-remote)
+   Compiling vcs-merge v0.1.0 (/data/repo/crates/vcs-merge)
+   Compiling vcs-repo v0.1.0 (/data/repo/crates/vcs-repo)
+   Compiling vcs-store-s3 v0.1.0 (/data/repo/crates/vcs-store-s3)
+   Compiling vcs-server v0.1.0 (/data/repo/crates/vcs-server)
+warning: variable does not need to be mutable
+   --> crates/vcs-repo/src/scaling_probe.rs:170:9
+    |
+170 |     let mut w = |h: &mut blake3::Hasher, f: &mut std::io::BufWriter<std::fs::File>, b: &[u8]| -> std::io::Result<()> {
+    |         ----^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling vcs-bench v0.1.0 (/data/repo/crates/vcs-bench)
+   Compiling vcs-watchd v0.1.0 (/data/repo/crates/vcs-watchd)
+warning: `vcs-repo` (lib) generated 1 warning (run `cargo fix --lib -p vcs-repo` to apply 1 suggestion)
+   Compiling vcs-cli v0.1.0 (/data/repo/crates/vcs-cli)
+    Finished `release` profile [optimized] target(s) in 2m 45s

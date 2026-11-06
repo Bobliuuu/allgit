@@ -1,0 +1,6 @@
+0.00 s wall, 2700 KB maxrss: pfilter 1000 /data/scaling-work/pf
+0.00 s wall, 3280 KB maxrss: pfilter 10000 /data/scaling-work/pf
+0.02 s wall, 9100 KB maxrss: pfilter 100000 /data/scaling-work/pf
+0.21 s wall, 66188 KB maxrss: pfilter 1000000 /data/scaling-work/pf
+1.96 s wall, 637580 KB maxrss: pfilter 10000000 /data/scaling-work/pf
+19.46 s wall, 6350284 KB maxrss: pfilter 100000000 /data/scaling-work/pf

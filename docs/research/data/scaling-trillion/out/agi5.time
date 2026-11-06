@@ -1,0 +1,7 @@
+0.01 s wall, 3280 KB maxrss: agi5 1000 /data/scaling-work/a
+0.02 s wall, 3868 KB maxrss: agi5 10000 /data/scaling-work/a
+0.06 s wall, 11856 KB maxrss: agi5 100000 /data/scaling-work/a
+0.33 s wall, 95948 KB maxrss: agi5 1000000 /data/scaling-work/a
+3.18 s wall, 939980 KB maxrss: agi5 10000000 /data/scaling-work/a
+30.03 s wall, 9379216 KB maxrss: agi5 100000000 /data/scaling-work/a
+52.86 s wall, 18755720 KB maxrss: agi5 200000000 /data/scaling-work/a
