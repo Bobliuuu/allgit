@@ -89,7 +89,9 @@ fn assert_meta_closure(s: &LocalStore, id: ObjectId) -> usize {
     seen.len()
 }
 
-fn bulk(mem: &MemBackend, dst: &LocalStore) -> Result<Option<Vec<(String, String, ObjectId)>>, PublishError> {
+type Heads = Vec<(String, String, ObjectId)>;
+
+fn bulk(mem: &MemBackend, dst: &LocalStore) -> Result<Option<Heads>, PublishError> {
     let (m, _) = load_manifest(mem)?;
     fetch_heads_bulk(mem, dst, &m, &Arc::new(PackCatalog::new()))
 }
