@@ -9,6 +9,10 @@ fn cerr(what: &str, e: impl std::fmt::Display) -> Error {
     Error::Msg(format!("{what}: {e}"))
 }
 
+pub fn cwd() -> Result<PathBuf, Error> {
+    std::env::current_dir().map_err(|e| cerr("cannot read the current directory", e))
+}
+
 /// The URL to act on: the argument, else the repository's configured remote.
 fn target(arg: Option<String>, cwd: &Path) -> Result<String, Error> {
     match arg {
@@ -115,7 +119,11 @@ fn copy(src_url: &str, dst_url: &str, restore: bool, a: &CopyArgs) -> Result<(),
         r.already_there,
         r.branches,
         if r.held { "; GC safe point held on the source" } else { "" },
-        if r.passes > 1 { format!("; {} pass(es) ({} key(s) vanished)", r.passes, r.vanished) } else { String::new() },
+        if r.passes > 1 {
+            format!("; {} pass(es) ({} key(s) vanished)", r.passes, r.vanished)
+        } else {
+            String::new()
+        },
     );
     print_report(dst_url, &r.verify);
     println!("manifest written to {dst_url} (last)");
@@ -153,7 +161,11 @@ pub fn safe_point(url: Option<String>, cwd: &Path) -> Result<(), Error> {
         }
         for h in holds {
             if h.expires_ms > now {
-                println!("HOLD (gc and compaction refuse to run): {} for another {} s", h.owner, (h.expires_ms - now) / 1000);
+                println!(
+                    "HOLD (gc and compaction refuse to run): {} for another {} s",
+                    h.owner,
+                    (h.expires_ms - now) / 1000
+                );
             } else {
                 println!("expired hold left by {} (a killed backup; the next gc clears it)", h.owner);
             }

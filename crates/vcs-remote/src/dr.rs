@@ -241,7 +241,9 @@ impl<'a> Hold<'a> {
             *last = Instant::now();
         }
         let mut mine = self.mine.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(cur) = self.b.get(&self.key)? else { return Err(DrError::HoldLost) };
+        let Some(cur) = self.b.get(&self.key)? else {
+            return Err(DrError::HoldLost);
+        };
         if cur.data != *mine {
             return Err(DrError::HoldLost);
         }
@@ -440,25 +442,29 @@ pub fn verify_remote(b: &dyn Backend, opts: &VerifyOptions) -> Result<VerifyRepo
 
 fn deep_scan(b: &dyn Backend, view: &View<'_>, rep: &mut VerifyReport) -> Result<(), DrError> {
     let stems: Vec<(&String, &vcs_store::pack::PackIndex)> = view.packs.iter().filter_map(|(s, i)| i.as_ref().map(|i| (s, i))).collect();
-    let res = crate::par::map_bounded(&stems, crate::par::parallelism(), |(stem, idx)| -> Result<(u64, u64, Option<Problem>), DrError> {
-        let info = crate::compact::PackInfo {
-            stem: (*stem).clone(),
-            len: idx.pack_len,
-        };
-        match crate::compact::read_pack(b, &info, idx) {
-            Ok(objs) => Ok((objs.len() as u64, idx.pack_len, None)),
-            Err(GcError::Damaged(w)) => Ok((
-                0,
-                0,
-                Some(Problem {
-                    id: None,
-                    context: format!("{stem}.pack"),
-                    what: w,
-                }),
-            )),
-            Err(e) => Err(e.into()),
-        }
-    })?;
+    let res = crate::par::map_bounded(
+        &stems,
+        crate::par::parallelism(),
+        |(stem, idx)| -> Result<(u64, u64, Option<Problem>), DrError> {
+            let info = crate::compact::PackInfo {
+                stem: (*stem).clone(),
+                len: idx.pack_len,
+            };
+            match crate::compact::read_pack(b, &info, idx) {
+                Ok(objs) => Ok((objs.len() as u64, idx.pack_len, None)),
+                Err(GcError::Damaged(w)) => Ok((
+                    0,
+                    0,
+                    Some(Problem {
+                        id: None,
+                        context: format!("{stem}.pack"),
+                        what: w,
+                    }),
+                )),
+                Err(e) => Err(e.into()),
+            }
+        },
+    )?;
     for (n, bytes, p) in res {
         rep.deep_objects += n;
         rep.bytes_walked += bytes;
@@ -467,21 +473,25 @@ fn deep_scan(b: &dyn Backend, view: &View<'_>, rep: &mut VerifyReport) -> Result
         }
     }
     let loose: Vec<&ObjectId> = view.loose.iter().collect();
-    let res = crate::par::map_bounded(&loose, crate::par::parallelism(), |id| -> Result<(u64, u64, Option<Problem>), DrError> {
-        match b.get(&crate::protocol::object_key(id))? {
-            None => Ok((0, 0, None)), // collected since the listing
-            Some(v) if id_of_encoded(&v.data) == **id && Object::decode(&v.data).is_ok() => Ok((1, v.data.len() as u64, None)),
-            Some(_) => Ok((
-                0,
-                0,
-                Some(Problem {
-                    id: Some(**id),
-                    context: crate::protocol::object_key(id),
-                    what: "fails hash verification or does not decode".into(),
-                }),
-            )),
-        }
-    })?;
+    let res = crate::par::map_bounded(
+        &loose,
+        crate::par::parallelism(),
+        |id| -> Result<(u64, u64, Option<Problem>), DrError> {
+            match b.get(&crate::protocol::object_key(id))? {
+                None => Ok((0, 0, None)), // collected since the listing
+                Some(v) if id_of_encoded(&v.data) == **id && Object::decode(&v.data).is_ok() => Ok((1, v.data.len() as u64, None)),
+                Some(_) => Ok((
+                    0,
+                    0,
+                    Some(Problem {
+                        id: Some(**id),
+                        context: crate::protocol::object_key(id),
+                        what: "fails hash verification or does not decode".into(),
+                    }),
+                )),
+            }
+        },
+    )?;
     for (n, bytes, p) in res {
         rep.deep_objects += n;
         rep.bytes_walked += bytes;
@@ -645,7 +655,12 @@ pub fn backup_copy(src: &dyn Backend, dst: &dyn Backend, opts: &CopyOptions) -> 
             "{} missing, {} corrupt in the destination{}",
             v.missing_total,
             v.corrupt_total,
-            first.map_or(String::new(), |p| format!(" (first: {} {}: {})", p.id.map_or(String::new(), |i| i.short()), p.context, p.what))
+            first.map_or(String::new(), |p| format!(
+                " (first: {} {}: {})",
+                p.id.map_or(String::new(), |i| i.short()),
+                p.context,
+                p.what
+            ))
         )));
     }
 

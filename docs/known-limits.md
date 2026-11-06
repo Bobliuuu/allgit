@@ -129,6 +129,10 @@ From the final scoreboard ([research/command-scoreboard.md](research/command-sco
 
 ## Other
 
+- Backup and restore ([backup-restore.md](backup-restore.md)): no continuous replication (RPO = backup interval); a backup copies
+  all data keys including uncollected garbage, holds a pack in memory per worker, flattens a sharded manifest, and is tested on
+  directory and in-memory backends only, not real S3. The server audit log is not replicated.
+
 - Merge assist is verified on 77 real conflicts with parse checks only, not
   the projects' own tests; the HTTP API path is mock-tested only
   ([assist.md](assist.md)).

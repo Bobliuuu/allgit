@@ -293,8 +293,10 @@ timeout on a conditional write may have applied and is resolved by the caller's 
   noncurrent versions after your recovery window, and consider cross-region replication. Objects and packs are immutable and the
   manifest is the only mutable key, but remote GC deletes unreachable objects: restoring an old `manifest` version is
   only safe if GC has not swept what that version references (versioning keeps the bytes; a delete marker is undone by deleting
-  it). Take the manifest version you intend to restore from before the last `vcs gc --remote` run. Nothing in the tool
-  automates or tests restore yet; rehearse it once on a copy (`aws s3 sync` of the prefix, then point a server at the copy).
+  it). Take the manifest version you intend to restore from before the last `vcs gc --remote` run.
+  `vcs remote verify URL --manifest FILE` says whether an old manifest is still restorable. `vcs remote backup`, `restore`
+  and `verify` automate and test backup and restore, with a GC safe point; see [backup-restore.md](backup-restore.md) (RPO/RTO,
+  drill, cross-region recipe).
 * Upgrades and rollback: a minimum-reader marker (`format` key) makes a binary older than the repository refuse with a clear
   message instead of a decode error, and `vcs-server` refuses to start on a repository newer than itself. A manifest over a
   size threshold is rewritten in the v5 layout and `migrate-sharded` is one-way, so the level rises and a rollback needs more

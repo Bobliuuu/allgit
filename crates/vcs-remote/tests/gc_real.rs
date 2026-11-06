@@ -457,7 +457,9 @@ fn deletes_old_unreachable_closure_keeps_head_and_reports() {
     assert!(fetch_object(&b, &w.h0).is_ok(), "the head lives in a pack and must survive");
     g_reach(&b).unwrap();
     assert!(b.list("tomb/").unwrap().is_empty(), "no tombstones left behind");
-    assert!(b.list("gc/").unwrap().is_empty(), "lock released");
+    assert!(!b.exists("gc/lock").unwrap(), "lock released");
+    assert!(b.list("gc/hold/").unwrap().is_empty());
+    assert!(b.exists("gc/safe-point").unwrap(), "a destructive sweep records its safe point");
     assert!(b.exists("manifest").unwrap());
     // 3 = C, D's blob... C, its tree D and the tree's blob
     assert_eq!(rep.deleted.len(), 3);
