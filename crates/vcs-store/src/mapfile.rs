@@ -108,3 +108,33 @@ impl std::fmt::Debug for MapFile {
         write!(f, "MapFile({} bytes, mapped={})", self.len(), self.is_mapped())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn big_hash_equals_plain_hash_and_map_reads_back() {
+        let mut v = vec![0u8; 5_000_001];
+        let mut x = 0x1234_5678_9abc_def0u64;
+        for b in v.iter_mut() {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            *b = x as u8;
+        }
+        assert_eq!(blake3_big(&v), blake3::hash(&v));
+        assert_eq!(blake3_big(&v[..1000]), blake3::hash(&v[..1000]));
+        let dir = std::env::temp_dir().join(format!("mapfile-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("f");
+        std::fs::write(&p, &v).unwrap();
+        let m = MapFile::open(&p, true).unwrap();
+        assert_eq!(&m[..], &v[..]);
+        assert_eq!(m.is_mapped(), cfg!(unix));
+        std::fs::write(&p, b"").unwrap();
+        assert_eq!(MapFile::open(&p, false).unwrap().len(), 0);
+        assert!(MapFile::open(&dir.join("missing"), false).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
