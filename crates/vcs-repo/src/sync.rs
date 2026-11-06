@@ -1046,7 +1046,17 @@ impl Repo {
             };
             repo.save_ws(&Workspace::default())?;
             let cat = Arc::new(PackCatalog::for_clone());
-            let got = fetch_heads_lazy_shared(backend, &repo.store, Some(&want), &m, &cat).map_err(publish_err)?;
+            // A clone of every zone streams the remote's metadata through all cores (see `vcs_remote::bulkmeta`); a zone
+            // subset, or packs that do not cover the heads, walk the history object by object.
+            let bulk = if zones.is_none() {
+                vcs_remote::fetch_heads_bulk(backend, &repo.store, &m, &cat).map_err(publish_err)?
+            } else {
+                None
+            };
+            let got = match bulk {
+                Some(g) => g,
+                None => fetch_heads_lazy_shared(backend, &repo.store, Some(&want), &m, &cat).map_err(publish_err)?,
+            };
             let mut rr = Refs::default();
             let mut local = Refs::default();
             for (a, b, id) in &got {

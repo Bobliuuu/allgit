@@ -6,6 +6,7 @@
 
 pub mod autocompact;
 pub mod backend;
+pub mod bulkmeta;
 pub mod clientcache;
 pub mod compact;
 pub mod diskcache;
@@ -41,9 +42,9 @@ pub use membackend::{CasFault, MemBackend};
 pub use memo::MemoBackend;
 pub use packfetch::fetch_many;
 pub use protocol::{
-    changed_paths, fetch_heads, fetch_heads_lazy, fetch_heads_lazy_shared, fetch_heads_lazy_with, fetch_object, fetch_objects,
-    fetch_objects_with, fetch_tags_lazy, fetch_tags_lazy_shared, fetch_tags_lazy_with, load_manifest, refresh_manifest, repair_remote,
-    Outcome, PublishError, Publisher, Step, PUBLISH_VERIFY_BUDGET,
+    changed_paths, fetch_heads, fetch_heads_bulk, fetch_heads_lazy, fetch_heads_lazy_shared, fetch_heads_lazy_with, fetch_object,
+    fetch_objects, fetch_objects_with, fetch_tags_lazy, fetch_tags_lazy_shared, fetch_tags_lazy_with, load_manifest, refresh_manifest,
+    repair_remote, Outcome, PublishError, Publisher, Step, PUBLISH_VERIFY_BUDGET,
 };
 pub use retry::{RetryBackend, RetryPolicy};
 pub use stats::{CountingBackend, LoggingBackend, TransferStats};

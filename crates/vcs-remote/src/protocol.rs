@@ -307,7 +307,7 @@ pub(crate) fn deps(o: &Object) -> Vec<ObjectId> {
 
 /// Like [`deps`], but with `skip_files` a tree contributes only its subdirectories, so a walk
 /// reaches commits and trees and never a file blob or chunk manifest.
-fn deps_of(o: &Object, skip_files: bool) -> Vec<ObjectId> {
+pub(crate) fn deps_of(o: &Object, skip_files: bool) -> Vec<ObjectId> {
     match o {
         Object::Tree(t) if skip_files => t
             .entries()
@@ -1678,6 +1678,49 @@ fn verify_files_exist(backend: &dyn Backend, cat: &packfetch::PackCatalog, files
     } else {
         Err(missing("chunk", gone))
     }
+}
+
+/// [`fetch_heads_lazy_shared`] for a clone of every zone into an EMPTY store: the metadata of all packs is streamed
+/// through [`crate::bulkmeta`] on every core and written as local packs, and only what the pack prefixes did not
+/// deliver is walked object by object. `Ok(None)`: the packs do not cover the branch heads; nothing was written and the
+/// caller uses [`fetch_heads_lazy_shared`].
+pub fn fetch_heads_bulk(
+    backend: &dyn Backend,
+    local: &vcs_store::LocalStore,
+    m: &Manifest,
+    cat: &Arc<packfetch::PackCatalog>,
+) -> Result<Option<Vec<(String, String, ObjectId)>>, PublishError> {
+    let roots: Vec<ObjectId> = m.branches.values().copied().collect();
+    let Some(bulk) = crate::bulkmeta::fetch_metadata_bulk(backend, local, cat, &roots)? else {
+        return Ok(None);
+    };
+    if !bulk.holes.is_empty() {
+        // Walk what the prefixes left out. Everything stored so far is dependency-complete except below these holes,
+        // so "present" is trustworthy for the walk once the holes themselves are filled.
+        let mut src = packfetch::RemoteSource::new(backend, packfetch::ReadAhead::None).with_catalog(cat.clone());
+        let mut seen = HashSet::new();
+        for h in &bulk.holes {
+            post_order(
+                *h,
+                &mut |i| Ok(local.contains(i)?),
+                &mut |i| {
+                    let data = src
+                        .fetch(i)?
+                        .ok_or_else(|| PublishError::Remote(format!("object {i} missing on remote")))?;
+                    Object::decode(&data).map_err(|e| PublishError::Remote(format!("object {i}: {e}")))
+                },
+                &mut |_, o| {
+                    local.put(o)?;
+                    Ok(())
+                },
+                &mut seen,
+                &|o| deps_of(o, true),
+            )?;
+        }
+    }
+    verify_files_exist(backend, cat, &bulk.files, LAZY_VERIFY_BUDGET).map_err(|e| PublishError::Remote(format!("clone: {e}")))?;
+    local.sync()?;
+    Ok(Some(m.branches.iter().map(|((a, b), id)| (a.clone(), b.clone(), *id)).collect()))
 }
 
 fn fetch_heads_impl(

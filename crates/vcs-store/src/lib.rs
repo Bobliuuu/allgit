@@ -883,6 +883,18 @@ impl LocalStore {
             Err(e) => vec![e.to_string()],
         }
     }
+    /// Stream `count` objects (id, encoded bytes; ids distinct, bytes already verified by the caller) into one new
+    /// durable pack and add it to this store. For bulk imports such as a clone, which would otherwise pay the
+    /// pending map and the barrier per object.
+    pub fn add_streamed_pack<'a>(
+        &self,
+        count: usize,
+        objects: impl Iterator<Item = Result<(ObjectId, std::borrow::Cow<'a, [u8]>), StoreError>>,
+    ) -> Result<(), StoreError> {
+        let pack = pack::write_pack_streaming(&self.dir, count, objects)?;
+        self.add_pack(pack);
+        Ok(())
+    }
     /// [`LocalStore::verify_packs`] that also hands every packed object to `visit` (see [`pack::Pack::scan`]):
     /// from many threads, in pack order, each thread with its own `init()` state (all returned). An id held by
     /// several packs is visited once per pack.
