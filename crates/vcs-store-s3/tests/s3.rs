@@ -792,7 +792,11 @@ mod stream_fake {
             let head = String::from_utf8_lossy(&data[..head_end]).to_string();
             let clen = head
                 .lines()
-                .find_map(|l| l.to_lowercase().strip_prefix("content-length:").and_then(|v| v.trim().parse::<usize>().ok()))
+                .find_map(|l| {
+                    l.to_lowercase()
+                        .strip_prefix("content-length:")
+                        .and_then(|v| v.trim().parse::<usize>().ok())
+                })
                 .unwrap_or(0);
             while data.len() < head_end + 4 + clen {
                 match s.read(&mut buf) {
@@ -805,9 +809,11 @@ mod stream_fake {
             let mut parts = head.lines().next().unwrap().split(' ');
             let (method, path) = (parts.next().unwrap().to_owned(), parts.next().unwrap().to_owned());
             let hdr = |n: &str| {
-                head.lines()
-                    .skip(1)
-                    .find_map(|l| l.split_once(':').filter(|(k, _)| k.eq_ignore_ascii_case(n)).map(|(_, v)| v.trim().to_owned()))
+                head.lines().skip(1).find_map(|l| {
+                    l.split_once(':')
+                        .filter(|(k, _)| k.eq_ignore_ascii_case(n))
+                        .map(|(_, v)| v.trim().to_owned())
+                })
             };
             let mut g = st.lock().unwrap();
             g.log.push(format!("{method} {path}"));
@@ -817,30 +823,42 @@ mod stream_fake {
                 let _ = s.write_all(h.as_bytes());
                 let _ = s.write_all(body);
             };
+            // decide under the lock, write after releasing it: a big body blocks until the client reads it
             match (method.as_str(), obj) {
                 ("PUT", _) => {
                     g.objects.insert(path, (body, "\"put\"".into()));
+                    drop(g);
                     reply(&mut s, "200 OK", "ETag: \"put\"\r\n", 0, b"");
                 }
                 ("HEAD", Some((d, tag))) => {
-                    reply(&mut s, "200 OK", &format!("ETag: {tag}\r\n"), d.len(), b"");
+                    // the swap is visible before the client can send its GET
                     if let Some((p, nd, nt)) = g.swap_after_head.take() {
                         g.objects.insert(p, (nd, nt));
                     }
+                    drop(g);
+                    reply(&mut s, "200 OK", &format!("ETag: {tag}\r\n"), d.len(), b"");
                 }
                 ("GET", Some((d, tag))) => {
+                    let cut = g.cut_at;
+                    drop(g);
                     if hdr("if-match").is_some_and(|m| m != tag) {
                         reply(&mut s, "412 Precondition Failed", "", 0, b"");
                     } else {
-                        let n = g.cut_at.unwrap_or(d.len()).min(d.len());
+                        let n = cut.unwrap_or(d.len()).min(d.len());
                         reply(&mut s, "200 OK", &format!("ETag: {tag}\r\n"), d.len(), &d[..n]);
                         if n < d.len() {
                             return; // drop the connection mid-body
                         }
                     }
                 }
-                (_, None) => reply(&mut s, "404 Not Found", "", 0, b""),
-                _ => reply(&mut s, "405 Method Not Allowed", "", 0, b""),
+                (_, None) => {
+                    drop(g);
+                    reply(&mut s, "404 Not Found", "", 0, b"");
+                }
+                _ => {
+                    drop(g);
+                    reply(&mut s, "405 Method Not Allowed", "", 0, b"");
+                }
             }
         }
     }
@@ -861,7 +879,10 @@ fn payload(n: usize) -> Vec<u8> {
 fn get_stream_is_head_then_one_unranged_get_with_the_etag_as_tag() {
     let (url, st) = stream_fake::start();
     let data = payload(3 << 20);
-    st.lock().unwrap().objects.insert("/b/packs/big.pack".into(), (data.clone(), "\"abc123\"".into()));
+    st.lock()
+        .unwrap()
+        .objects
+        .insert("/b/packs/big.pack".into(), (data.clone(), "\"abc123\"".into()));
     let b = stream_backend(&url);
     let mut s = b.get_stream("packs/big.pack", 1 << 20).unwrap().expect("streamed");
     assert_eq!((s.len, s.tag.as_str()), (data.len() as u64, "\"abc123\""));
@@ -906,7 +927,10 @@ fn get_stream_body_cut_short_is_an_error_not_a_short_object() {
     let mut got = Vec::new();
     let e = s.reader.read_to_end(&mut got).expect_err("short body must fail");
     assert!(got.len() <= 4000, "{}", got.len());
-    assert!(matches!(e.kind(), std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::Other), "{e:?}");
+    assert!(
+        matches!(e.kind(), std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::Other),
+        "{e:?}"
+    );
 }
 
 #[test]
