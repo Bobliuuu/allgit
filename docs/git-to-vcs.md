@@ -144,7 +144,7 @@ Status: exact (same command and flags), renamed (other spelling, same meaning), 
 semantics differ as the notes say), missing (no equivalent; the notes name the native route).
 
 <!-- BEGIN GENERATED TABLE -->
-303 rows: 178 exact, 42 renamed, 56 different, 27 missing.
+326 rows: 183 exact, 42 renamed, 74 different, 27 missing.
 
 | git | vcs | status | notes | test |
 |---|---|---|---|---|
@@ -162,7 +162,7 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git add -A` | `vcs add .` | different | git stages the whole tree from any directory; vcs stages the current directory (identical at the repository root) | `basics` |
 | `git add -u` | `vcs add <every modified or deleted tracked file>` | exact | tracked files only, as git | `basics` |
 | `git add -p` | none | missing | no interactive staging; stage whole files, or `vcs stash` / `vcs restore --staged` to adjust | `basics` |
-| `git add -f ignored.log` | none | missing | ignored files cannot be force-added; edit `.vcsignore` | translation |
+| `git add -f ignored.log` | `vcs add -f ignored.log` | exact | also for a file under an ignored directory and for a whole ignored directory; once tracked, a file is no longer reported as ignored, as in git | `ignored` |
 | `git rm f.txt` | `vcs rm f.txt` | exact |  | `basics` |
 | `git rm --cached f.txt` | `vcs rm --cached f.txt` | exact |  | `basics` |
 | `git rm -rf dir` | `vcs rm --force dir` | exact | `-r` is implied | `basics` |
@@ -172,7 +172,8 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git status -s` | `vcs status (rendered as XY lines)` | different | rendered by `vcs git` from `vcs status` data; native `vcs status` has no short form | `basics` |
 | `git status --porcelain` | `vcs status (rendered as XY lines)` | different | same two-letter codes for A/M/D/??; no rename detection (git shows a rename as R) | `basics` |
 | `git status -sb` | `vcs status (rendered as XY lines with ## branch)` | different | branch line shows only the first zone's branch | `basics` |
-| `git status --ignored` | none | missing | ignored files are never listed | translation |
+| `git status --ignored` | `vcs status --ignored` | different | an `ignored:` section after `untracked:`; a directory ignored as a whole is one entry with a trailing `/` | translation |
+| `git status -s --ignored` | `vcs status (rendered as XY lines with !! ignored)` | different | `!!` lines as git, listed after the `??` lines | `ignored` |
 | `git diff` | `vcs diff` | exact |  | `basics` |
 | `git diff --staged` | `vcs diff --staged` | exact |  | `basics` |
 | `git diff --cached` | `vcs diff --staged` | exact |  | `basics` |
@@ -259,7 +260,7 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git reset --mixed HEAD~1` | `vcs reset --mixed HEAD~1` | different | as above | `reset` |
 | `git reset --hard HEAD~1` | `vcs reset --hard HEAD~1` | different | as above; discards the zone's uncommitted work | `reset` |
 | `git reset HEAD -- f.txt` | `vcs reset HEAD -- f.txt` | exact | unstages the file (same as `vcs restore --staged`) | `basics` |
-| `git reset --hard HEAD@{1}` | none | missing | `vcs op log`, then `vcs op undo` / `vcs op restore <id>` | translation |
+| `git reset --hard HEAD@{1}` | `vcs reset --hard HEAD@{1}` | different | `<name>@{N}` (HEAD or a branch) is read from the operation log, one entry per operation that CHANGES the value (git also logs operations that leave it unchanged); dates (`@{yesterday}`), `@{upstream}` and `ORIG_HEAD` are refused; acts on one zone | `reflog` |
 | `git revert HEAD` | `vcs revert HEAD` | exact |  | `pick` |
 | `git revert --no-edit HEAD~2` | `vcs revert HEAD~2` | exact |  | `pick` |
 | `git revert -n HEAD` | `vcs revert --no-commit HEAD` | exact | the undoing change is left staged; record it with `vcs commit` | `pick` |
@@ -338,7 +339,6 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git bisect skip` | `vcs bisect skip` | exact |  | translation |
 | `git bisect run ./t.sh` | `vcs bisect run ./t.sh` | exact |  | translation |
 | `git bisect reset` | `vcs bisect reset` | exact |  | translation |
-| `git bisect log` | none | missing | no bisect log | translation |
 | `git rerere` | `vcs rerere` | exact | needs `rerere.enabled` (`vcs config set rerere.enabled on`); records and replays text-conflict resolutions for merge, rebase, cherry-pick and revert (docs/rerere.md) | translation |
 | `git rerere status` | `vcs rerere status` | exact |  | translation |
 | `git rerere remaining` | `vcs rerere remaining` | exact |  | translation |
@@ -347,6 +347,8 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git rerere clear` | `vcs rerere clear` | exact |  | translation |
 | `git rerere gc` | `vcs rerere gc` | exact | limits from `gc.rerereResolved` (60 days) and `gc.rerereUnresolved` (15 days) | translation |
 | `git rerere train` | none | missing | no training from history; resolve once and it is recorded | translation |
+| `git bisect log` | `vcs bisect log` | different | the marks in the order given, as `vcs bisect <verb> <id>` lines with `# verb: [id] subject` comments, ending with `# first bad commit` when found; ids are vcs ids | translation |
+| `git bisect replay f.log` | `vcs bisect replay f.log` | different | replays a `vcs bisect log` (a git log carries sha1 ids that do not exist here); refuses when a bisection is in progress | translation |
 | `git reflog` | `vcs op log` | renamed | repository-wide operation log, not one log per ref | translation |
 | `git reflog -n 5` | `vcs op log -n 5` | renamed |  | translation |
 | `git clean -n` | `vcs clean -n` | exact |  | `clean` |
@@ -365,7 +367,8 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git worktree add -b new ../wt` | `vcs worktree add ../wt new` | exact |  | translation |
 | `git worktree list` | `vcs worktree list` | exact |  | translation |
 | `git worktree remove ../wt` | `vcs worktree remove ../wt` | exact |  | translation |
-| `git worktree prune` | none | missing | `vcs worktree remove` | translation |
+| `git worktree prune` | `vcs worktree prune` | exact | forgets the registration of a worktree whose directory is gone at once (no --expire); never deletes a directory | translation |
+| `git worktree prune -n` | `vcs worktree prune --dry-run` | exact |  | translation |
 | `git submodule add URL path` | none | missing | no nested repositories. A zone is a path-prefix with its own branches and history inside the SAME repository: `vcs zone create <name> --path <dir>`; subscribe with `vcs zone add`, clone parts with `vcs clone --zone` | translation |
 | `git submodule update --init` | none | missing | `vcs zone add <name>` materializes a zone | translation |
 | `git sparse-checkout set dir` | none | missing | `vcs sparse set <zone> <dir>` (per zone) | translation |
@@ -422,7 +425,7 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git apply -R x.patch` | `vcs apply -R x.patch` | exact |  | `patch` |
 | `git apply -p0 x.patch` | `vcs apply -p 0 x.patch` | exact |  | translation |
 | `git apply -3 x.patch` | `vcs apply -3 x.patch` | different | same hunk-local three-way merge as `am -3`; conflicts leave markers, are not staged, and exit non-zero | translation |
-| `git apply --cached x.patch` | none | missing | index-only application: `vcs apply --index` then `vcs restore` the file | translation |
+| `git apply --cached x.patch` | `vcs apply --cached x.patch` | exact | checked against the staged content and staged; the working tree is not touched (no --3way with it) | `patch` |
 | `git apply --stat x.patch` | `vcs apply --stat x.patch` | different | applies nothing, as git; the counts are `+added -deleted` per file (git draws a bar graph); no --numstat/--summary | `patch` |
 | `git mergetool` | none | missing | `vcs conflict show <path>`, edit, `vcs resolve --mark <path>` | translation |
 | `git lfs track` | none | missing | large files are chunked natively | translation |
@@ -451,4 +454,24 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git notes prune` | none | missing | notes of unreachable commits are kept; remove them with `vcs notes remove <commit>` | translation |
 | `git notes --ref=review add -m x` | none | missing | only the default notes ref exists, per zone | translation |
 | `git log --notes` | none | missing | `vcs log` does not print notes; use `vcs notes show <rev>` | translation |
+| `git for-each-ref --format=%(refname) refs/heads` | `vcs branch + vcs tag (rendered as refs)` | different | acts on one zone; refs are refs/heads, refs/tags, refs/remotes/origin; atoms refname[:short], objectname[:short], objecttype (always commit, a tag shows its commit), subject, body, authorname, authoremail, authordate:unix, HEAD; --sort on refname, objectname, authordate, committerdate, subject; --count; ids are blake3 | `refs` |
+| `git show-ref` | `vcs branch + vcs tag (rendered as `<id> <refname>`)` | different | acts on one zone; exit 1 when nothing matches; no --dereference or --exclude-existing; ids are blake3 | `refs` |
+| `git show-ref --verify -q refs/heads/main` | `vcs branch + vcs tag (rendered as `<id> <refname>`)` | different | as above | `refs` |
+| `git ls-remote --heads origin` | `vcs remote show (read live from the remote)` | different | reads the remote's manifest now (not the refs fetched last); every zone: the root zone as refs/heads/<b>, another as refs/zones/<zone>/heads/<b>; no HEAD line, no --symref | translation |
+| `git name-rev HEAD~2` | `vcs describe-like search over branches and tags` | different | names a commit from the nearest branch or tag of the zone (`main~2`, `tags/v1~1`, `tags/v1^0` for an annotated tag); a tie goes to the tag; merges weigh as in git; no --tags/--all/--stdin | `refs` |
+| `git update-ref refs/heads/topic HEAD` | `vcs branch <name> <rev> (moves the ref only)` | different | creates or moves the branch without touching the index or files, even when it is checked out (the working tree then differs from it, as in git); a branch checked out in another worktree is refused; HEAD, refs/heads/* and refs/tags/* only | `refs` |
+| `git update-ref -d refs/heads/topic` | `vcs branch -d / vcs tag -d` | different | never the checked-out branch | `refs` |
+| `git check-ignore ignored.log` | `vcs .vcsignore match` | different | prints the paths `.vcsignore` hides, exit 1 when none; tracked files are never ignored; no -v/-n/--stdin | `ignored` |
+| `git count-objects -v` | `vcs object store count` | different | `count`, `size` (loose objects), `packs`, `size-pack` only | translation |
+| `git hash-object -w f.txt` | `vcs object id of file content, stored` | different | the id of the file content as `vcs add` would store it (blake3, 64 hex digits); blobs only; without -w nothing is written | translation |
+| `git write-tree` | `vcs tree id of the index` | different | the tree of the zone containing the current directory (every zone has its own) | translation |
+| `git commit-tree abc -p HEAD -m msg` | `vcs commit object from a tree` | different | a commit of that zone with the given tree and parents, referenced by nothing until `update-ref`; the author is `user.name`/`user.email`; the tree id must be written in full | translation |
+| `git prune` | `vcs gc` | different | deletes unreachable objects older than the 14-day grace period (git's default is 2 weeks) | translation |
+| `git prune -n` | `vcs gc --dry-run` | exact |  | translation |
+| `git update-index --add f.txt` | none | missing | the index is a binary image rewritten only by vcs commands: `vcs add`, `vcs rm --cached`, `vcs restore --staged` | translation |
+| `git read-tree HEAD` | none | missing | one zone's index follows its branch and cannot be loaded from an arbitrary tree: `vcs reset --mixed <rev>` (moves the branch too) | translation |
+| `git pack-objects --stdout` | none | missing | vcs packs are its own format, written by repack/gc and read by fetch: `vcs repack`, `vcs bundle create` | translation |
+| `git check-attr -a f.txt` | none | missing | there is no .gitattributes; `.vcsattributes` only marks lockable files | translation |
+| `git var GIT_AUTHOR_IDENT` | none | missing | `vcs config get user.name` and `user.email` | translation |
+| `git mktag` | none | missing | annotated tags are made with `vcs tag -a` | translation |
 <!-- END GENERATED TABLE -->
