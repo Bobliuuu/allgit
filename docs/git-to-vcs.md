@@ -144,7 +144,7 @@ Status: exact (same command and flags), renamed (other spelling, same meaning), 
 semantics differ as the notes say), missing (no equivalent; the notes name the native route).
 
 <!-- BEGIN GENERATED TABLE -->
-279 rows: 164 exact, 42 renamed, 52 different, 21 missing.
+290 rows: 169 exact, 42 renamed, 53 different, 26 missing.
 
 | git | vcs | status | notes | test |
 |---|---|---|---|---|
@@ -426,5 +426,16 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git filter-repo --subdirectory-filter lib` | `vcs rewrite --subdirectory-filter lib` | different | no --to-subdirectory-filter and no --path-rename | translation |
 | `git filter-repo --force --path src` | `vcs rewrite --keep src --force` | different | git's --force overrides the fresh-clone check; vcs --force overrides the refusal to change commits that origin holds (as last fetched) | translation |
 | `git filter-repo --replace-text expr.txt` | none | missing | no callbacks, --replace-text, --mailmap, --path-rename or --path-regex; use --msg-filter / --tree-filter with sed | translation |
-| `git notes add` | none | missing | none | translation |
+| `git notes add -m first HEAD~1` | `vcs notes add -m first HEAD~1` | exact | notes are per zone: they annotate commits of the zone of the current directory; stored as objects on an internal ref, published and fetched with the branches | `notes` |
+| `git notes add -f -m replaced HEAD` | `vcs notes add --force -m replaced HEAD` | exact | without -f an existing note is refused, as git | `notes` |
+| `git notes append -m more HEAD` | `vcs notes append -m more HEAD` | exact | a blank line separates the old text from the appended text, as git | `notes` |
+| `git notes show HEAD` | `vcs notes show HEAD` | exact | exit 1 when the commit has no note | `notes` |
+| `git notes list` | `vcs notes list` | different | prints `<note blob id> <commit id>` like git, but the ids are 64-digit BLAKE3, not SHA-1 | `notes` |
+| `git notes remove HEAD` | `vcs notes remove HEAD` | exact | an error when the commit has no note | `notes` |
+| `git notes edit` | none | missing | no editor: `vcs notes add --force -m <text>` or `vcs notes append` | translation |
+| `git notes merge other` | none | missing | one notes ref per zone; `vcs fetch` merges remote notes itself (union, texts concatenated when both sides annotated a commit) | translation |
+| `git notes copy HEAD~1 HEAD` | none | missing | `vcs notes show HEAD~1`, then `vcs notes add -m <text> HEAD` | translation |
+| `git notes prune` | none | missing | notes of unreachable commits are kept; remove them with `vcs notes remove <commit>` | translation |
+| `git notes --ref=review add -m x` | none | missing | only the default notes ref exists, per zone | translation |
+| `git log --notes` | none | missing | `vcs log` does not print notes; use `vcs notes show <rev>` | translation |
 <!-- END GENERATED TABLE -->
