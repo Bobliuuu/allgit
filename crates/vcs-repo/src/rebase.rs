@@ -1147,7 +1147,7 @@ impl Repo {
                     pc.root
                 } else {
                     let tm = self.merge3_trees(prefix, base_root, Some(ours_root), Some(pc.root))?;
-                    match self.settle_pick(&run, tm, pick, "while replaying")? {
+                    match self.settle_pick(&run, tm)? {
                         Settled::Tree(tm) => tm.apply(&self.store, Some(ours_root), true)?.0,
                         Settled::Conflicts(tm) => {
                             let rest: Vec<Step> = q.into();
@@ -1167,7 +1167,7 @@ impl Repo {
                         continue;
                     }
                     let tm = self.merge_into_set(prefix, &members, acc, np)?;
-                    match self.settle_pick(&run, tm, pick, "while recreating the merge")? {
+                    match self.settle_pick(&run, tm)? {
                         Settled::Tree(tm) => acc = tm.apply(&self.store, Some(acc), true)?.0,
                         Settled::Conflicts(tm) => {
                             if new_parents.len() > 2 {
@@ -1210,7 +1210,7 @@ impl Repo {
 
     /// Checks shared by every conflicting-or-clean tree merge of a pick: refuse what is not
     /// supported, store the merged blobs, and say whether the merge is clean.
-    fn settle_pick(&self, run: &Run, tm: crate::treemerge::Merge3, pick: ObjectId, what: &str) -> Result<Settled> {
+    fn settle_pick(&self, run: &Run, tm: crate::treemerge::Merge3) -> Result<Settled> {
         self.fd_preflight(&tm)?;
         if !tm.conflicts.is_empty() {
             self.require_conflicts_materialized(&run.zone, tm.conflicts.iter().map(|c| c.path.as_str()), "rebase")?;
