@@ -146,8 +146,8 @@ Options:
       --force-no-lock  Stage changes to lockable files (`.vcsattributes`) even without holding their lock
   -f, --force          Also stage files and directories that `.vcsignore` hides
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
-  -p, --patch          Choose hunks to stage one by one (answers y/n/q/a/d/s/e/? on standard input; no path = everything)
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+  -p, --patch          Choose hunks to stage one by one (answers y/n/q/a/d/s/e/? on standard input; no path = everything)
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```
