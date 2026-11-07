@@ -48,3 +48,18 @@ fn small_claims_and_honest_extreme_ratios_still_decode() {
     assert!(ratio < 65_536, "real zstd ratio {ratio} must stay under the cap");
     eprintln!("96 MiB of zeros: {} compressed bytes, ratio {ratio}:1", z.len());
 }
+
+/// Compatibility across the zstd crate bump (0.13 -> 0.14): a frame written by the reference `zstd -3` CLI (an
+/// older libzstd) decodes to the exact bytes, and what the crate writes now round-trips through the pack decoder.
+#[test]
+fn frame_written_before_the_bump_still_decodes() {
+    const HEX: &str = "28b52ffd20857d0200c2c4101770456ed4920937b8e517f608f93da02a5e8cf595fe871782a671fde0d8e22f800a6bdb2f855872c01a4f6e99f849c3962bd21f783bb5bd51a1cd3feea43f89ea2b5b020072d5592c040505";
+    let frame: Vec<u8> = (0..HEX.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&HEX[i..i + 2], 16).unwrap())
+        .collect();
+    let want = b"vcs pack entry compat vector: the quick brown fox jumps over the lazy dog, twice. the quick brown fox jumps over the lazy dog, twice.";
+    assert_eq!(zstd::bulk::decompress(&frame, 1 << 20).unwrap(), want);
+    let now = zstd::bulk::compress(want, 3).unwrap();
+    assert_eq!(zstd::bulk::decompress(&now, 1 << 20).unwrap(), want);
+}
