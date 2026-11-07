@@ -2141,7 +2141,8 @@ fn worktree_prune_forgets_only_vanished_worktrees() {
         gok(&["worktree", "add", "-q", "-b", "gb", w.to_str().unwrap()]);
         std::fs::remove_dir_all(&w).unwrap();
         gok(&["worktree", "prune"]);
-        assert!(!stdout_of(&grun(&g, &["worktree", "list"])).contains("gw"));
+        let glist = stdout_of(&grun(&g, &["worktree", "list"]));
+        assert!(!glist.contains(w.to_str().unwrap()), "{glist}");
     }
 }
 
