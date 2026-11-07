@@ -144,7 +144,7 @@ Status: exact (same command and flags), renamed (other spelling, same meaning), 
 semantics differ as the notes say), missing (no equivalent; the notes name the native route).
 
 <!-- BEGIN GENERATED TABLE -->
-326 rows: 183 exact, 42 renamed, 74 different, 27 missing.
+334 rows: 185 exact, 43 renamed, 82 different, 24 missing.
 
 | git | vcs | status | notes | test |
 |---|---|---|---|---|
@@ -161,8 +161,9 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git add .` | `vcs add .` | exact |  | `basics` |
 | `git add -A` | `vcs add .` | different | git stages the whole tree from any directory; vcs stages the current directory (identical at the repository root) | `basics` |
 | `git add -u` | `vcs add <every modified or deleted tracked file>` | exact | tracked files only, as git | `basics` |
-| `git add -p` | none | missing | no interactive staging; stage whole files, or `vcs stash` / `vcs restore --staged` to adjust | `basics` |
 | `git add -f ignored.log` | `vcs add -f ignored.log` | exact | also for a file under an ignored directory and for a whole ignored directory; once tracked, a file is no longer reported as ignored, as in git | `ignored` |
+| `git add -p` | `vcs add -p` | different | hunks from standard input or a terminal: y n q a d s e j J k K g ?; tracked files only, text only; no `/` search, no mode-change hunks; the answers are read one per line | translation |
+| `git add -p f.txt` | `vcs add -p f.txt` | exact | same hunks, splitting and `e` editing as git; the result is staged without touching the working file | translation |
 | `git rm f.txt` | `vcs rm f.txt` | exact |  | `basics` |
 | `git rm --cached f.txt` | `vcs rm --cached f.txt` | exact |  | `basics` |
 | `git rm -rf dir` | `vcs rm --force dir` | exact | `-r` is implied | `basics` |
@@ -254,7 +255,12 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git restore --staged f.txt` | `vcs restore --staged f.txt` | exact |  | `basics` |
 | `git restore -S -W f.txt` | `vcs restore --staged f.txt ; vcs restore f.txt` | exact |  | translation |
 | `git restore --source=HEAD~1 f.txt` | `vcs cat-file -p HEAD~1:<path> into the file for f.txt` | renamed | writes the file only (not staged), as git | `history` |
-| `git restore -p f.txt` | none | missing | no interactive restore | translation |
+| `git restore -p f.txt` | `vcs restore -p f.txt` | different | discards chosen hunks of the working file (relative to the index); `e` is not offered | translation |
+| `git restore --staged -p f.txt` | `vcs restore --staged -p f.txt` | different | unstages chosen hunks (index against HEAD); `e` is not offered | translation |
+| `git checkout -p` | `vcs checkout -p` | different | `vcs checkout` exists only for -p; discards chosen hunks of every changed tracked file from the working tree (relative to the index) | translation |
+| `git checkout -p HEAD~1 -- f.txt` | `vcs checkout -p HEAD~1 -- f.txt` | different | takes chosen hunks of the revision into the working file AND the index, which must agree for that file first | translation |
+| `git stash -p` | `vcs stash push -p` | different | stashes the chosen hunks of tracked files, the rest stays as unstaged changes (the index is reset to HEAD); `e` is not offered; staged new files are refused | translation |
+| `git stash push -p -- f.txt` | `vcs stash push -p -- f.txt` | different | same, for those paths only | translation |
 | `git reset` | `vcs reset` | different | acts on ONE zone (the cwd zone; --zone Z for another) because each zone has its own head | `reset` |
 | `git reset --soft HEAD~1` | `vcs reset --soft HEAD~1` | different | as above | `reset` |
 | `git reset --mixed HEAD~1` | `vcs reset --mixed HEAD~1` | different | as above | `reset` |
@@ -427,7 +433,9 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git apply -3 x.patch` | `vcs apply -3 x.patch` | different | same hunk-local three-way merge as `am -3`; conflicts leave markers, are not staged, and exit non-zero | translation |
 | `git apply --cached x.patch` | `vcs apply --cached x.patch` | exact | checked against the staged content and staged; the working tree is not touched (no --3way with it) | `patch` |
 | `git apply --stat x.patch` | `vcs apply --stat x.patch` | different | applies nothing, as git; the counts are `+added -deleted` per file (git draws a bar graph); no --numstat/--summary | `patch` |
-| `git mergetool` | none | missing | `vcs conflict show <path>`, edit, `vcs resolve --mark <path>` | translation |
+| `git mergetool` | `vcs mergetool` | different | tool named by `merge.tool`, command `mergetool.<name>.cmd` in the USER config (run with $BASE $LOCAL $REMOTE $MERGED); no built-in tool list; both-sides-modified conflicts only (delete/rename conflicts: `vcs resolve --ours\|--theirs`); keeps `<file>.orig` unless `mergetool.keepBackup off` | translation |
+| `git mergetool -y` | `vcs mergetool -y` | exact | do not ask before starting the tool | translation |
+| `git mergetool --tool=mine f.txt` | `vcs mergetool --tool mine f.txt` | renamed |  | translation |
 | `git lfs track` | none | missing | large files are chunked natively | translation |
 | `git filter-branch --subdirectory-filter lib` | `vcs rewrite --subdirectory-filter lib` | different | rewrites the checked-out branch of the cwd zone (paths are zone-relative); commits the filter empties are dropped (git keeps them unless --prune-empty); the whole run is ONE operation, `vcs op undo` puts every branch and tag back; refused when a changed commit is published, unless --force; needs a clean zone | translation |
 | `git filter-branch --subdirectory-filter lib -- --all` | `vcs rewrite --subdirectory-filter lib --all-branches` | different | every branch of the zone, and the tags on rewritten commits; other zones are never touched | translation |
