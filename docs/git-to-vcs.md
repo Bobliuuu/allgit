@@ -144,7 +144,7 @@ Status: exact (same command and flags), renamed (other spelling, same meaning), 
 semantics differ as the notes say), missing (no equivalent; the notes name the native route).
 
 <!-- BEGIN GENERATED TABLE -->
-298 rows: 175 exact, 42 renamed, 54 different, 27 missing.
+303 rows: 178 exact, 42 renamed, 56 different, 27 missing.
 
 | git | vcs | status | notes | test |
 |---|---|---|---|---|
@@ -269,6 +269,7 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git cherry-pick -m 1 M` | `vcs cherry-pick -m 1 M` | exact | picks the merge commit M as the change against its first parent (1-based, as git); without -m a merge commit is refused | translation |
 | `git cherry-pick A...B` | `vcs cherry-pick A...B` | exact | the commits of either side that the other lacks, oldest first, in one run (merge commits among them are refused unless -m) | translation |
 | `git cherry main feature` | `vcs cherry main feature` | different | `+`/`-` per commit by patch id (the diff against the first parent, line numbers ignored, context included); prints full ids, or `-v` short id and subject | translation |
+| `git range-diff main..old main..new` | `vcs range-diff main..old main..new` | different | commits are paired by identical diff, then by minimum total difference of the patch texts (`--creation-factor`, default 60); `=`/`!`/`<`/`>` lines as git, merges skipped; the `!` diff is plain (no colour); also `A...B` and `base old new` | translation |
 | `git merge feature` | `vcs merge feature` | exact | fast-forward when possible, else a merge commit | `merge` |
 | `git merge other` | `vcs merge other` | exact | also when the two branches have several merge bases (criss-cross history): the bases are merged into a virtual base first, as git's recursive/ort strategies do | `criss_cross` |
 | `git merge --abort` | `vcs merge --abort` | exact |  | `merge` |
@@ -389,6 +390,10 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git rev-parse --git-dir` | `vcs rev-parse --git-dir` | different | prints `.vcs` (the state directory of this worktree), absolute below the root; not `.git` | `plumbing` |
 | `git shortlog -sn` | `vcs shortlog -s -n` | exact |  | translation |
 | `git merge-base main feature` | `vcs merge-base main feature` | exact |  | translation |
+| `git show-branch main feature` | `vcs show-branch main feature` | different | the same matrix (`!`/`*` header, `+`/`-`/`*` columns, stops at the common ancestor); rows whose commit times are equal can come out in another order; no globs, -a/-r (remote branches), --topics, -g | translation |
+| `git show-branch --list` | `vcs show-branch --list` | exact |  | translation |
+| `git show-branch --merge-base main feature` | `vcs show-branch --merge-base main feature` | exact |  | translation |
+| `git show-branch --independent main feature` | `vcs show-branch --independent main feature` | exact |  | translation |
 | `git diff-tree -r A B` | `vcs diff-tree A B` | different | prints `A/D/M path` lines, not git's raw format | translation |
 | `git fast-export` | `vcs export-git` | renamed | one zone branch as a fast-import stream | translation |
 | `git fast-import` | `vcs import-git -` | renamed |  | translation |
