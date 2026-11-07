@@ -2146,6 +2146,11 @@ fn worktree_prune_forgets_only_vanished_worktrees() {
     }
 }
 
+/// Newer git quotes the term ("is the first 'bad' commit"); older git and vcs do not.
+fn is_first_bad(text: &str) -> bool {
+    text.contains("is the first bad commit") || text.contains("is the first 'bad' commit")
+}
+
 /// `bisect log` lists the marks in order and `bisect replay` redoes them to the same answer; real git
 /// finds the same first bad commit for the same history.
 #[test]
@@ -2199,7 +2204,7 @@ fn bisect_log_and_replay_reach_the_same_first_bad_commit() {
                 let verb = if dir.join("bug.txt").exists() { "bad" } else { "good" };
                 let out = ok(&["bisect", verb]);
                 trail.push_str(&format!("-- {verb}: {out}\n"));
-                if out.contains("first bad commit") {
+                if is_first_bad(&out) {
                     return out;
                 }
             }
@@ -2217,7 +2222,7 @@ fn bisect_log_and_replay_reach_the_same_first_bad_commit() {
         };
         let first = out
             .lines()
-            .find(|l| l.contains("is the first bad commit"))
+            .find(|l| is_first_bad(l))
             .map(|l| l.split(' ').next().unwrap().to_owned())
             .unwrap();
         let first_subject = subject(&first);
