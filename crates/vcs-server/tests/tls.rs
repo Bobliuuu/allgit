@@ -20,7 +20,7 @@ fn cert(names: &[&str]) -> Cert {
     let c = rcgen::generate_simple_self_signed(names.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap();
     Cert {
         cert_pem: c.cert.pem(),
-        key_pem: c.key_pair.serialize_pem(),
+        key_pem: c.signing_key.serialize_pem(),
     }
 }
 
@@ -111,16 +111,17 @@ use rcgen::{BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, 
 
 struct Ca {
     cert: rcgen::Certificate,
-    key: KeyPair,
+    issuer: rcgen::Issuer<'static, KeyPair>,
 }
 fn make_ca(name: &str) -> Ca {
     let mut p = CertificateParams::new(vec![]).unwrap();
     p.distinguished_name.push(rcgen::DnType::CommonName, name);
     p.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     let key = KeyPair::generate().unwrap();
+    let cert = p.self_signed(&key).unwrap();
     Ca {
-        cert: p.self_signed(&key).unwrap(),
-        key,
+        cert,
+        issuer: rcgen::Issuer::new(p, key),
     }
 }
 fn leaf(ca: &Ca, names: &[&str], client: bool) -> Cert {
@@ -131,7 +132,7 @@ fn leaf(ca: &Ca, names: &[&str], client: bool) -> Cert {
         ExtendedKeyUsagePurpose::ServerAuth
     }];
     let key = KeyPair::generate().unwrap();
-    let c = p.signed_by(&key, &ca.cert, &ca.key).unwrap();
+    let c = p.signed_by(&key, &ca.issuer).unwrap();
     Cert {
         cert_pem: c.pem(),
         key_pem: key.serialize_pem(),
@@ -224,9 +225,10 @@ fn ca_with_crl_sign(name: &str) -> Ca {
     p.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     p.key_usages = vec![rcgen::KeyUsagePurpose::KeyCertSign, rcgen::KeyUsagePurpose::CrlSign];
     let key = KeyPair::generate().unwrap();
+    let cert = p.self_signed(&key).unwrap();
     Ca {
-        cert: p.self_signed(&key).unwrap(),
-        key,
+        cert,
+        issuer: rcgen::Issuer::new(p, key),
     }
 }
 
@@ -237,7 +239,7 @@ fn client_leaf(ca: &Ca, cn: &str, serial: u64) -> Cert {
     p.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
     p.serial_number = Some(rcgen::SerialNumber::from(serial));
     let key = KeyPair::generate().unwrap();
-    let c = p.signed_by(&key, &ca.cert, &ca.key).unwrap();
+    let c = p.signed_by(&key, &ca.issuer).unwrap();
     Cert {
         cert_pem: c.pem(),
         key_pem: key.serialize_pem(),
@@ -262,7 +264,7 @@ fn crl_pem(ca: &Ca, revoked: &[u64]) -> String {
             .collect(),
         key_identifier_method: rcgen::KeyIdMethod::Sha256,
     };
-    params.signed_by(&ca.cert, &ca.key).unwrap().pem().unwrap()
+    params.signed_by(&ca.issuer).unwrap().pem().unwrap()
 }
 
 #[test]
@@ -320,7 +322,7 @@ fn client_certificate_subject_must_map_to_the_token_principal() {
         p.distinguished_name.push(rcgen::DnType::CommonName, "other");
         p.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
         let key = KeyPair::generate().unwrap();
-        let c = p.signed_by(&key, &ca.cert, &ca.key).unwrap();
+        let c = p.signed_by(&key, &ca.issuer).unwrap();
         Cert {
             cert_pem: c.pem(),
             key_pem: key.serialize_pem(),
