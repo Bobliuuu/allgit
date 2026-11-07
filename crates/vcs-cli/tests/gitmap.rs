@@ -2187,11 +2187,17 @@ fn bisect_log_and_replay_reach_the_same_first_bad_commit() {
         // c5 introduced bug.txt; mark by file presence
         let mark = |ok: &dyn Fn(&[&str]) -> String| {
             let mut guard = 0;
+            let mut trail = String::new();
             loop {
                 guard += 1;
-                assert!(guard < 10, "bisect did not finish");
+                assert!(
+                    guard < 10,
+                    "{} bisect did not finish:\n{trail}",
+                    if use_git { "git" } else { "vcs" }
+                );
                 let verb = if dir.join("bug.txt").exists() { "bad" } else { "good" };
                 let out = ok(&["bisect", verb]);
+                trail.push_str(&format!("-- {verb}: {out}\n"));
                 if out.contains("first bad commit") {
                     return out;
                 }
