@@ -76,6 +76,7 @@ How to read it:
 |---|---|---|---|
 | `vcs branch [name]` | `git branch` | `p4 branch`, `p4 branches`, `p4 stream` | a branch is a line of history, not a mapping |
 | `vcs switch b` | `git switch b` | `p4 switch` | a dirty zone is refused |
+| `vcs checkout -p [rev]` | `git checkout -p [rev]` | none | exists only for `-p`; use `vcs switch` to change branch and `vcs restore` for files |
 | `vcs merge b` | `git merge b` | `p4 merge`, `p4 integrate` | whole branches, no file-level integrate |
 | `vcs merge b` after a conflict, `vcs conflict`, `vcs resolve` | `git merge`, `git mergetool` | `p4 resolve` (`-at`, `-ay`, `-af`) | theirs/ours follow the p4 map: see p4-to-vcs.md |
 | `vcs cherry-pick c` | `git cherry-pick c` | none (`p4 integrate` of one change) | |
