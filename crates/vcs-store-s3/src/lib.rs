@@ -432,7 +432,20 @@ impl S3Backend {
         }
     }
 
+    /// [`Self::probe_once`], repeated on a fresh key when a request is dropped in transit. The probe PUTs are
+    /// not replayed by `send` (a conditional PUT whose answer was lost is ambiguous), but the probe can start
+    /// over: MinIO resets a pooled connection after answering 412, which would otherwise fail `connect`.
     fn probe(&self) -> Result<(), BackendError> {
+        let mut attempt = 1;
+        loop {
+            match self.probe_once() {
+                Err(BackendError::Unavailable(_)) if attempt < 3 => attempt += 1,
+                r => return r,
+            }
+        }
+    }
+
+    fn probe_once(&self) -> Result<(), BackendError> {
         let key = format!("{}.vcs-probe/{}", self.cfg.prefix, nonce());
         let refuse = |why: &str| {
             BackendError::Other(format!(
