@@ -191,7 +191,8 @@ fn apply_three_way_merges_drifted_context_and_marks_overlaps() {
     assert!(e.contains("conflict") && e.contains("f"), "{e}");
     let f = read(&d2, "f");
     assert!(
-        f.contains("        "{f}"
+        f.contains("<<<<<<< ours") && f.contains("LOCAL") && f.contains("SIX") && f.contains(">>>>>>> theirs (patch)"),
+        "{f}"
     );
 
     // already applied: a no-op, not a conflict
@@ -332,7 +333,6 @@ fn publish_mirror_forces_with_lease_prunes_and_sends_tags() {
     assert!(!vcs(&b, &["publish", "--mirror", "--tags"]).status.success());
 }
 
-<<<<<<< HEAD
 #[test]
 fn symmetric_difference_in_cherry_pick_and_format_patch() {
     let t = tempfile::tempdir().unwrap();
