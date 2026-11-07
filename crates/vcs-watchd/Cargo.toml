@@ -8,4 +8,4 @@ description = "The filesystem watcher behind `vcs watch` (notify: inotify / FSEv
 [dependencies]
 vcs-repo.workspace = true
 vcs-objects.workspace = true
-notify = { version = "6", default-features = false, features = ["macos_fsevent"] }
+notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
