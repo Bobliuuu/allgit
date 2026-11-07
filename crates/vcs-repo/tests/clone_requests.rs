@@ -104,8 +104,8 @@ fn many_small_packs_cost_two_requests_each_in_one_wave() {
     for (name, zones) in [("full", None), ("zone", Some(vec!["engine".to_string()]))] {
         let tl = timed(&remote);
         let b = Repo::clone_from(&tl, "mem", &d.path().join(name), zones.as_deref()).unwrap();
-        // manifest + LIST + (index + whole pack) per pack; nothing else, no trailer probes
-        assert_eq!(tl.requests(), 2 + 2 * n, "{name}");
+        // format marker + manifest + LIST + (index + whole pack) per pack; nothing else, no trailer probes
+        assert_eq!(tl.requests(), 3 + 2 * n, "{name}");
         // manifest/LIST, then indexes and packs: a short chain, not one round per pack
         assert!(tl.depth() <= 8, "{name}: depth {}", tl.depth());
         let rep = b.fsck().unwrap();
@@ -127,8 +127,8 @@ fn a_big_pack_is_read_in_few_ranges() {
     assert_eq!(packs_on(&remote), 1);
     let tl = timed(&remote);
     let b = Repo::clone_from(&tl, "mem", &d.path().join("c"), None).unwrap();
-    // manifest, LIST, index, trailer, commit range, tree range and at most 8 file ranges
-    assert!(tl.requests() <= 14, "{} requests", tl.requests());
+    // format marker, manifest, LIST, index, trailer, commit range, tree range and at most 8 file ranges
+    assert!(tl.requests() <= 15, "{} requests", tl.requests());
     assert!(b.fsck().unwrap().problems.is_empty());
     assert_eq!(files_of(b.worktree()).len(), 2000);
 }
