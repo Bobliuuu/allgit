@@ -44,7 +44,7 @@ fn serve(cert_der: Vec<u8>, key_der: Vec<u8>, conns: usize) -> (u16, std::sync::
 
 fn cert() -> (String, Vec<u8>, Vec<u8>) {
     let c = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-    (c.cert.pem(), c.cert.der().to_vec(), c.key_pair.serialize_der())
+    (c.cert.pem(), c.cert.der().to_vec(), c.signing_key.serialize_der())
 }
 
 #[test]
