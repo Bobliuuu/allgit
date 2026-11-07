@@ -149,7 +149,7 @@ From the final scoreboard ([research/command-scoreboard.md](research/command-sco
 
 ## Git commands with no faithful vcs meaning
 
-`vcs git` (docs/git-to-vcs.md) maps 284 git command lines to native steps. These stay refused, each for a
+`vcs git` maps the git command lines listed in docs/git-to-vcs.md to native steps. These stay refused, each for a
 reason in the model, and the refusal names the native way:
 
 - `clone --depth`, `fetch --depth`: history is not shallow-able per commit; a zone is the unit of partial
