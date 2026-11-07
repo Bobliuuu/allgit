@@ -507,4 +507,18 @@ mod tests {
         assert!(t.parse_allowed("# c\n\n").is_ok());
         assert!(t.parse_revoked("garbage").is_err());
     }
+    /// Fixed vector produced with ed25519-dalek 2.2 (before the 3.0 bump): signing is deterministic, so a changed
+    /// signature or a signature that no longer verifies means the dependency changed behaviour.
+    #[test]
+    fn signature_made_before_the_dalek_bump_still_verifies() {
+        let key = SigningKey::from_seed([7; 32]);
+        let payload = b"vcs signing compat vector";
+        let line = key.sign_payload(payload);
+        const BEFORE_BUMP: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOpKbGPinFIKvvVQexMuxfmVR3auvr57kkIe6mkURtIs d2z0xhCb29S0bBl9oesz1xdJ1LlNzwcQDcDmjSvU6EqY38Cxh61lvvxAl7r6kS0T5hjfVV0ZQYNAzcUdY55IDA==";
+        let mut trust = Trust::default();
+        trust.parse_allowed(&format!("dev {}\n", key.public_line())).unwrap();
+        assert_eq!(line, BEFORE_BUMP, "signing is deterministic and must not change");
+        assert!(matches!(check(BEFORE_BUMP, payload, &trust), SigStatus::Good { .. }));
+        assert!(matches!(check(BEFORE_BUMP, b"other", &trust), SigStatus::Bad(_)));
+    }
 }
