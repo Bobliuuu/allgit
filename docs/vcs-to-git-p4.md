@@ -77,6 +77,10 @@ How to read it:
 | `vcs branch [name]` | `git branch` | `p4 branch`, `p4 branches`, `p4 stream` | a branch is a line of history, not a mapping |
 | `vcs switch b` | `git switch b` | `p4 switch` | a dirty zone is refused |
 | `vcs checkout -p [rev]` | `git checkout -p [rev]` | none | exists only for `-p`; use `vcs switch` to change branch and `vcs restore` for files |
+| `vcs mergetool [paths]` | `git mergetool` | `p4 resolve` (interactive) | runs the configured tool on each conflicted file; see `vcs conflict` and `vcs resolve` |
+| `vcs rewrite` | `git filter-branch`, `git filter-repo` (external) | none | keep/remove paths, change messages or authors, run a command on every tree; `vcs op undo` reverts |
+| `vcs range-diff A B` | `git range-diff A B` | none | compares two commit ranges by patch |
+| `vcs show-branch revs` | `git show-branch revs` | none | which commits each revision has, as a matrix |
 | `vcs merge b` | `git merge b` | `p4 merge`, `p4 integrate` | whole branches, no file-level integrate |
 | `vcs merge b` after a conflict, `vcs conflict`, `vcs resolve` | `git merge`, `git mergetool` | `p4 resolve` (`-at`, `-ay`, `-af`) | theirs/ours follow the p4 map: see p4-to-vcs.md |
 | `vcs cherry-pick c` | `git cherry-pick c` | none (`p4 integrate` of one change) | |
