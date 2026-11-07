@@ -157,7 +157,8 @@ fn s3_sweeper_deletes_old_garbage_keeps_the_head_and_touch_protects() {
     assert!(b.exists("manifest").unwrap());
     assert!(b.list("tomb/").unwrap().is_empty(), "no tombstones left behind");
     assert!(
-        b.list("gc/").unwrap().iter().all(|k| k == "gc/clock"),
+        // the clock anchor and the disaster-recovery safe point (docs/backup-restore.md) stay; only a lock would be a leak
+        b.list("gc/").unwrap().iter().all(|k| k == "gc/clock" || k == "gc/safe-point"),
         "lock released: {:?}",
         b.list("gc/")
     );
