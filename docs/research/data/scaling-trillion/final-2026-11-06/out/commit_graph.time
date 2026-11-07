@@ -1,0 +1,10 @@
+0.00 s wall, 3260 KB maxrss: cgraph 3000 /data/scaling-work/cg
+0.01 s wall, 3908 KB maxrss: cgraph 10000 /data/scaling-work/cg
+0.04 s wall, 7004 KB maxrss: cgraph 30000 /data/scaling-work/cg
+0.14 s wall, 17248 KB maxrss: cgraph 100000 /data/scaling-work/cg
+0.70 s wall, 46944 KB maxrss: cgraph 300000 /data/scaling-work/cg
+4.99 s wall, 105056 KB maxrss: cgraph 1000000 /data/scaling-work/cg
+21.65 s wall, 308944 KB maxrss: cgraph 3000000 /data/scaling-work/cg
+68.08 s wall, 1016088 KB maxrss: cgraph 10000000 /data/scaling-work/cg
+62.59 s wall, 3043696 KB maxrss: cgraph 30000000 /data/scaling-work/cg
+223.68 s wall, 9944156 KB maxrss: cgraph 100000000 /data/scaling-work/cg

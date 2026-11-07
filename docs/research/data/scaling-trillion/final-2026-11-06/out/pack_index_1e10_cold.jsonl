@@ -1,0 +1,6 @@
+{"comp":"pack_index","op":"build","n":10000000000,"samples":1,"p50_us":140.724,"p95_us":140.724,"rss_kb":2508,"anon_kb":144,"hwm_kb":2508,"bytes":440000004432,"bytes_per_object":44.000,"packs":4}
+{"comp":"pack_index","op":"open","n":10000000000,"samples":1,"p50_us":1465.412,"p95_us":1465.412,"rss_kb":2640,"anon_kb":148,"hwm_kb":2640,"packs":4}
+{"comp":"pack_index","op":"lookup_hit_cold","n":10000000000,"samples":512,"p50_us":3680.586,"p95_us":7198.517,"rss_kb":81344,"anon_kb":156,"hwm_kb":81344,"packs":4}
+{"comp":"pack_index","op":"lookup_hit","n":10000000000,"samples":20000,"p50_us":2701.541,"p95_us":5420.775,"rss_kb":2252324,"anon_kb":476,"hwm_kb":2252324,"packs":4}
+{"comp":"pack_index","op":"lookup_miss_random","n":10000000000,"samples":20000,"p50_us":3855.917,"p95_us":4842.398,"rss_kb":5122108,"anon_kb":792,"hwm_kb":5122108,"packs":4}
+{"comp":"pack_index","op":"lookup_miss_near_collision","n":10000000000,"samples":20000,"p50_us":3424.744,"p95_us":4413.447,"rss_kb":7660432,"anon_kb":1108,"hwm_kb":7660432,"false_hits":0,"packs":4}

@@ -1,0 +1,6 @@
+0.00 s wall, 2768 KB maxrss: locks 100
+0.01 s wall, 3792 KB maxrss: locks 1000
+0.22 s wall, 12636 KB maxrss: locks 10000
+3.12 s wall, 113052 KB maxrss: locks 100000
+10.93 s wall, 1119480 KB maxrss: locks 1000000
+118.90 s wall, 11214020 KB maxrss: locks 10000000

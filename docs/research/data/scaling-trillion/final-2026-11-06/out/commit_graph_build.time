@@ -1,0 +1,7 @@
+0.00 s wall, 2988 KB maxrss: cgbuild 1000
+0.01 s wall, 3520 KB maxrss: cgbuild 3000
+0.11 s wall, 6816 KB maxrss: cgbuild 10000
+0.94 s wall, 15800 KB maxrss: cgbuild 30000
+4.75 s wall, 44596 KB maxrss: cgbuild 100000
+70.32 s wall, 140672 KB maxrss: cgbuild 300000
+562.82 s wall, 444724 KB maxrss: cgbuild 1000000

@@ -1,0 +1,22 @@
+stream 2421 MB in 39s
+{"tool": "vcs", "kind": "wide", "n": 30000000, "step": "init", "wall_s": 0.008, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 7136, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 30000000, "step": "import", "wall_s": 592.879, "user_s": 409.49, "sys_s": 597.38, "maxrss_kb": 36653932, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 30000000, "step": "disk_after_import", "disk_kb": 5959480}
+{"tool": "vcs", "kind": "wide", "n": 30000000, "step": "status_first", "wall_s": 72.866, "user_s": 88.71, "sys_s": 432.52, "maxrss_kb": 10043956, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 30000000, "step": "status_second", "wall_s": 28.352, "user_s": 34.65, "sys_s": 47.46, "maxrss_kb": 8740548, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 30000000, "step": "log_n20", "wall_s": 0.003, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 12144, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 30000000, "step": "rev_list_head", "wall_s": 0.003, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 12088, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 30000000, "step": "tag_create", "wall_s": 0.003, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 15856, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 30000000, "step": "add_one_file", "wall_s": 0.007, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 57696, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 30000000, "step": "commit_one_file", "wall_s": 20.99, "user_s": 21.65, "sys_s": 5.09, "maxrss_kb": 8745680, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 30000000, "step": "remote_set", "wall_s": 0.003, "user_s": 0.0, "sys_s": 0.0, "maxrss_kb": 9104, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 30000000, "step": "publish_first", "wall_s": 110.01, "user_s": 101.31, "sys_s": 26.92, "maxrss_kb": 11640256, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 30000000, "step": "add_one_file2", "wall_s": 0.114, "user_s": 0.0, "sys_s": 0.06, "maxrss_kb": 141752, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 30000000, "step": "commit_one_file2", "wall_s": 21.191, "user_s": 21.79, "sys_s": 5.22, "maxrss_kb": 8745968, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 30000000, "step": "publish_incremental", "wall_s": 0.064, "user_s": 0.02, "sys_s": 0.0, "maxrss_kb": 58296, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 30000000, "step": "disk_remote", "disk_kb": 3197348}
+{"tool": "vcs", "kind": "wide", "n": 30000000, "step": "clone_full", "wall_s": 764.267, "user_s": 498.49, "sys_s": 977.15, "maxrss_kb": 28488384, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 30000000, "step": "gc_first", "wall_s": 213.693, "user_s": 200.31, "sys_s": 63.05, "maxrss_kb": 18152760, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 30000000, "step": "gc_second", "wall_s": 83.322, "user_s": 78.99, "sys_s": 15.28, "maxrss_kb": 15204748, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 30000000, "step": "fsck", "wall_s": 223.109, "user_s": 236.07, "sys_s": 52.19, "maxrss_kb": 16270880, "rc": 0}
+{"tool": "vcs", "kind": "wide", "n": 30000000, "step": "disk_after_gc", "disk_kb": 8607728}
