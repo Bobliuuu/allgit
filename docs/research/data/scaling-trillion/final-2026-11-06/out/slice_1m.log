@@ -1,0 +1,8 @@
+{"tool":"vcs","kind":"slice","n":1000000,"step":"add_all","wall_s":7.209492234,"user_s":9.74,"sys_s":12.33,"maxrss_kb":1103016,"rc":0}
+{"tool":"vcs","kind":"slice","n":1000000,"step":"commit_all","wall_s":0.628700931,"user_s":0.54,"sys_s":0.18,"maxrss_kb":299592,"rc":0}
+{"tool":"vcs","kind":"slice","n":1000000,"step":"publish_all","wall_s":5.529048163,"user_s":9.77,"sys_s":1.64,"maxrss_kb":1716816,"rc":0}
+{"tool":"vcs","kind":"slice","n":1000000,"step":"clone_all","wall_s":12.702796857,"user_s":14.51,"sys_s":18.56,"maxrss_kb":1445392,"rc":0}
+{"tool":"vcs","kind":"slice","n":1000000,"step":"clone_one_zone","wall_s":0.393518023,"user_s":0.32,"sys_s":0.32,"maxrss_kb":258176,"rc":0}
+{"tool":"vcs","kind":"slice","n":1000000,"step":"files_in_slice","files":10000}
+{"tool":"git","kind":"slice","n":1000000,"step":"clone_all","wall_s":22.725816034,"user_s":18.62,"sys_s":18.05,"maxrss_kb":700880,"rc":0}
+{"tool":"git","kind":"slice","n":1000000,"step":"clone_one_dir","wall_s":0.869633958,"user_s":0.80,"sys_s":0.24,"maxrss_kb":575256,"rc":0}
