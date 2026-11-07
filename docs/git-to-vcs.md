@@ -144,7 +144,7 @@ Status: exact (same command and flags), renamed (other spelling, same meaning), 
 semantics differ as the notes say), missing (no equivalent; the notes name the native route).
 
 <!-- BEGIN GENERATED TABLE -->
-290 rows: 169 exact, 42 renamed, 53 different, 26 missing.
+298 rows: 175 exact, 42 renamed, 54 different, 27 missing.
 
 | git | vcs | status | notes | test |
 |---|---|---|---|---|
@@ -338,6 +338,14 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git bisect run ./t.sh` | `vcs bisect run ./t.sh` | exact |  | translation |
 | `git bisect reset` | `vcs bisect reset` | exact |  | translation |
 | `git bisect log` | none | missing | no bisect log | translation |
+| `git rerere` | `vcs rerere` | exact | needs `rerere.enabled` (`vcs config set rerere.enabled on`); records and replays text-conflict resolutions for merge, rebase, cherry-pick and revert (docs/rerere.md) | translation |
+| `git rerere status` | `vcs rerere status` | exact |  | translation |
+| `git rerere remaining` | `vcs rerere remaining` | exact |  | translation |
+| `git rerere diff` | `vcs rerere diff` | different | same content (preimage against the file now, marker labels ignored); the diff header is vcs's | translation |
+| `git rerere forget f.txt` | `vcs rerere forget f.txt` | exact |  | translation |
+| `git rerere clear` | `vcs rerere clear` | exact |  | translation |
+| `git rerere gc` | `vcs rerere gc` | exact | limits from `gc.rerereResolved` (60 days) and `gc.rerereUnresolved` (15 days) | translation |
+| `git rerere train` | none | missing | no training from history; resolve once and it is recorded | translation |
 | `git reflog` | `vcs op log` | renamed | repository-wide operation log, not one log per ref | translation |
 | `git reflog -n 5` | `vcs op log -n 5` | renamed |  | translation |
 | `git clean -n` | `vcs clean -n` | exact |  | `clean` |
