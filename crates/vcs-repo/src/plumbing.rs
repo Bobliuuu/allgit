@@ -358,7 +358,7 @@ impl Repo {
     /// Refuses a branch another worktree has checked out. Returns the previous head.
     pub fn branch_set(&self, zone: &str, branch: &str, to: &ObjectId, expect: Option<Option<ObjectId>>) -> Result<Option<ObjectId>> {
         let zone = self.resolve_zone(zone)?;
-        validate_branch_name(branch)?;
+        validate_user_branch_name(branch)?;
         if self.commit_obj(to)?.zone != zone {
             return msg(format!("commit {} is not in zone {zone:?}", to.short()));
         }
