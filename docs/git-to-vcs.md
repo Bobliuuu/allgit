@@ -144,7 +144,7 @@ Status: exact (same command and flags), renamed (other spelling, same meaning), 
 semantics differ as the notes say), missing (no equivalent; the notes name the native route).
 
 <!-- BEGIN GENERATED TABLE -->
-264 rows: 160 exact, 42 renamed, 41 different, 21 missing.
+276 rows: 160 exact, 42 renamed, 52 different, 22 missing.
 
 | git | vcs | status | notes | test |
 |---|---|---|---|---|
@@ -410,6 +410,18 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git apply --stat x.patch` | `vcs apply --stat x.patch` | different | applies nothing, as git; the counts are `+added -deleted` per file (git draws a bar graph); no --numstat/--summary | `patch` |
 | `git mergetool` | none | missing | `vcs conflict show <path>`, edit, `vcs resolve --mark <path>` | translation |
 | `git lfs track` | none | missing | large files are chunked natively | translation |
-| `git filter-branch` | none | missing | `vcs zone apply` splits history by path; otherwise none | translation |
+| `git filter-branch --subdirectory-filter lib` | `vcs rewrite --subdirectory-filter lib` | different | rewrites the checked-out branch of the cwd zone (paths are zone-relative); commits the filter empties are dropped (git keeps them unless --prune-empty); the whole run is ONE operation, `vcs op undo` puts every branch and tag back; refused when a changed commit is published, unless --force; needs a clean zone | translation |
+| `git filter-branch --subdirectory-filter lib -- --all` | `vcs rewrite --subdirectory-filter lib --all-branches` | different | every branch of the zone, and the tags on rewritten commits; other zones are never touched | translation |
+| `git filter-branch --prune-empty --subdirectory-filter lib` | `vcs rewrite --subdirectory-filter lib` | different | pruning is the default; `--keep-empty` keeps emptied commits | translation |
+| `git filter-branch --msg-filter ./fix-msg.sh` | `vcs rewrite --msg-filter ./fix-msg.sh` | different | run with `sh -c`, old message on stdin, new message on stdout, as git | translation |
+| `git filter-branch --env-filter ./fix-author.sh` | `vcs rewrite --env-filter ./fix-author.sh` | different | GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL and GIT_AUTHOR_DATE (`@SECONDS`) can be changed; a vcs commit has ONE signature, so GIT_COMMITTER_* are readable but changes to them are ignored (a warning counts them) | translation |
+| `git filter-branch --tree-filter ./strip.sh` | `vcs rewrite --tree-filter ./strip.sh` | different | each commit's tree is checked out into a scratch directory under .vcs, the command runs there, what is left becomes the tree; one checkout and re-hash per commit, so slow on long histories | translation |
+| `git filter-branch --tag-name-filter cat -- --all` | `vcs rewrite --tag-name-filter cat --all-branches` | different | tags on rewritten commits are always moved to the new commits (git needs this flag); the command may rename them; annotated tags lose their signature | translation |
+| `git filter-branch --index-filter ./f.sh` | none | missing | no index filter, parent filter or commit filter; use `vcs rewrite --keep\|--remove` for paths or --tree-filter for anything else | translation |
+| `git filter-repo --path src` | `vcs rewrite --keep src` | different | as filter-branch: checked-out branch, one op, refused when published without --force. No fresh-clone requirement | translation |
+| `git filter-repo --path secrets --invert-paths` | `vcs rewrite --remove secrets` | different | repeat --path to remove several | translation |
+| `git filter-repo --subdirectory-filter lib` | `vcs rewrite --subdirectory-filter lib` | different | no --to-subdirectory-filter and no --path-rename | translation |
+| `git filter-repo --force --path src` | `vcs rewrite --keep src --force` | different | git's --force overrides the fresh-clone check; vcs --force overrides the refusal to change commits that origin holds (as last fetched) | translation |
+| `git filter-repo --replace-text expr.txt` | none | missing | no callbacks, --replace-text, --mailmap, --path-rename or --path-regex; use --msg-filter / --tree-filter with sed | translation |
 | `git notes add` | none | missing | none | translation |
 <!-- END GENERATED TABLE -->
