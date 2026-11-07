@@ -74,7 +74,12 @@ jobs:
         run: |
           # Upstream stopped publishing MinIO binaries and images; build from source.
           # Pinned to the commit of tag RELEASE.2025-10-15T17-29-55Z (go install needs a semver or commit, not the tag).
-          GOBIN="$PWD" go install github.com/minio/minio@9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
+          # proxy.golang.org drops streams now and then, so retry the build.
+          for attempt in 1 2 3; do
+            GOBIN="$PWD" go install github.com/minio/minio@9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a && break
+            [ "$attempt" = 3 ] && exit 1
+            sleep 5
+          done
           MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin \
             nohup ./minio server "$RUNNER_TEMP/minio-data" --address 127.0.0.1:9000 > minio.log 2>&1 &
           for i in $(seq 1 30); do
