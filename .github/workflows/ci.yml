@@ -90,6 +90,8 @@ jobs:
       - run: cargo test -p vcs-store-s3 -p vcs-cli
         env:
           VCS_TEST_S3_ENDPOINT: http://127.0.0.1:9000
+      - if: failure()
+        run: tail -n 200 minio.log
 
   # Advisory: compile-only on Windows (not in ci-ok). Nothing is executed on Windows here. Libraries and binaries
   # only: the test suites and the vcs-bench tools use Unix-only APIs (permissions, process groups, st_blocks).
