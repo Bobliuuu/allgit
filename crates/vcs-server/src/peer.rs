@@ -251,6 +251,9 @@ struct Live {
     epoch: u64,
     manifest: Option<ManifestCopy>,
     lists: HashMap<String, (Vec<String>, Instant)>,
+    /// Last answer for the format marker (`None` inside = no marker), kept only to serve within
+    /// `stale_if_error` when upstream is down: every client reads the marker before the manifest.
+    format: Option<(Option<Versioned>, Instant)>,
 }
 
 type Got = Result<Option<Versioned>, BackendError>;
@@ -314,6 +317,7 @@ impl PeerBackend {
         let mut l = self.live();
         l.epoch += 1;
         l.lists.clear();
+        l.format = None;
         if let Some(m) = manifest {
             l.manifest = m.map(|v| ManifestCopy {
                 v,
@@ -372,6 +376,34 @@ impl PeerBackend {
         }
     }
 
+    /// The format marker: always asked of upstream, but when upstream is unavailable the last answer
+    /// is served within `stale_if_error` (like the manifest), so a warm peer keeps serving reads.
+    fn format_get(&self) -> Got {
+        let epoch = self.epoch();
+        self.f_get.run(
+            format!("{epoch}\0{}", vcs_remote::format::KEY),
+            &self.coalesced,
+            || Err(BackendError::Other("peer: fetch aborted".into())),
+            || match self.upstream.get(vcs_remote::format::KEY) {
+                Ok(v) => {
+                    let mut l = self.live();
+                    if l.epoch == epoch {
+                        l.format = Some((v.clone(), Instant::now()));
+                    }
+                    Ok(v)
+                }
+                Err(e @ BackendError::Unavailable(_)) => {
+                    let l = self.live();
+                    match &l.format {
+                        Some((v, at)) if !self.cfg.stale_if_error.is_zero() && at.elapsed() < self.cfg.stale_if_error => Ok(v.clone()),
+                        _ => Err(e),
+                    }
+                }
+                Err(e) => Err(e),
+            },
+        )
+    }
+
     fn list_fetch(&self, prefix: &str, epoch: u64) -> Lst {
         {
             let l = self.live();
@@ -405,6 +437,9 @@ impl Backend for PeerBackend {
     fn get(&self, key: &str) -> Got {
         if key == MANIFEST {
             return self.manifest_get();
+        }
+        if key == vcs_remote::format::KEY {
+            return self.format_get();
         }
         let immut = immutable_whole(key);
         let ep = if immut { 0 } else { self.epoch() };
