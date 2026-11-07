@@ -131,6 +131,7 @@ far-future lease would otherwise stall gc and compaction. Read tokens cannot PUT
 | Key | Written by | Write token may PUT | Notes |
 |---|---|---|---|
 | `manifest` | publish, sharded migration marker | yes, create or `If-Match` | the one mutable authoritative key; validated and size-limited |
+| `format` | any writer that needs a newer encoding | yes, create or `If-Match`, raise only | minimum-reader marker; lowering the level needs an Admin token (403 otherwise), see upgrade-rollback.md |
 | `objects/<hh>/<id>` | publish | yes, create or `If-Match` | body must hash to the key (422 otherwise) |
 | `packs/<name>.pack`, `packs/<name>.idx` | pack publish | create-only (`If-None-Match: *`) | immutable once written |
 | `tx/<txid>` | publish | create-only | immutable transaction record |
