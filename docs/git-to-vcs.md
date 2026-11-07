@@ -144,7 +144,7 @@ Status: exact (same command and flags), renamed (other spelling, same meaning), 
 semantics differ as the notes say), missing (no equivalent; the notes name the native route).
 
 <!-- BEGIN GENERATED TABLE -->
-276 rows: 160 exact, 42 renamed, 52 different, 22 missing.
+279 rows: 164 exact, 42 renamed, 52 different, 21 missing.
 
 | git | vcs | status | notes | test |
 |---|---|---|---|---|
@@ -270,6 +270,7 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git cherry-pick A...B` | `vcs cherry-pick A...B` | exact | the commits of either side that the other lacks, oldest first, in one run (merge commits among them are refused unless -m) | translation |
 | `git cherry main feature` | `vcs cherry main feature` | different | `+`/`-` per commit by patch id (the diff against the first parent, line numbers ignored, context included); prints full ids, or `-v` short id and subject | translation |
 | `git merge feature` | `vcs merge feature` | exact | fast-forward when possible, else a merge commit | `merge` |
+| `git merge other` | `vcs merge other` | exact | also when the two branches have several merge bases (criss-cross history): the bases are merged into a virtual base first, as git's recursive/ort strategies do | `criss_cross` |
 | `git merge --abort` | `vcs merge --abort` | exact |  | `merge` |
 | `git merge --continue` | `vcs commit` | exact |  | translation |
 | `git merge origin/main` | `vcs merge --remote main` | renamed | merges the remote-tracking branch as last fetched | translation |
@@ -286,7 +287,9 @@ semantics differ as the notes say), missing (no equivalent; the notes name the n
 | `git rebase --skip` | `vcs rebase --skip` | exact | drops the commit that stopped with conflicts | `merge` |
 | `git rebase --onto main A` | `vcs rebase --onto main A` | exact | replays the commits A lacks onto main (any revision); not combinable with -i/-x; the branch to rebase must be checked out | translation |
 | `git rebase --onto main --root` | `vcs rebase --onto main --root` | exact | replays the whole branch, root commit included; linear history only | translation |
-| `git rebase --rebase-merges main` | none | missing | replay is linear: a range containing a merge commit is refused before anything changes; rebase each linear side, or `vcs merge` | translation |
+| `git rebase --rebase-merges main` | `vcs rebase --rebase-merges main` | exact | recreates the merge commits (message, author and change id kept, tree freshly merged) and stops/continues/skips/aborts on conflicts like any rebase; the default `no-rebase-cousins` leaves commits that do not descend from the merge base alone, `--rebase-merges=rebase-cousins` replays them; criss-cross histories use a virtual merge base; not with -i/-x (no label/reset/merge todo lines) | `rebase_merges` |
+| `git rebase --rebase-merges=rebase-cousins main` | `vcs rebase --rebase-merges=rebase-cousins main` | exact | also replays commits that do not descend from the merge base onto the new base | `rebase_cousins` |
+| `git rebase --rebase-merges=no-rebase-cousins main` | `vcs rebase --rebase-merges main` | exact | the default mode: commits that do not descend from the merge base keep their original parents | `rebase_nocousins` |
 | `git rebase origin/main` | `vcs rebase origin/main` | exact | origin/<branch> is the remote-tracking head as of the last `vcs fetch` | translation |
 | `git stash` | `vcs stash push` | exact | tracked changes only; untracked files stay | `stash` |
 | `git stash push -m wip` | `vcs stash push -m wip` | exact |  | `stash` |
