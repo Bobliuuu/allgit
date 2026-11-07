@@ -43,16 +43,17 @@ fn server_bin() -> PathBuf {
 
 struct Ca {
     cert: rcgen::Certificate,
-    key: KeyPair,
+    issuer: rcgen::Issuer<'static, KeyPair>,
 }
 fn make_ca(name: &str) -> Ca {
     let mut p = CertificateParams::new(vec![]).unwrap();
     p.distinguished_name.push(rcgen::DnType::CommonName, name);
     p.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     let key = KeyPair::generate().unwrap();
+    let cert = p.self_signed(&key).unwrap();
     Ca {
-        cert: p.self_signed(&key).unwrap(),
-        key,
+        cert,
+        issuer: rcgen::Issuer::new(p, key),
     }
 }
 /// (cert pem, key pem). Server leaves are valid for 127.0.0.1.
@@ -65,7 +66,7 @@ fn leaf(ca: &Ca, client: bool) -> (String, String) {
         ExtendedKeyUsagePurpose::ServerAuth
     }];
     let key = KeyPair::generate().unwrap();
-    let c = p.signed_by(&key, &ca.cert, &ca.key).unwrap();
+    let c = p.signed_by(&key, &ca.issuer).unwrap();
     (c.pem(), key.serialize_pem())
 }
 
