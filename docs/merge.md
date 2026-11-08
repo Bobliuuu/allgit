@@ -197,6 +197,10 @@ string `resolution`, a NUL in it, or any line starting with a conflict marker (`
 `>>>>>>>`). Unknown fields are ignored; `explanation` is truncated to 4 KiB. A non-zero exit, a failure to start, or
 running past the timeout also yields no proposal. stderr is discarded.
 
+The request has no `kind` field. A second request kind, `"kind":"zone-suggest"` (same `version` 1), is used by
+`vcs zone suggest --assist` and is specified in [zone-assist.md](zone-assist.md); the merge request, its response and the
+merge code are unchanged, and `"kind":"merge-conflict"` is accepted by the bundled assistants as a synonym for no kind.
+
 A ready-made assistant for the Anthropic API, with its own validation, is described in [assist.md](assist.md); the
 opt-in `merge.assist` setting makes `vcs merge`/`vcs rebase` run an assistant without `--assist`.
 

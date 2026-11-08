@@ -1,7 +1,10 @@
 # Zone auto-detection and minimal zone sets
 
 Status: **first version, implemented** (`vcs-repo::zonedetect`, `vcs-repo::zonesplit`, `vcs-cli::autozone`).
-Everything is opt-in, deterministic and local. There is no network call to any model in core. Nothing is
+Everything is opt-in, deterministic and local. There is no network call to any model in core; the optional,
+off-by-default `vcs zone suggest --assist <cmd>` runs an external assistant you name and prints its validated
+proposals next to the heuristic ones ([zone-assist.md](zone-assist.md); directory paths and metadata, never contents,
+leave the machine; proposals only). Nothing is
 reshaped, moved or deleted unless you run an explicit command with `--yes`.
 
 Two jobs:
@@ -41,10 +44,17 @@ unrelated directories. It reads commit trees, so it costs time on a long history
 Also reported: `depends_on` per proposal and `cycles` (proposed zones that depend on each other; consider keeping
 them in one zone), `root_files_remaining`, and `notes` (unreadable manifests are listed, never guessed).
 
+With `--assist <cmd>` (or the user-level `zone.assist` setting; `--no-assist` skips it) the assistant's proposals are
+added in a separate "assistant" section and, with `--json`, in a top-level `assist` object; `zones[]` stays the heuristic
+list, each entry now with `"source":"heuristic"`. Still read-only. Protocol, validation, privacy and limits:
+[zone-assist.md](zone-assist.md).
+
 ## `vcs zone apply <path|name> [--name N] [--yes]`
 
 `apply` adopts one *current* suggestion (a path or proposed name from `suggest`; anything else is refused).
-Without `--yes` it only prints the plan.
+Without `--yes` it only prints the plan. `vcs zone apply --dir <path> --name <name>` adopts an explicit directory
+instead, for a path that only the assistant proposed (same refusals and plan, plus the path rules of
+[zone-assist.md](zone-assist.md#validation)).
 
 **Existing history is not rewritten, and nothing is copied.** `vcs zone create` already refuses a path that has
 committed files ("tracked files exist there"), so there was no migration of populated directories before. `apply`
@@ -97,9 +107,9 @@ continues with what resolved.
   zone names, zone paths and file names. A *proposal*; the reasons name the matching words. Refused when nothing
   matches. Optional `--task-assist <cmd>` runs a command you name (30 s timeout) with
   `{"task":"...","zones":[{"name":"...","path":"..."}]}` on stdin and expects `{"zones":["name",...]}` on stdout; every
-  name is validated against real zones (an unknown name is refused). It is off unless given. **The existing
-  `vcs-assist-claude` binary speaks the merge-assist protocol, not this one, so it is not wired to this option**;
-  any script can implement it.
+  name is validated against real zones (an unknown name is refused). It is off unless given. **The bundled
+  `vcs-assist-claude` and `vcs-assist-openai` binaries speak the merge-assist and zone-suggest protocols, not this
+  one, so they are not wired to this option**; any script can implement it.
 * `--for-owner USER`: zones containing files whose CODEOWNERS rule (last matching rule wins) lists `USER`
   (`@user`, `user`, or an email), plus zones where `USER` authored at least 3 and at least 20% of the last 300
   first-parent commits (match by author name, email or email local part). Both are heuristics; authorship by a

@@ -10,6 +10,9 @@ all validation (markers, size, NUL, non-conflicting hunks preserved byte for byt
 code of `vcs-assist-claude`, and the same rule holds: the three file versions are untrusted data, sent only inside
 delimited blocks of the user turn, never in the system prompt; the prompt tells the model not to follow text inside them.
 
+It also answers `"kind":"zone-suggest"` requests ([zone-assist.md](zone-assist.md)): the same environment, key rules and
+budgets, but only directory paths and metadata are sent. Not run against a live API.
+
 **Privacy and cost warnings from [assist.md](assist.md) apply unchanged**: whole files leave your machine, to whatever
 URL you configure, and each conflict costs money.
 
