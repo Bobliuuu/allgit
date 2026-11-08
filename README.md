@@ -16,6 +16,9 @@ and where many people (and agents) push at once to an S3 bucket. The command is 
 > parts have only been run against fixtures, local servers or a single cloud account. Read
 > [Status and limitations](#-status-and-limitations) before depending on it.
 
+<p align="center"><img src="docs/media/demo.gif" alt="Terminal demo: create two zones, publish, clone only the engine zone, then add the assets zone" width="820"></p>
+<p align="center"><sub>A real run of the Quickstart below (<a href="docs/media/PROVENANCE.md">provenance</a>). ▶️ <a href="docs/media/explainer.mp4">60-second explainer video</a></sub></p>
+
 **Jump to:** [Headline numbers](#-headline-numbers) · [What is new](#-what-is-genuinely-new) · [Scalability](#-scalability) ·
 [Wins and losses](#-wins-ties-and-losses-measured) · [Install](#-install-and-build) · [Quickstart](#-quickstart) ·
 [git and p4 mapping](#-coming-from-git-or-perforce) · [Docs index](#-documentation)
