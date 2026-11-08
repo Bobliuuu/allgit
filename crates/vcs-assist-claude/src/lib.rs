@@ -1,5 +1,6 @@
-//! `vcs-assist-claude`: the assistant side of `vcs merge --assist`. Reads one conflict request
-//! (JSON, see docs/merge.md) and answers with a validated proposal, or refuses. The file contents
+//! `vcs-assist-claude`: the assistant side of `vcs merge --assist` and `vcs zone suggest --assist`. Reads one
+//! request (JSON: a conflict, see docs/merge.md, or a `"kind":"zone-suggest"` request, see docs/zone-assist.md)
+//! and answers with a validated proposal, or refuses. The file contents
 //! are sent to the Anthropic API: see docs/assist.md.
 
 pub mod api;
@@ -9,6 +10,7 @@ pub mod eval;
 pub mod hunks;
 pub mod prompt;
 pub mod validate;
+pub mod zones;
 
 use validate::{Answer, ParseCheck};
 

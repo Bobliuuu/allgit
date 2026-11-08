@@ -1,9 +1,10 @@
 use std::io::{Read, Write};
 use std::process::ExitCode;
-use vcs_assist_claude::{eval, parse_request, resolve, response_json, Outcome};
+use vcs_assist_claude::{eval, parse_request, resolve, response_json, zones, Outcome};
 use vcs_assist_openai::api::{ApiConfig, Client};
 
-const HELP: &str = "vcs-assist-openai: assistant for `vcs merge --assist` using an OpenAI-compatible API.\n\n\
+const HELP: &str =
+    "vcs-assist-openai: assistant for `vcs merge --assist` and `vcs zone suggest --assist` using an OpenAI-compatible API.\n\n\
 usage:\n  vcs-assist-openai                         read a request on stdin, write a response on stdout\n  \
 vcs-assist-openai eval <dir> [--live] [--json]   score the assistant on fixtures\n\n\
 File contents are sent to the API. Needs OPENAI_API_KEY; model from VCS_ASSIST_MODEL (default gpt-4.1-mini);\n\
@@ -53,6 +54,11 @@ fn run_assist() -> ExitCode {
     if std::io::stdin().take(16 << 20).read_to_end(&mut buf).is_err() {
         return fail("cannot read stdin");
     }
+    match zones::request_kind(&buf) {
+        Ok(zones::Kind::Zone) => return run_zone_assist(&buf),
+        Ok(zones::Kind::Merge) => {}
+        Err(e) => return fail(&e),
+    }
     let req = match parse_request(&buf) {
         Ok(r) => r,
         Err(e) => return fail(&e),
@@ -78,6 +84,36 @@ fn run_assist() -> ExitCode {
         }
         Outcome::Refused(r) => fail(&format!("refused: {r}")),
         Outcome::Failed(r) => fail(&r),
+    }
+}
+
+/// `"kind":"zone-suggest"`: only directory paths and metadata are in the request; same key, size and budget rules.
+fn run_zone_assist(buf: &[u8]) -> ExitCode {
+    let req = match zones::parse_zone_request(buf) {
+        Ok(r) => r,
+        Err(e) => return fail(&e),
+    };
+    let cfg = match ApiConfig::from_env(&env) {
+        Ok(c) => c,
+        Err(e) => return fail(&e),
+    };
+    let client = Client::new(cfg);
+    let out = zones::resolve_zones(&req, &|s, u, m| client.complete(s, u, m));
+    eprintln!("vcs-assist-openai: {}", usage_line(&client));
+    let key = client.cfg.key.as_str();
+    match out {
+        zones::ZoneOutcome::Proposals { response, dropped } => {
+            if response.contains(key) {
+                return fail("answer rejected: it contains the API key");
+            }
+            for d in dropped {
+                eprintln!("vcs-assist-openai: dropped a proposal: {}", d.replace(key, "[redacted]"));
+            }
+            let _ = writeln!(std::io::stdout(), "{response}");
+            ExitCode::SUCCESS
+        }
+        zones::ZoneOutcome::Refused(r) => fail(&format!("refused: {r}")),
+        zones::ZoneOutcome::Failed(r) => fail(&r),
     }
 }
 
