@@ -3,8 +3,9 @@
 //! inputs (local refs, or remote metadata fetched into a throwaway store), renders text/JSON and
 //! runs the explicit actions. Contract and limits: docs/zones-autodetect.md.
 //!
-//! Nothing here calls a model. `--task-assist <cmd>` runs a command the user names, on explicit
-//! request, and treats its answer as a proposal that is validated against real zone names.
+//! Nothing here calls a model. `--task-assist <cmd>` and `zone suggest --assist <cmd>` (or the user-level
+//! `zone.assist` setting) run a command the user names, on explicit request, and treat its answer as a
+//! proposal that is validated (docs/zone-assist.md); nothing is ever applied by them.
 
 use crate::json::{doc, J};
 use crate::{author, config, remote, Cmd, ZoneCmd};
@@ -16,6 +17,7 @@ use vcs_objects::{Object, ObjectId};
 use vcs_remote::Backend;
 use vcs_repo::meta::Zones;
 use vcs_repo::treeops::{self, Flat};
+use vcs_repo::zoneassist as zar;
 use vcs_repo::zonedetect as zd;
 use vcs_repo::{Error, Repo, ROOT_ZONE};
 
@@ -33,14 +35,30 @@ pub struct SuggestArgs {
     /// How many commits of the root zone `--cochange` looks at
     #[arg(long, default_value_t = 500)]
     pub max_commits: usize,
+    /// Also ask this command (an AI assistant, e.g. `vcs-assist-claude`) to propose zone boundaries. Directory
+    /// paths, manifest paths and CODEOWNERS rules (no file contents) are sent to it. Proposals only; off unless
+    /// given or the user-level `zone.assist` setting is set (docs/zone-assist.md)
+    #[arg(long, value_name = "CMD")]
+    pub assist: Option<String>,
+    /// Do not run the zone assistant even if the `zone.assist` setting is configured
+    #[arg(long, conflicts_with = "assist")]
+    pub no_assist: bool,
+    /// Seconds the assistant may take
+    #[arg(long, value_name = "SECS", default_value_t = 30)]
+    pub assist_timeout: u64,
 }
 
 #[derive(Args, Clone)]
 pub struct ApplyArgs {
     /// Path or proposed name of a suggestion from `vcs zone suggest`; several make all the zones
     /// in one step (one status check, one new root commit, one write of the repository state)
-    #[arg(required = true)]
+    #[arg(required_unless_present = "dir")]
     pub target: Vec<String>,
+    /// Adopt this directory instead of a heuristic suggestion (for a path proposed by `zone suggest --assist`).
+    /// Needs --name. Same plan/--yes rules and refusals; the path must be relative, with no `.`/`..`, dot, vendor or
+    /// build components
+    #[arg(long, value_name = "DIR", requires = "name", conflicts_with = "target")]
+    pub dir: Option<String>,
     /// Zone name to use instead of the proposed one (only with a single target)
     #[arg(long)]
     pub name: Option<String>,
@@ -464,13 +482,162 @@ fn suggestion_json(z: &zd::Suggestion) -> J {
         ),
         ("depends_on", strs(&z.depends_on)),
         ("coupled_with", strs(&z.coupled_with)),
+        ("source", s("heuristic")),
+    ])
+}
+
+/// The zone assistant command: `--assist`, else the opt-in user-level `zone.assist` setting (announced,
+/// because directory paths, manifest paths and CODEOWNERS rules are then handed to that command), unless
+/// `--no-assist`. The announcement goes to stderr with `--json` so stdout stays one document.
+fn zone_assist_command(a: &SuggestArgs, json: bool) -> Result<Option<(String, bool)>, Error> {
+    if a.no_assist {
+        return Ok(None);
+    }
+    if let Some(c) = &a.assist {
+        if c.trim().is_empty() {
+            return Err(Error::Msg("--assist needs a command".into()));
+        }
+        return Ok(Some((c.clone(), false)));
+    }
+    let Some(c) = config::Config::load()?.zone_assist_command() else {
+        return Ok(None);
+    };
+    let line = format!("zone.assist is set: running `{c}` on the repository's directory layout (use --no-assist to skip)");
+    if json {
+        eprintln!("{line}");
+    } else {
+        println!("{line}");
+    }
+    Ok(Some((c, true)))
+}
+
+/// Build the request, run the assistant, validate its answer. `Err` is the one-line reason nothing was
+/// accepted; the heuristic report is printed regardless.
+fn run_zone_assist(repo: &Repo, v: &View, rep: &zd::SuggestReport, a: &SuggestArgs, cmd: &str) -> Result<zar::Outcome, String> {
+    let root_paths: Vec<&str> = v
+        .files
+        .keys()
+        .filter(|p| v.zones.owner(p) == ROOT_ZONE)
+        .map(String::as_str)
+        .collect();
+    let mut codeowners = Vec::new();
+    for p in zd::CODEOWNERS_PATHS {
+        if let Some((_, id)) = v.files.get(*p) {
+            if v.zones.owner(p) == ROOT_ZONE {
+                if let Some(t) = v.read(id).and_then(|b| String::from_utf8(b).ok()) {
+                    codeowners = zd::parse_codeowners(&t);
+                    break;
+                }
+            }
+        }
+    }
+    let existing: Vec<(String, String)> = v
+        .zones
+        .names()
+        .filter(|z| *z != ROOT_ZONE)
+        .map(|z| (z.to_owned(), v.zones.path_of(z).unwrap_or("").to_owned()))
+        .collect();
+    let mut taken: BTreeSet<String> = v.zones.names().map(str::to_owned).collect();
+    taken.extend(v.zones.labels().map(|(_, l)| l.to_owned()));
+    let heuristic: Vec<(String, String)> = rep.zones.iter().map(|z| (z.name.clone(), z.path.clone())).collect();
+    let max_zones = 20;
+    let input = zar::ReqInput {
+        total_files: rep.total_files,
+        root_paths: root_paths.clone(),
+        codeowners,
+        existing: existing.clone(),
+        heuristic: rep
+            .zones
+            .iter()
+            .map(|z| zar::HeuristicIn {
+                name: z.name.clone(),
+                path: z.path.clone(),
+                files: z.files,
+                confidence_pct: pct(z.confidence),
+                signals: z.signals.iter().map(|g| (g.kind.clone(), g.detail.clone())).collect(),
+            })
+            .collect(),
+        min_files: a.min_files,
+        max_zones,
+    };
+    let req = zar::encode_request(&input).map_err(|e| format!("refusing to send: {e}"))?;
+    let secs = a.assist_timeout.max(1);
+    let out =
+        vcs_repo::assist::run_command(cmd, req.as_bytes(), std::time::Duration::from_secs(secs), repo.worktree()).map_err(|r| match r {
+            vcs_repo::AssistResult::TimedOut => format!("assistant timed out after {secs} s"),
+            vcs_repo::AssistResult::Failed(w) => format!("assistant failed: {w}"),
+            vcs_repo::AssistResult::Rejected(w) => format!("assistant answer ignored: {w}"),
+            other => format!("assistant failed: {other:?}"),
+        })?;
+    let count = |prefix: &str| {
+        let pre = format!("{prefix}/");
+        root_paths.iter().filter(|p| p.starts_with(&pre)).count()
+    };
+    let ctx = zar::Ctx {
+        existing: &existing,
+        taken_names: &taken,
+        heuristic: &heuristic,
+        min_files: a.min_files,
+        max_zones,
+        count_under: &count,
+    };
+    zar::parse_and_validate(&out, &ctx).map_err(|e| format!("assistant answer ignored: {e}"))
+}
+
+fn assist_json(setting: bool, r: &Result<zar::Outcome, String>) -> J {
+    let (ok, err, props, rej, notes) = match r {
+        Ok(o) => (true, J::Null, o.accepted.as_slice(), o.rejected.as_slice(), o.notes.as_slice()),
+        Err(e) => (false, s(e), &[][..], &[][..], &[][..]),
+    };
+    J::Obj(vec![
+        ("used", J::Bool(true)),
+        ("command_from", s(if setting { "setting" } else { "flag" })),
+        ("ok", J::Bool(ok)),
+        ("error", err),
+        (
+            "proposals",
+            J::Arr(
+                props
+                    .iter()
+                    .map(|p| {
+                        J::Obj(vec![
+                            ("name", s(&p.name)),
+                            ("path", s(&p.path)),
+                            ("files", n(p.files as u64)),
+                            ("confidence_pct", n(p.confidence_pct)),
+                            ("rationale", s(&p.rationale)),
+                            ("source", s(p.source.label())),
+                            ("overlaps_heuristic", strs(&p.overlaps_heuristic)),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        (
+            "rejected",
+            J::Arr(
+                rej.iter()
+                    .map(|x| J::Obj(vec![("name", s(&x.name)), ("path", s(&x.path)), ("reason", s(&x.reason))]))
+                    .collect(),
+            ),
+        ),
+        ("notes", strs(notes)),
     ])
 }
 
 fn suggest(a: &SuggestArgs, json: bool) -> Result<(), Error> {
     let (repo, _) = crate::open()?;
     let (v, rep) = compute_suggestions(&repo, a, a.min_confidence)?;
+    // Opt-in: no assistant unless --assist or the user-level zone.assist setting. Read-only either way.
+    let assist = zone_assist_command(a, json)?.map(|(cmd, setting)| {
+        let r = run_zone_assist(&repo, &v, &rep, a, &cmd);
+        (cmd, setting, r)
+    });
     if json {
+        let mut extra = vec![];
+        if let Some((_, setting, r)) = &assist {
+            extra.push(("assist", assist_json(*setting, r)));
+        }
         emit(doc(
             "zone suggest",
             vec![
@@ -499,7 +666,10 @@ fn suggest(a: &SuggestArgs, json: bool) -> Result<(), Error> {
                 ("clusters", J::Arr(rep.clusters.iter().map(|c| strs(c)).collect())),
                 ("notes", strs(&rep.notes)),
                 ("history_rewritten", J::Bool(false)),
-            ],
+            ]
+            .into_iter()
+            .chain(extra)
+            .collect(),
         ));
         return Ok(());
     }
@@ -549,7 +719,54 @@ fn suggest(a: &SuggestArgs, json: bool) -> Result<(), Error> {
     if !rep.zones.is_empty() {
         println!("\napply one with `vcs zone apply <path>` (plan only), then add --yes. Existing history is not rewritten; see docs/zones-autodetect.md.");
     }
+    if let Some((cmd, _, r)) = &assist {
+        print_assist(cmd, r);
+    }
     Ok(())
+}
+
+fn print_assist(cmd: &str, r: &Result<zar::Outcome, String>) {
+    println!(
+        "\nassistant `{cmd}`: proposals only (source: assist, or both when a heuristic proposal has the same path); nothing was changed."
+    );
+    let o = match r {
+        Ok(o) => o,
+        Err(e) => {
+            println!("no assistant proposals: {e}");
+            return;
+        }
+    };
+    if o.accepted.is_empty() {
+        println!("the assistant made no acceptable proposal");
+    }
+    for p in &o.accepted {
+        println!(
+            "\n{}  path {}/  {} file(s)  confidence {:.2}  source {}",
+            p.name,
+            p.path,
+            p.files,
+            p.confidence_pct as f64 / 100.0,
+            p.source.label()
+        );
+        if !p.rationale.is_empty() {
+            println!("    - why: {}", p.rationale);
+        }
+        if !p.overlaps_heuristic.is_empty() {
+            println!(
+                "    overlaps heuristic proposal(s): {} (alternatives; pick one)",
+                p.overlaps_heuristic.join(", ")
+            );
+        }
+    }
+    for x in &o.rejected {
+        println!("rejected {:?} ({:?}): {}", x.name, x.path, x.reason);
+    }
+    for x in &o.notes {
+        println!("note: {x}");
+    }
+    if !o.accepted.is_empty() {
+        println!("\nadopt one with `vcs zone apply --dir <path> --name <name>` (plan only), then add --yes. The assistant is not trusted: check the paths yourself.");
+    }
 }
 
 fn apply(a: &ApplyArgs, json: bool) -> Result<(), Error> {
@@ -559,12 +776,24 @@ fn apply(a: &ApplyArgs, json: bool) -> Result<(), Error> {
         min_files: 1,
         cochange: false,
         max_commits: 0,
+        assist: None,
+        no_assist: true,
+        assist_timeout: 0,
     };
-    let (_v, rep) = compute_suggestions(&repo, &sa, 0.0)?;
+    let mut splits = Vec::new();
+    let (_v, rep) = if a.dir.is_some() {
+        (None, zd::SuggestReport::default())
+    } else {
+        let (v, rep) = compute_suggestions(&repo, &sa, 0.0)?;
+        (Some(v), rep)
+    };
     if a.name.is_some() && a.target.len() > 1 {
         return Err(Error::Msg("--name needs exactly one target".into()));
     }
-    let mut splits = Vec::new();
+    if let (Some(dir), Some(name)) = (&a.dir, &a.name) {
+        let path = vcs_repo::zoneassist::check_path_syntax(dir).map_err(Error::Msg)?;
+        splits.push((name.clone(), path));
+    }
     for target in &a.target {
         let t = target.trim_matches('/');
         let Some(z) = rep.zones.iter().find(|z| z.path == t || z.name == t) else {

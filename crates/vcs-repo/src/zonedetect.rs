@@ -603,7 +603,7 @@ const CONTAINERS: &[&str] = &[
     "pkgs",
     "tools",
 ];
-const SKIP_DIRS: &[&str] = &[
+pub const SKIP_DIRS: &[&str] = &[
     "node_modules",
     "target",
     "vendor",

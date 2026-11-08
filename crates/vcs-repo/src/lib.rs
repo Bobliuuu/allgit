@@ -76,6 +76,7 @@ pub mod worktree;
 pub mod worktree_fs;
 mod writer_threads;
 mod zone_batch;
+pub mod zoneassist;
 pub mod zonedetect;
 pub mod zoneprofile;
 mod zonesplit;
