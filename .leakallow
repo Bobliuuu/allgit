@@ -1,0 +1,12 @@
+# Test fixtures only: dummy keys and RFC-reserved/loopback-style addresses.
+crates/vcs-assist-claude/tests/common.rs::sk-ant-test-
+crates/vcs-assist-openai/tests/*.rs::sk-test
+crates/vcs-objects/src/signing.rs::-----BEGIN OPENSSH PRIVATE KEY-----
+crates/vcs-objects/tests/fixtures/*::-----BEGIN OPENSSH PRIVATE KEY-----
+crates/vcs-server/src/backend_url.rs::169.254.170.2
+crates/vcs-server/src/ratelimit.rs::10.0.0.1
+crates/vcs-server/src/ratelimit.rs::10.0.0.2
+.leakallow::BEGIN OPENSSH
+.leakallow::169.254.170.2
+.leakallow::10.0.0.1
+.leakallow::10.0.0.2
