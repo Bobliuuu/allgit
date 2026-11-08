@@ -1,0 +1,44 @@
+$ vcs init demo
+Initialized empty vcs repository in ~/demo-run/demo/.vcs
+$ mkdir engine assets
+$ echo 'fn main(){}' > engine/main.rs; echo bin > assets/logo.bin; echo hi > README.md
+$ vcs zone create engine --path engine
+created zone engine owning engine/
+$ vcs zone create assets --path assets
+created zone assets owning assets/
+$ vcs add . && vcs commit -m "initial"
+staged 3 file(s), 0 removal(s)
+[assets/main 5bf78ef7757b] initial
+[engine/main 7071ad5cde28] initial
+[root/main c7d816c4d219] initial
+atomic transaction 4b4004cc12bc covering 3 zones
+$ vcs zone list
+assets         assets               subscribed, on main; 1 branch(es)
+engine         engine               subscribed, on main; 1 branch(es)
+root           (rest of repo)       subscribed, on main; 1 branch(es)
+$ vcs remote set ../shared.vcs
+remote set to ~/demo-run/shared.vcs
+$ vcs publish
+assets/main (none) -> 5bf78ef7757b
+engine/main (none) -> 7071ad5cde28
+root/main (none) -> c7d816c4d219
+published atomically (remote generation 1)
+$ vcs clone shared.vcs work --zone engine
+Cloned ~/demo-run/shared.vcs into work
+downloaded zones: engine
+skipped zones (not subscribed): assets, root
+  add one later with `vcs zone add <name>` then `vcs fetch --zone <name>`
+$ vcs status
+zone engine (engine/): branch main @ 7071ad5cde28
+not subscribed (not downloaded/materialized, NOT deleted): assets, root
+clean
+$ vcs zone add assets && vcs fetch --zone assets
+subscribed to zone assets
+fetched assets/main @ 5bf78ef7757b
+$ vcs op log
+@ a9d83d4cb361  1794178280  Ada <ada@example.com>
+    zone add assets/main
+  781956d1cfd5  1794178280  Ada <ada@example.com>
+    zone add engine/main
+  906e3bdfce93  1794178280  Ada <ada@example.com>
+    init repository
