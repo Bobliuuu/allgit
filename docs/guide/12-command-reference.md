@@ -2722,6 +2722,12 @@ Options:
           How many commits of the root zone `--cochange` looks at [default: 500]
       --no-hooks
           Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
+      --assist <CMD>
+          Also ask this command (an AI assistant, e.g. `vcs-assist-claude`) to propose zone boundaries. Directory paths, manifest paths and CODEOWNERS rules (no file contents) are sent to it. Proposals only; off unless given or the user-level `zone.assist` setting is set (docs/zone-assist.md)
+      --no-assist
+          Do not run the zone assistant even if the `zone.assist` setting is configured
+      --assist-timeout <SECS>
+          Seconds the assistant may take [default: 30]
   -h, --help
           Print help
 ```
@@ -2731,17 +2737,18 @@ Options:
 ```text
 Turn one suggestion into a zone (plan only without --yes; history is not rewritten)
 
-Usage: vcs zone apply [OPTIONS] <TARGET>...
+Usage: vcs zone apply [OPTIONS] [TARGET]...
 
 Arguments:
-  <TARGET>...  Path or proposed name of a suggestion from `vcs zone suggest`; several make all the zones in one step (one status check, one new root commit, one write of the repository state)
+  [TARGET]...  Path or proposed name of a suggestion from `vcs zone suggest`; several make all the zones in one step (one status check, one new root commit, one write of the repository state)
 
 Options:
   -C <DIR>             Run as if vcs was started in <DIR> (applied before repository discovery)
-      --name <NAME>    Zone name to use instead of the proposed one (only with a single target)
+      --dir <DIR>      Adopt this directory instead of a heuristic suggestion (for a path proposed by `zone suggest --assist`). Needs --name. Same plan/--yes rules and refusals; the path must be relative, with no `.`/`..`, dot, vendor or build components
       --json           Machine-readable output (status, log, diff, branch, zone list, op log, conflict list); see docs/cli.md
-      --yes            Actually do it. Without this only the plan is printed
+      --name <NAME>    Zone name to use instead of the proposed one (only with a single target)
       --ca-pem <FILE>  PEM file with the CA certificate(s) to trust for an https:// remote (same as config `remote.cainfo`)
+      --yes            Actually do it. Without this only the plan is printed
       --no-hooks       Do not run client-side hooks (same as VCS_NO_HOOKS=1); see docs/hooks.md
   -h, --help           Print help
 ```

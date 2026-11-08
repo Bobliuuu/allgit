@@ -29,6 +29,11 @@ pub const KEYS: &[(&str, &str, &str)] = &[
         "opt-in: command run on conflicts after `vcs merge`/`vcs rebase` to propose resolutions (file contents go to that command; see docs/assist.md)",
     ),
     (
+        "zone.assist",
+        "VCS_ZONE_ASSIST",
+        "opt-in: command `vcs zone suggest` runs to get AI-proposed zone boundaries (directory paths, manifest paths and CODEOWNERS rules go to that command; see docs/zone-assist.md)",
+    ),
+    (
         "merge.renames",
         "VCS_MERGE_RENAMES",
         "on/off: detect renames in merge/rebase (default off)",
@@ -176,7 +181,7 @@ pub fn validate_value(key: &str, value: &str) -> Result<(), Error> {
         "lock.releaseOnPublish" if !matches!(value, "on" | "off") => msg("lock.releaseOnPublish must be 'on' or 'off'"),
         "lock.offline" if !matches!(value, "warn" | "refuse") => msg("lock.offline must be 'warn' or 'refuse'"),
         "gc.autoPackLimit" if value.trim().parse::<usize>().is_err() => msg("gc.autoPackLimit must be a non-negative integer"),
-        "user.name" | "user.email" | "core.editor" | "remote.default" | "remote.cainfo" | "merge.assist" | "merge.tool"
+        "user.name" | "user.email" | "core.editor" | "remote.default" | "remote.cainfo" | "merge.assist" | "zone.assist" | "merge.tool"
             if value.trim().is_empty() =>
         {
             msg(format!("{key} cannot be empty (use `vcs config unset {key}`)"))
@@ -440,6 +445,13 @@ impl Config {
             .filter(|v| !v.trim().is_empty() && v.trim() != "off")
     }
 
+    /// zone.assist: the opt-in zone-suggestion assistant command (unset, empty or `off` means none).
+    /// Same rule as `merge.assist`: never from the repository's own config.
+    pub fn zone_assist_command(&self) -> Option<String> {
+        self.command_setting("zone.assist")
+            .filter(|v| !v.trim().is_empty() && v.trim() != "off")
+    }
+
     /// merge.renames, default off. An invalid value is an error.
     pub fn renames(&self) -> Result<bool, Error> {
         match self.get("merge.renames").as_deref() {
@@ -485,7 +497,7 @@ impl Config {
 }
 
 /// Keys that name a program to run: only the user config (and the environment) may set them.
-pub const COMMAND_KEYS: &[&str] = &["core.editor", "merge.assist"];
+pub const COMMAND_KEYS: &[&str] = &["core.editor", "merge.assist", "zone.assist"];
 
 pub fn set(scope: Scope, key: &str, value: &str) -> Result<(), Error> {
     validate_key(key)?;
