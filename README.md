@@ -433,7 +433,9 @@ vcs gc --dry-run                          # reports what GC would delete
 
 Not sure which zones you need? `vcs zone suggest` proposes boundaries from manifests and ownership files (read-only),
 and `vcs clone <url> work --for path/or/symbol --dry-run` shows the smallest zone set, with dependencies, and how
-much it would download. See [docs/zones-autodetect.md](docs/zones-autodetect.md). The full tour, with pasted output
+much it would download. An optional, opt-in `vcs zone suggest --assist <cmd>` can add AI-proposed boundaries (proposals
+only, nothing applied; directory paths and ownership rules, no file contents, go to the model API; first version, not yet
+called against a live API: [docs/zone-assist.md](docs/zone-assist.md)). See [docs/zones-autodetect.md](docs/zones-autodetect.md). The full tour, with pasted output
 from real runs, is the [user guide](docs/guide/README.md).
 
 ## 🔀 Coming from git or Perforce
@@ -550,6 +552,8 @@ CPU as more reliable; none of this is a general claim about other machines.
 - 🔑 **Credentials** stay out of the repository config; use `vcs login` and the credential helper. S3 secrets are never
   stored in `.vcs/remote`.
 - 🤖 **Assisted merge** (`vcs merge --assist`) sends file contents to a third-party API if you enable it; it is opt-in.
+  **Assisted zone proposals** (`vcs zone suggest --assist`) send directory paths, manifest paths and CODEOWNERS rules (no
+  file contents); also opt-in, user-level setting only.
 
 Details and what is not defended: [docs/security.md](docs/security.md), [docs/security-review.md](docs/security-review.md),
 [docs/signing.md](docs/signing.md) (Ed25519 signed commits and tags).
@@ -565,7 +569,7 @@ Details and what is not defended: [docs/security.md](docs/security.md), [docs/se
 | `crates/vcs-store-s3` | S3-compatible backend (SigV4, blocking, no async runtime) |
 | `crates/vcs-merge` | merge base, text and tree merge, rename-aware merge, optional tree-sitter structural merge |
 | `crates/vcs-server` | the `vcs-server` binary, an HTTP validating writer |
-| `crates/vcs-assist-claude`, `crates/vcs-assist-openai` | helper binaries for opt-in `merge --assist` |
+| `crates/vcs-assist-claude`, `crates/vcs-assist-openai` | helper binaries for opt-in `merge --assist` and `zone suggest --assist` |
 | `crates/vcs-bench` | seeded dataset generator, criterion benchmarks, `s3bench`, `storebench` |
 | `crates/vcs-cli` | the `vcs` and `git-remote-allgit` binaries |
 | `crates/vcs-watchd` | the optional file-watcher daemon that makes `status` incremental |
@@ -589,7 +593,7 @@ harnesses.
 - Scale and novelty: [Scalability](docs/scalability.md) · [Manifest scaling](docs/manifest-scaling.md) · [Peering](docs/peering.md) · [Zone ontology](docs/zone-ontology.md) · [Zone profile](docs/zone-profile.md) · [High-load matrix](docs/research/highload-matrix.md) · [Locks](docs/locks.md)
 - Remotes and servers: [S3](docs/s3.md) · [Remote packs](docs/remote-packs.md) · [Server](docs/server.md) ·
   [Deploy](docs/deploy.md) · [Security](docs/security.md)
-- Assisted merge: [Claude](docs/assist.md) · [OpenAI](docs/assist-openai.md)
+- Assisted merge: [Claude](docs/assist.md) · [OpenAI](docs/assist-openai.md) · Assisted zone proposals: [zone-assist](docs/zone-assist.md)
 - Measurements and design studies: [Benchmarks](docs/benchmarks.md) · [Research index](docs/research.md) ·
   [Storage engine study](docs/research/storage/README.md). Older notes in `docs/research.md` were written from memory
   and are unverified.
@@ -618,7 +622,7 @@ Early research software; tested means an executable test exists in the repositor
 - 🟡 **Partial:** history editing (`rebase` keeps change ids), structural merge (tree-sitter for a few languages, behind
   cargo features, off by default), locks (advisory unless `vcs-server` is in front), p4 import (checked once against
   real `p4d` output on a small history, otherwise fixtures).
-- 🤖 **Assisted merge:** the Claude helper has never been called against the live API (fixture and mock tests only). The OpenAI helper had one small live run, documented in [docs/assist-openai.md](docs/assist-openai.md); there are no broader quality or cost numbers.
+- 🤖 **Assisted merge:** the Claude helper has never been called against the live API (fixture and mock tests only). The OpenAI helper had one small live run, documented in [docs/assist-openai.md](docs/assist-openai.md); there are no broader quality or cost numbers. The same holds, more so, for `vcs zone suggest --assist`: mock-tested only, never called against a live API.
 - 🪣 **S3:** exercised against MinIO, RustFS, real AWS S3 from a Mac and from an in-region EC2 box (standard and S3 Express One Zone, see
   [real-s3](docs/research/real-s3.md)); other providers are untested, and Express has no GC/compaction.
 - 🪟 **Windows:** only compile-checked in CI. The code has never been run there.

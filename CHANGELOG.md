@@ -7,6 +7,17 @@ on-disk format promise (see [docs/known-limits.md](docs/known-limits.md)).
 
 ## [Unreleased]
 
+### Added
+
+- `vcs zone suggest --assist <cmd>` (and the user-only `zone.assist` setting, `--no-assist`, `--assist-timeout`): an
+  opt-in external assistant proposes zone boundaries. Directory paths, manifest paths and CODEOWNERS rules (no file
+  contents) are sent; `vcs` validates every proposal and prints it next to the heuristic ones with a `source` label.
+  Proposals only, nothing is applied. New `"kind":"zone-suggest"` request kind of the assistant protocol; the merge
+  request is unchanged. `vcs-assist-claude` and `vcs-assist-openai` handle it. First version, mock-tested, not yet
+  called against a live API. See docs/zone-assist.md.
+- `vcs zone apply --dir <path> --name <name>` adopts an explicit directory (for a path only the assistant proposed).
+- `--json` of `zone suggest`: `zones[]` entries carry `"source":"heuristic"`.
+
 ## [0.1.0] - 2026-11-08
 
 First tagged release. Early research software; see the README for status and limitations.

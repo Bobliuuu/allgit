@@ -1,6 +1,7 @@
 # Claude assistant for `vcs merge --assist`
 
-See also [assist-openai.md](assist-openai.md) for the OpenAI-compatible adapter.
+See also [assist-openai.md](assist-openai.md) for the OpenAI-compatible adapter, and [zone-assist.md](zone-assist.md) for
+the second request kind this binary handles (`vcs zone suggest --assist`: AI-proposed zone boundaries).
 
 `vcs-assist-claude` is a separate binary (crate `crates/vcs-assist-claude`) that implements the assistant side of the
 protocol in [merge.md](merge.md#assisted-merge-vcs-merge---assist). It reads a conflict request on stdin, asks the
@@ -17,6 +18,11 @@ Anthropic Messages API for a resolution, validates the answer, and prints the pr
   Retries after 429/5xx are separate attempts. Measured cost and latency on a real corpus are under Evaluation (about $0.001 per conflict with haiku, $0.014 with sonnet).
 * The model can be wrong. Validation (below) catches structural failures, not bad merges. Review every proposal with
   `vcs conflict proposals`.
+* **Zone proposals send paths, not contents.** The same binary also answers `vcs zone suggest --assist` requests
+  ([zone-assist.md](zone-assist.md)). Then only directory paths with file counts, manifest paths, CODEOWNERS rules,
+  existing zone names and the heuristic proposals go to the API (never file contents; request over 200 KiB refused
+  without a call), once per run, billed to your key. First version, never called against the live API, no cost
+  measurement; it is opt-in through `--assist` or the user-level `zone.assist` setting.
 * The API key is read from `ANTHROPIC_API_KEY`, sent only in the `x-api-key` header of requests to the configured
   URL, and scrubbed from every message the tool prints. It is never written to disk or placed on a command line.
 
