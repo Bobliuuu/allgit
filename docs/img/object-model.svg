@@ -15,14 +15,7 @@ text{fill:#1f2328}.m{fill:#59636e}
 .ln,.ar{stroke:#8c959f}.fl{fill:#8c959f}
 .dotA{fill:#0969da}.dotB{fill:#1a7f37}.dotC{fill:#bc4c00}.dotD{fill:#8250df}.dotH{fill:#bf8700}.dotX{fill:#cf222e}
 .tA{fill:#0969da}.tB{fill:#1a7f37}.tC{fill:#bc4c00}.tX{fill:#cf222e}
-@media (prefers-color-scheme:dark){text{fill:#e6edf3}.m{fill:#9198a1}
-.bg{fill:#0d1117}.sH{stroke:#d29922}.sL{stroke:#6e7681}
-.panel{fill:#161b22;stroke:#30363d}
-.kA{fill:#0c2d6b;stroke:#58a6ff}.kB{fill:#0f2d1a;stroke:#3fb950}.kC{fill:#3d1f0a;stroke:#f0883e}.kD{fill:#2d1a52;stroke:#bc8cff}
-.kH{fill:#3a2d00;stroke:#d29922}.kX{fill:#4c1417;stroke:#ff7b72}
-.ln,.ar{stroke:#6e7681}.fl{fill:#6e7681}
-.dotA{fill:#58a6ff}.dotB{fill:#3fb950}.dotC{fill:#f0883e}.dotD{fill:#bc8cff}.dotH{fill:#d29922}.dotX{fill:#ff7b72}
-.tA{fill:#58a6ff}.tB{fill:#3fb950}.tC{fill:#f0883e}.tX{fill:#ff7b72}}
+
 </style>
 <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="fl"/></marker></defs>
 <rect width="900" height="482" rx="10" class="bg"/>

@@ -43,7 +43,7 @@ Scoreboard totals across all measured cells (one quiet-box pass, build `845610a`
 **136 wins, 68 ties, 14 losses** for vcs against git, Perforce, walgit, Jujutsu and Sapling. The 14 losses are listed in plain
 text further down.
 
-<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/charts/huge-scale-dark.svg"><img src="docs/img/charts/huge-scale-light.svg" alt="1M files: vcs vs git, wall seconds on a log axis" width="900"></picture></p>
+<p align="center"><img src="docs/img/charts/huge-scale-light.svg" alt="1M files: vcs vs git, wall seconds on a log axis" width="900"></p>
 
 ## 🏛️ Architecture at a glance
 
@@ -165,11 +165,11 @@ server `kill -9`: 2,254 acked files, none lost. **One hot branch is still a retr
 use branches or zones per writer. SlowDown counts, replicas and git/walgit at this scale were not run.
 [many-writers-s3](docs/research/many-writers-s3.md).
 
-<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/charts/many-writers-scaling-dark.svg"><img src="docs/img/charts/many-writers-scaling-light.svg" alt="Pushes per second and p99 at 64 to 1024 writers, before and after batch commit, real S3 and local disk" width="900"></picture></p>
+<p align="center"><img src="docs/img/charts/many-writers-scaling-light.svg" alt="Pushes per second and p99 at 64 to 1024 writers, before and after batch commit, real S3 and local disk" width="900"></p>
 
 <p align="center"><img src="docs/img/group-commit.svg" alt="Animation: many publishers, one merged manifest write" width="900"></p>
 
-<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/charts/group-commit-dark.svg"><img src="docs/img/charts/group-commit-light.svg" alt="Group commit off vs on at 64 and 512 writers" width="820"></picture></p>
+<p align="center"><img src="docs/img/charts/group-commit-light.svg" alt="Group commit off vs on at 64 and 512 writers" width="820"></p>
 
 Against other tools on the same box (separate branches, 10 commits per pusher, 3 reps, every push verified by a fresh clone): on
 S3-compatible storage vcs beats walgit in 8 of 9 cells and ties 1; on local disk **git is faster** in 6 of 9 cells (1 win, 2 ties;
@@ -177,7 +177,7 @@ the gap is mostly durability cost, since vcs fsyncs acknowledged objects; with `
 25%). On the **same branch** at 32 pushers only vcs landed every commit (with `publish --auto-merge`); git landed 60 to 75 of 160
 and walgit 35 of 160. See [highload-matrix](docs/research/highload-matrix.md).
 
-<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/charts/highload-dark.svg"><img src="docs/img/charts/highload-light.svg" alt="Pushes per second at 8, 32 and 128 pushers: git, vcs on disk, vcs on S3, walgit" width="820"></picture></p>
+<p align="center"><img src="docs/img/charts/highload-light.svg" alt="Pushes per second at 8, 32 and 128 pushers: git, vcs on disk, vcs on S3, walgit" width="820"></p>
 
 **S3-backed remotes and zones.** The remote is a directory, an S3-compatible bucket or `vcs-server`; the bucket needs conditional
 writes (checked by a probe at connect). The manifest grows about 40 to 63 bytes per branch (1 MiB at 17 to 26k refs; 2.6 MB at 10k
@@ -191,14 +191,14 @@ locally. A batch of 64 to 256 concurrent clones cost the origin 3 requests with 
 direct. Clone latency is a tie (the clients' own CPU dominates on loopback); bytes saved over a real WAN were not measured.
 [peering](docs/peering.md).
 
-<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/charts/peering-dark.svg"><img src="docs/img/charts/peering-light.svg" alt="Origin requests for 64, 128 and 256 concurrent clones: direct, cold peer, warm peer" width="760"></picture></p>
+<p align="center"><img src="docs/img/charts/peering-light.svg" alt="Origin requests for 64, 128 and 256 concurrent clones: direct, cold peer, warm peer" width="760"></p>
 
 **Soak and chaos, zero data loss.** Writers pushed while the server was killed with `kill -9` 157 times in about 14 minutes. All 245
 acknowledged files were present with correct content in a fresh clone, `fsck` was clean, and a clone of a copy of the store was
 clean. This is a short run on one box: no memory or fd trend under kills (the sampler followed a dead pid), no kill during `gc`, and
 the git comparison row was verify-only. [box-harvest](docs/research/box-harvest.md).
 
-<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/charts/soak-chaos-dark.svg"><img src="docs/img/charts/soak-chaos-light.svg" alt="Pack count over 14 minutes with 157 server kills; 245 acknowledged files, none missing" width="820"></picture></p>
+<p align="center"><img src="docs/img/charts/soak-chaos-light.svg" alt="Pack count over 14 minutes with 157 server kills; 245 acknowledged files, none missing" width="820"></p>
 
 **Monorepo stress, one box ([monorepo-stress](docs/research/monorepo-stress.md)).** On a c6id.8xlarge, one run per cell: a synthetic monorepo of
 1,000,659 files, 200,000 commits and 20 binaries of 1 to 5 GiB (64.7 GB, three versions each) imports in 76 s (`import-git` was
@@ -217,7 +217,7 @@ faster in wall time, but makes 71 requests instead of 28 and loses to `git pull`
 
 <p align="center"><img src="docs/img/zone-autoselect.svg" alt="Usage profile feeds a predictor that picks zones" width="900"></p>
 
-<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/charts/zone-profile-dark.svg"><img src="docs/img/charts/zone-profile-light.svg" alt="Auto zone selection: bytes and clone time vs full clone and git partial clone" width="820"></picture></p>
+<p align="center"><img src="docs/img/charts/zone-profile-light.svg" alt="Auto zone selection: bytes and clone time vs full clone and git partial clone" width="820"></p>
 
 **Other limits, stated.** Refs are one file read whole: fine to about 100k refs; 1M tags cost seconds per command (the lazy tag table and, from 50,000 tags, the refs delta log (#527, opt-out `VCS_REFS_DELTA=0`) help: see [scalability](docs/scalability.md#refs-delta-log-436-item-2c-527)). `vcs-server` uses a thread per connection (256 default cap). First `status` after importing a
 300,000-file wide tree took 22 s. Direct-to-store publishers (S3 without a server) get no group commit: keep fewer than 8 per
@@ -231,7 +231,7 @@ vcs is **not uniformly faster**. Verdict rule: WIN = vcs at least 5% lower in bo
 in both, TIE = everything else, any difference under 2 ms and any gap inside the MAD noise of the interleaved runs (9 runs per cell). "Ties are within noise" is the rule, not a courtesy. Every cell
 names its machine, build and run count in the linked document.
 
-<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/charts/scoreboard-summary-dark.svg"><img src="docs/img/charts/scoreboard-summary-light.svg" alt="Wins, ties and losses against git, Perforce, walgit, Jujutsu and Sapling" width="820"></picture></p>
+<p align="center"><img src="docs/img/charts/scoreboard-summary-light.svg" alt="Wins, ties and losses against git, Perforce, walgit, Jujutsu and Sapling" width="820"></p>
 
 Summary (counts are cells, not importance; rows sharing a scenario count once per row; not-measured cells are excluded):
 

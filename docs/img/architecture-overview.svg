@@ -2,13 +2,11 @@
 <style>
 text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px;fill:#1f2328}
 .m{font-size:11px;fill:#59636e}.t{font-size:18px;font-weight:700}.h{font-weight:700}.mid{text-anchor:middle}.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
-.bg{fill:#fcfcfb}.box{fill:#f6f8fa;stroke:#d0d7de;stroke-width:1.2}
+.bg{fill:#ffffff}.box{fill:#f6f8fa;stroke:#d0d7de;stroke-width:1.2}
 .a{fill:#ddf4ff;stroke:#0969da;stroke-width:1.5}.b{fill:#dafbe1;stroke:#1a7f37;stroke-width:1.5}.c{fill:#fff1e5;stroke:#bc4c00;stroke-width:1.5}.d{fill:#fbefff;stroke:#8250df;stroke-width:1.5}.k{fill:#fff8c5;stroke:#bf8700;stroke-width:1.8}
 .ln{stroke:#8c959f;stroke-width:1.5;fill:none}.ar{stroke:#8c959f;stroke-width:1.8;fill:none;marker-end:url(#ah)}.fl{fill:#8c959f}
 .dA{fill:#0969da}.dB{fill:#1a7f37}.dC{fill:#bc4c00}.dD{fill:#8250df}
-@media (prefers-color-scheme:dark){text{fill:#e6edf3}.m{fill:#9198a1}.bg{fill:#0d1117}.box{fill:#161b22;stroke:#30363d}
-.a{fill:#0c2d6b;stroke:#58a6ff}.b{fill:#0f2d1a;stroke:#3fb950}.c{fill:#3d1f0a;stroke:#f0883e}.d{fill:#2d1a52;stroke:#bc8cff}.k{fill:#3a2d00;stroke:#d29922}
-.ln,.ar{stroke:#6e7681}.fl{fill:#6e7681}.dA{fill:#58a6ff}.dB{fill:#3fb950}.dC{fill:#f0883e}.dD{fill:#bc8cff}}
+
 </style>
 <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" class="fl"/></marker></defs>
 <rect class="bg" width="900" height="430"/>

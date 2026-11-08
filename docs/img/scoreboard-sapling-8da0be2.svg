@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 740 714" width="740" height="714" font-family="system-ui,sans-serif" font-size="13" role="img" aria-label="vcs vs Sapling (sl) scoreboard">
-<style>:root{--bg:#fff;--fg:#1b1f24;--grid:#d0d7de;--win:#1a7f37;--tie:#9a6700;--loss:#cf222e;--na:#8c959f;--on:#fff}@media (prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--grid:#30363d;--win:#2ea043;--tie:#bf8700;--loss:#f85149;--na:#6e7681;--on:#0d1117}}.bg{fill:var(--bg)}.t{fill:var(--fg)}.h{font-weight:600}.sm{font-size:11px;opacity:.8}.c{fill:var(--on);text-anchor:middle;font-weight:600}</style>
+<style>:root{--bg:#fff;--fg:#1b1f24;--grid:#d0d7de;--win:#1a7f37;--tie:#9a6700;--loss:#cf222e;--na:#8c959f;--on:#fff}.bg{fill:#fff}.t{fill:var(--fg)}.h{font-weight:600}.sm{font-size:11px;opacity:.8}.c{fill:var(--on);text-anchor:middle;font-weight:600}</style>
 <rect class="bg" width="740" height="714"/>
 <text class="t h" x="12" y="26" font-size="17">allgit vcs vs Sapling (sl): per-command scoreboard</text>
 <text class="t sm" x="12" y="46">cell = sl median wall / vcs median wall (ratio; above 1 means vcs is faster). WIN &gt;= 1.10, LOSS &lt;= 0.91, else TIE.</text>

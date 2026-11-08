@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" role="img" aria-label="vcs: one repository, many zones, any size">
+<style>
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1f2328}
+.mono{font-family:ui-monospace,Menlo,Consolas,monospace}
+.sub{fill:#59636e}
+.l{stroke-width:5;fill:none;stroke-linecap:round}
+</style>
+<rect width="1280" height="640" fill="#ffffff"/>
+<text x="80" y="170" font-size="104" font-weight="800">vcs</text>
+<text x="80" y="240" font-size="40" font-weight="600">One repository, many zones, any size.</text>
+<text x="80" y="292" font-size="28" class="sub">Take only the slice you need. Publish atomically from many hands.</text>
+<g font-size="26" class="sub">
+<text x="80" y="400">Written from scratch in Rust: no git, no libgit2</text>
+<text x="80" y="446">Zones with their own histories, one deduplicated object graph</text>
+<text x="80" y="492">S3 as the only authority: one compare-and-swap manifest</text>
+</g>
+<g transform="translate(880,390)">
+<text x="0" y="-20" font-size="22" class="mono sub">engine/</text>
+<path class="l" stroke="#0969da" d="M110 -28H340"/>
+<circle cx="130" cy="-28" r="11" fill="#0969da"/><circle cx="200" cy="-28" r="11" fill="#0969da"/><circle cx="260" cy="-28" r="11" fill="#0969da"/><circle cx="340" cy="-28" r="11" fill="#0969da"/>
+<text x="0" y="62" font-size="22" class="mono sub">assets/</text>
+<path class="l" stroke="#1a7f37" d="M110 54H340"/>
+<circle cx="150" cy="54" r="11" fill="#1a7f37"/><circle cx="260" cy="54" r="11" fill="#1a7f37"/>
+<text x="0" y="144" font-size="22" class="mono sub">root</text>
+<path class="l" stroke="#8250df" d="M110 136H340"/>
+<circle cx="130" cy="136" r="11" fill="#8250df"/><circle cx="200" cy="136" r="11" fill="#8250df"/><circle cx="340" cy="136" r="11" fill="#8250df"/>
+<path d="M340 -60V170" stroke="#bf8700" stroke-width="3" stroke-dasharray="8 7" fill="none"/>
+<text x="350" y="206" text-anchor="end" font-size="22" font-weight="700" style="fill:#bf8700">one atomic publish</text>
+</g>
+<text x="80" y="580" font-size="26" class="mono" style="fill:#0969da">github.com/Bobliuuu/allgit</text>
+</svg>
