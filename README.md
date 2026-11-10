@@ -12,7 +12,7 @@ built for big repositories where code, art and docs should not share one history
 and where many people (and agents) push at once to an S3 bucket. The command is `vcs`; the repository is
 [Bobliuuu/allgit](https://github.com/Bobliuuu/allgit).
 
-> 🐣 Early research software. There is no stable release and no on-disk format promise yet. Much of it is tested, but
+> 🐣 Early research software. The latest tag, [v0.1.0](https://github.com/Bobliuuu/allgit/releases/tag/v0.1.0), is a first early release, not a stable one, and there is no on-disk format promise yet. Much of it is tested, but
 > parts have only been run against fixtures, local servers or a single cloud account. Read
 > [Status and limitations](#-status-and-limitations) before depending on it.
 
