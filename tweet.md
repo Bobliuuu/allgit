@@ -49,7 +49,7 @@ Real S3, 256 to 1,024 writers: 157 to 348 pushes/s, p99 1.3 to 7.4s. Without bat
 **6/ Agents on one branch**
 32 pushers on the same branch: only vcs landed every commit (with `publish --auto-merge`). git landed 60 to 75 of 160. walgit landed 35.
 
-The catch: on local disk git pushes faster (222 vs 85 pushes/s), because vcs fsyncs every acknowledged object.
+Honest loss: with 128 pushers on separate branches into a local directory, git is faster (222 vs 85 pushes/s). vcs fsyncs every acknowledged object.
 
 📎 06-highload.png
 
@@ -66,6 +66,20 @@ No LFS needed. A 4 MiB edit to a 4 GiB file pushed in 0.03s vs git's 126s, and t
 Clean `status` on 100k files, fair run: 2.8 ms with the watcher vs 38.5 ms for git's fsmonitor hook.
 
 📎 08-huge-scale.png
+
+**8b/ Every metric**
+Every command I measured, against git, Perforce, walgit and Jujutsu. Green = win, amber = tie, red = loss (5% or worse in wall and CPU), grey = not measured.
+
+136 wins, 68 ties, 14 losses across all five tools. Raw tables: github.com/Bobliuuu/allgit/blob/main/docs/research/command-scoreboard.md
+
+📎 08b-scoreboard-git.png, 08b-scoreboard-perforce.png, 08b-scoreboard-walgit.png, 08b-scoreboard-jujutsu.png
+
+**8c/ Sapling**
+Same scoreboard against Sapling (flat 100k files): 15 wins, 1 tie, 0 losses in the cells measured.
+
+Every row is one machine, one build, interleaved runs. Ties are inside the noise by rule.
+
+📎 08c-scoreboard-sapling.png
 
 **9/ The rest**
 `vcs op undo` reverts any local operation. Conflicts are saved state you can list and resolve. Change ids survive rebase. Lease locks for unmergeable files.
