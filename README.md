@@ -283,7 +283,10 @@ add 4,810 vs 538 ms and `status` 65 vs 55 ms; it is superseded by the numbers be
 auto-starts a detached `vcs watch` daemon, and later `status`/`diff` read its journal instead of scanning
 ([benchmarks](docs/benchmarks.md#watcher-on-by-default-for-big-repositories-2026-11-03)). The harness neither disables it
 (`VCS_NO_AUTOWATCH=1`) nor counts the daemon's CPU, and git ran **without** `core.fsmonitor` or the untracked cache. So
-this row compares vcs-with-a-daemon to git-without-one; a fair pair is not measured yet
+this row compares vcs-with-a-daemon to git-without-one. The fair pair was measured separately on a quiet 32-vCPU box
+(100,000 files, 15 runs per arm, daemon CPU counted; median wall / CPU ms, clean tree): git default 86.1 / 184.5, git untracked cache
+20.3 / 118.6, git fsmonitor hook 38.5 / 39.5, vcs watcher off 15.6 / 117.3, **vcs watcher on 2.8 / 2.3**. The git fsmonitor arm is the
+script hook, not git's built-in daemon, which was not tested. Details in [benchmarks](docs/benchmarks.md)
 ([audit](docs/research/benchmark-audit.md) #2, script `scripts/bench_status_fair.sh`).
 
 Source: [docs/research/data/command-scoreboard](docs/research/data/command-scoreboard) (`git-fresh.json`,
