@@ -357,5 +357,5 @@ bound runs were not repeated.
 ## Not run
 
 R2/GCS, S3 SlowDown counts under load on a real store (the shared throttle is only tested against the in-process injector), several server replicas for writes, thousands of idle sockets, the first `status` and later
-commands at 10M files (see above, killed after 30 min), `gc` and `fsck` memory bounds at 1M commits (5.8 GB and 16 GB measured; fsck batched, not re-measured; gc not fixed), lock service or remote GC at scale on real S3 (in-memory backend only), sharded manifest on a real object store, 100k-path commit through `vcs add`/`commit`,
+commands at 10M files (see above, killed after 30 min), `gc` and `fsck` memory bounds at 1M commits (5.8 GB and 16 GB measured; fsck batched, not re-measured; gc: chunked reads since bdffcaa and the first pass's id snapshot is dropped before the second pass, not re-measured at 1M), lock service or remote GC at scale on real S3 (in-memory backend only), sharded manifest on a real object store, 100k-path commit through `vcs add`/`commit`,
 slowloris with thousands of sockets, per-client fair queuing, long (2 h) soak with the delta layout, macOS 1M-commit run.
