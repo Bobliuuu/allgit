@@ -101,7 +101,10 @@ impl Repo {
         // second; its list, roots and ages are still taken fresh.
         let mut known = Known::new();
         let cache = if self.use_reach_cache { self.load_reach_cache() } else { None };
-        let first = self.gc_plan_known(now, opts.grace, &mut known, cache.as_ref())?;
+        let mut first = self.gc_plan_known(now, opts.grace, &mut known, cache.as_ref())?;
+        // Only the first pass's candidate list is needed later; its id/mark/tx snapshot (about 40 bytes per
+        // object) would otherwise stay resident while the second pass builds its own.
+        first.snapshot = None;
         // Fresh list + fresh roots + fresh ages, immediately before deleting.
         let mut second = self.gc_plan_known(now, opts.grace, &mut known, cache.as_ref())?;
         let confirmed: BTreeSet<ObjectId> = second.would_delete.iter().map(|x| x.0).collect();
