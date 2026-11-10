@@ -47,9 +47,9 @@ Real S3, 256 to 1,024 writers: 157 to 348 pushes/s, p99 1.3 to 7.4s. Without bat
 📎 05-many-writers.png (+ 05b-group-commit.mp4)
 
 **6/ Agents on one branch**
-32 pushers on the same branch: only vcs landed every commit (with `publish --auto-merge`). git landed 60 to 75 of 160. walgit landed 35.
+32 pushers, same branch: only vcs landed every commit (with `publish --auto-merge`). git landed 60 to 75 of 160. walgit landed 35.
 
-Honest loss: with 128 pushers on separate branches into a local directory, git is faster (222 vs 85 pushes/s). vcs fsyncs every acknowledged object.
+Honest loss: 128 pushers on separate branches into a local directory, git is faster (222 vs 85 pushes/s). vcs fsyncs every acknowledged object.
 
 📎 06-highload.png
 
