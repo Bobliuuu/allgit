@@ -134,7 +134,19 @@ Rather than cherry-pick, I ran a per-command scoreboard against everything. The 
 
 So no, vcs is **not uniformly faster than git or Perforce**. It is ahead in most of the cells I measured, and the 14 losses are real. Against git they are mostly tiny metadata commands (`branch`, `tag` take 6 to 9 ms against git's 1.4 ms), `ls-tree`, `add -u` and `commit -a` after a one-file change, and the no-op `add` at a million files. Against Perforce, a one-file `submit` is 120 ms against 9 ms, because p4 is a thin client talking to a server process that is already running.
 
-One more caution. The clean-tree `status` row looks great (31 ms against git's 100 ms), but vcs runs a background file watcher for big repositories and git was run without `core.fsmonitor`. That compares a vcs with a daemon to a git without one. A fair pair is the next measurement, and the harness for it is already in the repo.
+### `status`, measured fairly
+
+`status` on a clean tree is where a naive comparison cheats, because vcs starts a background file watcher for big repositories. So I ran a fair version on a quiet 32-core box (100,000 files, 15 runs per arm, daemon CPU counted), against git in its default setup, with the untracked cache, and with an fsmonitor hook:
+
+| clean tree, 100k files (median) | wall | total CPU |
+|---|---|---|
+| git, default | 86.1 ms | 184.5 ms |
+| git, untracked cache | 20.3 ms | 118.6 ms |
+| git, fsmonitor hook | 38.5 ms | 39.5 ms |
+| vcs, watcher off | 15.6 ms | 117.3 ms |
+| vcs, watcher on | **2.8 ms** | **2.3 ms** |
+
+With the watcher off, vcs is a little faster than git's best wall time and level with it on CPU. With the watcher on, it is about 14x faster than git's fsmonitor hook on wall time and 17x on CPU. The git arm here is the script-based fsmonitor hook, not git's built-in daemon, which I did not test. Full table, including the 1%-modified case, in `docs/benchmarks.md`.
 
 ## Does it lose your data?
 
