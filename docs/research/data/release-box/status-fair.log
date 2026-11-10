@@ -1,0 +1,438 @@
+{"wall_ms": 86.2, "user_ms": 63.5, "sys_ms": 120.2, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "A", "phase": "clean", "round": 0}
+{"wall_ms": 20.4, "user_ms": 25.1, "sys_ms": 97.2, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "clean", "round": 0}
+{"wall_ms": 38.7, "user_ms": 25.1, "sys_ms": 14.4, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "clean", "round": 0}
+{"wall_ms": 16.7, "user_ms": 51.0, "sys_ms": 117.0, "rc": 0, "load1": 1.2, "out_lines": 2, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "clean", "round": 0}
+{"wall_ms": 86.1, "user_ms": 64.9, "sys_ms": 119.5, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "A", "phase": "clean", "round": 1}
+{"wall_ms": 20.3, "user_ms": 20.8, "sys_ms": 101.8, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "clean", "round": 1}
+{"wall_ms": 37.6, "user_ms": 23.7, "sys_ms": 14.7, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "clean", "round": 1}
+{"wall_ms": 15.6, "user_ms": 31.8, "sys_ms": 85.7, "rc": 0, "load1": 1.2, "out_lines": 2, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "clean", "round": 1}
+{"wall_ms": 85.3, "user_ms": 68.3, "sys_ms": 118.8, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "A", "phase": "clean", "round": 2}
+{"wall_ms": 20.0, "user_ms": 22.8, "sys_ms": 95.3, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "clean", "round": 2}
+{"wall_ms": 38.3, "user_ms": 25.7, "sys_ms": 13.6, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "clean", "round": 2}
+{"wall_ms": 15.7, "user_ms": 35.7, "sys_ms": 82.0, "rc": 0, "load1": 1.2, "out_lines": 2, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "clean", "round": 2}
+{"wall_ms": 86.0, "user_ms": 54.0, "sys_ms": 130.5, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "A", "phase": "clean", "round": 3}
+{"wall_ms": 20.0, "user_ms": 17.0, "sys_ms": 101.1, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "clean", "round": 3}
+{"wall_ms": 38.2, "user_ms": 30.6, "sys_ms": 8.6, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "clean", "round": 3}
+{"wall_ms": 15.6, "user_ms": 38.4, "sys_ms": 78.9, "rc": 0, "load1": 1.2, "out_lines": 2, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "clean", "round": 3}
+{"wall_ms": 84.8, "user_ms": 59.0, "sys_ms": 123.9, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "A", "phase": "clean", "round": 4}
+{"wall_ms": 20.1, "user_ms": 23.3, "sys_ms": 95.3, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "clean", "round": 4}
+{"wall_ms": 38.5, "user_ms": 27.8, "sys_ms": 11.7, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "clean", "round": 4}
+{"wall_ms": 15.6, "user_ms": 36.0, "sys_ms": 81.2, "rc": 0, "load1": 1.2, "out_lines": 2, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "clean", "round": 4}
+{"wall_ms": 90.2, "user_ms": 59.2, "sys_ms": 132.8, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "A", "phase": "clean", "round": 5}
+{"wall_ms": 20.2, "user_ms": 18.8, "sys_ms": 104.0, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "clean", "round": 5}
+{"wall_ms": 38.5, "user_ms": 22.5, "sys_ms": 16.9, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "clean", "round": 5}
+{"wall_ms": 15.6, "user_ms": 37.5, "sys_ms": 79.8, "rc": 0, "load1": 1.2, "out_lines": 2, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "clean", "round": 5}
+{"wall_ms": 85.8, "user_ms": 60.9, "sys_ms": 126.7, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "A", "phase": "clean", "round": 6}
+{"wall_ms": 20.2, "user_ms": 13.5, "sys_ms": 105.1, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "clean", "round": 6}
+{"wall_ms": 38.7, "user_ms": 29.5, "sys_ms": 10.2, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "clean", "round": 6}
+{"wall_ms": 15.7, "user_ms": 35.6, "sys_ms": 82.1, "rc": 0, "load1": 1.2, "out_lines": 2, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "clean", "round": 6}
+{"wall_ms": 85.3, "user_ms": 61.8, "sys_ms": 126.6, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "A", "phase": "clean", "round": 7}
+{"wall_ms": 20.5, "user_ms": 22.3, "sys_ms": 101.6, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "clean", "round": 7}
+{"wall_ms": 39.2, "user_ms": 24.8, "sys_ms": 15.5, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "clean", "round": 7}
+{"wall_ms": 15.8, "user_ms": 40.9, "sys_ms": 76.6, "rc": 0, "load1": 1.2, "out_lines": 2, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "clean", "round": 7}
+{"wall_ms": 87.2, "user_ms": 63.6, "sys_ms": 126.3, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "A", "phase": "clean", "round": 8}
+{"wall_ms": 20.5, "user_ms": 23.3, "sys_ms": 97.4, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "clean", "round": 8}
+{"wall_ms": 39.3, "user_ms": 29.6, "sys_ms": 10.6, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "clean", "round": 8}
+{"wall_ms": 15.7, "user_ms": 34.7, "sys_ms": 83.7, "rc": 0, "load1": 1.2, "out_lines": 2, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "clean", "round": 8}
+{"wall_ms": 86.7, "user_ms": 70.0, "sys_ms": 119.0, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "A", "phase": "clean", "round": 9}
+{"wall_ms": 20.3, "user_ms": 16.6, "sys_ms": 102.9, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "clean", "round": 9}
+{"wall_ms": 39.5, "user_ms": 25.9, "sys_ms": 14.7, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "clean", "round": 9}
+{"wall_ms": 15.6, "user_ms": 36.7, "sys_ms": 81.1, "rc": 0, "load1": 1.2, "out_lines": 2, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "clean", "round": 9}
+{"wall_ms": 86.6, "user_ms": 55.4, "sys_ms": 125.3, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "A", "phase": "clean", "round": 10}
+{"wall_ms": 20.3, "user_ms": 16.9, "sys_ms": 98.3, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "clean", "round": 10}
+{"wall_ms": 37.9, "user_ms": 23.4, "sys_ms": 15.4, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "clean", "round": 10}
+{"wall_ms": 15.6, "user_ms": 37.5, "sys_ms": 78.8, "rc": 0, "load1": 1.2, "out_lines": 2, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "clean", "round": 10}
+{"wall_ms": 86.0, "user_ms": 57.9, "sys_ms": 126.2, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "A", "phase": "clean", "round": 11}
+{"wall_ms": 20.5, "user_ms": 17.6, "sys_ms": 100.3, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "clean", "round": 11}
+{"wall_ms": 38.0, "user_ms": 26.1, "sys_ms": 12.7, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "clean", "round": 11}
+{"wall_ms": 15.5, "user_ms": 39.6, "sys_ms": 76.3, "rc": 0, "load1": 1.2, "out_lines": 2, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "clean", "round": 11}
+{"wall_ms": 86.6, "user_ms": 65.7, "sys_ms": 119.0, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "A", "phase": "clean", "round": 12}
+{"wall_ms": 20.5, "user_ms": 25.1, "sys_ms": 93.5, "rc": 0, "load1": 1.2, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "clean", "round": 12}
+{"wall_ms": 38.6, "user_ms": 26.9, "sys_ms": 12.8, "rc": 0, "load1": 1.18, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "clean", "round": 12}
+{"wall_ms": 15.6, "user_ms": 28.2, "sys_ms": 87.7, "rc": 0, "load1": 1.18, "out_lines": 2, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "clean", "round": 12}
+{"wall_ms": 86.1, "user_ms": 62.1, "sys_ms": 122.2, "rc": 0, "load1": 1.18, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "A", "phase": "clean", "round": 13}
+{"wall_ms": 20.5, "user_ms": 21.5, "sys_ms": 96.6, "rc": 0, "load1": 1.18, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "clean", "round": 13}
+{"wall_ms": 38.5, "user_ms": 29.7, "sys_ms": 9.7, "rc": 0, "load1": 1.18, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "clean", "round": 13}
+{"wall_ms": 15.6, "user_ms": 39.9, "sys_ms": 75.6, "rc": 0, "load1": 1.18, "out_lines": 2, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "clean", "round": 13}
+{"wall_ms": 85.3, "user_ms": 60.8, "sys_ms": 121.5, "rc": 0, "load1": 1.18, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "A", "phase": "clean", "round": 14}
+{"wall_ms": 20.5, "user_ms": 19.5, "sys_ms": 98.5, "rc": 0, "load1": 1.18, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "clean", "round": 14}
+{"wall_ms": 39.0, "user_ms": 29.5, "sys_ms": 10.5, "rc": 0, "load1": 1.18, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "clean", "round": 14}
+{"wall_ms": 15.6, "user_ms": 28.5, "sys_ms": 86.6, "rc": 0, "load1": 1.18, "out_lines": 2, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "clean", "round": 14}
+{"block": "A", "phase": "clean", "rounds": 15, "git_fsmonitor_daemon_cpu_ms": 0.0, "vcs_daemon_cpu_ms": 0, "git_daemon_pids": [6376], "vcs_daemon_pids": [], "idle_60s_git_daemon_cpu_ms": 0.0, "idle_60s_vcs_daemon_cpu_ms": 0}
+{"wall_ms": 87.0, "user_ms": 68.0, "sys_ms": 116.8, "rc": 0, "load1": 0.4, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "B", "phase": "clean", "round": 0}
+{"wall_ms": 20.5, "user_ms": 25.1, "sys_ms": 93.6, "rc": 0, "load1": 0.4, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "clean", "round": 0}
+{"wall_ms": 38.5, "user_ms": 26.6, "sys_ms": 12.8, "rc": 0, "load1": 0.4, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "clean", "round": 0}
+{"wall_ms": 2.9, "user_ms": 1.2, "sys_ms": 1.2, "rc": 0, "load1": 0.4, "out_lines": 2, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "clean", "round": 0}
+{"wall_ms": 87.1, "user_ms": 60.4, "sys_ms": 119.8, "rc": 0, "load1": 0.4, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "B", "phase": "clean", "round": 1}
+{"wall_ms": 20.6, "user_ms": 20.0, "sys_ms": 94.2, "rc": 0, "load1": 0.4, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "clean", "round": 1}
+{"wall_ms": 38.4, "user_ms": 26.5, "sys_ms": 12.8, "rc": 0, "load1": 0.4, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "clean", "round": 1}
+{"wall_ms": 2.8, "user_ms": 0.8, "sys_ms": 1.5, "rc": 0, "load1": 0.4, "out_lines": 2, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "clean", "round": 1}
+{"wall_ms": 86.6, "user_ms": 66.4, "sys_ms": 113.5, "rc": 0, "load1": 0.4, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "B", "phase": "clean", "round": 2}
+{"wall_ms": 20.6, "user_ms": 19.9, "sys_ms": 98.2, "rc": 0, "load1": 0.4, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "clean", "round": 2}
+{"wall_ms": 39.0, "user_ms": 23.9, "sys_ms": 16.1, "rc": 0, "load1": 0.4, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "clean", "round": 2}
+{"wall_ms": 2.8, "user_ms": 0.0, "sys_ms": 2.3, "rc": 0, "load1": 0.45, "out_lines": 2, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "clean", "round": 2}
+{"wall_ms": 86.1, "user_ms": 57.5, "sys_ms": 125.8, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "B", "phase": "clean", "round": 3}
+{"wall_ms": 20.5, "user_ms": 20.1, "sys_ms": 94.8, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "clean", "round": 3}
+{"wall_ms": 38.7, "user_ms": 28.9, "sys_ms": 10.7, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "clean", "round": 3}
+{"wall_ms": 2.8, "user_ms": 0.0, "sys_ms": 2.3, "rc": 0, "load1": 0.45, "out_lines": 2, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "clean", "round": 3}
+{"wall_ms": 86.7, "user_ms": 53.0, "sys_ms": 127.6, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "B", "phase": "clean", "round": 4}
+{"wall_ms": 20.3, "user_ms": 25.2, "sys_ms": 88.5, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "clean", "round": 4}
+{"wall_ms": 39.1, "user_ms": 24.2, "sys_ms": 15.7, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "clean", "round": 4}
+{"wall_ms": 2.7, "user_ms": 1.1, "sys_ms": 1.1, "rc": 0, "load1": 0.45, "out_lines": 2, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "clean", "round": 4}
+{"wall_ms": 86.2, "user_ms": 57.0, "sys_ms": 126.4, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "B", "phase": "clean", "round": 5}
+{"wall_ms": 20.5, "user_ms": 14.8, "sys_ms": 98.9, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "clean", "round": 5}
+{"wall_ms": 39.1, "user_ms": 24.6, "sys_ms": 15.4, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "clean", "round": 5}
+{"wall_ms": 2.8, "user_ms": 2.3, "sys_ms": 0.0, "rc": 0, "load1": 0.45, "out_lines": 2, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "clean", "round": 5}
+{"wall_ms": 86.6, "user_ms": 56.2, "sys_ms": 124.1, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "B", "phase": "clean", "round": 6}
+{"wall_ms": 20.2, "user_ms": 14.5, "sys_ms": 99.3, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "clean", "round": 6}
+{"wall_ms": 39.5, "user_ms": 26.1, "sys_ms": 14.3, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "clean", "round": 6}
+{"wall_ms": 2.8, "user_ms": 0.0, "sys_ms": 2.3, "rc": 0, "load1": 0.45, "out_lines": 2, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "clean", "round": 6}
+{"wall_ms": 83.6, "user_ms": 64.2, "sys_ms": 112.2, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "B", "phase": "clean", "round": 7}
+{"wall_ms": 20.5, "user_ms": 19.0, "sys_ms": 99.0, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "clean", "round": 7}
+{"wall_ms": 38.2, "user_ms": 25.8, "sys_ms": 13.3, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "clean", "round": 7}
+{"wall_ms": 2.7, "user_ms": 1.1, "sys_ms": 1.1, "rc": 0, "load1": 0.45, "out_lines": 2, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "clean", "round": 7}
+{"wall_ms": 86.7, "user_ms": 66.9, "sys_ms": 114.2, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "B", "phase": "clean", "round": 8}
+{"wall_ms": 20.6, "user_ms": 25.1, "sys_ms": 93.2, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "clean", "round": 8}
+{"wall_ms": 38.9, "user_ms": 25.5, "sys_ms": 14.4, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "clean", "round": 8}
+{"wall_ms": 2.8, "user_ms": 2.3, "sys_ms": 0.0, "rc": 0, "load1": 0.45, "out_lines": 2, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "clean", "round": 8}
+{"wall_ms": 86.0, "user_ms": 57.4, "sys_ms": 123.0, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "B", "phase": "clean", "round": 9}
+{"wall_ms": 20.5, "user_ms": 8.6, "sys_ms": 105.6, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "clean", "round": 9}
+{"wall_ms": 38.7, "user_ms": 28.4, "sys_ms": 11.3, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "clean", "round": 9}
+{"wall_ms": 2.8, "user_ms": 0.0, "sys_ms": 2.3, "rc": 0, "load1": 0.45, "out_lines": 2, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "clean", "round": 9}
+{"wall_ms": 86.3, "user_ms": 60.1, "sys_ms": 124.1, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "B", "phase": "clean", "round": 10}
+{"wall_ms": 20.5, "user_ms": 28.3, "sys_ms": 89.7, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "clean", "round": 10}
+{"wall_ms": 38.0, "user_ms": 24.0, "sys_ms": 15.0, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "clean", "round": 10}
+{"wall_ms": 2.7, "user_ms": 0.0, "sys_ms": 2.2, "rc": 0, "load1": 0.45, "out_lines": 2, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "clean", "round": 10}
+{"wall_ms": 86.1, "user_ms": 58.5, "sys_ms": 122.0, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "B", "phase": "clean", "round": 11}
+{"wall_ms": 20.5, "user_ms": 17.6, "sys_ms": 100.6, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "clean", "round": 11}
+{"wall_ms": 38.4, "user_ms": 28.3, "sys_ms": 11.0, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "clean", "round": 11}
+{"wall_ms": 2.7, "user_ms": 1.5, "sys_ms": 0.8, "rc": 0, "load1": 0.45, "out_lines": 2, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "clean", "round": 11}
+{"wall_ms": 86.2, "user_ms": 57.6, "sys_ms": 122.3, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "B", "phase": "clean", "round": 12}
+{"wall_ms": 20.2, "user_ms": 18.3, "sys_ms": 95.5, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "clean", "round": 12}
+{"wall_ms": 39.2, "user_ms": 28.1, "sys_ms": 12.0, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "clean", "round": 12}
+{"wall_ms": 2.8, "user_ms": 2.3, "sys_ms": 0.0, "rc": 0, "load1": 0.45, "out_lines": 2, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "clean", "round": 12}
+{"wall_ms": 86.4, "user_ms": 63.5, "sys_ms": 116.2, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "B", "phase": "clean", "round": 13}
+{"wall_ms": 20.4, "user_ms": 25.7, "sys_ms": 92.1, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "clean", "round": 13}
+{"wall_ms": 38.6, "user_ms": 27.7, "sys_ms": 11.9, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "clean", "round": 13}
+{"wall_ms": 2.8, "user_ms": 0.0, "sys_ms": 2.3, "rc": 0, "load1": 0.45, "out_lines": 2, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "clean", "round": 13}
+{"wall_ms": 85.5, "user_ms": 66.6, "sys_ms": 116.5, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_default", "block": "B", "phase": "clean", "round": 14}
+{"wall_ms": 20.3, "user_ms": 22.9, "sys_ms": 94.6, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "clean", "round": 14}
+{"wall_ms": 39.1, "user_ms": 25.4, "sys_ms": 14.6, "rc": 0, "load1": 0.45, "out_lines": 0, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "clean", "round": 14}
+{"wall_ms": 2.7, "user_ms": 1.1, "sys_ms": 1.1, "rc": 0, "load1": 0.45, "out_lines": 2, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "clean", "round": 14}
+{"block": "B", "phase": "clean", "rounds": 15, "git_fsmonitor_daemon_cpu_ms": 0.0, "vcs_daemon_cpu_ms": 0.0, "git_daemon_pids": [8831], "vcs_daemon_pids": [8795], "idle_60s_git_daemon_cpu_ms": 0.0, "idle_60s_vcs_daemon_cpu_ms": 10.0}
+{"wall_ms": 88.5, "user_ms": 74.3, "sys_ms": 110.0, "rc": 0, "load1": 0.23, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "A", "phase": "dirty", "round": 0}
+{"wall_ms": 23.5, "user_ms": 24.5, "sys_ms": 95.9, "rc": 0, "load1": 0.23, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "dirty", "round": 0}
+{"wall_ms": 42.8, "user_ms": 34.1, "sys_ms": 11.3, "rc": 0, "load1": 0.23, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "dirty", "round": 0}
+{"wall_ms": 17.1, "user_ms": 44.8, "sys_ms": 79.1, "rc": 0, "load1": 0.23, "out_lines": 1002, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "dirty", "round": 0}
+{"wall_ms": 88.8, "user_ms": 60.9, "sys_ms": 121.9, "rc": 0, "load1": 0.23, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "A", "phase": "dirty", "round": 1}
+{"wall_ms": 23.4, "user_ms": 22.6, "sys_ms": 93.5, "rc": 0, "load1": 0.23, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "dirty", "round": 1}
+{"wall_ms": 42.5, "user_ms": 31.5, "sys_ms": 13.6, "rc": 0, "load1": 0.23, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "dirty", "round": 1}
+{"wall_ms": 16.8, "user_ms": 43.5, "sys_ms": 79.2, "rc": 0, "load1": 0.23, "out_lines": 1002, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "dirty", "round": 1}
+{"wall_ms": 88.6, "user_ms": 60.7, "sys_ms": 125.3, "rc": 0, "load1": 0.23, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "A", "phase": "dirty", "round": 2}
+{"wall_ms": 24.7, "user_ms": 23.3, "sys_ms": 99.2, "rc": 0, "load1": 0.23, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "dirty", "round": 2}
+{"wall_ms": 42.0, "user_ms": 29.6, "sys_ms": 15.0, "rc": 0, "load1": 0.23, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "dirty", "round": 2}
+{"wall_ms": 16.8, "user_ms": 38.0, "sys_ms": 82.9, "rc": 0, "load1": 0.23, "out_lines": 1002, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "dirty", "round": 2}
+{"wall_ms": 89.2, "user_ms": 59.5, "sys_ms": 123.1, "rc": 0, "load1": 0.23, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "A", "phase": "dirty", "round": 3}
+{"wall_ms": 23.2, "user_ms": 17.6, "sys_ms": 99.7, "rc": 0, "load1": 0.23, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "dirty", "round": 3}
+{"wall_ms": 42.3, "user_ms": 31.6, "sys_ms": 13.3, "rc": 0, "load1": 0.23, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "dirty", "round": 3}
+{"wall_ms": 16.9, "user_ms": 34.3, "sys_ms": 86.8, "rc": 0, "load1": 0.23, "out_lines": 1002, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "dirty", "round": 3}
+{"wall_ms": 91.3, "user_ms": 70.7, "sys_ms": 118.1, "rc": 0, "load1": 0.23, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "A", "phase": "dirty", "round": 4}
+{"wall_ms": 23.6, "user_ms": 25.2, "sys_ms": 95.5, "rc": 0, "load1": 0.23, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "dirty", "round": 4}
+{"wall_ms": 42.0, "user_ms": 30.3, "sys_ms": 14.2, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "dirty", "round": 4}
+{"wall_ms": 17.0, "user_ms": 38.7, "sys_ms": 82.5, "rc": 0, "load1": 0.29, "out_lines": 1002, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "dirty", "round": 4}
+{"wall_ms": 88.6, "user_ms": 55.9, "sys_ms": 131.1, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "A", "phase": "dirty", "round": 5}
+{"wall_ms": 23.2, "user_ms": 29.5, "sys_ms": 91.3, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "dirty", "round": 5}
+{"wall_ms": 42.0, "user_ms": 22.3, "sys_ms": 22.2, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "dirty", "round": 5}
+{"wall_ms": 16.8, "user_ms": 41.3, "sys_ms": 81.7, "rc": 0, "load1": 0.29, "out_lines": 1002, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "dirty", "round": 5}
+{"wall_ms": 88.5, "user_ms": 56.1, "sys_ms": 126.2, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "A", "phase": "dirty", "round": 6}
+{"wall_ms": 24.6, "user_ms": 15.6, "sys_ms": 102.6, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "dirty", "round": 6}
+{"wall_ms": 42.1, "user_ms": 26.3, "sys_ms": 18.3, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "dirty", "round": 6}
+{"wall_ms": 16.9, "user_ms": 36.3, "sys_ms": 85.0, "rc": 0, "load1": 0.29, "out_lines": 1002, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "dirty", "round": 6}
+{"wall_ms": 89.4, "user_ms": 65.6, "sys_ms": 121.2, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "A", "phase": "dirty", "round": 7}
+{"wall_ms": 23.4, "user_ms": 19.5, "sys_ms": 97.3, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "dirty", "round": 7}
+{"wall_ms": 42.4, "user_ms": 33.0, "sys_ms": 11.9, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "dirty", "round": 7}
+{"wall_ms": 16.7, "user_ms": 34.5, "sys_ms": 86.8, "rc": 0, "load1": 0.29, "out_lines": 1002, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "dirty", "round": 7}
+{"wall_ms": 89.2, "user_ms": 61.3, "sys_ms": 121.6, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "A", "phase": "dirty", "round": 8}
+{"wall_ms": 23.2, "user_ms": 22.4, "sys_ms": 94.5, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "dirty", "round": 8}
+{"wall_ms": 41.6, "user_ms": 31.7, "sys_ms": 12.2, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "dirty", "round": 8}
+{"wall_ms": 16.7, "user_ms": 34.6, "sys_ms": 86.9, "rc": 0, "load1": 0.29, "out_lines": 1002, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "dirty", "round": 8}
+{"wall_ms": 88.8, "user_ms": 57.8, "sys_ms": 124.8, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "A", "phase": "dirty", "round": 9}
+{"wall_ms": 23.5, "user_ms": 24.0, "sys_ms": 96.8, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "dirty", "round": 9}
+{"wall_ms": 42.1, "user_ms": 30.7, "sys_ms": 13.9, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "dirty", "round": 9}
+{"wall_ms": 16.8, "user_ms": 31.1, "sys_ms": 90.1, "rc": 0, "load1": 0.29, "out_lines": 1002, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "dirty", "round": 9}
+{"wall_ms": 89.2, "user_ms": 64.9, "sys_ms": 121.5, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "A", "phase": "dirty", "round": 10}
+{"wall_ms": 23.2, "user_ms": 20.5, "sys_ms": 96.3, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "dirty", "round": 10}
+{"wall_ms": 42.0, "user_ms": 37.0, "sys_ms": 7.5, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "dirty", "round": 10}
+{"wall_ms": 16.8, "user_ms": 39.5, "sys_ms": 82.0, "rc": 0, "load1": 0.29, "out_lines": 1002, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "dirty", "round": 10}
+{"wall_ms": 88.8, "user_ms": 57.0, "sys_ms": 126.1, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "A", "phase": "dirty", "round": 11}
+{"wall_ms": 23.7, "user_ms": 20.4, "sys_ms": 97.1, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "dirty", "round": 11}
+{"wall_ms": 40.7, "user_ms": 27.8, "sys_ms": 15.1, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "dirty", "round": 11}
+{"wall_ms": 16.8, "user_ms": 41.4, "sys_ms": 79.8, "rc": 0, "load1": 0.29, "out_lines": 1002, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "dirty", "round": 11}
+{"wall_ms": 89.8, "user_ms": 62.6, "sys_ms": 121.0, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "A", "phase": "dirty", "round": 12}
+{"wall_ms": 23.5, "user_ms": 23.9, "sys_ms": 96.7, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "dirty", "round": 12}
+{"wall_ms": 42.6, "user_ms": 28.4, "sys_ms": 16.5, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "dirty", "round": 12}
+{"wall_ms": 16.8, "user_ms": 35.7, "sys_ms": 85.2, "rc": 0, "load1": 0.29, "out_lines": 1002, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "dirty", "round": 12}
+{"wall_ms": 89.4, "user_ms": 63.7, "sys_ms": 123.5, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "A", "phase": "dirty", "round": 13}
+{"wall_ms": 23.3, "user_ms": 22.7, "sys_ms": 93.9, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "dirty", "round": 13}
+{"wall_ms": 42.5, "user_ms": 30.7, "sys_ms": 14.5, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "dirty", "round": 13}
+{"wall_ms": 16.8, "user_ms": 27.9, "sys_ms": 93.1, "rc": 0, "load1": 0.29, "out_lines": 1002, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "dirty", "round": 13}
+{"wall_ms": 88.2, "user_ms": 67.8, "sys_ms": 117.8, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "A", "phase": "dirty", "round": 14}
+{"wall_ms": 22.9, "user_ms": 22.4, "sys_ms": 94.6, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "A", "phase": "dirty", "round": 14}
+{"wall_ms": 42.2, "user_ms": 24.7, "sys_ms": 20.1, "rc": 0, "load1": 0.29, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "A", "phase": "dirty", "round": 14}
+{"wall_ms": 17.3, "user_ms": 37.4, "sys_ms": 91.4, "rc": 0, "load1": 0.29, "out_lines": 1002, "err_tail": "", "arm": "vcs_nowatch", "block": "A", "phase": "dirty", "round": 14}
+{"block": "A", "phase": "dirty", "rounds": 15, "git_fsmonitor_daemon_cpu_ms": 0.0, "vcs_daemon_cpu_ms": 0, "git_daemon_pids": [10799], "vcs_daemon_pids": [], "idle_60s_git_daemon_cpu_ms": 0.0, "idle_60s_vcs_daemon_cpu_ms": 0}
+{"wall_ms": 89.4, "user_ms": 63.4, "sys_ms": 118.7, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "B", "phase": "dirty", "round": 0}
+{"wall_ms": 23.8, "user_ms": 24.2, "sys_ms": 93.9, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "dirty", "round": 0}
+{"wall_ms": 42.2, "user_ms": 28.3, "sys_ms": 16.4, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "dirty", "round": 0}
+{"wall_ms": 3.5, "user_ms": 0.0, "sys_ms": 3.1, "rc": 0, "load1": 0.09, "out_lines": 1002, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "dirty", "round": 0}
+{"wall_ms": 88.6, "user_ms": 65.7, "sys_ms": 116.7, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "B", "phase": "dirty", "round": 1}
+{"wall_ms": 24.6, "user_ms": 27.3, "sys_ms": 94.4, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "dirty", "round": 1}
+{"wall_ms": 41.9, "user_ms": 31.8, "sys_ms": 12.5, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "dirty", "round": 1}
+{"wall_ms": 3.4, "user_ms": 1.0, "sys_ms": 2.0, "rc": 0, "load1": 0.09, "out_lines": 1002, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "dirty", "round": 1}
+{"wall_ms": 87.8, "user_ms": 63.3, "sys_ms": 117.6, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "B", "phase": "dirty", "round": 2}
+{"wall_ms": 23.5, "user_ms": 26.4, "sys_ms": 93.7, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "dirty", "round": 2}
+{"wall_ms": 42.2, "user_ms": 30.5, "sys_ms": 14.2, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "dirty", "round": 2}
+{"wall_ms": 3.5, "user_ms": 3.1, "sys_ms": 0.0, "rc": 0, "load1": 0.09, "out_lines": 1002, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "dirty", "round": 2}
+{"wall_ms": 86.0, "user_ms": 72.8, "sys_ms": 109.7, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "B", "phase": "dirty", "round": 3}
+{"wall_ms": 22.9, "user_ms": 20.5, "sys_ms": 99.4, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "dirty", "round": 3}
+{"wall_ms": 42.3, "user_ms": 29.1, "sys_ms": 15.6, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "dirty", "round": 3}
+{"wall_ms": 3.6, "user_ms": 1.0, "sys_ms": 2.1, "rc": 0, "load1": 0.09, "out_lines": 1002, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "dirty", "round": 3}
+{"wall_ms": 89.2, "user_ms": 61.5, "sys_ms": 120.9, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "B", "phase": "dirty", "round": 4}
+{"wall_ms": 23.6, "user_ms": 21.2, "sys_ms": 99.1, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "dirty", "round": 4}
+{"wall_ms": 41.8, "user_ms": 22.4, "sys_ms": 21.7, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "dirty", "round": 4}
+{"wall_ms": 3.5, "user_ms": 1.0, "sys_ms": 2.0, "rc": 0, "load1": 0.09, "out_lines": 1002, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "dirty", "round": 4}
+{"wall_ms": 88.9, "user_ms": 71.4, "sys_ms": 114.8, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "B", "phase": "dirty", "round": 5}
+{"wall_ms": 23.3, "user_ms": 31.9, "sys_ms": 88.8, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "dirty", "round": 5}
+{"wall_ms": 41.4, "user_ms": 27.4, "sys_ms": 16.4, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "dirty", "round": 5}
+{"wall_ms": 3.4, "user_ms": 2.0, "sys_ms": 1.0, "rc": 0, "load1": 0.09, "out_lines": 1002, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "dirty", "round": 5}
+{"wall_ms": 89.1, "user_ms": 72.0, "sys_ms": 114.4, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "B", "phase": "dirty", "round": 6}
+{"wall_ms": 23.5, "user_ms": 33.1, "sys_ms": 87.6, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "dirty", "round": 6}
+{"wall_ms": 41.9, "user_ms": 28.2, "sys_ms": 16.1, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "dirty", "round": 6}
+{"wall_ms": 3.5, "user_ms": 2.0, "sys_ms": 1.0, "rc": 0, "load1": 0.09, "out_lines": 1002, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "dirty", "round": 6}
+{"wall_ms": 87.2, "user_ms": 65.2, "sys_ms": 119.7, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "B", "phase": "dirty", "round": 7}
+{"wall_ms": 23.5, "user_ms": 29.4, "sys_ms": 91.2, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "dirty", "round": 7}
+{"wall_ms": 42.6, "user_ms": 25.7, "sys_ms": 19.2, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "dirty", "round": 7}
+{"wall_ms": 3.5, "user_ms": 1.0, "sys_ms": 2.0, "rc": 0, "load1": 0.09, "out_lines": 1002, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "dirty", "round": 7}
+{"wall_ms": 89.1, "user_ms": 73.1, "sys_ms": 112.1, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "B", "phase": "dirty", "round": 8}
+{"wall_ms": 23.2, "user_ms": 19.2, "sys_ms": 97.1, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "dirty", "round": 8}
+{"wall_ms": 42.3, "user_ms": 24.8, "sys_ms": 20.0, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "dirty", "round": 8}
+{"wall_ms": 3.5, "user_ms": 0.0, "sys_ms": 3.0, "rc": 0, "load1": 0.09, "out_lines": 1002, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "dirty", "round": 8}
+{"wall_ms": 90.6, "user_ms": 54.4, "sys_ms": 129.6, "rc": 0, "load1": 0.09, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "B", "phase": "dirty", "round": 9}
+{"wall_ms": 23.6, "user_ms": 25.1, "sys_ms": 96.1, "rc": 0, "load1": 0.16, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "dirty", "round": 9}
+{"wall_ms": 42.0, "user_ms": 29.3, "sys_ms": 15.0, "rc": 0, "load1": 0.16, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "dirty", "round": 9}
+{"wall_ms": 3.5, "user_ms": 0.0, "sys_ms": 3.0, "rc": 0, "load1": 0.16, "out_lines": 1002, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "dirty", "round": 9}
+{"wall_ms": 88.0, "user_ms": 51.5, "sys_ms": 133.2, "rc": 0, "load1": 0.16, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "B", "phase": "dirty", "round": 10}
+{"wall_ms": 23.0, "user_ms": 28.2, "sys_ms": 92.2, "rc": 0, "load1": 0.16, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "dirty", "round": 10}
+{"wall_ms": 42.2, "user_ms": 32.5, "sys_ms": 12.1, "rc": 0, "load1": 0.16, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "dirty", "round": 10}
+{"wall_ms": 3.5, "user_ms": 1.5, "sys_ms": 1.5, "rc": 0, "load1": 0.16, "out_lines": 1002, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "dirty", "round": 10}
+{"wall_ms": 89.8, "user_ms": 64.3, "sys_ms": 122.4, "rc": 0, "load1": 0.16, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "B", "phase": "dirty", "round": 11}
+{"wall_ms": 23.7, "user_ms": 20.1, "sys_ms": 101.3, "rc": 0, "load1": 0.16, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "dirty", "round": 11}
+{"wall_ms": 42.0, "user_ms": 27.2, "sys_ms": 17.2, "rc": 0, "load1": 0.16, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "dirty", "round": 11}
+{"wall_ms": 3.6, "user_ms": 1.0, "sys_ms": 2.1, "rc": 0, "load1": 0.16, "out_lines": 1002, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "dirty", "round": 11}
+{"wall_ms": 89.1, "user_ms": 65.3, "sys_ms": 120.7, "rc": 0, "load1": 0.16, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "B", "phase": "dirty", "round": 12}
+{"wall_ms": 23.2, "user_ms": 20.6, "sys_ms": 96.0, "rc": 0, "load1": 0.16, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "dirty", "round": 12}
+{"wall_ms": 42.4, "user_ms": 26.0, "sys_ms": 18.8, "rc": 0, "load1": 0.16, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "dirty", "round": 12}
+{"wall_ms": 3.6, "user_ms": 1.0, "sys_ms": 2.1, "rc": 0, "load1": 0.16, "out_lines": 1002, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "dirty", "round": 12}
+{"wall_ms": 89.1, "user_ms": 68.2, "sys_ms": 114.0, "rc": 0, "load1": 0.16, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "B", "phase": "dirty", "round": 13}
+{"wall_ms": 23.8, "user_ms": 22.4, "sys_ms": 98.9, "rc": 0, "load1": 0.16, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "dirty", "round": 13}
+{"wall_ms": 41.2, "user_ms": 28.8, "sys_ms": 14.7, "rc": 0, "load1": 0.16, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "dirty", "round": 13}
+{"wall_ms": 3.5, "user_ms": 1.0, "sys_ms": 2.1, "rc": 0, "load1": 0.16, "out_lines": 1002, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "dirty", "round": 13}
+{"wall_ms": 89.2, "user_ms": 63.0, "sys_ms": 123.0, "rc": 0, "load1": 0.16, "out_lines": 1000, "err_tail": "", "arm": "git_default", "block": "B", "phase": "dirty", "round": 14}
+{"wall_ms": 23.5, "user_ms": 24.4, "sys_ms": 96.7, "rc": 0, "load1": 0.16, "out_lines": 1000, "err_tail": "", "arm": "git_untracked_cache", "block": "B", "phase": "dirty", "round": 14}
+{"wall_ms": 42.1, "user_ms": 24.6, "sys_ms": 20.1, "rc": 0, "load1": 0.16, "out_lines": 1000, "err_tail": "", "arm": "git_fsmonitor_hook_uc", "block": "B", "phase": "dirty", "round": 14}
+{"wall_ms": 3.4, "user_ms": 2.0, "sys_ms": 1.0, "rc": 0, "load1": 0.16, "out_lines": 1002, "err_tail": "", "arm": "vcs_watch", "block": "B", "phase": "dirty", "round": 14}
+{"block": "B", "phase": "dirty", "rounds": 15, "git_fsmonitor_daemon_cpu_ms": 0.0, "vcs_daemon_cpu_ms": 0.0, "git_daemon_pids": [13106], "vcs_daemon_pids": [13066], "idle_60s_git_daemon_cpu_ms": 0.0, "idle_60s_vcs_daemon_cpu_ms": 10.0}
+{
+ "clean/A/git_default": {
+  "n": 15,
+  "wall_med_ms": 86.1,
+  "wall_min_ms": 84.8,
+  "wall_max_ms": 90.2,
+  "client_cpu_med_ms": 184.5,
+  "load1_max": 1.2,
+  "nonzero_rc": 0,
+  "out_lines_med": 0,
+  "daemon_cpu_per_run_ms": 0.0,
+  "total_cpu_med_ms": 184.5
+ },
+ "dirty/A/git_default": {
+  "n": 15,
+  "wall_med_ms": 88.8,
+  "wall_min_ms": 88.2,
+  "wall_max_ms": 91.3,
+  "client_cpu_med_ms": 184.3,
+  "load1_max": 0.29,
+  "nonzero_rc": 0,
+  "out_lines_med": 1000,
+  "daemon_cpu_per_run_ms": 0.0,
+  "total_cpu_med_ms": 184.3
+ },
+ "clean/B/git_default": {
+  "n": 15,
+  "wall_med_ms": 86.3,
+  "wall_min_ms": 83.6,
+  "wall_max_ms": 87.1,
+  "client_cpu_med_ms": 180.5,
+  "load1_max": 0.45,
+  "nonzero_rc": 0,
+  "out_lines_med": 0,
+  "daemon_cpu_per_run_ms": 0.0,
+  "total_cpu_med_ms": 180.5
+ },
+ "dirty/B/git_default": {
+  "n": 15,
+  "wall_med_ms": 89.1,
+  "wall_min_ms": 86.0,
+  "wall_max_ms": 90.6,
+  "client_cpu_med_ms": 184.7,
+  "load1_max": 0.16,
+  "nonzero_rc": 0,
+  "out_lines_med": 1000,
+  "daemon_cpu_per_run_ms": 0.0,
+  "total_cpu_med_ms": 184.7
+ },
+ "clean/A/git_fsmonitor_hook_uc": {
+  "n": 15,
+  "wall_med_ms": 38.5,
+  "wall_min_ms": 37.6,
+  "wall_max_ms": 39.5,
+  "client_cpu_med_ms": 39.5,
+  "load1_max": 1.2,
+  "nonzero_rc": 0,
+  "out_lines_med": 0,
+  "daemon_cpu_per_run_ms": 0.0,
+  "total_cpu_med_ms": 39.5
+ },
+ "dirty/A/git_fsmonitor_hook_uc": {
+  "n": 15,
+  "wall_med_ms": 42.1,
+  "wall_min_ms": 40.7,
+  "wall_max_ms": 42.8,
+  "client_cpu_med_ms": 44.6,
+  "load1_max": 0.29,
+  "nonzero_rc": 0,
+  "out_lines_med": 1000,
+  "daemon_cpu_per_run_ms": 0.0,
+  "total_cpu_med_ms": 44.6
+ },
+ "clean/B/git_fsmonitor_hook_uc": {
+  "n": 15,
+  "wall_med_ms": 38.7,
+  "wall_min_ms": 38.0,
+  "wall_max_ms": 39.5,
+  "client_cpu_med_ms": 39.7,
+  "load1_max": 0.45,
+  "nonzero_rc": 0,
+  "out_lines_med": 0,
+  "daemon_cpu_per_run_ms": 0.0,
+  "total_cpu_med_ms": 39.7
+ },
+ "dirty/B/git_fsmonitor_hook_uc": {
+  "n": 15,
+  "wall_med_ms": 42.1,
+  "wall_min_ms": 41.2,
+  "wall_max_ms": 42.6,
+  "client_cpu_med_ms": 44.6,
+  "load1_max": 0.16,
+  "nonzero_rc": 0,
+  "out_lines_med": 1000,
+  "daemon_cpu_per_run_ms": 0.0,
+  "total_cpu_med_ms": 44.6
+ },
+ "clean/A/git_untracked_cache": {
+  "n": 15,
+  "wall_med_ms": 20.3,
+  "wall_min_ms": 20.0,
+  "wall_max_ms": 20.5,
+  "client_cpu_med_ms": 118.6,
+  "load1_max": 1.2,
+  "nonzero_rc": 0,
+  "out_lines_med": 0,
+  "daemon_cpu_per_run_ms": 0.0,
+  "total_cpu_med_ms": 118.6
+ },
+ "dirty/A/git_untracked_cache": {
+  "n": 15,
+  "wall_med_ms": 23.4,
+  "wall_min_ms": 22.9,
+  "wall_max_ms": 24.7,
+  "client_cpu_med_ms": 117.5,
+  "load1_max": 0.29,
+  "nonzero_rc": 0,
+  "out_lines_med": 1000,
+  "daemon_cpu_per_run_ms": 0.0,
+  "total_cpu_med_ms": 117.5
+ },
+ "clean/B/git_untracked_cache": {
+  "n": 15,
+  "wall_med_ms": 20.5,
+  "wall_min_ms": 20.2,
+  "wall_max_ms": 20.6,
+  "client_cpu_med_ms": 117.5,
+  "load1_max": 0.45,
+  "nonzero_rc": 0,
+  "out_lines_med": 0,
+  "daemon_cpu_per_run_ms": 0.0,
+  "total_cpu_med_ms": 117.5
+ },
+ "dirty/B/git_untracked_cache": {
+  "n": 15,
+  "wall_med_ms": 23.5,
+  "wall_min_ms": 22.9,
+  "wall_max_ms": 24.6,
+  "client_cpu_med_ms": 120.6,
+  "load1_max": 0.16,
+  "nonzero_rc": 0,
+  "out_lines_med": 1000,
+  "daemon_cpu_per_run_ms": 0.0,
+  "total_cpu_med_ms": 120.6
+ },
+ "clean/A/vcs_nowatch": {
+  "n": 15,
+  "wall_med_ms": 15.6,
+  "wall_min_ms": 15.5,
+  "wall_max_ms": 16.7,
+  "client_cpu_med_ms": 117.30000000000001,
+  "load1_max": 1.2,
+  "nonzero_rc": 0,
+  "out_lines_med": 2,
+  "daemon_cpu_per_run_ms": 0.0,
+  "total_cpu_med_ms": 117.3
+ },
+ "dirty/A/vcs_nowatch": {
+  "n": 15,
+  "wall_med_ms": 16.8,
+  "wall_min_ms": 16.7,
+  "wall_max_ms": 17.3,
+  "client_cpu_med_ms": 121.3,
+  "load1_max": 0.29,
+  "nonzero_rc": 0,
+  "out_lines_med": 1002,
+  "daemon_cpu_per_run_ms": 0.0,
+  "total_cpu_med_ms": 121.3
+ },
+ "clean/B/vcs_watch": {
+  "n": 15,
+  "wall_med_ms": 2.8,
+  "wall_min_ms": 2.7,
+  "wall_max_ms": 2.9,
+  "client_cpu_med_ms": 2.3,
+  "load1_max": 0.45,
+  "nonzero_rc": 0,
+  "out_lines_med": 2,
+  "daemon_cpu_per_run_ms": 0.0,
+  "total_cpu_med_ms": 2.3
+ },
+ "dirty/B/vcs_watch": {
+  "n": 15,
+  "wall_med_ms": 3.5,
+  "wall_min_ms": 3.4,
+  "wall_max_ms": 3.6,
+  "client_cpu_med_ms": 3.0,
+  "load1_max": 0.16,
+  "nonzero_rc": 0,
+  "out_lines_med": 1002,
+  "daemon_cpu_per_run_ms": 0.0,
+  "total_cpu_med_ms": 3.0
+ }
+}
