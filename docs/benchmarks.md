@@ -852,3 +852,22 @@ Single runs of the whole sequence; the flat rows ran at a different load than th
 1,000 modified files and 1,000 more edits to reach them. Not done: a path arena for index keys (the AGI5 memory-mapped
 index, #493, already removed the decode from the hot commands; the remaining decode is on the fallback path only),
 a quiet-box re-measure, Windows (ReadDirectoryChanges untested).
+
+### Issue #293: what is left, and the exact command for the quiet-box re-measure
+
+Two items from #293 are still open. Neither is a code change that can be verified on a laptop.
+
+- **Re-measure against Git on a quiet box.** The harness exists and refuses to run off Linux. On a dedicated Linux box
+  (nothing else running; check `uptime` first), after `cargo build --release -p vcs-cli -p vcs-watchd -p vcs-bench`:
+
+  ```
+  scripts/bench_status_fair.sh <workdir> docs/research/data/status-fair-100k.json 15 100000
+  ```
+
+  It covers git default, git untracked cache, git fsmonitor hook, `vcs` with the watcher off, and `vcs` with the watcher
+  on (journal plus state shortcut), clean and 1% modified, with daemon CPU counted. Record load average, CPU model and
+  git version next to the numbers, and compare CPU time first (wall time is the noisy column).
+- **Path arena for index keys.** Not attempted. `Entries` derefs to a public `BTreeMap<String, IndexEntry>` that is read
+  across the workspace, so an arena would change a public type for every caller. The decode it would speed up is now only
+  on the fallback path: quiet `status` skips it (state shortcut) and the AGI5 memory-mapped index (#493) removed it from
+  the hot commands. Revisit only if a quiet-box profile shows the fallback decode above 10% of `status`.
