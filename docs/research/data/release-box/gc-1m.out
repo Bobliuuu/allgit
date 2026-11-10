@@ -1,0 +1,3 @@
+DESTRUCTIVE: deleting unreachable local objects older than 1209600s (holding the repository lock)
+deleted 0 object(s) (0 loose files, 0 dropped from packs; 0 pack(s) rewritten, 0 removed)
+0 unreachable object(s) younger than the grace period were kept

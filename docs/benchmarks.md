@@ -864,6 +864,12 @@ Two items from #293 are still open. Neither is a code change that can be verifie
   scripts/bench_status_fair.sh <workdir> docs/research/data/status-fair-100k.json 15 100000
   ```
 
+  Measured 2026-11-10 on an AWS i4i.8xlarge (32 vCPU, local NVMe ext4, git 2.43.0, commit 3ecadb1, load 1.2 or less, warm cache, 100,000
+  files, 15 runs per arm, median wall / total CPU in ms; raw in `docs/research/data/status-fair-100k.json`). Clean tree: git default 86.1 / 184.5,
+  git untracked cache 20.3 / 118.6, git fsmonitor hook 38.5 / 39.5, `vcs` watcher off 15.6 / 117.3, `vcs` watcher on **2.8 / 2.3**.
+  1% modified (1,000 files): 88.8 / 184.3, 23.4 / 117.5, 42.1 / 44.6, 16.8 / 121.3, 3.5 / 3.0. Blocks A and B agree within about 1 ms. The
+  fsmonitor hook arm is Git's script hook (not the built-in daemon).
+
   It covers git default, git untracked cache, git fsmonitor hook, `vcs` with the watcher off, and `vcs` with the watcher
   on (journal plus state shortcut), clean and 1% modified, with daemon CPU counted. Record load average, CPU model and
   git version next to the numbers, and compare CPU time first (wall time is the noisy column).

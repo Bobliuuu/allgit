@@ -127,6 +127,26 @@ hold the whole object set in memory: that is the first thing to break at this sc
 memory of `gc` (streaming marks). `fsck` now reads and decodes objects in batches of 8192 and keeps only zone, root and parents per
 commit, so it no longer holds the decoded store; the 16 GB figure above is the old code and is not re-measured at 1M commits yet.
 
+## 1,000,000 commits, re-measured (release box: AWS i4i.8xlarge, 32 vCPU, 256 GB, local NVMe ext4, 2026-11-10, commit 3ecadb1)
+
+Same generator (`scripts/scalability/gen.py deep 1000000`, 1M commits, 100,000 tags), release build, single runs, `/usr/bin/time -v` (maxrss
+includes mapped pack pages, unlike the anonymous-RSS figures above), load average under 0.6 before each run. Raw outputs:
+`docs/research/data/release-box/`. A different, much faster box than box f, so wall times are not comparable with the table above.
+
+| step | wall | maxrss |
+|---|---|---|
+| `import-git` | 53.7 s | 2.28 GB |
+| `.vcs` on disk | 4.3 GB | |
+| `gc` (nothing to delete, after import) | 45.7 s | **2.82 GB** (was 5.8 GB on the old code) |
+| `fsck` after `gc`, warm | 34.7 s | 4.89 GB |
+| `fsck` after `gc`, cold (`drop_caches`) | 41.0 s | 4.86 GB |
+| `fsck` on a fresh import, no `gc` (2 runs) | 3.90 s, 3.87 s | 4.84 GB |
+
+Reading: `gc` peak memory is about half of the old figure. `fsck` is fast on a freshly imported repository (3.9 s for 4,000,003 objects,
+consistent with the 4.6 s above) but **about 9x slower (34.7 s) on the same repository after `gc`**, with the same object count. That is
+a finding, not explained here: the pack layout after `gc` is the only difference between the runs, and it was not profiled. The 4.8 GB
+maxrss is mostly mapped pack pages; the anonymous peak was not sampled on this run, so the 0.52 GB figure above is not re-confirmed.
+
 ## 10,000,000 files (box f, release, single run, one commit of 10M files in 100,000 directories)
 
 `gen.py wide 10000000` (stream 763 MB): `import-git` **853 s, 11.5 GB peak RSS**, `.vcs` 1.9 GB. The first `status` (nothing
@@ -357,5 +377,5 @@ bound runs were not repeated.
 ## Not run
 
 R2/GCS, S3 SlowDown counts under load on a real store (the shared throttle is only tested against the in-process injector), several server replicas for writes, thousands of idle sockets, the first `status` and later
-commands at 10M files (see above, killed after 30 min), `gc` and `fsck` memory bounds at 1M commits (5.8 GB and 16 GB measured; fsck batched, not re-measured; gc: chunked reads since bdffcaa and the first pass's id snapshot is dropped before the second pass, not re-measured at 1M), lock service or remote GC at scale on real S3 (in-memory backend only), sharded manifest on a real object store, 100k-path commit through `vcs add`/`commit`,
+commands at 10M files (see above, killed after 30 min), `gc` and `fsck` at 1M commits were re-measured on the 2026-11-10 release box (see "1,000,000 commits, re-measured"); the first-ever 10M-commit `gc` is not re-measured, lock service or remote GC at scale on real S3 (in-memory backend only), sharded manifest on a real object store, 100k-path commit through `vcs add`/`commit`,
 slowloris with thousands of sockets, per-client fair queuing, long (2 h) soak with the delta layout, macOS 1M-commit run.
