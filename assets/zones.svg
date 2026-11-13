@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1550 408" width="1550" height="408" role="img" aria-label="One store, many zones, one manifest">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8a98ad"/></marker></defs>
+<rect width="1550" height="408" rx="16" fill="#0b0f17"/>
+<text x="40" y="42" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-weight="700" font-size="22" fill="#e6edf6">One store, many zones, one manifest</text>
+<polyline points="310,132 375,132 375,132 440,132" fill="none" stroke="#8a98ad" stroke-width="2.2" marker-end="url(#ah)"/>
+<polyline points="310,132 375,132 375,316 440,316" fill="none" stroke="#8a98ad" stroke-width="2.2" marker-end="url(#ah)"/>
+<polyline points="710,132 775,132 775,132 840,132" fill="none" stroke="#8a98ad" stroke-width="2.2" marker-end="url(#ah)"/>
+<polyline points="710,316 775,316 775,132 840,132" fill="none" stroke="#8a98ad" stroke-width="2.2" marker-end="url(#ah)"/>
+<polyline points="1110,132 1175,132 1175,132 1240,132" fill="none" stroke="#8a98ad" stroke-width="2.2" marker-end="url(#ah)"/>
+<text x="1175" y="124" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#8a98ad">objects first</text>
+<polyline points="1375,184 1375,264" fill="none" stroke="#8a98ad" stroke-width="2.2" marker-end="url(#ah)"/>
+<text x="1375" y="216" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#8a98ad">compare-and-swap</text>
+<rect x="40" y="80" width="270" height="104" rx="12" fill="#131a26" stroke="#27c8e8" stroke-width="2"/>
+<text x="175.0" y="118" text-anchor="middle" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-weight="700" font-size="19" fill="#e6edf6">workspace</text>
+<text x="175.0" y="142" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#8a98ad">engine/ assets/ root</text>
+<rect x="440" y="80" width="270" height="104" rx="12" fill="#131a26" stroke="#3ddc97" stroke-width="2"/>
+<text x="575.0" y="118" text-anchor="middle" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-weight="700" font-size="19" fill="#e6edf6">zone engine</text>
+<text x="575.0" y="142" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#8a98ad">own branches and history</text>
+<rect x="440" y="264" width="270" height="104" rx="12" fill="#131a26" stroke="#3ddc97" stroke-width="2"/>
+<text x="575.0" y="302" text-anchor="middle" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-weight="700" font-size="19" fill="#e6edf6">zone assets</text>
+<text x="575.0" y="326" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#8a98ad">own branches and history</text>
+<rect x="840" y="80" width="270" height="104" rx="12" fill="#131a26" stroke="#f2c14e" stroke-width="2"/>
+<text x="975.0" y="118" text-anchor="middle" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-weight="700" font-size="19" fill="#e6edf6">content-addressed DAG</text>
+<text x="975.0" y="142" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#8a98ad">BLAKE3-named chunks, trees,</text>
+<text x="975.0" y="160" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#8a98ad">commits</text>
+<rect x="1240" y="80" width="270" height="104" rx="12" fill="#131a26" stroke="#ff6b6b" stroke-width="2"/>
+<text x="1375.0" y="118" text-anchor="middle" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-weight="700" font-size="19" fill="#e6edf6">CAS manifest</text>
+<text x="1375.0" y="142" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#8a98ad">one atomic publish: all heads</text>
+<text x="1375.0" y="160" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#8a98ad">move or none</text>
+<rect x="1240" y="264" width="270" height="104" rx="12" fill="#131a26" stroke="#f2c14e" stroke-width="2"/>
+<text x="1375.0" y="302" text-anchor="middle" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-weight="700" font-size="19" fill="#e6edf6">remote</text>
+<text x="1375.0" y="326" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#8a98ad">directory, S3 bucket or</text>
+<text x="1375.0" y="344" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#8a98ad">vcs-server</text>
+</svg>

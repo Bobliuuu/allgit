@@ -1,0 +1,343 @@
+# Spec for ~/video-readme-maker:  python3 tools/readme_data.py && python3 ~/video-readme-maker/vrm.py all README.spec.yml
+# Numbers come from raw result files under docs/research/data/ (hugescale-boxf/results.tsv, zoneprofile-bench.json) via tools/readme_data.py.
+project:
+  name: vcs (allgit)
+  emoji: "🌳"
+  tagline: "One repository, many zones, any size. A version control system written from scratch in Rust, with no git underneath"
+  repo: Bobliuuu/allgit
+hero:
+  title: vcs
+  subtitle: "take only the slice you need, publish from as many hands as you like"
+  chips: [Rust, zones, atomic publish, S3 CAS manifest]
+theme: {accent: "#3ddc97", accent2: "#ff6b6b", accent3: "#f2c14e", good: "#27c8e8"}
+readme_out: README.md
+assets_dir: assets
+badges:
+  - {label: CI, message: "GitHub Actions", color: 6b7280, link: "https://github.com/Bobliuuu/allgit/actions/workflows/ci.yml"}
+  - {label: rust, message: "1.88+", color: f74c00, logo: rust}
+  - {label: status, message: early research, color: f2c14e}
+  - {label: license, message: "MIT OR Apache-2.0", color: 3b82f6}
+  - {label: workspace, message: "{{ n.crates }} crates", color: 3ddc97}
+  - {label: release, message: v0.1.1, color: 27c8e8, logo: github, link: "https://github.com/Bobliuuu/allgit/releases/tag/v0.1.1"}
+nav:
+  - {emoji: "🎬", label: Video, anchor: video}
+  - {emoji: "✨", label: What it is, anchor: what-it-is}
+  - {emoji: "📊", label: Results, anchor: results}
+  - {emoji: "🧩", label: Architecture, anchor: architecture}
+  - {emoji: "🚀", label: Quickstart, anchor: quickstart}
+  - {emoji: "🛠️", label: Install, anchor: install}
+  - {emoji: "🚧", label: Limits, anchor: caveats}
+  - {emoji: "📚", label: Docs, anchor: documentation}
+  - {emoji: "🗺️", label: Repo map, anchor: repo-map}
+
+numbers:
+  crates: {file: docs/research/data/readme_data.json, path: crates}
+  tests: {file: docs/research/data/readme_data.json, path: test_fns, fmt: "{:,.0f}"}
+  rust_lines: {file: docs/research/data/readme_data.json, path: rust_lines, fmt: "{:,.0f}"}
+  docs_n: {file: docs/research/data/readme_data.json, path: docs}
+  add_git: {file: docs/research/data/readme_data.json, path: huge_add.git_s, unit: " s", fmt: "{:.0f}"}
+  add_vcs: {file: docs/research/data/readme_data.json, path: huge_add.vcs_s, unit: " s", fmt: "{:.1f}"}
+  add_x: {file: docs/research/data/readme_data.json, path: huge_add.ratio, unit: "x", fmt: "{:.0f}"}
+  diff_git: {file: docs/research/data/readme_data.json, path: huge_diff.git_s, unit: " s", fmt: "{:.1f}"}
+  diff_vcs: {file: docs/research/data/readme_data.json, path: huge_diff.vcs_s, unit: " s", fmt: "{:.1f}"}
+  diff_x: {file: docs/research/data/readme_data.json, path: huge_diff.ratio, unit: "x", fmt: "{:.1f}"}
+  gc_x: {file: docs/research/data/readme_data.json, path: huge_gc.ratio, unit: "x", fmt: "{:.1f}"}
+  noop_git: {file: docs/research/data/readme_data.json, path: huge_noop.git_s, unit: " s", fmt: "{:.1f}"}
+  noop_vcs: {file: docs/research/data/readme_data.json, path: huge_noop.vcs_s, unit: " s", fmt: "{:.1f}"}
+  vcs_wins: {file: docs/research/data/readme_data.json, path: huge_vcs_faster}
+  git_wins: {file: docs/research/data/readme_data.json, path: huge_git_faster}
+  cmp_rows: {file: docs/research/data/readme_data.json, path: huge_cmp_rows}
+  clone_vcs: {file: docs/research/data/readme_data.json, path: huge_clone.vcs_s, unit: " s", fmt: "{:.1f}"}
+  clone_git: {file: docs/research/data/readme_data.json, path: huge_clone.git_s, unit: " s", fmt: "{:.0f}"}
+  zone_full: {file: docs/research/data/readme_data.json, path: zone.full_mb, unit: " MB", fmt: "{:.1f}"}
+  zone_auto: {file: docs/research/data/readme_data.json, path: zone.auto_mb, unit: " MB", fmt: "{:.0f}"}
+  zone_saved: {file: docs/research/data/readme_data.json, path: zone.saved_pct, unit: "%"}
+  zone_zones: {file: docs/research/data/readme_data.json, path: zone.zones}
+  zone_hot: {file: docs/research/data/readme_data.json, path: zone.hot}
+  zone_auto_s: {file: docs/research/data/readme_data.json, path: zone.auto_s, unit: " s", fmt: "{:.2f}"}
+  zone_full_s: {file: docs/research/data/readme_data.json, path: zone.full_s, unit: " s", fmt: "{:.2f}"}
+
+intro: |
+  <a id="video"></a>
+  **vcs** is a version control system written from scratch in Rust, with **no git, no libgit2 and no Perforce underneath**. It is built for big repositories
+  where code, art and docs should not share one history, where nobody wants to download everything, and where many people (and agents) push at once to an S3 bucket.
+  The command is `vcs`; the repository is [Bobliuuu/allgit](https://github.com/Bobliuuu/allgit).
+
+  > 🐣 Early research software, with no on-disk format promise yet. Much of it is tested, but parts have only been run against fixtures, local servers or a single cloud account.
+  > Read [Limits](#caveats) before depending on it. The complete former front page (all benchmark tables, idea matrix, scoreboards) is kept in [docs/overview.md](docs/overview.md).
+
+  <p align="center"><img src="docs/media/demo.gif" alt="Terminal demo: create two zones, publish, clone only the engine zone, then add the assets zone" width="820"></p>
+  <p align="center"><sub>A real recorded run of the Quickstart ([provenance](docs/media/PROVENANCE.md)).</sub></p>
+
+video:
+  url: ""
+  caption: "Explainer video (with voice-over and subtitles): zones, atomic publish, and the measured results including where git wins"
+  mp4: video/allgit_explainer.mp4
+  gif: video/preview.gif
+  srt: video/allgit_explainer.srt
+  poster: video/poster.png
+  out_dir: video/.render
+  fps: 24
+  max_mb: 22
+  render_crf: 18
+  concurrency: 4
+  music: true
+  voice: {engine: openai, voice: alloy, model: gpt-4o-mini-tts, tempo: 1.15}
+  scenes:
+    - type: title
+      title: vcs
+      subtitle: One repository, many zones, any size
+      chips: [Rust, zones, atomic publish, S3 manifest]
+      say: "vcs: one repository, many zones, any size. A version control system written from scratch in Rust, with no git underneath. This is a short tour of the idea, the numbers we measured, and where it loses to git."
+    - type: problem
+      heading: The problem
+      bullets:
+        - "Big repos mix code, art and docs in one history"
+        - "Everyone downloads everything, even the slice they never touch"
+        - "Many writers, human and agent, publish at once to shared storage"
+      say: "Big repositories mix code, art and documentation in one history. Everyone downloads everything, even the slice they never touch. And now many writers, people and agents, publish at the same time to shared storage."
+    - type: architecture
+      diagram: zones
+      heading: "The idea: zones in one content-addressed store"
+      say: "The idea is zones. Every object, a file chunk, tree, or commit, is named by its hash and stored once. A zone owns a path prefix and has its own branches and history. You subscribe only to the zones you need, and the others are never downloaded. A single manifest, replaced by compare and swap, makes a publish visible at one instant, across all zones."
+    - type: terminal
+      heading: "Quickstart"
+      lines:
+        - {cmd: "vcs init demo && cd demo"}
+        - {cmd: "vcs zone create engine --path engine"}
+        - {cmd: "vcs zone create assets --path assets"}
+        - {cmd: "vcs add . && vcs commit -m initial"}
+        - {out: "one atomic transaction covering 3 zones"}
+        - {cmd: "vcs remote set ../shared.vcs && vcs publish"}
+        - {out: "published atomically"}
+        - {cmd: "vcs clone shared.vcs work --zone engine"}
+        - {out: "assets: not subscribed, not downloaded, NOT deleted"}
+      say: "Here is the quickstart. Create two zones, commit once, which is one atomic transaction across zones, publish to a shared location, and clone only the engine zone. The assets zone is not downloaded, and it is not deleted either; it is simply not there until you add it."
+    - type: cards
+      heading: "What is in the box"
+      cards:
+        - {title: "Local first", sub: "offline except sharing", lines: ["Operation log with undo", "Structured conflicts you can list and resolve"]}
+        - {title: "S3 and server", sub: "CAS manifest", lines: ["Directory, S3-compatible bucket or vcs-server", "Protocol checked by an executable model"]}
+        - {title: "Large files", sub: "built in", lines: ["Content-defined chunking, stored once", "Streaming add and checkout, no extra tool"]}
+      footer: "{{ n.crates.text }} crates, {{ n.tests.text }} test functions, {{ n.rust_lines.text }} lines of Rust"
+      say: "It works offline except for sharing, keeps an operation log with undo, and records conflicts as structured state. The remote can be a directory, an S3 compatible bucket, or a server, and the protocol is checked by an executable model. Large files are chunked and stored once, with no separate tool. The workspace has {{ n.crates.numtext }} crates and {{ n.tests.numtext }} test functions."
+    - type: stat
+      number: add_x
+      kicker: "adding 1,000,000 files: git {{ n.add_git.text }}, vcs {{ n.add_vcs.text }}"
+      label: faster than git
+      sub: "one run, one machine, quiet box; raw data in the repo"
+      say: "Now the numbers. On a million file tree, adding everything takes git {{ n.add_git.numtext }} seconds and vcs {{ n.add_vcs.numtext }}. That is {{ n.add_x.numtext }} times faster, from one run on one machine."
+    - type: chart
+      chart: ratios
+      gif: video/ratios.gif
+      gif_start: 0.4
+      gif_end: 10
+      gif_width: 900
+      gif_fps: 10
+      say: "Here is every operation on that tree, as git time divided by vcs time. Above one, vcs is faster. Diff of a one percent change is {{ n.diff_x.numtext }} times faster, and garbage collection {{ n.gc_x.numtext }} times. But below one, git wins. Adding when nothing changed takes git {{ n.noop_git.numtext }} seconds against {{ n.noop_vcs.numtext }} for vcs, and status with one percent modified is slightly slower too."
+    - type: table
+      table: huge_tbl
+      heading: "1,000,000 files, every row"
+      say: "Of the {{ n.cmp_rows.numtext }} operations that can be compared, vcs is faster on {{ n.vcs_wins.numtext }} and git on {{ n.git_wins.numtext }}. The clone row is not like for like, because a local path clone is the fast case for git too, so treat that one with care."
+    - type: chart
+      chart: zone_mb
+      say: "Zones also save bytes. On a fifty zone repository, a full clone downloads {{ n.zone_full.numtext }} megabytes. When the zones are chosen from your usage profile, it downloads {{ n.zone_auto.numtext }}, which is {{ n.zone_saved.numtext }} percent less, in {{ n.zone_auto_s.numtext }} seconds instead of {{ n.zone_full_s.numtext }}."
+    - type: caveats
+      heading: "Honest limits"
+      bullets:
+        - "Early research software; the on-disk format may still change"
+        - "Benchmarks are one machine, one build and few runs; git still wins several rows"
+        - "Windows is only compile-checked; the AI merge helpers are mock-tested"
+        - "Memory use on add, publish and clone is higher than git"
+      say: "Honest limits. This is early research software and the on disk format may still change. Every benchmark is one machine, one build and a small number of runs, and git still wins several rows. Windows is only compile checked, the AI merge helpers are tested with mocks, and vcs uses more memory than git on add, publish and clone."
+    - type: end
+      title: vcs
+      subtitle: "Code, raw benchmark data and full docs are in the repo"
+      say: "vcs. The code, the raw benchmark data and the full documentation are in the repo."
+
+tables:
+  - id: huge_tbl
+    title: "1,000,000 files: wall seconds and peak memory (one run per cell, quiet box)"
+    file: docs/research/data/readme_data.json
+    rows_path: huge_table
+    columns:
+      - {key: op, title: Operation}
+      - {key: git_s, title: "git (s)", align: right, fmt: "{:,.2f}"}
+      - {key: vcs_s, title: "vcs (s)", align: right, fmt: "{:,.2f}"}
+      - {key: verdict, title: Faster}
+      - {key: git_rss, title: "git RSS (MiB)", align: right, fmt: "{:,.0f}"}
+      - {key: vcs_rss, title: "vcs RSS (MiB)", align: right, fmt: "{:,.0f}"}
+  - id: zone_tbl
+    title: "Zone-profile clone, 50 zones x 2,000 files (median of 3 runs)"
+    file: docs/research/data/readme_data.json
+    rows_path: zone.s_rows
+    columns:
+      - {key: what, title: Clone}
+      - {key: s, title: "Wall time", align: right, fmt: "{:.2f}", unit: " s"}
+
+charts:
+  - id: ratios
+    type: bar
+    title: "git time / vcs time per operation on 1,000,000 files (above 1 = vcs faster)"
+    subtitle: "one run per cell; * the clone row is not like for like"
+    better: higher
+    file: docs/research/data/readme_data.json
+    rows_path: huge_ratio_rows
+    label: op
+    y: ratio
+    unit: "x"
+    fmt: "{:.2f}"
+    highlight: "add all"
+  - id: zone_mb
+    type: bar
+    title: "Bytes downloaded by a clone (MB, lower is better)"
+    subtitle: "50 zones x 2,000 files; vcs full clone versus zones chosen from a usage profile"
+    better: lower
+    file: docs/research/data/readme_data.json
+    rows_path: zone.mb_rows
+    label: what
+    y: mb
+    unit: " MB"
+    fmt: "{:.1f}"
+    highlight: "zones chosen from your profile"
+
+diagrams:
+  - id: zones
+    title: "One store, many zones, one manifest"
+    nodes:
+      - {id: ws, label: "workspace", sub: "engine/ assets/ root", col: 0, row: 0, kind: io}
+      - {id: z1, label: "zone engine", sub: "own branches and history", col: 1, row: 0}
+      - {id: z2, label: "zone assets", sub: "own branches and history", col: 1, row: 1}
+      - {id: store, label: "content-addressed DAG", sub: "BLAKE3-named chunks, trees, commits", col: 2, row: 0, kind: store}
+      - {id: man, label: "CAS manifest", sub: "one atomic publish: all heads move or none", col: 3, row: 0, kind: accent}
+      - {id: remote, label: "remote", sub: "directory, S3 bucket or vcs-server", col: 3, row: 1, kind: store}
+    edges:
+      - {from: ws, to: z1}
+      - {from: ws, to: z2}
+      - {from: z1, to: store}
+      - {from: z2, to: store}
+      - {from: store, to: man, label: "objects first"}
+      - {from: man, to: remote, label: "compare-and-swap"}
+
+sections:
+  - title: What it is
+    emoji: "✨"
+    id: what-it-is
+    body: |
+      ```text
+       one repo, many zones, each with its own history
+
+         engine/  ──●──●──●──●        you subscribe to what you need
+         assets/  ──●────●            (engine only? assets are never downloaded)
+         root     ──●──●──────●
+              \________|_________/
+         one atomic publish: all heads move, or none
+      ```
+      - 🧬 **One global content-addressed DAG.** Every object is named by its BLAKE3 hash and stored once, whichever zone or branch uses it.
+      - 🧩 **Zones.** A zone owns a path prefix and has its **own branches and history**. A busy art zone does not clutter the code log.
+      - 🎯 **Sparse subscription.** Zones you skip are never downloaded (and never "deleted").
+      - ⚛️ **Atomic cross-zone transactions.** `vcs publish` moves all the branch heads you publish in one step, or none of them.
+      - 🏠 **Local-first**, with an **operation log and undo**, **structured conflicts**, **locks** (advisory unless `vcs-server` is in front), a built-in **large-file engine** and `vcs gc`.
+      - 🪣 **S3-compatible authoritative remote** with a CAS manifest; the protocol is checked by an executable model that explores crashes and interleavings.
+
+      The full feature list, the idea matrix against other tools and every scoreboard are in [docs/overview.md](docs/overview.md).
+    images:
+      - {src: video/preview.gif, alt: "animated overview of the explainer video", width: "70%"}
+  - title: Results
+    emoji: "📊"
+    id: results
+    body: |
+      Each number below is parsed from raw files committed in [`docs/research/data/`](docs/research/data) by [`tools/readme_data.py`](tools/readme_data.py).
+      They are one machine, one build and few runs each, not statements about other hardware; where git wins, the table says so.
+      The clone row is **not like for like** (see the [benchmark audit](docs/research/benchmark-audit.md)). Setup and caveats: [huge-scale](docs/research/huge-scale.md), [zone-profile-bench](docs/research/zone-profile-bench.md).
+    highlights:
+      - {label: "add 1M files: vcs vs git", number: add_x}
+      - {label: "diff, 1% changed", number: diff_x}
+      - {label: "gc", number: gc_x}
+      - {label: "Bytes saved by profile-chosen zones", number: zone_saved}
+      - {label: "Test functions", number: tests}
+    charts: [ratios, zone_mb]
+    tables: [huge_tbl, zone_tbl]
+    after: |
+      vcs is slower on `status` with 1% modified and on a no-op `add` (git's index stat cache wins), and uses more memory on `add`, `publish` and `clone`.
+      More measurements (many writers, real S3, soak with `kill -9`, other VCSs) with their own caveats: [docs/overview.md](docs/overview.md#-headline-numbers) and [docs/research/](docs/research).
+  - title: Architecture
+    emoji: "🧩"
+    id: architecture
+    body: "Objects are uploaded first, then one conditional write of the manifest makes the publish visible at a single instant."
+    diagrams: [zones]
+    details:
+      - summary: Object model and atomic publish
+        body: "<p align=\"center\"><img src=\"docs/img/object-model.svg\" alt=\"Object model\" width=\"700\"></p><p align=\"center\"><img src=\"docs/img/atomic-publish.svg\" alt=\"Atomic publish animation\" width=\"700\"></p>"
+      - summary: Architecture overview
+        body: "<p align=\"center\"><img src=\"docs/img/architecture-overview.svg\" alt=\"Front ends, repository layer, object graph, remote protocol and backends\" width=\"700\"></p>"
+  - title: Quickstart
+    emoji: "🚀"
+    id: quickstart
+    body: |
+      ```bash
+      export VCS_AUTHOR_NAME=Ada VCS_AUTHOR_EMAIL=ada@example.com
+      vcs init demo && cd demo
+      mkdir engine assets
+      echo 'fn main(){}' > engine/main.rs && echo bin > assets/logo.bin && echo hi > README.md
+      vcs zone create engine --path engine
+      vcs zone create assets --path assets
+      vcs add . && vcs commit -m "initial"      # one atomic transaction covering 3 zones
+      vcs zone list
+
+      vcs remote set ../shared.vcs
+      vcs publish                               # published atomically
+      cd .. && vcs clone shared.vcs work --zone engine
+      cd work && vcs status                     # assets and root: not subscribed, not downloaded, NOT deleted
+
+      echo x >> engine/main.rs
+      vcs git commit -am "edit"                 # git spelling; native: vcs add + vcs commit
+      vcs publish
+      vcs zone add assets && vcs fetch --zone assets
+      vcs op log                                # every local operation; `vcs op undo` reverts the last one
+      ```
+      Coming from git or Perforce: [docs/git-to-vcs.md](docs/git-to-vcs.md), [docs/p4-to-vcs.md](docs/p4-to-vcs.md). The full tour is the [user guide](docs/guide/README.md).
+  - title: Install
+    emoji: "🛠️"
+    id: install
+    body: |
+      Needs Rust 1.88 or newer.
+
+      ```bash
+      git clone https://github.com/Bobliuuu/allgit && cd allgit
+      cargo build --release                                         # binaries in target/release
+      cargo install --path crates/vcs-cli --locked                  # or install `vcs` onto your PATH
+      vcs --help
+      ```
+      Tagged releases publish tarballs; see [docs/install.md](docs/install.md) (also covers Windows, which is compile-checked only).
+  - title: Documentation
+    emoji: "📚"
+    id: documentation
+    body: |
+      {{ n.docs_n.text }} topic documents in [`docs/`](docs): [architecture](docs/architecture.md), [object model](docs/object-model.md), [CLI](docs/cli.md), [deploy](docs/deploy.md),
+      [operations](docs/operations.md), [durability](docs/durability.md), [benchmarks](docs/benchmarks.md), [known limits](docs/known-limits.md), plus the [user guide](docs/guide/README.md)
+      and the complete [overview](docs/overview.md). Also [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), [CHANGELOG.md](CHANGELOG.md).
+quickstart:
+  - title: Test and regenerate this page
+    shell: |
+      cargo test --workspace
+      python3 tools/readme_data.py
+      python3 ~/video-readme-maker/vrm.py all README.spec.yml
+caveats:
+  - "Early research software: object ids changed between early format versions with no migration tool; expect more change before a stable release."
+  - "Benchmarks are one machine, one build and few runs; git still wins several rows (status with 1% modified, no-op add) and uses less memory on add, publish and clone."
+  - "The 1M-file clone row is not like for like (local path clone); see the benchmark audit."
+  - "Windows is compile-checked in CI only; locks are advisory unless vcs-server is in front; other S3 providers than MinIO, RustFS and AWS S3 are untested."
+  - "Assisted merge and `zone suggest --assist` are fixture and mock tested; the Claude helper has never been called against the live API."
+repo_map:
+  - {path: crates/, desc: "16 crates: objects, store, merge, remote, repo, server, CLI, S3 store, watch daemon, bench, assist helpers and storage labs"}
+  - {path: docs/, desc: "topic documents, user guide, research with raw benchmark data, diagrams"}
+  - {path: docs/overview.md, desc: "the complete former front page: all tables, scoreboards and idea matrix"}
+  - {path: docs/research/data/, desc: "raw result files; readme_data.json is derived from them by tools/readme_data.py"}
+  - {path: scripts/, desc: "benchmark and media scripts"}
+  - {path: deploy/, desc: "Dockerfile, systemd unit, Prometheus and Grafana configs for vcs-server"}
+  - {path: fuzz/, desc: "fuzz targets"}
+  - {path: README.spec.yml, desc: "drives this README and the video"}
+  - {path: video/, desc: "explainer mp4, poster, preview gif, subtitles", generated: true}
+  - {path: assets/, desc: "generated hero, chart and diagram SVGs", generated: true}
+footer: "Generated with [video-readme-maker](https://github.com/Bobliuuu/video-readme-maker)."

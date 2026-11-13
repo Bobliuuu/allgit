@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 600" width="980" height="600" role="img" aria-label="git time / vcs time per operation on 1,000,000 files (above 1 = vcs faster)">
+<rect width="980" height="600" rx="16" fill="#0b0f17"/>
+<text x="32" y="44" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-weight="700" font-size="22" fill="#e6edf6">git time / vcs time per operation on 1,000,000 files (above 1 = vcs faster)</text>
+<text x="32" y="68" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="14" fill="#8a98ad">one run per cell; * the clone row is not like for like</text>
+<text x="234" y="118" text-anchor="end" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#e6edf6" font-weight="700">add all</text>
+<rect x="248" y="96" width="446.0" height="30" rx="6" fill="#3ddc97"/>
+<text x="704.0" y="117" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="15" font-weight="700" fill="#e6edf6">11.41x</text>
+<text x="234" y="164" text-anchor="end" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#8a98ad" font-weight="400">commit</text>
+<rect x="248" y="142" width="116.9" height="30" rx="6" fill="#263044"/>
+<text x="374.9" y="163" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="15" font-weight="700" fill="#e6edf6">2.99x</text>
+<text x="234" y="210" text-anchor="end" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#8a98ad" font-weight="400">status, clean</text>
+<rect x="248" y="188" width="58.2" height="30" rx="6" fill="#263044"/>
+<text x="316.2" y="209" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="15" font-weight="700" fill="#e6edf6">1.49x</text>
+<text x="234" y="256" text-anchor="end" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#8a98ad" font-weight="400">status, 1% modified</text>
+<rect x="248" y="234" width="34.8" height="30" rx="6" fill="#263044"/>
+<text x="292.8" y="255" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="15" font-weight="700" fill="#e6edf6">0.89x</text>
+<text x="234" y="302" text-anchor="end" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#8a98ad" font-weight="400">diff, 1% modified</text>
+<rect x="248" y="280" width="207.2" height="30" rx="6" fill="#263044"/>
+<text x="465.2" y="301" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="15" font-weight="700" fill="#e6edf6">5.30x</text>
+<text x="234" y="348" text-anchor="end" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#8a98ad" font-weight="400">checkout previous commit</text>
+<rect x="248" y="326" width="159.9" height="30" rx="6" fill="#263044"/>
+<text x="417.9" y="347" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="15" font-weight="700" fill="#e6edf6">4.09x</text>
+<text x="234" y="394" text-anchor="end" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#8a98ad" font-weight="400">checkout back</text>
+<rect x="248" y="372" width="68.0" height="30" rx="6" fill="#263044"/>
+<text x="326.0" y="393" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="15" font-weight="700" fill="#e6edf6">1.74x</text>
+<text x="234" y="440" text-anchor="end" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#8a98ad" font-weight="400">clone*</text>
+<rect x="248" y="418" width="582.0" height="30" rx="6" fill="#263044"/>
+<text x="840.0" y="439" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="15" font-weight="700" fill="#e6edf6">14.89x</text>
+<text x="234" y="486" text-anchor="end" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#8a98ad" font-weight="400">gc</text>
+<rect x="248" y="464" width="169.6" height="30" rx="6" fill="#263044"/>
+<text x="427.6" y="485" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="15" font-weight="700" fill="#e6edf6">4.34x</text>
+<text x="234" y="532" text-anchor="end" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#8a98ad" font-weight="400">add, nothing changed</text>
+<rect x="248" y="510" width="5.1" height="30" rx="6" fill="#263044"/>
+<text x="263.1" y="531" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="15" font-weight="700" fill="#e6edf6">0.13x</text>
+<text x="948" y="586" text-anchor="end" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8a98ad">source: docs/research/data/readme_data.json · higher is better</text>
+</svg>

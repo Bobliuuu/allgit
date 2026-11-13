@@ -1,0 +1,188 @@
+1
+00:00:00,400 --> 00:00:03,141
+vcs: one repository, many zones, any size.
+
+2
+00:00:03,141 --> 00:00:08,232
+A version control system written from scratch in Rust, with no git underneath.
+
+3
+00:00:08,232 --> 00:00:13,779
+This is a short tour of the idea, the numbers we measured, and where it loses to git.
+
+4
+00:00:14,780 --> 00:00:18,809
+Big repositories mix code, art and documentation in one history.
+
+5
+00:00:18,809 --> 00:00:22,775
+Everyone downloads everything, even the slice they never touch.
+
+6
+00:00:22,775 --> 00:00:28,063
+And now many writers, people and agents, publish at the same time to shared storage.
+
+7
+00:00:29,060 --> 00:00:30,173
+The idea is zones.
+
+8
+00:00:30,173 --> 00:00:35,245
+Every object, a file chunk, tree, or commit, is named by its hash and stored once.
+
+9
+00:00:35,245 --> 00:00:39,142
+A zone owns a path prefix and has its own branches and history.
+
+10
+00:00:39,142 --> 00:00:43,967
+You subscribe only to the zones you need, and the others are never downloaded.
+
+11
+00:00:43,967 --> 00:00:49,843
+A single manifest, replaced by compare and swap, makes a publish visible at one instant, across
+
+12
+00:00:49,843 --> 00:00:50,461
+all zones.
+
+13
+00:00:51,460 --> 00:00:52,879
+Here is the quickstart.
+
+14
+00:00:52,879 --> 00:00:58,368
+Create two zones, commit once, which is one atomic transaction across zones, publish to a
+
+15
+00:00:58,368 --> 00:01:01,328
+shared location, and clone only the engine zone.
+
+16
+00:01:01,328 --> 00:01:07,064
+The assets zone is not downloaded, and it is not deleted either; it is simply not there until
+
+17
+00:01:07,064 --> 00:01:07,742
+you add it.
+
+18
+00:01:08,740 --> 00:01:14,848
+It works offline except for sharing, keeps an operation log with undo, and records conflicts as
+
+19
+00:01:14,848 --> 00:01:15,942
+structured state.
+
+20
+00:01:15,942 --> 00:01:21,600
+The remote can be a directory, an S3 compatible bucket, or a server, and the protocol is
+
+21
+00:01:21,600 --> 00:01:23,593
+checked by an executable model.
+
+22
+00:01:23,593 --> 00:01:27,644
+Large files are chunked and stored once, with no separate tool.
+
+23
+00:01:27,644 --> 00:01:31,052
+The workspace has 16 crates and 1,774 test functions.
+
+24
+00:01:32,050 --> 00:01:33,339
+Now the numbers.
+
+25
+00:01:33,339 --> 00:01:39,541
+On a million file tree, adding everything takes git 215 seconds and vcs 18.9.
+
+26
+00:01:39,541 --> 00:01:43,810
+That is 11 times faster, from one run on one machine.
+
+27
+00:01:44,810 --> 00:01:49,780
+Here is every operation on that tree, as git time divided by vcs time.
+
+28
+00:01:49,780 --> 00:01:51,555
+Above one, vcs is faster.
+
+29
+00:01:51,555 --> 00:01:57,447
+Diff of a one percent change is 5.3 times faster, and garbage collection 4.3 times.
+
+30
+00:01:57,447 --> 00:01:59,151
+But below one, git wins.
+
+31
+00:01:59,151 --> 00:02:05,541
+Adding when nothing changed takes git 0.9 seconds against 6.8 for vcs, and status with one
+
+32
+00:02:05,541 --> 00:02:08,380
+percent modified is slightly slower too.
+
+33
+00:02:09,380 --> 00:02:14,191
+Of the 11 operations that can be compared, vcs is faster on 8 and git on 3.
+
+34
+00:02:14,191 --> 00:02:20,284
+The clone row is not like for like, because a local path clone is the fast case for git too, so
+
+35
+00:02:20,284 --> 00:02:21,887
+treat that one with care.
+
+36
+00:02:22,890 --> 00:02:24,495
+Zones also save bytes.
+
+37
+00:02:24,495 --> 00:02:29,382
+On a fifty zone repository, a full clone downloads 189.5 megabytes.
+
+38
+00:02:29,382 --> 00:02:36,093
+When the zones are chosen from your usage profile, it downloads 37, which is 80 percent less
+
+39
+00:02:36,093 --> 00:02:38,427
+in 1.16 seconds instead of 2.87.
+
+40
+00:02:39,430 --> 00:02:40,274
+Honest limits.
+
+41
+00:02:40,274 --> 00:02:44,616
+This is early research software and the on disk format may still change.
+
+42
+00:02:44,616 --> 00:02:49,922
+Every benchmark is one machine, one build and a small number of runs, and git still wins
+
+43
+00:02:49,922 --> 00:02:50,706
+several rows.
+
+44
+00:02:50,706 --> 00:02:56,374
+Windows is only compile checked, the AI merge helpers are tested with mocks, and vcs uses more
+
+45
+00:02:56,374 --> 00:02:58,907
+memory than git on add, publish and clone.
+
+46
+00:02:59,910 --> 00:03:00,192
+vcs.
+
+47
+00:03:00,192 --> 00:03:05,548
+The code, the raw benchmark data and the full documentation are in the repo.
+

@@ -1,0 +1,252 @@
+{
+ "huge_table": [
+  {
+   "op": "init",
+   "git_s": 0.02,
+   "vcs_s": 0.17,
+   "git_rss": 4,
+   "vcs_rss": 8,
+   "ratio": 0.12,
+   "verdict": "git faster"
+  },
+  {
+   "op": "add all (1M files)",
+   "git_s": 215.45,
+   "vcs_s": 18.88,
+   "git_rss": 210,
+   "vcs_rss": 1004,
+   "ratio": 11.41,
+   "verdict": "vcs faster"
+  },
+  {
+   "op": "commit",
+   "git_s": 4.49,
+   "vcs_s": 1.5,
+   "git_rss": 218,
+   "vcs_rss": 354,
+   "ratio": 2.99,
+   "verdict": "vcs faster"
+  },
+  {
+   "op": "status, clean",
+   "git_s": 0.76,
+   "vcs_s": 0.51,
+   "git_rss": 220,
+   "vcs_rss": 357,
+   "ratio": 1.49,
+   "verdict": "vcs faster"
+  },
+  {
+   "op": "status, 1% modified",
+   "git_s": 1.83,
+   "vcs_s": 2.06,
+   "git_rss": 220,
+   "vcs_rss": 284,
+   "ratio": 0.89,
+   "verdict": "git faster"
+  },
+  {
+   "op": "diff, 1% modified",
+   "git_s": 19.65,
+   "vcs_s": 3.71,
+   "git_rss": 220,
+   "vcs_rss": 142,
+   "ratio": 5.3,
+   "verdict": "vcs faster"
+  },
+  {
+   "op": "checkout previous commit",
+   "git_s": 46.54,
+   "vcs_s": 11.39,
+   "git_rss": 266,
+   "vcs_rss": 375,
+   "ratio": 4.09,
+   "verdict": "vcs faster"
+  },
+  {
+   "op": "checkout back",
+   "git_s": 28.55,
+   "vcs_s": 16.41,
+   "git_rss": 266,
+   "vcs_rss": 322,
+   "ratio": 1.74,
+   "verdict": "vcs faster"
+  },
+  {
+   "op": "publish (local remote)",
+   "git_s": null,
+   "vcs_s": 11.22,
+   "git_rss": null,
+   "vcs_rss": 2256,
+   "ratio": null,
+   "verdict": null
+  },
+  {
+   "op": "clone (local path; not like for like)",
+   "git_s": 603.11,
+   "vcs_s": 40.5,
+   "git_rss": 136,
+   "vcs_rss": 1319,
+   "ratio": 14.89,
+   "verdict": "vcs faster"
+  },
+  {
+   "op": "gc",
+   "git_s": 15.2,
+   "vcs_s": 3.5,
+   "git_rss": 888,
+   "vcs_rss": 532,
+   "ratio": 4.34,
+   "verdict": "vcs faster"
+  },
+  {
+   "op": "add, nothing changed",
+   "git_s": 0.9,
+   "vcs_s": 6.82,
+   "git_rss": 220,
+   "vcs_rss": 480,
+   "ratio": 0.13,
+   "verdict": "git faster"
+  }
+ ],
+ "huge_files": 1000000,
+ "huge_vcs_faster": 8,
+ "huge_git_faster": 3,
+ "huge_cmp_rows": 11,
+ "huge_add": {
+  "op": "add all (1M files)",
+  "git_s": 215.45,
+  "vcs_s": 18.88,
+  "git_rss": 210,
+  "vcs_rss": 1004,
+  "ratio": 11.41,
+  "verdict": "vcs faster"
+ },
+ "huge_diff": {
+  "op": "diff, 1% modified",
+  "git_s": 19.65,
+  "vcs_s": 3.71,
+  "git_rss": 220,
+  "vcs_rss": 142,
+  "ratio": 5.3,
+  "verdict": "vcs faster"
+ },
+ "huge_gc": {
+  "op": "gc",
+  "git_s": 15.2,
+  "vcs_s": 3.5,
+  "git_rss": 888,
+  "vcs_rss": 532,
+  "ratio": 4.34,
+  "verdict": "vcs faster"
+ },
+ "huge_noop": {
+  "op": "add, nothing changed",
+  "git_s": 0.9,
+  "vcs_s": 6.82,
+  "git_rss": 220,
+  "vcs_rss": 480,
+  "ratio": 0.13,
+  "verdict": "git faster"
+ },
+ "huge_clone": {
+  "op": "clone (local path; not like for like)",
+  "git_s": 603.11,
+  "vcs_s": 40.5,
+  "git_rss": 136,
+  "vcs_rss": 1319,
+  "ratio": 14.89,
+  "verdict": "vcs faster"
+ },
+ "huge_ratio_rows": [
+  {
+   "op": "add all",
+   "ratio": 11.41
+  },
+  {
+   "op": "commit",
+   "ratio": 2.99
+  },
+  {
+   "op": "status, clean",
+   "ratio": 1.49
+  },
+  {
+   "op": "status, 1% modified",
+   "ratio": 0.89
+  },
+  {
+   "op": "diff, 1% modified",
+   "ratio": 5.3
+  },
+  {
+   "op": "checkout previous commit",
+   "ratio": 4.09
+  },
+  {
+   "op": "checkout back",
+   "ratio": 1.74
+  },
+  {
+   "op": "clone*",
+   "ratio": 14.89
+  },
+  {
+   "op": "gc",
+   "ratio": 4.34
+  },
+  {
+   "op": "add, nothing changed",
+   "ratio": 0.13
+  }
+ ],
+ "zone": {
+  "zones": 50,
+  "files_per_zone": 2000,
+  "runs": 3,
+  "hot": 8,
+  "full_mb": 189.483338,
+  "auto_mb": 37.041407,
+  "full_s": 2.872983466993901,
+  "auto_s": 1.155829958996037,
+  "git_full_s": 7.802298533002613,
+  "git_sparse_s": 3.6776979949936504,
+  "full_disk_mb": 622.539128,
+  "auto_disk_mb": 95.155597,
+  "saved_pct": 80,
+  "mb_rows": [
+   {
+    "what": "full clone (all zones)",
+    "mb": 189.5
+   },
+   {
+    "what": "zones chosen from your profile",
+    "mb": 37.0
+   }
+  ],
+  "s_rows": [
+   {
+    "what": "git full clone",
+    "s": 7.8
+   },
+   {
+    "what": "vcs full clone",
+    "s": 2.87
+   },
+   {
+    "what": "git partial + sparse clone",
+    "s": 3.68
+   },
+   {
+    "what": "vcs profile-chosen zones",
+    "s": 1.16
+   }
+  ]
+ },
+ "crates": 16,
+ "test_fns": 1774,
+ "docs": 52,
+ "research_docs": 39,
+ "rust_lines": 174103,
+ "version": "0.1.0"
+}
