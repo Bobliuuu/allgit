@@ -7,7 +7,7 @@
 # The image is built with the `tls` feature (--tls-cert/--tls-key, https:// S3 endpoints). Without a certificate it
 # still speaks plain HTTP: publish the port on loopback or a private network, or terminate TLS in front (docs/deploy.md).
 # Base images are pinned by digest (multi-arch index digests). Dependabot (docker ecosystem, /deploy) proposes bumps.
-FROM rust:1.99.1-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS build
+FROM rust:1.100.0-bookworm@sha256:ade39a710ef85f3506cffcfec3e8a24ba090badef1dff2fb798f71d878833fea AS build
 WORKDIR /src
 COPY . .
 # tls: HTTPS listener (--tls-cert/--tls-key) and https:// S3 endpoints (real AWS S3 needs it).
