@@ -13,7 +13,7 @@ COPY . .
 # tls: HTTPS listener (--tls-cert/--tls-key) and https:// S3 endpoints (real AWS S3 needs it).
 RUN cargo build --release --locked -p vcs-server --bin vcs-server --features tls
 
-FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
+FROM debian:bookworm-slim@sha256:e67eeead736ff7bbe258ef088bff683635c561b1fcfefad0806c1df4ab49ce0e
 RUN useradd --system --uid 10001 --home-dir /data --shell /usr/sbin/nologin vcs \
  && mkdir -p /data /etc/vcs && chown vcs /data
 COPY --from=build /src/target/release/vcs-server /usr/local/bin/vcs-server
